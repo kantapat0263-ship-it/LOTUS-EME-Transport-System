@@ -31,7 +31,7 @@ import {
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
+import { useCollection, useFirestore, useMemoFirebase, useUser } from "@/firebase"
 import { collection, query, where, orderBy } from "firebase/firestore"
 import { Trip, Site } from "@/types/models"
 import { startOfWeek, endOfWeek, format, isWithinInterval, startOfMonth, endOfMonth, subDays } from "date-fns"
@@ -39,14 +39,15 @@ import { th } from "date-fns/locale"
 
 export default function DashboardPage() {
   const db = useFirestore()
+  const { user } = useUser()
   const todayStr = new Date().toISOString().split('T')[0]
   const yesterdayStr = subDays(new Date(), 1).toISOString().split('T')[0]
   
-  // Queries
-  const tripsRef = useMemoFirebase(() => collection(db, "trips"), [db])
+  // Queries - Only run if firestore is ready
+  const tripsRef = useMemoFirebase(() => db ? collection(db, "trips") : null, [db])
   const { data: allTrips, isLoading: isLoadingTrips } = useCollection<Trip>(tripsRef)
   
-  const sitesRef = useMemoFirebase(() => query(collection(db, "sites"), where("status", "==", "Active")), [db])
+  const sitesRef = useMemoFirebase(() => db ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db])
   const { data: activeSites, isLoading: isLoadingSites } = useCollection<Site>(sitesRef)
 
   // 1. Stats Calculations
