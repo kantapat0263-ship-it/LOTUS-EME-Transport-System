@@ -1,15 +1,16 @@
-export type ProjectType = 'Electrical' | 'Plumbing' | 'HVAC' | 'Mixed';
+
+export type ProjectType = 'LOTUS EME' | 'P-ADVANCED';
 
 export interface Site {
   id: string;
   name: string;
   address: string;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
   projectTypeTag: ProjectType;
   status: 'Active' | 'Inactive';
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export type VehicleType = 'Pickup' | '4-wheel truck' | '6-wheel truck';
@@ -19,16 +20,16 @@ export interface Vehicle {
   licensePlate: string;
   type: VehicleType;
   maxLoadCapacityKg: number;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface Driver {
   id: string;
   name: string;
   phoneNumber: string;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
@@ -54,6 +55,6 @@ export interface Trip {
   totalDistanceKm?: number;
   totalEstimatedTimeMinutes?: number;
   routePolyline?: string;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }

@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -54,11 +55,8 @@ import { useToast } from "@/hooks/use-toast"
 
 const siteSchema = z.object({
   name: z.string().min(2, "กรุณาระบุชื่อไซน์งาน"),
-  address: z.string().min(5, "กรุณาระบุที่อยู่"),
-  projectTypeTag: z.enum(['Electrical', 'Plumbing', 'HVAC', 'Mixed']),
-  status: z.enum(['Active', 'Inactive']),
-  latitude: z.coerce.number(),
-  longitude: z.coerce.number(),
+  address: z.string().min(5, "กรุณาระบุที่อยู่หรือพิกัดจาก Google Map"),
+  projectTypeTag: z.enum(['LOTUS EME', 'P-ADVANCED']),
 })
 
 type SiteFormValues = z.infer<typeof siteSchema>
@@ -78,10 +76,7 @@ export default function SitesPage() {
     defaultValues: {
       name: "",
       address: "",
-      projectTypeTag: "Mixed",
-      status: "Active",
-      latitude: 13.7563,
-      longitude: 100.5018,
+      projectTypeTag: "LOTUS EME",
     },
   })
 
@@ -101,6 +96,7 @@ export default function SitesPage() {
     } else {
       addDocumentNonBlocking(sitesRef, {
         ...values,
+        status: 'Active',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -116,10 +112,7 @@ export default function SitesPage() {
     form.reset({
       name: site.name,
       address: site.address,
-      projectTypeTag: site.projectTypeTag,
-      status: site.status,
-      latitude: site.latitude,
-      longitude: site.longitude,
+      projectTypeTag: site.projectTypeTag as ProjectType,
     })
     setIsDialogOpen(true)
   }
@@ -134,10 +127,8 @@ export default function SitesPage() {
 
   const getTagColor = (type: ProjectType) => {
     switch (type) {
-      case 'Electrical': return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
-      case 'Plumbing': return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
-      case 'HVAC': return 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20';
-      case 'Mixed': return 'bg-purple-500/10 text-purple-500 border-purple-500/20';
+      case 'LOTUS EME': return 'bg-primary/20 text-primary border-primary/30';
+      case 'P-ADVANCED': return 'bg-accent/20 text-accent border-accent/30';
       default: return 'bg-gray-500/10 text-gray-500 border-gray-500/20';
     }
   }
@@ -153,7 +144,11 @@ export default function SitesPage() {
           className="bg-accent hover:bg-accent/90" 
           onClick={() => {
             setEditingSite(null)
-            form.reset()
+            form.reset({
+              name: "",
+              address: "",
+              projectTypeTag: "LOTUS EME",
+            })
             setIsDialogOpen(true)
           }}
         >
@@ -177,9 +172,6 @@ export default function SitesPage() {
               <Button variant="outline" size="sm">
                 <Filter className="mr-2 h-4 w-4" /> กรองข้อมูล
               </Button>
-              <Button variant="outline" size="sm" onClick={() => toast({ title: "Info", description: "ฟีเจอร์แผนที่กำลังพัฒนา" })}>
-                <MapPin className="mr-2 h-4 w-4" /> ดูในแผนที่
-              </Button>
             </div>
           </div>
 
@@ -187,16 +179,15 @@ export default function SitesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>ชื่อไซน์งาน</TableHead>
-                <TableHead>ประเภทโครงการ</TableHead>
-                <TableHead>ที่อยู่</TableHead>
-                <TableHead>สถานะ</TableHead>
+                <TableHead>บริษัทที่รับผิดชอบ</TableHead>
+                <TableHead>ที่อยู่/พิกัด</TableHead>
                 <TableHead className="text-right">จัดการ</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center">
+                  <TableCell colSpan={4} className="h-24 text-center">
                     <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                   </TableCell>
                 </TableRow>
@@ -204,16 +195,11 @@ export default function SitesPage() {
                 <TableRow key={site.id}>
                   <TableCell className="font-medium">{site.name}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={getTagColor(site.projectTypeTag)}>
+                    <Badge variant="outline" className={getTagColor(site.projectTypeTag as ProjectType)}>
                       {site.projectTypeTag}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{site.address}</TableCell>
-                  <TableCell>
-                    <Badge variant={site.status === 'Active' ? 'default' : 'secondary'} className={site.status === 'Active' ? 'bg-green-500 hover:bg-green-600' : ''}>
-                      {site.status === 'Active' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
-                    </Badge>
-                  </TableCell>
+                  <TableCell className="text-muted-foreground max-w-xs truncate">{site.address}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -235,7 +221,7 @@ export default function SitesPage() {
               ))}
               {!isLoading && filteredSites.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
                     ไม่พบข้อมูลไซน์งาน
                   </TableCell>
                 </TableRow>
@@ -250,7 +236,7 @@ export default function SitesPage() {
           <DialogHeader>
             <DialogTitle>{editingSite ? "แก้ไขข้อมูลไซน์งาน" : "เพิ่มไซน์งานใหม่"}</DialogTitle>
             <DialogDescription>
-              กรอกรายละเอียดข้อมูลไซน์งานก่อสร้างที่ต้องการจัดการ
+              ระบุรายละเอียดโครงการและพิกัดจาก Google Maps
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -260,9 +246,9 @@ export default function SitesPage() {
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>ชื่อไซน์งาน</FormLabel>
+                    <FormLabel>ชื่อโครงการ</FormLabel>
                     <FormControl>
-                      <Input placeholder="ชื่อโครงการ..." {...field} />
+                      <Input placeholder="เช่น โครงการ ABC สุขุมวิท..." {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -273,89 +259,36 @@ export default function SitesPage() {
                 name="address"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>ที่อยู่</FormLabel>
+                    <FormLabel>ที่อยู่ / พิกัด Google Maps</FormLabel>
                     <FormControl>
-                      <Input placeholder="ที่ตั้งโครงการ..." {...field} />
+                      <Input placeholder="วางที่อยู่ หรือ ลิงก์พิกัดที่นี่..." {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="projectTypeTag"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>ประเภทโครงการ</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="เลือกประเภท" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="Electrical">Electrical</SelectItem>
-                          <SelectItem value="Plumbing">Plumbing</SelectItem>
-                          <SelectItem value="HVAC">HVAC</SelectItem>
-                          <SelectItem value="Mixed">Mixed</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>สถานะ</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="เลือกสถานะ" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="Active">เปิดใช้งาน</SelectItem>
-                          <SelectItem value="Inactive">ปิดใช้งาน</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="latitude"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Latitude</FormLabel>
+              <FormField
+                control={form.control}
+                name="projectTypeTag"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>บริษัทที่รับผิดชอบ</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
-                        <Input type="number" step="any" {...field} />
+                        <SelectTrigger>
+                          <SelectValue placeholder="เลือกบริษัท" />
+                        </SelectTrigger>
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="longitude"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Longitude</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="any" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <DialogFooter>
+                      <SelectContent>
+                        <SelectItem value="LOTUS EME">LOTUS EME</SelectItem>
+                        <SelectItem value="P-ADVANCED">P-ADVANCED</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter className="pt-4">
                 <Button type="submit" className="w-full bg-accent">
                   {editingSite ? "บันทึกการแก้ไข" : "เพิ่มไซน์งาน"}
                 </Button>
