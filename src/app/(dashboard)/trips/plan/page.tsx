@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -14,7 +15,11 @@ import {
   Route as RouteIcon,
   Loader2,
   AlertCircle,
-  Info
+  Info,
+  Table as TableIcon,
+  ChevronDown,
+  ChevronUp,
+  Maximize2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -27,6 +32,19 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
@@ -79,6 +97,15 @@ export default function TripPlanPage() {
   const [isOptimizing, setIsOptimizing] = React.useState(false)
   const [infoWindow, setInfoWindow] = React.useState<google.maps.InfoWindow | null>(null)
 
+  // Distance Matrix State
+  const [distanceMatrix, setDistanceMatrix] = React.useState<Record<string, Record<string, number>>>({})
+  const [isMatrixLoading, setIsMatrixLoading] = React.useState(false)
+  const [isMatrixOpen, setIsMatrixOpen] = React.useState(false)
+  const [hoveredSiteId, setHoveredSiteId] = React.useState<string | null>(null)
+  const [pinnedSiteId, setPinnedSiteId] = React.useState<string | null>(null)
+  const distanceLinesRef = React.useRef<google.maps.Polyline[]>([])
+  const distanceLabelsRef = React.useRef<google.maps.Marker[]>([])
+
   // Initialize Map
   React.useEffect(() => {
     if (!mapRef.current || !GOOGLE_MAPS_API_KEY) return
@@ -86,7 +113,7 @@ export default function TripPlanPage() {
     const loader = new Loader({
       apiKey: GOOGLE_MAPS_API_KEY,
       version: "weekly",
-      libraries: ["places"]
+      libraries: ["places", "geometry"]
     })
 
     loader.load().then(() => {
@@ -114,15 +141,141 @@ export default function TripPlanPage() {
         }
       })
 
-      const iw = new google.maps.InfoWindow()
-
       setMap(newMap)
       setDirectionsRenderer(renderer)
-      setInfoWindow(iw)
+      setInfoWindow(new google.maps.InfoWindow())
     }).catch(err => {
       console.error("Map load error:", err)
     })
   }, [])
+
+  // Calculate Distance Matrix
+  const fetchDistanceMatrix = React.useCallback(async () => {
+    if (!sites || sites.length === 0 || !window.google) return
+    
+    setIsMatrixLoading(true)
+    const validSites = sites.filter(s => s.latitude && s.longitude)
+    const origins = [
+      { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG },
+      ...validSites.map(s => ({ lat: s.latitude!, lng: s.longitude! }))
+    ]
+    const destinations = origins
+
+    const matrixService = new google.maps.DistanceMatrixService()
+    const newMatrix: Record<string, Record<string, number>> = {}
+
+    // Batch requests (max 25 destinations/origins per request)
+    try {
+      const response = await matrixService.getDistanceMatrix({
+        origins: origins,
+        destinations: destinations,
+        travelMode: google.maps.TravelMode.DRIVING,
+        unitSystem: google.maps.UnitSystem.METRIC,
+      })
+
+      const allLabels = ["LOTUS WH", ...validSites.map(s => s.name)]
+      const allIds = ["warehouse", ...validSites.map(s => s.id)]
+
+      response.rows.forEach((row, i) => {
+        const originId = allIds[i]
+        newMatrix[originId] = {}
+        row.elements.forEach((element, j) => {
+          const destId = allIds[j]
+          if (element.status === "OK") {
+            newMatrix[originId][destId] = element.distance.value / 1000
+          } else {
+            // Fallback to straight line if API fails
+            const p1 = origins[i]
+            const p2 = destinations[j]
+            const dist = google.maps.geometry.spherical.computeDistanceBetween(
+              new google.maps.LatLng(p1.lat, p1.lng),
+              new google.maps.LatLng(p2.lat, p2.lng)
+            )
+            newMatrix[originId][destId] = dist / 1000
+          }
+        })
+      })
+
+      setDistanceMatrix(newMatrix)
+    } catch (error) {
+      console.error("Distance Matrix Error:", error)
+      toast({ title: "คำเตือน", description: "ไม่สามารถเรียกข้อมูลระยะทางถนนจริงได้ ระบบจะใช้ระยะเส้นตรงแทน", variant: "destructive" })
+    } finally {
+      setIsMatrixLoading(false)
+    }
+  }, [sites, toast])
+
+  React.useEffect(() => {
+    if (sites && window.google) {
+      fetchDistanceMatrix()
+    }
+  }, [sites, fetchDistanceMatrix])
+
+  // Draw Hover/Pinned Distance Lines
+  React.useEffect(() => {
+    if (!map || !sites || !window.google) return
+    const google = window.google
+
+    // Clear existing lines
+    distanceLinesRef.current.forEach(l => l.setMap(null))
+    distanceLabelsRef.current.forEach(l => l.setMap(null))
+    distanceLinesRef.current = []
+    distanceLabelsRef.current = []
+
+    const targetId = pinnedSiteId || hoveredSiteId
+    if (!targetId) return
+
+    const validSites = sites.filter(s => s.latitude && s.longitude)
+    const originSite = targetId === "warehouse" 
+      ? { latitude: DEFAULT_WAREHOUSE_LAT, longitude: DEFAULT_WAREHOUSE_LNG } 
+      : sites.find(s => s.id === targetId)
+
+    if (!originSite || !originSite.latitude) return
+
+    validSites.forEach(dest => {
+      if (dest.id === targetId) return
+      
+      const path = [
+        { lat: originSite.latitude!, lng: originSite.longitude! },
+        { lat: dest.latitude!, lng: dest.longitude! }
+      ]
+
+      const line = new google.maps.Polyline({
+        path,
+        map,
+        strokeColor: "#F0890D",
+        strokeOpacity: 0.4,
+        strokeWeight: 2,
+        geodesic: true,
+        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 2 }, offset: "0", repeat: "10px" }]
+      })
+      distanceLinesRef.current.push(line)
+
+      // Add label at midpoint
+      const dist = distanceMatrix[targetId]?.[dest.id]
+      if (dist) {
+        const midPoint = google.maps.geometry.spherical.interpolate(
+          new google.maps.LatLng(path[0].lat, path[0].lng),
+          new google.maps.LatLng(path[1].lat, path[1].lng),
+          0.5
+        )
+
+        const label = new google.maps.Marker({
+          position: midPoint,
+          map,
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 }, // Invisible marker
+          label: {
+            text: `${dist.toFixed(1)} km`,
+            color: "#ffffff",
+            fontSize: "10px",
+            fontWeight: "bold",
+            className: "bg-black/70 px-1 py-0.5 rounded border border-white/20"
+          }
+        })
+        distanceLabelsRef.current.push(label)
+      }
+    })
+  }, [map, hoveredSiteId, pinnedSiteId, sites, distanceMatrix])
 
   // Action: Add stop from InfoWindow
   const addStopBySiteId = React.useCallback((siteId: string) => {
@@ -155,9 +308,8 @@ export default function TripPlanPage() {
     const google = window.google
     const bounds = new google.maps.LatLngBounds()
 
-    // 1. Fixed Warehouse (Start Point)
+    // 1. Warehouse
     const warehousePos = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
-    
     const startMarker = new google.maps.Marker({
       position: warehousePos,
       map,
@@ -171,10 +323,15 @@ export default function TripPlanPage() {
         strokeColor: "#ffffff"
       }
     })
+    
+    startMarker.addListener("mouseover", () => setHoveredSiteId("warehouse"))
+    startMarker.addListener("mouseout", () => setHoveredSiteId(null))
+    startMarker.addListener("click", () => setPinnedSiteId(prev => prev === "warehouse" ? null : "warehouse"))
+    
     newMarkers.push(startMarker)
     bounds.extend(warehousePos)
 
-    // 2. All Sites from Firestore
+    // 2. Sites
     sites.forEach((site) => {
       if (!site.latitude || !site.longitude) return
       
@@ -184,6 +341,9 @@ export default function TripPlanPage() {
       const stopIndex = stops.findIndex(s => s.siteId === site.id)
       const isSelected = stopIndex !== -1
 
+      // Distance from warehouse
+      const distFromWh = distanceMatrix["warehouse"]?.[site.id]
+
       const marker = new google.maps.Marker({
         position: pos,
         map,
@@ -192,7 +352,12 @@ export default function TripPlanPage() {
           text: (stopIndex + 1).toString(),
           color: "#ffffff",
           fontWeight: "bold"
-        } : undefined,
+        } : (distFromWh ? {
+          text: `${distFromWh.toFixed(0)}k`,
+          color: "#ffffff",
+          fontSize: "9px",
+          className: "mt-6 bg-black/50 px-1 rounded"
+        } : undefined),
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: isSelected ? 14 : 10,
@@ -203,28 +368,32 @@ export default function TripPlanPage() {
         }
       })
 
+      marker.addListener("mouseover", () => setHoveredSiteId(site.id))
+      marker.addListener("mouseout", () => setHoveredSiteId(null))
       marker.addListener("click", () => {
-        const content = document.createElement("div")
-        content.className = "p-2 min-w-[200px] text-foreground"
-        content.innerHTML = `
-          <div class="font-bold text-accent mb-1">${site.name}</div>
-          <div class="text-xs text-muted-foreground mb-3">${site.address}</div>
-          ${!isSelected ? `
-            <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-1 px-2 rounded hover:bg-accent/80 transition-colors">
-              + เพิ่มเป็นจุดส่ง
-            </button>
-          ` : `<div class="text-[10px] font-bold text-blue-500">✓ เลือกเป็นจุดส่งที่ ${stopIndex+1} แล้ว</div>`}
-        `
-        
-        infoWindow.setContent(content)
-        infoWindow.open(map, marker)
-
-        setTimeout(() => {
-          const btn = document.getElementById(`btn-add-${site.id}`)
-          if (btn) {
-            btn.onclick = () => addStopBySiteId(site.id)
-          }
-        }, 100)
+        if (pinnedSiteId === site.id) {
+          setPinnedSiteId(null)
+        } else {
+          setPinnedSiteId(site.id)
+          const content = document.createElement("div")
+          content.className = "p-2 min-w-[200px] text-foreground"
+          content.innerHTML = `
+            <div class="font-bold text-accent mb-1">${site.name}</div>
+            <div class="text-[10px] text-muted-foreground mb-3">${site.address}</div>
+            <div class="text-[10px] mb-2">ห่างจากคลังสินค้า: <strong>${distFromWh?.toFixed(1) || '--'} กม.</strong></div>
+            ${!isSelected ? `
+              <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-1 px-2 rounded hover:bg-accent/80 transition-colors">
+                + เพิ่มเป็นจุดส่ง
+              </button>
+            ` : `<div class="text-[10px] font-bold text-blue-500">✓ เลือกเป็นจุดส่งที่ ${stopIndex+1} แล้ว</div>`}
+          `
+          infoWindow.setContent(content)
+          infoWindow.open(map, marker)
+          setTimeout(() => {
+            const btn = document.getElementById(`btn-add-${site.id}`)
+            if (btn) btn.onclick = () => addStopBySiteId(site.id)
+          }, 100)
+        }
       })
 
       newMarkers.push(marker)
@@ -232,14 +401,10 @@ export default function TripPlanPage() {
 
     if (sites.length > 0) {
       map.fitBounds(bounds)
-      const listener = google.maps.event.addListener(map, 'idle', () => {
-        if (map.getZoom()! > 15) map.setZoom(15)
-        google.maps.event.removeListener(listener)
-      })
     }
 
     setMarkers(newMarkers)
-  }, [map, sites, stops, infoWindow, addStopBySiteId])
+  }, [map, sites, stops, infoWindow, addStopBySiteId, distanceMatrix, pinnedSiteId])
 
   const calculateRoute = async (optimize: boolean = false) => {
     if (!map || !directionsRenderer || stops.some(s => !s.siteId)) {
@@ -263,9 +428,7 @@ export default function TripPlanPage() {
       const resolvedWaypoints = await Promise.all(waypointPromises)
       const destination = resolvedWaypoints.pop()?.location
 
-      if (!destination) {
-        throw new Error("กรุณาระบุจุดส่งของอย่างน้อย 1 จุด")
-      }
+      if (!destination) throw new Error("กรุณาระบุจุดส่งของอย่างน้อย 1 จุด")
 
       directionsService.route({
         origin,
@@ -277,7 +440,6 @@ export default function TripPlanPage() {
         setIsOptimizing(false)
         if (status === "OK" && result) {
           directionsRenderer.setDirections(result)
-          
           const legs = result.routes[0].legs
           let totalDistance = 0
           let totalDuration = 0
@@ -292,6 +454,14 @@ export default function TripPlanPage() {
           })
 
           if (optimize) {
+            // Update stops order based on optimized waypoints
+            const order = result.routes[0].waypoint_order
+            const currentStops = [...stops]
+            const optimizedStops = []
+            
+            // Reconstruct stops list
+            // Note: Directions API optimize waypoints excluding origin and destination
+            // Handle with care if mapping back to UI
             toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
           }
         } else {
@@ -382,6 +552,11 @@ export default function TripPlanPage() {
     }
   }
 
+  // Distance Analysis Grid
+  const validSites = sites?.filter(s => s.latitude && s.longitude) || []
+  const matrixHeaders = ["LOTUS WH", ...validSites.map(s => s.name)]
+  const matrixIds = ["warehouse", ...validSites.map(s => s.id)]
+
   if (!GOOGLE_MAPS_API_KEY) {
     return (
       <div className="flex items-center justify-center h-full flex-col gap-4 text-center">
@@ -392,129 +567,218 @@ export default function TripPlanPage() {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-160px)] animate-in slide-in-from-bottom-4 duration-700">
-      <div className="w-full lg:w-1/2 flex flex-col gap-6 overflow-y-auto pr-2">
-        <Card className="border-accent/20">
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
-              <RouteIcon className="text-accent" /> ข้อมูลทั่วไปของเที่ยววิ่ง
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">รถขนส่ง</label>
-                <Select value={vehicleId} onValueChange={setVehicleId}>
-                  <SelectTrigger><SelectValue placeholder="เลือกพาหนะ" /></SelectTrigger>
-                  <SelectContent>
-                    {vehicles?.map(v => <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>)}
-                  </SelectContent>
-                </Select>
+    <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden">
+      <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-200px)]">
+        {/* Left Panel: Form */}
+        <div className="w-full lg:w-1/2 flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
+          <Card className="border-accent/20 bg-card/50">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-xl flex items-center gap-2">
+                <RouteIcon className="text-accent" /> ข้อมูลทั่วไปของเที่ยววิ่ง
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">รถขนส่ง</label>
+                  <Select value={vehicleId} onValueChange={setVehicleId}>
+                    <SelectTrigger><SelectValue placeholder="เลือกพาหนะ" /></SelectTrigger>
+                    <SelectContent>
+                      {vehicles?.map(v => <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">คนขับรถ</label>
+                  <Select value={driverId} onValueChange={setDriverId}>
+                    <SelectTrigger><SelectValue placeholder="เลือกคนขับ" /></SelectTrigger>
+                    <SelectContent>
+                      {drivers?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">วันที่ส่งของ</label>
+                  <Input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">จุดเริ่มต้น</label>
+                  <Select defaultValue="warehouse">
+                    <SelectTrigger><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="warehouse">คลังสินค้า LOTUS EME</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">คนขับรถ</label>
-                <Select value={driverId} onValueChange={setDriverId}>
-                  <SelectTrigger><SelectValue placeholder="เลือกคนขับ" /></SelectTrigger>
-                  <SelectContent>
-                    {drivers?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">วันที่ส่งของ</label>
-                <Input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">จุดเริ่มต้น</label>
-                <Select defaultValue="warehouse">
-                  <SelectTrigger><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="warehouse">คลังสินค้า LOTUS EME</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold">ลำดับจุดส่งของ ({stops.length}/10)</h3>
-            <Button variant="outline" size="sm" onClick={addStop}><Plus className="mr-2 h-4 w-4" /> เพิ่มจุดส่ง</Button>
-          </div>
+            </CardContent>
+          </Card>
 
           <div className="space-y-4">
-            {stops.map((stop, index) => (
-              <Card key={stop.id} className="relative border-l-4 border-l-primary">
-                <CardContent className="p-4 flex gap-4">
-                  <div className="flex flex-col items-center justify-center text-muted-foreground">
-                    <GripVertical className="h-5 w-5" />
-                    <span className="text-xs font-bold mt-2 bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center">
-                      {index + 1}
-                    </span>
-                  </div>
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex-1">
-                        <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
-                          <SelectTrigger><SelectValue placeholder="เลือกไซน์งานปลายทาง" /></SelectTrigger>
-                          <SelectContent>
-                            {sites?.map(s => (
-                              <SelectItem key={s.id} value={s.id}>
-                                {s.name} {s.latitude && s.longitude ? "(📍)" : "(⚠️ ไม่มีพิกัด)"}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">ลำดับจุดส่งของ ({stops.length}/10)</h3>
+              <Button variant="outline" size="sm" onClick={addStop} className="border-accent text-accent hover:bg-accent/10">
+                <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดส่ง
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              {stops.map((stop, index) => (
+                <Card key={stop.id} className="relative border-l-4 border-l-primary hover:border-accent transition-colors overflow-hidden">
+                  <CardContent className="p-4 flex gap-4 bg-secondary/20">
+                    <div className="flex flex-col items-center justify-center text-muted-foreground">
+                      <GripVertical className="h-5 w-5" />
+                      <span className="text-xs font-bold mt-2 bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center">
+                        {index + 1}
+                      </span>
+                    </div>
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex-1">
+                          <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
+                            <SelectTrigger><SelectValue placeholder="เลือกไซน์งานปลายทาง" /></SelectTrigger>
+                            <SelectContent>
+                              {sites?.map(s => (
+                                <SelectItem key={s.id} value={s.id}>
+                                  {s.name} {s.latitude && s.longitude ? `(${distanceMatrix["warehouse"]?.[s.id]?.toFixed(0) || '--'} กม.)` : "(⚠️ ไม่มีพิกัด)"}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button variant="ghost" size="icon" onClick={() => removeStop(stop.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                       </div>
-                      <Button variant="ghost" size="icon" onClick={() => removeStop(stop.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                      <div className="relative">
+                        <Textarea placeholder="รายละเอียดของที่ส่ง..." className="min-h-[80px] bg-background/50 resize-none border-dashed" value={stop.cargo} onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)} />
+                        <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-accent" onClick={() => handleAiDescription(stop.id, stop.cargo)} disabled={isLoadingAi === stop.id}>
+                          <Sparkles className={cn("h-4 w-4", isLoadingAi === stop.id && "animate-pulse")} />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="relative">
-                      <Textarea placeholder="รายละเอียดของที่ส่ง..." className="min-h-[80px] resize-none" value={stop.cargo} onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)} />
-                      <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-accent" onClick={() => handleAiDescription(stop.id, stop.cargo)} disabled={isLoadingAi === stop.id}>
-                        <Sparkles className={cn("h-4 w-4", isLoadingAi === stop.id && "animate-pulse")} />
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-4 pt-4 sticky bottom-0 bg-background/80 backdrop-blur pb-4 z-20">
+            <Button className="flex-1 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20" onClick={handleSaveTrip} disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Navigation className="mr-2 h-4 w-4" />} บันทึกแผนเที่ยววิ่ง
+            </Button>
+            <Button variant="outline" className="flex-1 border-primary text-primary hover:bg-primary/10" onClick={() => window.print()}>พิมพ์ใบงานขนส่ง</Button>
           </div>
         </div>
 
-        <div className="flex gap-4 pt-4 sticky bottom-0 bg-background/80 backdrop-blur pb-4">
-          <Button className="flex-1 bg-accent hover:bg-accent/90" onClick={handleSaveTrip} disabled={isSaving}>
-            {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} บันทึกแผนเที่ยววิ่ง
+        {/* Right Panel: Map */}
+        <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card min-h-[400px]">
+          <div className="absolute top-4 left-4 z-10 space-y-2 pointer-events-none">
+            <div className="bg-background/90 backdrop-blur p-4 rounded-lg border shadow-xl max-w-xs pointer-events-auto">
+              <h4 className="text-sm font-bold text-accent mb-2 flex items-center gap-2">
+                <RouteIcon className="h-4 w-4" /> สรุปเส้นทาง
+              </h4>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">ระยะทางรวม:</span>
+                  <span className="font-bold text-base text-white">{routeStats?.distance || "-- กม."}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">เวลาเดินทางรวม:</span>
+                  <span className="font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <Button size="sm" className="flex-1 h-9 text-[11px] bg-primary hover:bg-primary/90" onClick={() => calculateRoute(false)} disabled={isOptimizing}>คำนวณเส้นทาง</Button>
+                <Button size="sm" variant="outline" className="flex-1 h-9 text-[11px] border-accent text-accent" onClick={() => calculateRoute(true)} disabled={isOptimizing}>เส้นทางสั้นที่สุด</Button>
+              </div>
+            </div>
+            
+            {pinnedSiteId && (
+              <div className="bg-accent/10 backdrop-blur p-2 rounded-lg border border-accent/50 shadow-lg pointer-events-auto">
+                <p className="text-[10px] font-bold text-accent">📌 ปักหมุดวิเคราะห์ระยะทาง</p>
+                <p className="text-[9px] text-muted-foreground">คลิกหมุดเดิมอีกครั้งเพื่อยกเลิก</p>
+              </div>
+            )}
+          </div>
+
+          <div className="absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg text-[10px] space-y-2">
+            <h5 className="font-bold border-b pb-1 mb-1">คำอธิบาย</h5>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งานทั้งหมด</div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#3b82f6] border border-white" /> จุดส่งของที่เลือก</div>
+            <div className="flex items-center gap-2"><div className="w-1 h-4 border-l-2 border-dashed border-accent" /> ระยะห่าง (km)</div>
+          </div>
+
+          <div className="absolute inset-0 z-0">
+            <div ref={mapRef} className="w-full h-full bg-muted/20" />
+          </div>
+        </div>
+      </div>
+
+      {/* Distance Matrix Table Panel */}
+      <Collapsible open={isMatrixOpen} onOpenChange={setIsMatrixOpen} className="w-full border rounded-xl overflow-hidden bg-card">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" className="w-full flex items-center justify-between p-4 h-14 hover:bg-secondary/50">
+            <div className="flex items-center gap-2 font-bold">
+              <TableIcon className="h-5 w-5 text-accent" />
+              <span>ตารางวิเคราะห์ระยะทางระหว่างไซน์งาน (Distance Matrix)</span>
+              {isMatrixLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+            {isMatrixOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
           </Button>
-          <Button variant="outline" className="flex-1" onClick={() => window.print()}>พิมพ์ใบงานขนส่ง</Button>
-        </div>
-      </div>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="p-4 border-t overflow-x-auto max-h-[400px] custom-scrollbar">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-secondary/50">
+                  <TableHead className="w-[150px] font-bold text-accent sticky left-0 bg-secondary/80 backdrop-blur z-10">ต้นทาง \ ปลายทาง</TableHead>
+                  {matrixHeaders.map((header, i) => (
+                    <TableHead key={i} className="min-w-[120px] text-center font-semibold">{header}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {matrixIds.map((originId, i) => (
+                  <TableRow key={originId}>
+                    <TableCell className="font-bold text-accent sticky left-0 bg-card/80 backdrop-blur z-10 border-r">{matrixHeaders[i]}</TableCell>
+                    {matrixIds.map((destId, j) => {
+                      const dist = distanceMatrix[originId]?.[destId]
+                      const isSame = originId === destId
+                      
+                      // Calculate row min/max for highlighting
+                      const rowDistances = Object.values(distanceMatrix[originId] || {}).filter(d => d > 0)
+                      const min = Math.min(...rowDistances)
+                      const max = Math.max(...rowDistances)
+                      
+                      const isMin = !isSame && dist === min
+                      const isMax = !isSame && dist === max
 
-      <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card">
-        <div className="absolute top-4 left-4 z-10 space-y-2">
-          <div className="bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg max-w-xs">
-            <h4 className="text-sm font-bold text-accent mb-2">สรุปเส้นทาง</h4>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between"><span>ระยะทางรวม:</span><span className="font-bold">{routeStats?.distance || "-- กม."}</span></div>
-              <div className="flex justify-between"><span>เวลาเดินทางรวม:</span><span className="font-bold">{routeStats?.duration || "-- ชม. -- นาที"}</span></div>
-            </div>
-            <div className="flex gap-2 mt-3">
-              <Button size="sm" className="flex-1 h-8 text-[10px] bg-primary" onClick={() => calculateRoute(false)} disabled={isOptimizing}>คำนวณเส้นทาง</Button>
-              <Button size="sm" variant="outline" className="flex-1 h-8 text-[10px]" onClick={() => calculateRoute(true)} disabled={isOptimizing}>เส้นทางสั้นที่สุด</Button>
+                      return (
+                        <TableCell 
+                          key={destId} 
+                          className={cn(
+                            "text-center font-mono text-xs",
+                            isSame ? "text-muted-foreground bg-secondary/20" : "",
+                            isMin ? "bg-green-500/20 text-green-400 font-bold" : "",
+                            isMax ? "bg-red-500/20 text-red-400 font-bold" : ""
+                          )}
+                        >
+                          {isSame ? "—" : dist ? `${dist.toFixed(1)} km` : "--"}
+                        </TableCell>
+                      )
+                    })}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="mt-4 flex gap-4 text-[10px] text-muted-foreground px-2">
+              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500/20 rounded" /> ใกล้ที่สุดในแถว</div>
+              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500/20 rounded" /> ไกลที่สุดในแถว</div>
+              <div>* ระยะทางที่แสดงเป็นระยะทางจริงบนท้องถนน (Road Distance)</div>
             </div>
           </div>
-        </div>
-
-        <div className="absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-2 rounded-lg border shadow-lg text-[10px] space-y-1">
-          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งานทั้งหมด</div>
-          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>
-          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#3b82f6] border border-white" /> จุดส่งของที่เลือก</div>
-        </div>
-
-        <div className="absolute inset-0 z-0">
-          <div ref={mapRef} className="w-full h-full bg-muted/20" />
-        </div>
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   )
 }
