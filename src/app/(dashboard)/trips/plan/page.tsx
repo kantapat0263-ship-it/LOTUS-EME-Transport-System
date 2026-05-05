@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -32,7 +33,7 @@ import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
 import { collection, serverTimestamp, doc } from "firebase/firestore"
 import { Site, Vehicle, Driver } from "@/types/models"
-import { addDocumentNonBlocking } from "@/firebase/non-blocking-updates"
+import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
 
 export default function TripPlanPage() {
@@ -122,33 +123,34 @@ export default function TripPlanPage() {
     setIsSaving(true)
     try {
       const tripsRef = collection(db, "trips")
-      const tripId = `T-${Date.now()}`
+      const newTripRef = doc(tripsRef)
+      const tripId = newTripRef.id
       
       // Save Main Trip
-      addDocumentNonBlocking(tripsRef, {
+      setDocumentNonBlocking(newTripRef, {
         id: tripId,
         tripDate,
         vehicleId,
         driverId,
         status: "Planned",
         departureSiteId: "warehouse",
-        stopIds: [], // Will update later or handle via subcollection
+        stopIds: [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      })
+      }, { merge: true })
 
       // Save Trip Stops as subcollection
       stops.forEach((stop, index) => {
-        const stopRef = collection(db, "trips", tripId, "tripStops")
-        addDocumentNonBlocking(stopRef, {
-          id: `S-${tripId}-${index}`,
+        const stopRef = doc(collection(db, "trips", tripId, "tripStops"))
+        setDocumentNonBlocking(stopRef, {
+          id: stopRef.id,
           tripId: tripId,
           siteId: stop.siteId,
           orderIndex: index,
           plannedCargoDescription: stop.cargo,
           driverId: driverId, // Denormalized for security
           createdAt: serverTimestamp(),
-        })
+        }, { merge: true })
       })
 
       toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })

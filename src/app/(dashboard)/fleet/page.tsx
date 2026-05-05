@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -42,7 +43,7 @@ import { collection, doc, serverTimestamp } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
-import { addDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
+import { setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
 import { Vehicle, Driver } from "@/types/models"
 
@@ -89,7 +90,13 @@ export default function FleetPage() {
       updateDocumentNonBlocking(doc(db, "vehicles", editingVehicle.id), { ...values, updatedAt: serverTimestamp() })
       toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลรถเรียบร้อยแล้ว" })
     } else {
-      addDocumentNonBlocking(vehiclesRef, { ...values, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
+      const newRef = doc(collection(db, "vehicles"))
+      setDocumentNonBlocking(newRef, { 
+        ...values, 
+        id: newRef.id,
+        createdAt: serverTimestamp(), 
+        updatedAt: serverTimestamp() 
+      }, { merge: true })
       toast({ title: "สำเร็จ", description: "เพิ่มรถใหม่เรียบร้อยแล้ว" })
     }
     setIsVehicleDialogOpen(false)
@@ -102,7 +109,13 @@ export default function FleetPage() {
       updateDocumentNonBlocking(doc(db, "drivers", editingDriver.id), { ...values, updatedAt: serverTimestamp() })
       toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลคนขับเรียบร้อยแล้ว" })
     } else {
-      addDocumentNonBlocking(driversRef, { ...values, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
+      const newRef = doc(collection(db, "drivers"))
+      setDocumentNonBlocking(newRef, { 
+        ...values, 
+        id: newRef.id,
+        createdAt: serverTimestamp(), 
+        updatedAt: serverTimestamp() 
+      }, { merge: true })
       toast({ title: "สำเร็จ", description: "เพิ่มคนขับใหม่เรียบร้อยแล้ว" })
     }
     setIsDriverDialogOpen(false)

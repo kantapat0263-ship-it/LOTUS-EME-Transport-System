@@ -50,7 +50,7 @@ import { collection, doc, serverTimestamp } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
-import { addDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
+import { setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
 
 const siteSchema = z.object({
@@ -94,12 +94,14 @@ export default function SitesPage() {
       })
       toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลไซน์งานเรียบร้อยแล้ว" })
     } else {
-      addDocumentNonBlocking(sitesRef, {
+      const newSiteRef = doc(collection(db, "sites"))
+      setDocumentNonBlocking(newSiteRef, {
         ...values,
+        id: newSiteRef.id,
         status: 'Active',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      })
+      }, { merge: true })
       toast({ title: "สำเร็จ", description: "เพิ่มไซน์งานใหม่เรียบร้อยแล้ว" })
     }
     setIsDialogOpen(false)
