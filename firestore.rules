@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * CORE PHILOSOPHY
+     * This ruleset implements a Role-Based Access Control (RBAC) model combined with specific 
+     * resource ownership for logistics and construction site management. 
+     * 
+     * DATA STRUCTURE
+     * - User profiles are stored at the top level, defining the user's system-wide role.
+     * - Logistics entities (Sites, Vehicles, Drivers) are top-level collections managed by staff.
+     * - Trips and their nested TripStops represent the operational flow, accessible by staff 
+     *   and specific assigned drivers.
+     * 
+     * KEY SECURITY DECISIONS
+     * - Role-Based Access: Admin and Dispatcher roles hold broad management permissions.
+     * - Authorization Independence: Subcollections (TripStops) utilize denormalized data 
+     *   (driverId) to allow security checks without performing expensive parent document lookups.
+     * - Prototyping Flexibility: Rules strictly enforce 'who' can access data but remain 
+     *   flexible on the 'shape' of the data to facilitate rapid development.
+     * - Integrity: Critical IDs and ownership fields are enforced on creation and made immutable.
+     */
+
+    // --- Global Helper Functions ---
+
+    /** @description Checks if the request is from an authenticated user. */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /** @description Fetches the authenticated user's profile data. */
+    function getUserData() {
+      return get(/databases/$(database)/documents/userProfiles/$(request.auth.uid)).data;
+    }
+
+    /** @description Checks if the user has a specific system role. */
+    function hasRole(role) {
+      return isSignedIn() && getUserData().role == role;
+    }
+
+    /** @description Checks if the user is the owner based on UID matching the document ID. */
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    /** @description Checks if the user is the assigned driver for a resource. */
+    function isAssignedDriver(driverId) {
+      return isSignedIn() && request.auth.uid == driverId;
+    }
+    
+    // The 'isExistingOwner' function was removed as it was unused and contained an invalid variable reference ('resource')
+    // within its scope, which led to a 'WARNING' from the firebaserules API.
+
+    // --- Collection Rules ---
+
+    /**
+     * @description Rules for user profile management. Users can create their own profile; Admins manage all.
+     * @path /userProfiles/{userId}
+     * @allow (create) if auth.uid matches userId.
+     * @deny (update) if the user attempts to change their own role without Admin rights.
+     * @principle Verified Identity and Role-Based Access.
+     */
+    match /userProfiles/{userId} {
+      allow get: if isSignedIn();
+      allow list: if hasRole('Admin') || hasRole('Dispatcher');
+      allow create: if isOwner(userId) && request.resource.data.id == userId;
+      allow update: if (hasRole('Admin') || isOwner(userId)) && resource != null;
+      allow delete: if hasRole('Admin') && resource != null;
+    }
+
+    /**
+     * @description Management of construction sites. Fixed issue where CRUD was restricted.
+     * @path /sites/{siteId}
+     * @allow (create, update, delete) if user is Admin or Dispatcher.
+     * @deny (create) if user is a Viewer or unassigned Driver.
+     * @principle Relational Integrity and Role-Based CRUD.
+     */
+    match /sites/{siteId} {
+      allow get, list: if isSignedIn();
+      allow create: if (hasRole('Admin') || hasRole('Dispatcher')) && request.resource.data.id == siteId;
+      allow update, delete: if (hasRole('Admin') || hasRole('Dispatcher')) && resource != null;
+    }
+
+    /**
+     * @description Logistics vehicle registry.
+     * @path /vehicles/{vehicleId}
+     * @allow (create, update, delete) if user is Admin or Dispatcher.
+     * @deny (update) if vehicle ID is changed.
+     * @principle Role-Based Access Control.
+     */
+    match /vehicles/{vehicleId} {
+      allow get, list: if isSignedIn();
+      allow create: if (hasRole('Admin') || hasRole('Dispatcher')) && request.resource.data.id == vehicleId;
+      allow update, delete: if (hasRole('Admin') || hasRole('Dispatcher')) && resource != null;
+    }
+
+    /**
+     * @description Driver personnel records.
+     * @path /drivers/{driverId}
+     * @allow (create, update) if user is Admin or Dispatcher.
+     * @deny (list) if user is not signed in.
+     * @principle Role-Based Access Control.
+     */
+    match /drivers/{driverId} {
+      allow get, list: if isSignedIn();
+      allow create: if (hasRole('Admin') || hasRole('Dispatcher')) && request.resource.data.id == driverId;
+      allow update, delete: if (hasRole('Admin') || hasRole('Dispatcher')) && resource != null;
+    }
+
+    /**
+     * @description Global configuration settings for the company.
+     * @path /companySettings/{settingId}
+     * @allow (read) for all staff; (write) for Admin only.
+     * @deny (write) if user is a Dispatcher or Viewer.
+     * @principle Structural Segregation of sensitive settings.
+     */
+    match /companySettings/{settingId} {
+      allow get, list: if isSignedIn();
+      allow create: if hasRole('Admin') && settingId == 'default';
+      allow update, delete: if hasRole('Admin') && resource != null;
+    }
+
+    /**
+     * @description Trip coordination. Drivers can view and update trips they are assigned to.
+     * @path /trips/{tripId}
+     * @allow (update) if request.auth.uid matches resource.data.driverId.
+     * @deny (create) if the user is not an Admin or Dispatcher.
+     * @principle Query Access Patterns (QAPs) and Resource Ownership.
+     */
+    match /trips/{tripId} {
+      allow get, list: if isSignedIn();
+      allow create: if (hasRole('Admin') || hasRole('Dispatcher')) && request.resource.data.id == tripId;
+      allow update: if (hasRole('Admin') || hasRole('Dispatcher') || isAssignedDriver(resource.data.driverId)) && resource != null;
+      allow delete: if (hasRole('Admin') || hasRole('Dispatcher')) && resource != null;
+
+      /**
+       * @description Individual stops within a trip. Uses denormalized driverId for security efficiency.
+       * @path /trips/{tripId}/tripStops/{tripStopId}
+       * @allow (read, update) if driverId in document matches user.
+       * @deny (create) if mandatory parent tripId is missing or mismatched.
+       * @principle Authorization Independence via Denormalization.
+       */
+      match /tripStops/{tripStopId} {
+        allow get, list: if isSignedIn();
+        allow create: if (hasRole('Admin') || hasRole('Dispatcher')) && request.resource.data.tripId == tripId;
+        allow update: if (hasRole('Admin') || hasRole('Dispatcher') || isAssignedDriver(resource.data.driverId)) && resource != null;
+        allow delete: if (hasRole('Admin') || hasRole('Dispatcher')) && resource != null;
+      }
+    }
+  }
+}

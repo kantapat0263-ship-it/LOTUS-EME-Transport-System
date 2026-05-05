@@ -1,0 +1,489 @@
+{
+  "entities": {
+    "UserProfile": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "UserProfile",
+      "type": "object",
+      "description": "Represents a user within the application, holding their profile information and assigned role.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the UserProfile entity, typically matching the Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "description": "The user's email address.",
+          "format": "email"
+        },
+        "name": {
+          "type": "string",
+          "description": "The user's display name."
+        },
+        "role": {
+          "type": "string",
+          "description": "The role of the user within the application, determining access permissions. (enum: Admin, Dispatcher, Viewer)"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the user profile was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the user profile was last updated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "name",
+        "role"
+      ]
+    },
+    "Site": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Site",
+      "type": "object",
+      "description": "Represents a construction site where material deliveries are made.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Site entity."
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the construction site (e.g., 'โครงการ ABC สุขุมวิท 50')."
+        },
+        "address": {
+          "type": "string",
+          "description": "The physical address of the construction site."
+        },
+        "latitude": {
+          "type": "number",
+          "description": "The geographical latitude coordinate of the site, typically picked via a map click."
+        },
+        "longitude": {
+          "type": "number",
+          "description": "The geographical longitude coordinate of the site, typically picked via a map click."
+        },
+        "projectTypeTag": {
+          "type": "string",
+          "description": "A tag indicating the primary type of project at this site. (enum: Electrical, Plumbing, HVAC, Mixed)"
+        },
+        "status": {
+          "type": "string",
+          "description": "The operational status of the site. (enum: Active, Inactive)"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the site was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the site was last updated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "address",
+        "latitude",
+        "longitude",
+        "projectTypeTag",
+        "status"
+      ]
+    },
+    "Vehicle": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Vehicle",
+      "type": "object",
+      "description": "Represents a delivery vehicle used for transport.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Vehicle entity."
+        },
+        "licensePlate": {
+          "type": "string",
+          "description": "The unique license plate number of the vehicle."
+        },
+        "type": {
+          "type": "string",
+          "description": "The classification or type of the vehicle. (enum: Pickup, 4-wheel truck, 6-wheel truck)"
+        },
+        "maxLoadCapacityKg": {
+          "type": "number",
+          "description": "The maximum permissible load capacity of the vehicle in kilograms."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the vehicle record was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the vehicle record was last updated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "licensePlate",
+        "type",
+        "maxLoadCapacityKg"
+      ]
+    },
+    "Driver": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Driver",
+      "type": "object",
+      "description": "Represents a driver responsible for operating a vehicle for deliveries.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Driver entity."
+        },
+        "name": {
+          "type": "string",
+          "description": "The full name of the driver."
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "The driver's contact phone number."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the driver record was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the driver record was last updated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "phoneNumber"
+      ]
+    },
+    "CompanySetting": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "CompanySetting",
+      "type": "object",
+      "description": "Stores global configuration settings for the LOTUS EME company, such as warehouse location and API key references.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the CompanySetting entity. Expected to be a singleton (e.g., 'default' or 'company')."
+        },
+        "companyName": {
+          "type": "string",
+          "description": "The official name of the company (e.g., 'LOTUS EME')."
+        },
+        "warehouseName": {
+          "type": "string",
+          "description": "The name of the primary company warehouse or office location."
+        },
+        "warehouseAddress": {
+          "type": "string",
+          "description": "The physical address of the primary company warehouse or office."
+        },
+        "warehouseLatitude": {
+          "type": "number",
+          "description": "The geographical latitude coordinate of the primary warehouse."
+        },
+        "warehouseLongitude": {
+          "type": "number",
+          "description": "The geographical longitude coordinate of the primary warehouse."
+        },
+        "googleMapsApiKeyReference": {
+          "type": "string",
+          "description": "A reference or identifier to where the Google Maps API key is securely stored (e.g., Firebase environment config ID), not the key itself."
+        },
+        "defaultMapCenterLatitude": {
+          "type": "number",
+          "description": "The default latitude coordinate for centering maps in the application (e.g., Bangkok)."
+        },
+        "defaultMapCenterLongitude": {
+          "type": "number",
+          "description": "The default longitude coordinate for centering maps in the application (e.g., Bangkok)."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the settings were created or first configured.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the settings were last updated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "companyName",
+        "warehouseName",
+        "warehouseAddress",
+        "warehouseLatitude",
+        "warehouseLongitude",
+        "googleMapsApiKeyReference",
+        "defaultMapCenterLatitude",
+        "defaultMapCenterLongitude"
+      ]
+    },
+    "Trip": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Trip",
+      "type": "object",
+      "description": "Represents a planned or executed material delivery trip, coordinating vehicles, drivers, and multiple stops.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Trip entity."
+        },
+        "tripDate": {
+          "type": "string",
+          "description": "The scheduled date for the delivery trip.",
+          "format": "date"
+        },
+        "driverId": {
+          "type": "string",
+          "description": "Reference to the Driver assigned to this trip. (Relationship: Driver 1:N Trip)"
+        },
+        "vehicleId": {
+          "type": "string",
+          "description": "Reference to the Vehicle assigned to this trip. (Relationship: Vehicle 1:N Trip)"
+        },
+        "departureSiteId": {
+          "type": "string",
+          "description": "Reference to the departure Site for the trip, typically the warehouse. (Relationship: Site 1:N Trip)"
+        },
+        "stopIds": {
+          "type": "array",
+          "description": "An ordered list of references to TripStop entities belonging to this trip. The order determines the route sequence. (Relationship: Trip 1:N TripStop)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "description": "The current operational status of the trip. (enum: Planned, In Progress, Completed, Cancelled)"
+        },
+        "totalDistanceKm": {
+          "type": "number",
+          "description": "The calculated total distance for the entire trip in kilometers, typically from Google Routes API."
+        },
+        "totalEstimatedTimeMinutes": {
+          "type": "number",
+          "description": "The calculated total estimated travel time for the entire trip in minutes, typically from Google Routes API."
+        },
+        "routePolyline": {
+          "type": "string",
+          "description": "An encoded polyline string representing the full optimized route on a map, generated by Google Routes API."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the trip was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the trip was last updated (e.g., status change, route re-optimization).",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "tripDate",
+        "driverId",
+        "vehicleId",
+        "departureSiteId",
+        "stopIds",
+        "status"
+      ]
+    },
+    "TripStop": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TripStop",
+      "type": "object",
+      "description": "Represents a single delivery stop within a larger trip, detailing the site and cargo.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the TripStop entity."
+        },
+        "tripId": {
+          "type": "string",
+          "description": "Reference to the Trip this stop belongs to. (Relationship: Trip 1:N TripStop)"
+        },
+        "siteId": {
+          "type": "string",
+          "description": "Reference to the Site where this stop is located. (Relationship: Site 1:N TripStop)"
+        },
+        "orderIndex": {
+          "type": "number",
+          "description": "The sequential order of this stop within the trip (0-indexed)."
+        },
+        "plannedCargoDescription": {
+          "type": "string",
+          "description": "Description of cargo items planned for delivery at this stop (e.g., 'สายไฟ 3 ม้วน, ท่อ PVC 50 เมตร')."
+        },
+        "actualCargoDescription": {
+          "type": "string",
+          "description": "Description of cargo items actually delivered at this stop, editable after trip completion."
+        },
+        "distanceFromPreviousKm": {
+          "type": "number",
+          "description": "The calculated distance from the previous stop in the route, in kilometers."
+        },
+        "estimatedTimeFromPreviousMinutes": {
+          "type": "number",
+          "description": "The calculated estimated travel time from the previous stop in the route, in minutes."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the trip stop was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the trip stop was last updated (e.g., cargo notes edited).",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "tripId",
+        "siteId",
+        "orderIndex",
+        "plannedCargoDescription"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/userProfiles/{userId}",
+        "definition": {
+          "entityName": "UserProfile",
+          "schema": {
+            "$ref": "#/backend/entities/UserProfile"
+          },
+          "description": "Stores user profiles, including their unique ID (matching Firebase Auth UID), email, name, and crucial role (Admin, Dispatcher, Viewer) for role-based access control. The `userId` parameter represents the Firebase Authentication UID."
+        }
+      },
+      {
+        "path": "/sites/{siteId}",
+        "definition": {
+          "entityName": "Site",
+          "schema": {
+            "$ref": "#/backend/entities/Site"
+          },
+          "description": "Stores details for each construction site, including name, address, GPS coordinates, project type, and status. Access is governed by the user's role (Admin/Dispatcher for CRUD, Viewer for Read).",
+          "params": [
+            {
+              "name": "siteId",
+              "description": "The unique identifier for a specific construction site."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/vehicles/{vehicleId}",
+        "definition": {
+          "entityName": "Vehicle",
+          "schema": {
+            "$ref": "#/backend/entities/Vehicle"
+          },
+          "description": "Manages delivery vehicle information such as license plate, type, and max load capacity. Access is governed by the user's role (Admin/Dispatcher for CRUD, Viewer for Read).",
+          "params": [
+            {
+              "name": "vehicleId",
+              "description": "The unique identifier for a specific vehicle."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/drivers/{driverId}",
+        "definition": {
+          "entityName": "Driver",
+          "schema": {
+            "$ref": "#/backend/entities/Driver"
+          },
+          "description": "Contains details for each driver, including name and phone number. Access is governed by the user's role (Admin/Dispatcher for CRUD, Viewer for Read).",
+          "params": [
+            {
+              "name": "driverId",
+              "description": "The unique identifier for a specific driver."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/companySettings/{settingId}",
+        "definition": {
+          "entityName": "CompanySetting",
+          "schema": {
+            "$ref": "#/backend/entities/CompanySetting"
+          },
+          "description": "A singleton collection for global company-wide settings like warehouse location and API key references. Expected `settingId` is 'default'. Admin users have CRUD access, Dispatcher/Viewer users have Read-only access.",
+          "params": [
+            {
+              "name": "settingId",
+              "description": "The unique identifier for a specific company setting document (e.g., 'default')."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/trips/{tripId}",
+        "definition": {
+          "entityName": "Trip",
+          "schema": {
+            "$ref": "#/backend/entities/Trip"
+          },
+          "description": "Manages individual delivery trip details, including assigned driver and vehicle, stops, route information, and status. Access is granted to Admin/Dispatcher roles for CRUD, Viewer for Read, and the `driverId` assigned to the trip can read and update their own trips.",
+          "params": [
+            {
+              "name": "tripId",
+              "description": "The unique identifier for a specific delivery trip."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/trips/{tripId}/tripStops/{tripStopId}",
+        "definition": {
+          "entityName": "TripStop",
+          "schema": {
+            "$ref": "#/backend/entities/TripStop"
+          },
+          "description": "A subcollection representing individual stops within a specific trip. Includes denormalized `driverId` (copied from the parent Trip) for Authorization Independence. Access is granted to Admin/Dispatcher roles for CRUD, Viewer for Read, and the `driverId` assigned to the parent trip can read and update their own trip stops.",
+          "params": [
+            {
+              "name": "tripId",
+              "description": "The unique identifier of the parent trip to which this stop belongs."
+            },
+            {
+              "name": "tripStopId",
+              "description": "The unique identifier for a specific stop within the trip."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore structure prioritizes secure, scalable, and debuggable authorization by adhering to the core design principles, especially Authorization Independence and QAPs. The central tenet for authorization is the `UserProfile` document (`/userProfiles/{userId}`), which stores the user's `role` (Admin, Dispatcher, Viewer) based on the DBAC (Database-Backed Access Control) principle. Firebase Security Rules will leverage this `role` to grant or deny access.\n\n**Authorization Independence:**\n1.  **Top-Level Collections:** Collections like `userProfiles`, `sites`, `vehicles`, `drivers`, and `companySettings` are designed to be entirely authorization-independent. Access rules for these collections will directly reference the `request.auth.uid` to fetch the user's role from their `UserProfile` document (e.g., `get(/userProfiles/$(request.auth.uid)).data.role`). This eliminates any hierarchical authorization dependencies between these top-level entities themselves.\n2.  **`Trip` Collection:** `Trip` documents (`/trips/{tripId}`) are secured by either the user's `role` (Admin/Dispatcher for full access, Viewer for read-only) or by checking if `request.auth.uid` matches the `resource.data.driverId` field directly within the `Trip` document. This avoids `get()` calls for parent documents and enables drivers to access their assigned trips independently.\n3.  **`TripStop` Subcollection (CRITICAL Denormalization):** To ensure Authorization Independence for `TripStop` documents (`/trips/{tripId}/tripStops/{tripStopId}`), the `driverId` from the parent `Trip` will be denormalized and copied into every `TripStop` document. This is a critical application of Strategy A. This denormalization allows `TripStop` security rules to operate solely on `resource.data.driverId` (or the user's global role), thereby completely eliminating the need for `get(/trips/$(tripId))` calls within the `TripStop` rules. This makes `TripStop` operations atomic, rules simple, and highly debuggable.\n\n**QAPs (Rules are not Filters):**\n1.  **Homogeneous Security Posture:** Collections like `/sites`, `/vehicles`, `/drivers`, and `/companySettings` maintain a homogeneous security posture. All documents within these collections are accessible based on the user's global `role`. For instance, an `Admin` or `Dispatcher` can perform CRUD operations on *all* `Site` documents, while a `Viewer` can only read *all* `Site` documents. This directly supports secure `list` operations without requiring complex server-side filtering logic within rules. The client queries the full collection, and the rule simply validates access to the entire set.\n2.  **User-Specific Data (`Trips`, `TripStops`):** For collections like `/trips` and `/trips/{tripId}/tripStops`, where access might be restricted to an assigned `driverId`, client-side queries must explicitly include filters (e.g., `db.collection('trips').where('driverId', '==', request.auth.uid)`). The Firebase Security Rules will then *validate* that `request.auth.uid` matches `resource.data.driverId` for each document being accessed or listed, in addition to checking for `Admin`/`Dispatcher` roles. The rules *do not filter* results; they enforce that *any requested data* (individual or via list query) matches the allowed access pattern. The denormalized `driverId` in `TripStop` is key here for QAPs on subcollections.\n\n**Structural Segregation & Consistency:**\n*   Entities are mapped to top-level collections (e.g., `/sites`, `/vehicles`).\n*   Hierarchical paths are used for nested, logically dependent data (`/trips/{tripId}/tripStops/{tripStopId}`).\n*   A dedicated `status` field is used for explicit state modeling across `Site` and `Trip` entities, simplifying rules based on document lifecycle. Wildcards in paths are descriptive (e.g., `{userId}`, `{siteId}`). The prompt's requirement for fixing non-functional CRUD for sites is directly addressed by enabling `Admin` and `Dispatcher` roles to perform these actions on the `/sites` collection, with authorization based on the user's role retrieved from `/userProfiles/{userId}`."
+  }
+}
