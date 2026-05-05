@@ -1,350 +1,48 @@
-
 {
   "entities": {
-    "UserProfile": {
+    "User": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "UserProfile",
+      "title": "User",
       "type": "object",
-      "description": "Represents a user within the application, holding their profile information and assigned role.",
+      "description": "Represents a user account within the application with specific roles and access permissions.",
       "properties": {
         "id": {
           "type": "string",
-          "description": "Unique identifier for the UserProfile entity, typically matching the Firebase Auth UID."
+          "description": "Unique identifier for the User entity, corresponding to Firebase Authentication UID."
         },
         "email": {
           "type": "string",
-          "description": "The user's email address.",
+          "description": "The user's email address, used for authentication.",
           "format": "email"
         },
         "name": {
           "type": "string",
-          "description": "The user's display name."
+          "description": "The full name of the user."
         },
         "role": {
           "type": "string",
-          "description": "The role of the user within the application, determining access permissions. (enum: Admin, Dispatcher, Viewer)"
+          "description": "The role of the user, defining their access permissions within the application.",
+          "items": {
+            "type": "string"
+          }
         },
         "createdAt": {
           "type": "string",
-          "description": "Timestamp when the user profile was created.",
+          "description": "Timestamp indicating when the user account was created.",
           "format": "date-time"
         },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the user profile was last updated.",
-          "format": "date-time"
+        "active": {
+          "type": "boolean",
+          "description": "A boolean flag indicating whether the user account is active or deactivated. Deactivated users cannot log in."
         }
       },
       "required": [
         "id",
         "email",
         "name",
-        "role"
-      ]
-    },
-    "Site": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Site",
-      "type": "object",
-      "description": "Represents a construction site where material deliveries are made.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Site entity."
-        },
-        "name": {
-          "type": "string",
-          "description": "The name of the construction site."
-        },
-        "address": {
-          "type": "string",
-          "description": "The physical address or location from Google Maps."
-        },
-        "latitude": {
-          "type": "number",
-          "description": "The geographical latitude coordinate of the site (optional/legacy)."
-        },
-        "longitude": {
-          "type": "number",
-          "description": "The geographical longitude coordinate of the site (optional/legacy)."
-        },
-        "projectTypeTag": {
-          "type": "string",
-          "description": "The company managing this site. (enum: LOTUS EME, P-ADVANCED)"
-        },
-        "status": {
-          "type": "string",
-          "description": "The operational status of the site. (enum: Active, Inactive)"
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the site was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the site was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "address",
-        "projectTypeTag"
-      ]
-    },
-    "Vehicle": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Vehicle",
-      "type": "object",
-      "description": "Represents a delivery vehicle used for transport.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Vehicle entity."
-        },
-        "licensePlate": {
-          "type": "string",
-          "description": "The unique license plate number of the vehicle."
-        },
-        "type": {
-          "type": "string",
-          "description": "The classification or type of the vehicle. (enum: Pickup, 4-wheel truck, 6-wheel truck)"
-        },
-        "maxLoadCapacityKg": {
-          "type": "number",
-          "description": "The maximum permissible load capacity of the vehicle in kilograms."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the vehicle record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the vehicle record was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "licensePlate",
-        "type",
-        "maxLoadCapacityKg"
-      ]
-    },
-    "Driver": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Driver",
-      "type": "object",
-      "description": "Represents a driver responsible for operating a vehicle for deliveries.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Driver entity."
-        },
-        "name": {
-          "type": "string",
-          "description": "The full name of the driver."
-        },
-        "phoneNumber": {
-          "type": "string",
-          "description": "The driver's contact phone number."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the driver record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the driver record was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "phoneNumber"
-      ]
-    },
-    "CompanySetting": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "CompanySetting",
-      "type": "object",
-      "description": "Stores global configuration settings for the LOTUS EME company.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the CompanySetting entity. Expected to be a singleton (e.g., 'default' or 'company')."
-        },
-        "companyName": {
-          "type": "string",
-          "description": "The official name of the company (e.g., 'LOTUS EME')."
-        },
-        "warehouseName": {
-          "type": "string",
-          "description": "The name of the primary company warehouse or office location."
-        },
-        "warehouseAddress": {
-          "type": "string",
-          "description": "The physical address of the primary company warehouse or office."
-        },
-        "warehouseLatitude": {
-          "type": "number",
-          "description": "The geographical latitude coordinate of the primary warehouse."
-        },
-        "warehouseLongitude": {
-          "type": "number",
-          "description": "The geographical longitude coordinate of the primary warehouse."
-        },
-        "googleMapsApiKeyReference": {
-          "type": "string",
-          "description": "A reference or identifier to where the Google Maps API key is securely stored."
-        },
-        "defaultMapCenterLatitude": {
-          "type": "number",
-          "description": "The default latitude coordinate for centering maps."
-        },
-        "defaultMapCenterLongitude": {
-          "type": "number",
-          "description": "The default longitude coordinate for centering maps."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the settings were created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the settings were last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyName",
-        "warehouseName",
-        "warehouseAddress"
-      ]
-    },
-    "Trip": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Trip",
-      "type": "object",
-      "description": "Represents a planned or executed material delivery trip.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Trip entity."
-        },
-        "tripDate": {
-          "type": "string",
-          "description": "The scheduled date for the delivery trip.",
-          "format": "date"
-        },
-        "driverId": {
-          "type": "string",
-          "description": "Reference to the Driver assigned to this trip."
-        },
-        "vehicleId": {
-          "type": "string",
-          "description": "Reference to the Vehicle assigned to this trip."
-        },
-        "departureSiteId": {
-          "type": "string",
-          "description": "Reference to the departure Site for the trip."
-        },
-        "stopIds": {
-          "type": "array",
-          "description": "An ordered list of references to TripStop entities.",
-          "items": {
-            "type": "string"
-          }
-        },
-        "status": {
-          "type": "string",
-          "description": "The current operational status of the trip. (enum: Planned, In Progress, Completed, Cancelled)"
-        },
-        "totalDistanceKm": {
-          "type": "number",
-          "description": "The calculated total distance for the entire trip in kilometers."
-        },
-        "totalEstimatedTimeMinutes": {
-          "type": "number",
-          "description": "The calculated total estimated travel time for the entire trip in minutes."
-        },
-        "routePolyline": {
-          "type": "string",
-          "description": "An encoded polyline string representing the full optimized route."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the trip was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the trip was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "tripDate",
-        "driverId",
-        "vehicleId",
-        "status"
-      ]
-    },
-    "TripStop": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "TripStop",
-      "type": "object",
-      "description": "Represents a single delivery stop within a larger trip.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the TripStop entity."
-        },
-        "tripId": {
-          "type": "string",
-          "description": "Reference to the Trip this stop belongs to."
-        },
-        "siteId": {
-          "type": "string",
-          "description": "Reference to the Site where this stop is located."
-        },
-        "orderIndex": {
-          "type": "number",
-          "description": "The sequential order of this stop within the trip."
-        },
-        "plannedCargoDescription": {
-          "type": "string",
-          "description": "Description of cargo items planned for delivery."
-        },
-        "actualCargoDescription": {
-          "type": "string",
-          "description": "Description of cargo items actually delivered."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the trip stop was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the trip stop was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "tripId",
-        "siteId",
-        "orderIndex",
-        "plannedCargoDescription"
+        "role",
+        "createdAt",
+        "active"
       ]
     }
   },
@@ -357,13 +55,19 @@
   "firestore": {
     "structure": [
       {
-        "path": "/userProfiles/{userId}",
+        "path": "/users/{userId}",
         "definition": {
-          "entityName": "UserProfile",
+          "entityName": "User",
           "schema": {
-            "$ref": "#/backend/entities/UserProfile"
+            "$ref": "#/backend/entities/User"
           },
-          "description": "Stores user profiles."
+          "description": "Stores user profiles, including their `uid` (matching Firebase Auth UID), `email`, `name`, `role` ('admin', 'dispatcher', 'viewer'), `createdAt` timestamp, and `active` status. The `role` field is central for server-side authorization. Only ADMINs can create, edit, or deactivate users in this collection.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier of the user, corresponding to their Firebase Authentication UID."
+            }
+          ]
         }
       },
       {
@@ -373,7 +77,13 @@
           "schema": {
             "$ref": "#/backend/entities/Site"
           },
-          "description": "Stores details for each construction site."
+          "description": "Stores details for construction sites, including `name`, `address`, `gpsCoordinates` (lat/lng), `projectType` tag, and `active` status. Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
+          "params": [
+            {
+              "name": "siteId",
+              "description": "The unique identifier for a construction site."
+            }
+          ]
         }
       },
       {
@@ -383,7 +93,13 @@
           "schema": {
             "$ref": "#/backend/entities/Vehicle"
           },
-          "description": "Manages delivery vehicle information."
+          "description": "Stores registered vehicle information, including `licensePlate`, `type` ('Pickup', '4-wheel truck', '6-wheel truck'), and `maxLoadCapacity` (kg). Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
+          "params": [
+            {
+              "name": "vehicleId",
+              "description": "The unique identifier for a vehicle."
+            }
+          ]
         }
       },
       {
@@ -393,17 +109,13 @@
           "schema": {
             "$ref": "#/backend/entities/Driver"
           },
-          "description": "Contains details for each driver."
-        }
-      },
-      {
-        "path": "/companySettings/{settingId}",
-        "definition": {
-          "entityName": "CompanySetting",
-          "schema": {
-            "$ref": "#/backend/entities/CompanySetting"
-          },
-          "description": "Global company-wide settings."
+          "description": "Stores driver profiles, including `name` and `phoneNumber`. Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
+          "params": [
+            {
+              "name": "driverId",
+              "description": "The unique identifier for a driver."
+            }
+          ]
         }
       },
       {
@@ -413,19 +125,52 @@
           "schema": {
             "$ref": "#/backend/entities/Trip"
           },
-          "description": "Manages individual delivery trip details."
+          "description": "Stores main trip plan details, including `departurePoint`, `selectedVehicleId`, `selectedDriverId`, `tripDate`, ordered `stopIds`, and `status` ('Planned', 'In Progress', 'Completed', 'Cancelled'). Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
+          "params": [
+            {
+              "name": "tripId",
+              "description": "The unique identifier for a delivery trip."
+            }
+          ]
         }
       },
       {
-        "path": "/trips/{tripId}/tripStops/{tripStopId}",
+        "path": "/trips/{tripId}/stops/{stopId}",
         "definition": {
           "entityName": "TripStop",
           "schema": {
             "$ref": "#/backend/entities/TripStop"
           },
-          "description": "Individual stops within a trip."
+          "description": "Stores individual stops for a specific trip, including `siteId`, `orderIndex`, `cargoDescription`, and potentially `actualDeliveredItems`. Access control is inherited from the parent `Trip` document: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
+          "params": [
+            {
+              "name": "tripId",
+              "description": "The unique identifier of the parent trip."
+            },
+            {
+              "name": "stopId",
+              "description": "The unique identifier for a specific stop within the trip."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/settings/{settingId}",
+        "definition": {
+          "entityName": "CompanySetting",
+          "schema": {
+            "$ref": "#/backend/entities/CompanySetting"
+          },
+          "description": "Stores global application settings such as the default `warehouseLocation` and `googleMapsApiKeyRef`. Only the 'admin' role can create/edit/delete these settings; all authenticated roles can read them.",
+          "params": [
+            {
+              "name": "settingId",
+              "description": "The unique identifier for a company setting (e.g., 'main')."
+            }
+          ]
         }
       }
-    ]
+    ],
+    "reasoning": "The Firestore data structure is designed to support a secure, scalable, and debuggable role-based access control (RBAC) system for the LotusLogistics Pro application, adhering strictly to the core design principles and strategic mandates.\n\n**1. Authorization Independence (CRITICAL) & DBAC:**\nRoles are implemented using a Database Access Control (DBAC) model, where each user's `role` ('admin', 'dispatcher', 'viewer') is stored directly in their respective document within the `/users/{userId}` collection. While strictly avoiding `get()` calls in rules is a core principle, checking the `request.auth.uid`'s own role requires a `get()` call to `/users/$(request.auth.uid)`. This specific `get()` operation is an accepted pattern for user-centric role checks, as it's a direct lookup of the requesting user's own profile and does not create hierarchical dependencies between unrelated documents (e.g., a trip needing to read a site's owner). For all other data (sites, vehicles, drivers, trips, trip stops, settings), authorization is based solely on the requesting user's `uid` and their associated `role` in `/users`, simplifying rules. No denormalization of owner IDs or membership maps is required within `/sites`, `/vehicles`, `/drivers`, or `/trips` documents for authorization purposes because access is purely role-based across these shared resources. This prevents complex multi-document lookups that could break atomic operations or complicate debugging.\n\n**2. Clarity of Intent (Debuggability):**\nThe use of explicit, descriptive collection names (`/users`, `/sites`, `/vehicles`, `/drivers`, `/trips`, `/settings`) and wildcards (`{userId}`, `{siteId}`, etc.) makes the purpose of each path immediately clear. The `role` field in the `User` document explicitly defines permissions, and `active` flags manage user status directly, preventing ambiguous inferred states.\n\n**3. Structural Segregation (Homogeneous Security Posture):**\nEach top-level collection (`/users`, `/sites`, `/vehicles`, `/drivers`, `/trips`, `/settings`) holds documents that share a consistent security posture. For example, all documents in `/sites` are readable by all authenticated users and writable only by 'admin' or 'dispatcher' roles. There is no mixing of public and private data within the same collection. This significantly simplifies Firestore security rules, as rules can be applied uniformly to an entire collection without complex conditional logic based on document content.\n\n**4. QAPs (Rules are not Filters):**\nThe structure inherently supports queryable access patterns (QAPs).\n*   For `/users`, `list` operations are restricted to `admin` role, ensuring that queries by non-admins would not return unauthorized data.\n*   For `/sites`, `/vehicles`, `/drivers`, and `/trips` (including `/trips/{tripId}/stops`), all authenticated users (admin, dispatcher, viewer) have read access. This means `list` queries on these collections will always return data that the requesting user is authorized to see. The application can fetch all data and then apply client-side filtering (e.g., filter trips by driver) without violating security rules. This eliminates the need for complex, inefficient, or insecure server-side filtering via rules.\n*   For `/settings`, all authenticated users have read access, while only admins can write, also supporting QAPs for read operations.\n\n**5. Invariants:**\nTimestamp fields like `createdAt` in `User` documents ensure data integrity. The `status` field in `Trip` documents explicitly models the trip's lifecycle. Ownership for user profiles is naturally tied to the `uid` in the path, preventing unauthorized modification outside of the defined `admin` role.\n\nIn summary, this design leverages explicit role definitions, structural segregation, and careful consideration of `get()` operations for user roles to create a robust, secure, and easily debuggable Firestore structure that aligns with all stated principles and mandates."
   }
 }

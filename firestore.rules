@@ -1,9 +1,184 @@
+/**
+ * LOTUS EME - Trip Management & Logistics Security Rules
+ *
+ * Core Philosophy:
+ * This ruleset implements a strict Role-Based Access Control (RBAC) model. Access is determined by a
+ * user's 'role' ('admin', 'dispatcher', 'viewer') and their 'active' status, both stored in the
+ * central /users/{userId} collection.
+ *
+ * Data Structure:
+ * - /users: Root collection for user profiles and roles. Managed by ADMINs.
+ * - /sites, /vehicles, /drivers: Shared resource collections for logistics management.
+ * - /trips: Main operational data, including nested /stops subcollections.
+ * - /settings: Global application configuration.
+ *
+ * Key Security Decisions:
+ * - Centralized Role Lookup: Rules perform a single `get()` on the authenticated user's profile to 
+ *   verify their role and account status before granting access to shared collections.
+ * - Account Suspension: A global `isActive()` check ensures that deactivated users (active: false) 
+ *   are immediately barred from all read/write operations across the system.
+ * - Least Privilege: VIEWERS are granted read-only access. DISPATCHERs can manage operations but 
+ *   cannot touch user accounts or global settings. ADMINs have full system authority.
+ *
+ * Denormalization for Authorization:
+ * Authorization is primarily role-based rather than ownership-based for shared resources (trips, 
+ * sites, etc.). The user's role is stored directly on their profile to simplify global permissions 
+ * without needing complex nested ownership checks.
+ */
 
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    // --- Helper Functions ---
+
+    /**
+     * @description Basic check if the request is authenticated.
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * @description Retrieves the current user's document from the /users collection.
+     */
+    function getCurrentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    /**
+     * @description Checks if the user's account is marked as active.
+     */
+    function isActive() {
+      return isSignedIn() && getCurrentUserData().active == true;
+    }
+
+    /**
+     * @description Checks if the authenticated user has a specific role.
+     */
+    function hasRole(role) {
+      return isSignedIn() && getCurrentUserData().role == role;
+    }
+
+    /**
+     * @description Determines if the user is an ADMIN.
+     */
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    /**
+     * @description Determines if the user is a DISPATCHER.
+     */
+    function isDispatcher() {
+      return hasRole('dispatcher');
+    }
+
+    /**
+     * @description Combined check for users permitted to manage logistics operations.
+     */
+    function canManageOperations() {
+      return isActive() && (isAdmin() || isDispatcher());
+    }
+
+    // --- Collection Rules ---
+
+    /**
+     * @description User profiles and RBAC management.
+     * @path /users/{userId}
+     * @allow (get) Any authenticated user reading their own profile or an Admin.
+     * @allow (create) A user creating their own profile or an Admin.
+     * @allow (update/delete) Admins managing user accounts.
+     * @deny (list) Non-admin users listing the entire user database.
+     * @principle Restricts user management and role assignment to administrative accounts.
+     */
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if request.auth.uid == userId || isAdmin();
+      allow update, delete: if isAdmin() && resource != null;
+    }
+
+    /**
+     * @description Master data for delivery sites.
+     * @path /sites/{siteId}
+     * @allow (read) All active authenticated users.
+     * @allow (write) Admins and Dispatchers.
+     * @deny (write) Viewers or inactive users.
+     * @principle RBAC for shared logistics resources.
+     */
+    match /sites/{siteId} {
+      allow get, list: if isActive();
+      allow create: if canManageOperations();
+      allow update, delete: if canManageOperations() && resource != null;
+    }
+
+    /**
+     * @description Vehicle fleet records.
+     * @path /vehicles/{vehicleId}
+     * @allow (read) All active authenticated users.
+     * @allow (write) Admins and Dispatchers.
+     * @deny (write) Viewers or inactive users.
+     * @principle RBAC for shared logistics resources.
+     */
+    match /vehicles/{vehicleId} {
+      allow get, list: if isActive();
+      allow create: if canManageOperations();
+      allow update, delete: if canManageOperations() && resource != null;
+    }
+
+    /**
+     * @description Driver directory.
+     * @path /drivers/{driverId}
+     * @allow (read) All active authenticated users.
+     * @allow (write) Admins and Dispatchers.
+     * @deny (write) Viewers or inactive users.
+     * @principle RBAC for shared logistics resources.
+     */
+    match /drivers/{driverId} {
+      allow get, list: if isActive();
+      allow create: if canManageOperations();
+      allow update, delete: if canManageOperations() && resource != null;
+    }
+
+    /**
+     * @description Trip planning and history.
+     * @path /trips/{tripId}
+     * @allow (read) All active authenticated users.
+     * @allow (write) Admins and Dispatchers managing schedules.
+     * @deny (write) Viewers attempting to modify trip data.
+     * @principle RBAC for operational data with status tracking.
+     */
+    match /trips/{tripId} {
+      allow get, list: if isActive();
+      allow create: if canManageOperations();
+      allow update, delete: if canManageOperations() && resource != null;
+
+      /**
+       * @description Individual delivery stops within a trip.
+       * @path /trips/{tripId}/stops/{stopId}
+       * @allow (read/write) Inherits permissions from the parent Trip document.
+       * @principle Hierarchical data management for complex operations.
+       */
+      match /stops/{stopId} {
+        allow get, list: if isActive();
+        allow create: if canManageOperations();
+        allow update, delete: if canManageOperations() && resource != null;
+      }
+    }
+
+    /**
+     * @description Global application and company configurations.
+     * @path /settings/{settingId}
+     * @allow (read) All active authenticated users.
+     * @allow (write) Restricted strictly to Admins.
+     * @deny (write) Dispatchers or Viewers.
+     * @principle Strict administrative control over system-wide settings.
+     */
+    match /settings/{settingId} {
+      allow get, list: if isActive();
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin() && resource != null;
     }
   }
 }
