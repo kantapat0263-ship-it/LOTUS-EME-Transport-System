@@ -124,11 +124,11 @@ export default function TripPlanPage() {
     markers.forEach(m => m.setMap(null))
     const newMarkers: google.maps.Marker[] = []
 
+    const google = window.google
     const geocoder = new google.maps.Geocoder()
     const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
 
     // Start Marker (Warehouse)
-    // Check if warehouse has coordinates
     if (companySettings?.warehouseLatitude && companySettings?.warehouseLongitude) {
       const marker = new google.maps.Marker({
         position: { lat: companySettings.warehouseLatitude, lng: companySettings.warehouseLongitude },
@@ -191,30 +191,6 @@ export default function TripPlanPage() {
           }
         })
         newMarkers.push(marker)
-      } else {
-        geocoder.geocode({ address: site.address }, (results, status) => {
-          if (status === "OK" && results![0]) {
-            const marker = new google.maps.Marker({
-              position: results![0].geometry.location,
-              map,
-              label: {
-                text: (index + 1).toString(),
-                color: "#ffffff",
-                fontWeight: "bold"
-              },
-              title: site.name,
-              icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                scale: 12,
-                fillColor: "#F0890D",
-                fillOpacity: 1,
-                strokeWeight: 2,
-                strokeColor: "#ffffff"
-              }
-            })
-            newMarkers.push(marker)
-          }
-        })
       }
     })
 
@@ -234,13 +210,11 @@ export default function TripPlanPage() {
     
     const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
 
-    // Helper to geocode a single address or use lat/lng
     const getPoint = async (siteId?: string, isWarehouse: boolean = false): Promise<google.maps.LatLng> => {
       if (isWarehouse) {
         if (companySettings?.warehouseLatitude && companySettings?.warehouseLongitude) {
           return new google.maps.LatLng(companySettings.warehouseLatitude, companySettings.warehouseLongitude)
         }
-        // Fallback to geocoding address
         return new Promise((resolve, reject) => {
           geocoder.geocode({ address: warehouseAddr }, (results, status) => {
             if (status === "OK" && results?.[0]?.geometry?.location) {
@@ -255,26 +229,11 @@ export default function TripPlanPage() {
       const site = sites?.find(s => s.id === siteId)
       if (!site) throw new Error("ไม่พบข้อมูลไซน์งาน")
 
-      // Use stored coordinates if available
       if (site.latitude && site.longitude) {
         return new google.maps.LatLng(site.latitude, site.longitude)
       }
 
-      // If it's a URL and no coordinates, show error
-      if (site.address.startsWith("http")) {
-        throw new Error(`ไซน์งาน "${site.name}" เป็นลิงก์พิกัด กรุณา "ปักหมุดบนแผนที่" ในหน้าจัดการไซน์งานก่อนคำนวณเส้นทาง`)
-      }
-
-      // Fallback to geocoding text address
-      return new Promise((resolve, reject) => {
-        geocoder.geocode({ address: site.address }, (results, status) => {
-          if (status === "OK" && results?.[0]?.geometry?.location) {
-            resolve(results[0].geometry.location)
-          } else {
-            reject(new Error(`ไม่สามารถระบุพิกัดจากที่อยู่ของ "${site.name}" ได้`))
-          }
-        })
-      })
+      throw new Error(`ไซน์งาน "${site.name}" ยังไม่มีพิกัด (Lat, Lng) กรุณาแก้ไขข้อมูลในหน้า "จัดการไซน์งาน" ก่อนคำนวณเส้นทาง`)
     }
 
     try {
@@ -484,7 +443,11 @@ export default function TripPlanPage() {
                         <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
                           <SelectTrigger><SelectValue placeholder="เลือกไซน์งานปลายทาง" /></SelectTrigger>
                           <SelectContent>
-                            {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name} {s.latitude ? "(📍)" : ""}</SelectItem>)}
+                            {sites?.map(s => (
+                              <SelectItem key={s.id} value={s.id}>
+                                {s.name} {s.latitude && s.longitude ? "(📍)" : "(⚠️ ไม่มีพิกัด)"}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>

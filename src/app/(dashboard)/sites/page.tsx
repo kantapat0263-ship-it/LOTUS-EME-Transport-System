@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2, ExternalLink, Map as MapIcon, Check } from "lucide-react"
+import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2, ExternalLink, Map as MapIcon, Check, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { 
@@ -36,6 +36,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription,
 } from "@/components/ui/form"
 import {
   Select,
@@ -58,10 +59,13 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
 
 const siteSchema = z.object({
   name: z.string().min(2, "กรุณาระบุชื่อไซน์งาน"),
-  address: z.string().min(5, "กรุณาระบุที่อยู่"),
+  address: z.string().min(2, "กรุณาระบุที่อยู่สำหรับแสดงผล"),
+  coordinates: z.string().optional().refine((val) => {
+    if (!val) return true;
+    const parts = val.split(',').map(s => s.trim());
+    return parts.length === 2 && !isNaN(parseFloat(parts[0])) && !isNaN(parseFloat(parts[1]));
+  }, "พิกัดต้องอยู่ในรูปแบบ lat, lng (เช่น 13.7563, 100.5018)"),
   projectTypeTag: z.enum(['LOTUS EME', 'P-ADVANCED']),
-  latitude: z.coerce.number().optional(),
-  longitude: z.coerce.number().optional(),
 })
 
 type SiteFormValues = z.infer<typeof siteSchema>
@@ -85,9 +89,8 @@ export default function SitesPage() {
     defaultValues: {
       name: "",
       address: "",
+      coordinates: "",
       projectTypeTag: "LOTUS EME",
-      latitude: undefined,
-      longitude: undefined,
     },
   })
 
@@ -100,9 +103,14 @@ export default function SitesPage() {
       })
 
       loader.load().then(() => {
-        const center = { 
-          lat: form.getValues("latitude") || 13.7563, 
-          lng: form.getValues("longitude") || 100.5018 
+        const coordsStr = form.getValues("coordinates")
+        let center = { lat: 13.7563, lng: 100.5018 }
+        
+        if (coordsStr) {
+          const parts = coordsStr.split(',').map(s => parseFloat(s.trim()))
+          if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+            center = { lat: parts[0], lng: parts[1] }
+          }
         }
         
         const google = window.google
@@ -123,16 +131,14 @@ export default function SitesPage() {
         newMap.addListener("click", (e: google.maps.MapMouseEvent) => {
           if (e.latLng) {
             newMarker.setPosition(e.latLng)
-            form.setValue("latitude", e.latLng.lat())
-            form.setValue("longitude", e.latLng.lng())
+            form.setValue("coordinates", `${e.latLng.lat()}, ${e.latLng.lng()}`)
           }
         })
 
         newMarker.addListener("dragend", () => {
           const pos = newMarker.getPosition()
           if (pos) {
-            form.setValue("latitude", pos.lat())
-            form.setValue("longitude", pos.lng())
+            form.setValue("coordinates", `${pos.lat()}, ${pos.lng()}`)
           }
         })
 
@@ -148,21 +154,35 @@ export default function SitesPage() {
   ) || []
 
   function onSubmit(values: SiteFormValues) {
+    let latitude: number | undefined = undefined
+    let longitude: number | undefined = undefined
+
+    if (values.coordinates) {
+      const parts = values.coordinates.split(',').map(s => parseFloat(s.trim()))
+      latitude = parts[0]
+      longitude = parts[1]
+    }
+
+    const siteData = {
+      name: values.name,
+      address: values.address,
+      projectTypeTag: values.projectTypeTag,
+      latitude,
+      longitude,
+      status: 'Active' as const,
+      updatedAt: serverTimestamp(),
+    }
+
     if (editingSite) {
       const siteRef = doc(db, "sites", editingSite.id)
-      updateDocumentNonBlocking(siteRef, {
-        ...values,
-        updatedAt: serverTimestamp(),
-      })
+      updateDocumentNonBlocking(siteRef, siteData)
       toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลไซน์งานเรียบร้อยแล้ว" })
     } else {
       const newSiteRef = doc(collection(db, "sites"))
       setDocumentNonBlocking(newSiteRef, {
-        ...values,
+        ...siteData,
         id: newSiteRef.id,
-        status: 'Active',
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
       }, { merge: true })
       toast({ title: "สำเร็จ", description: "เพิ่มไซน์งานใหม่เรียบร้อยแล้ว" })
     }
@@ -176,9 +196,8 @@ export default function SitesPage() {
     form.reset({
       name: site.name,
       address: site.address,
+      coordinates: site.latitude && site.longitude ? `${site.latitude}, ${site.longitude}` : "",
       projectTypeTag: site.projectTypeTag as ProjectType,
-      latitude: site.latitude,
-      longitude: site.longitude,
     })
     setIsDialogOpen(true)
   }
@@ -191,10 +210,15 @@ export default function SitesPage() {
     }
   }
 
-  const handleOpenMap = (address: string) => {
-    if (!address) return;
-    const url = address.startsWith('http') ? address : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+  const handleOpenMap = (site: Site) => {
+    if (site.latitude && site.longitude) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${site.latitude},${site.longitude}`, '_blank');
+      return;
+    }
+    if (site.address) {
+      const url = site.address.startsWith('http') ? site.address : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(site.address)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   }
 
   const getTagColor = (type: ProjectType) => {
@@ -219,9 +243,8 @@ export default function SitesPage() {
             form.reset({
               name: "",
               address: "",
+              coordinates: "",
               projectTypeTag: "LOTUS EME",
-              latitude: undefined,
-              longitude: undefined,
             })
             setIsDialogOpen(true)
           }}
@@ -249,7 +272,7 @@ export default function SitesPage() {
               <TableRow>
                 <TableHead>ชื่อไซน์งาน</TableHead>
                 <TableHead>บริษัทที่รับผิดชอบ</TableHead>
-                <TableHead>พิกัด/ที่อยู่</TableHead>
+                <TableHead>ที่อยู่/พิกัด</TableHead>
                 <TableHead className="text-right">จัดการ</TableHead>
               </TableRow>
             </TableHeader>
@@ -265,9 +288,13 @@ export default function SitesPage() {
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
                       {site.name}
-                      {site.latitude && site.longitude && (
+                      {site.latitude && site.longitude ? (
                         <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-500 border-green-500/20">
                           <Check className="h-2 w-2 mr-1" /> ปักหมุดแล้ว
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground">
+                          <AlertCircle className="h-2 w-2 mr-1" /> ยังไม่ปักหมุด
                         </Badge>
                       )}
                     </div>
@@ -284,7 +311,7 @@ export default function SitesPage() {
                         variant="ghost" 
                         size="icon" 
                         className="h-8 w-8 shrink-0 hover:bg-accent/10 hover:text-accent" 
-                        onClick={() => handleOpenMap(site.address)}
+                        onClick={() => handleOpenMap(site)}
                         title="ดูใน Google Maps"
                       >
                         <ExternalLink className="h-4 w-4" />
@@ -345,40 +372,34 @@ export default function SitesPage() {
                   <FormItem>
                     <FormLabel>ที่อยู่ (สำหรับแสดงผล)</FormLabel>
                     <FormControl>
-                      <Input placeholder="ระบุที่อยู่หรือลิงก์พิกัด..." {...field} />
+                      <Input placeholder="เช่น ซอยสุขุมวิท 24, กรุงเทพฯ..." {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="latitude"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Latitude</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="any" placeholder="0.0000" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="longitude"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Longitude</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="any" placeholder="0.0000" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <FormField
+                control={form.control}
+                name="coordinates"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>พิกัด (lat, lng)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="เช่น 13.7563, 100.5018" {...field} />
+                    </FormControl>
+                    <FormDescription className="text-[10px]">
+                      คัดลอกจาก Google Maps → คลิกขวาบนแผนที่ → คัดลอกพิกัด
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="relative flex items-center gap-2">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[10px] text-muted-foreground uppercase">หรือ</span>
+                <div className="h-px flex-1 bg-border" />
               </div>
 
               <Button 
@@ -387,7 +408,7 @@ export default function SitesPage() {
                 className="w-full border-accent text-accent hover:bg-accent/10"
                 onClick={() => setIsMapPickerOpen(true)}
               >
-                <MapIcon className="mr-2 h-4 w-4" /> ปักหมุดบนแผนที่
+                <MapIcon className="mr-2 h-4 w-4" /> ปักหมุดบนแผนที่แทน
               </Button>
 
               <FormField
@@ -431,7 +452,7 @@ export default function SitesPage() {
           <div ref={mapPickerRef} className="flex-1 w-full bg-muted" />
           <div className="p-4 border-t bg-background flex justify-between items-center">
             <div className="text-xs">
-              <span className="font-bold">พิกัดที่เลือก:</span> {form.watch("latitude")?.toFixed(6)}, {form.watch("longitude")?.toFixed(6)}
+              <span className="font-bold">พิกัดที่เลือก:</span> {form.watch("coordinates") || "--"}
             </div>
             <Button onClick={() => setIsMapPickerOpen(false)} className="bg-accent">
               ยืนยันตำแหน่ง
