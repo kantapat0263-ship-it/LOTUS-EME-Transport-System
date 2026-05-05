@@ -128,46 +128,33 @@ export default function TripPlanPage() {
     const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
 
     // Start Marker (Warehouse)
-    geocoder.geocode({ address: warehouseAddr }, (results, status) => {
-      if (status === "OK" && results![0]) {
-        const marker = new google.maps.Marker({
-          position: results![0].geometry.location,
-          map,
-          title: "คลังสินค้า",
-          icon: {
-            path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-            scale: 6,
-            fillColor: "#10b981",
-            fillOpacity: 1,
-            strokeWeight: 2,
-            strokeColor: "#ffffff"
-          }
-        })
-        newMarkers.push(marker)
-      }
-    })
-
-    // Stop Markers
-    stops.forEach((stop, index) => {
-      if (!stop.siteId) return
-      const site = sites.find(s => s.id === stop.siteId)
-      if (!site) return
-
-      geocoder.geocode({ address: site.address }, (results, status) => {
+    // Check if warehouse has coordinates
+    if (companySettings?.warehouseLatitude && companySettings?.warehouseLongitude) {
+      const marker = new google.maps.Marker({
+        position: { lat: companySettings.warehouseLatitude, lng: companySettings.warehouseLongitude },
+        map,
+        title: "คลังสินค้า",
+        icon: {
+          path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+          scale: 6,
+          fillColor: "#10b981",
+          fillOpacity: 1,
+          strokeWeight: 2,
+          strokeColor: "#ffffff"
+        }
+      })
+      newMarkers.push(marker)
+    } else {
+      geocoder.geocode({ address: warehouseAddr }, (results, status) => {
         if (status === "OK" && results![0]) {
           const marker = new google.maps.Marker({
             position: results![0].geometry.location,
             map,
-            label: {
-              text: (index + 1).toString(),
-              color: "#ffffff",
-              fontWeight: "bold"
-            },
-            title: site.name,
+            title: "คลังสินค้า",
             icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              scale: 12,
-              fillColor: "#F0890D",
+              path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+              scale: 6,
+              fillColor: "#10b981",
               fillOpacity: 1,
               strokeWeight: 2,
               strokeColor: "#ffffff"
@@ -176,6 +163,59 @@ export default function TripPlanPage() {
           newMarkers.push(marker)
         }
       })
+    }
+
+    // Stop Markers
+    stops.forEach((stop, index) => {
+      if (!stop.siteId) return
+      const site = sites.find(s => s.id === stop.siteId)
+      if (!site) return
+
+      if (site.latitude && site.longitude) {
+        const marker = new google.maps.Marker({
+          position: { lat: site.latitude, lng: site.longitude },
+          map,
+          label: {
+            text: (index + 1).toString(),
+            color: "#ffffff",
+            fontWeight: "bold"
+          },
+          title: site.name,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 12,
+            fillColor: "#F0890D",
+            fillOpacity: 1,
+            strokeWeight: 2,
+            strokeColor: "#ffffff"
+          }
+        })
+        newMarkers.push(marker)
+      } else {
+        geocoder.geocode({ address: site.address }, (results, status) => {
+          if (status === "OK" && results![0]) {
+            const marker = new google.maps.Marker({
+              position: results![0].geometry.location,
+              map,
+              label: {
+                text: (index + 1).toString(),
+                color: "#ffffff",
+                fontWeight: "bold"
+              },
+              title: site.name,
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 12,
+                fillColor: "#F0890D",
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#ffffff"
+              }
+            })
+            newMarkers.push(marker)
+          }
+        })
+      }
     })
 
     setMarkers(newMarkers)
@@ -194,40 +234,67 @@ export default function TripPlanPage() {
     
     const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
 
-    // Helper to geocode a single address
-    const geocodePoint = (address: string): Promise<google.maps.LatLng> => {
+    // Helper to geocode a single address or use lat/lng
+    const getPoint = async (siteId?: string, isWarehouse: boolean = false): Promise<google.maps.LatLng> => {
+      if (isWarehouse) {
+        if (companySettings?.warehouseLatitude && companySettings?.warehouseLongitude) {
+          return new google.maps.LatLng(companySettings.warehouseLatitude, companySettings.warehouseLongitude)
+        }
+        // Fallback to geocoding address
+        return new Promise((resolve, reject) => {
+          geocoder.geocode({ address: warehouseAddr }, (results, status) => {
+            if (status === "OK" && results?.[0]?.geometry?.location) {
+              resolve(results[0].geometry.location)
+            } else {
+              reject(new Error("ไม่สามารถระบุตำแหน่งคลังสินค้าได้"))
+            }
+          })
+        })
+      }
+
+      const site = sites?.find(s => s.id === siteId)
+      if (!site) throw new Error("ไม่พบข้อมูลไซน์งาน")
+
+      // Use stored coordinates if available
+      if (site.latitude && site.longitude) {
+        return new google.maps.LatLng(site.latitude, site.longitude)
+      }
+
+      // If it's a URL and no coordinates, show error
+      if (site.address.startsWith("http")) {
+        throw new Error(`ไซน์งาน "${site.name}" เป็นลิงก์พิกัด กรุณา "ปักหมุดบนแผนที่" ในหน้าจัดการไซน์งานก่อนคำนวณเส้นทาง`)
+      }
+
+      // Fallback to geocoding text address
       return new Promise((resolve, reject) => {
-        geocoder.geocode({ address }, (results, status) => {
+        geocoder.geocode({ address: site.address }, (results, status) => {
           if (status === "OK" && results?.[0]?.geometry?.location) {
             resolve(results[0].geometry.location)
           } else {
-            reject(new Error(`Geocode failed for ${address}: ${status}`))
+            reject(new Error(`ไม่สามารถระบุพิกัดจากที่อยู่ของ "${site.name}" ได้`))
           }
         })
       })
     }
 
     try {
-      // Resolve all locations to LatLng first for reliable routing
-      const originLatLng = await geocodePoint(warehouseAddr)
+      const originLatLng = await getPoint(undefined, true)
       
       const waypointPromises = stops.map(async (s) => {
-        const site = sites?.find(site => site.id === s.siteId)
-        if (!site) throw new Error("Site not found")
-        const latLng = await geocodePoint(site.address)
+        const latLng = await getPoint(s.siteId)
         return { location: latLng, stopover: true }
       })
 
       const resolvedWaypoints = await Promise.all(waypointPromises)
-      const destinationLatLng = resolvedWaypoints.pop()?.location
+      const destination = resolvedWaypoints.pop()?.location
 
-      if (!destinationLatLng) {
-        throw new Error("No destination found")
+      if (!destination) {
+        throw new Error("กรุณาระบุจุดส่งของอย่างน้อย 1 จุด")
       }
 
       directionsService.route({
         origin: originLatLng,
-        destination: destinationLatLng,
+        destination: destination,
         waypoints: resolvedWaypoints,
         optimizeWaypoints: optimize,
         travelMode: google.maps.TravelMode.DRIVING
@@ -250,7 +317,7 @@ export default function TripPlanPage() {
           })
 
           if (optimize) {
-            toast({ title: "Optimized!", description: "จัดเรียงเส้นทางให้สั้นที่สุดเรียบร้อยแล้ว" })
+            toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
           }
         } else {
           toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
@@ -258,20 +325,13 @@ export default function TripPlanPage() {
       })
     } catch (error: any) {
       setIsOptimizing(false)
-      console.error("Routing error:", error)
-      toast({ title: "Error", description: "พบปัญหาในการระบุตำแหน่งพิกัด: " + error.message, variant: "destructive" })
+      toast({ title: "แจ้งเตือน", description: error.message, variant: "destructive" })
     }
   }
 
   const addStop = () => {
     if (stops.length < 10) {
       setStops([...stops, { id: Date.now().toString(), siteId: '', cargo: '' }])
-    } else {
-      toast({
-        title: "จำกัดจำนวนจุดจอด",
-        description: "สามารถระบุจุดจอดได้สูงสุด 10 จุดต่อหนึ่งเที่ยววิ่ง",
-        variant: "destructive"
-      })
     }
   }
 
@@ -287,39 +347,23 @@ export default function TripPlanPage() {
 
   const handleAiDescription = async (stopId: string, currentDescription: string) => {
     if (!currentDescription) {
-      toast({
-        title: "กรุณาระบุคำอธิบายเบื้องต้น",
-        description: "ตัวอย่าง: อุปกรณ์ประปาสำหรับโครงการ ABC",
-        variant: "destructive"
-      })
+      toast({ title: "แจ้งเตือน", description: "กรุณาระบุคำอธิบายเบื้องต้น", variant: "destructive" })
       return
     }
-
     setIsLoadingAi(stopId)
     try {
-      const result = await intelligentCargoDescriptionAssistant({ 
-        highLevelDescription: currentDescription 
-      })
+      const result = await intelligentCargoDescriptionAssistant({ highLevelDescription: currentDescription })
       updateStop(stopId, 'cargo', result.detailedDescription)
     } catch (error) {
-      toast({
-        title: "AI Error",
-        description: "ไม่สามารถสร้างรายการสินค้าได้ในขณะนี้",
-        variant: "destructive"
-      })
+      toast({ title: "AI Error", description: "ไม่สามารถสร้างรายการสินค้าได้", variant: "destructive" })
     } finally {
       setIsLoadingAi(null)
     }
   }
 
   const handleSaveTrip = async () => {
-    if (!vehicleId || !driverId || !tripDate) {
-      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกรถ คนขับ และวันที่", variant: "destructive" })
-      return
-    }
-
-    if (stops.some(s => !s.siteId)) {
-      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกไซน์งานให้ครบทุกจุดจอด", variant: "destructive" })
+    if (!vehicleId || !driverId || !tripDate || stops.some(s => !s.siteId)) {
+      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุข้อมูลให้ครบถ้วนก่อนบันทึก", variant: "destructive" })
       return
     }
 
@@ -368,7 +412,6 @@ export default function TripPlanPage() {
       <div className="flex items-center justify-center h-full flex-col gap-4 text-center">
         <AlertCircle className="h-12 w-12 text-destructive" />
         <h2 className="text-xl font-bold">กรุณาใส่ Google Maps API Key ใน .env</h2>
-        <p className="text-muted-foreground">เพื่อให้ระบบแผนที่และการคำนวณเส้นทางทำงานได้</p>
       </div>
     )
   }
@@ -381,56 +424,37 @@ export default function TripPlanPage() {
             <CardTitle className="text-xl flex items-center gap-2">
               <RouteIcon className="text-accent" /> ข้อมูลทั่วไปของเที่ยววิ่ง
             </CardTitle>
-            <CardDescription>ระบุยานพาหนะ คนขับ และวันที่ต้องการส่งของ</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <Truck className="h-4 w-4 text-muted-foreground" /> รถขนส่ง
-                </label>
+                <label className="text-sm font-medium">รถขนส่ง</label>
                 <Select value={vehicleId} onValueChange={setVehicleId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="เลือกพาหนะ" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="เลือกพาหนะ" /></SelectTrigger>
                   <SelectContent>
-                    {vehicles?.map(v => (
-                      <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>
-                    ))}
+                    {vehicles?.map(v => <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <User className="h-4 w-4 text-muted-foreground" /> คนขับรถ
-                </label>
+                <label className="text-sm font-medium">คนขับรถ</label>
                 <Select value={driverId} onValueChange={setDriverId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="เลือกคนขับ" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="เลือกคนขับ" /></SelectTrigger>
                   <SelectContent>
-                    {drivers?.map(d => (
-                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                    ))}
+                    {drivers?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <CalendarIcon className="h-4 w-4 text-muted-foreground" /> วันที่ส่งของ
-                </label>
+                <label className="text-sm font-medium">วันที่ส่งของ</label>
                 <Input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-muted-foreground" /> จุดเริ่มต้น
-                </label>
+                <label className="text-sm font-medium">จุดเริ่มต้น</label>
                 <Select defaultValue="warehouse">
-                  <SelectTrigger>
-                    <SelectValue placeholder="เลือกจุดเริ่มต้น" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="warehouse">คลังสินค้า LOTUS EME ({companySettings?.warehouseName || "สำนักงานใหญ่"})</SelectItem>
+                    <SelectItem value="warehouse">คลังสินค้า ({companySettings?.warehouseName || "สำนักงานใหญ่"})</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -440,20 +464,16 @@ export default function TripPlanPage() {
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold flex items-center gap-2">
-              <Navigation className="text-accent" /> ลำดับจุดส่งของ ({stops.length}/10)
-            </h3>
-            <Button variant="outline" size="sm" onClick={addStop}>
-              <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดส่ง
-            </Button>
+            <h3 className="text-lg font-bold">ลำดับจุดส่งของ ({stops.length}/10)</h3>
+            <Button variant="outline" size="sm" onClick={addStop}><Plus className="mr-2 h-4 w-4" /> เพิ่มจุดส่ง</Button>
           </div>
 
           <div className="space-y-4">
             {stops.map((stop, index) => (
-              <Card key={stop.id} className="relative group overflow-hidden border-l-4 border-l-primary">
+              <Card key={stop.id} className="relative border-l-4 border-l-primary">
                 <CardContent className="p-4 flex gap-4">
                   <div className="flex flex-col items-center justify-center text-muted-foreground">
-                    <GripVertical className="h-5 w-5 cursor-grab" />
+                    <GripVertical className="h-5 w-5" />
                     <span className="text-xs font-bold mt-2 bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center">
                       {index + 1}
                     </span>
@@ -462,40 +482,17 @@ export default function TripPlanPage() {
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex-1">
                         <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="เลือกไซน์งานปลายทาง" />
-                          </SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="เลือกไซน์งานปลายทาง" /></SelectTrigger>
                           <SelectContent>
-                            {sites?.map(s => (
-                              <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                            ))}
+                            {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name} {s.latitude ? "(📍)" : ""}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => removeStop(stop.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => removeStop(stop.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                     </div>
                     <div className="relative">
-                      <Textarea 
-                        placeholder="รายละเอียดของที่ส่ง (เช่น สายไฟ 3 ม้วน, ท่อ PVC 50 เมตร)"
-                        className="min-h-[80px] resize-none pr-10"
-                        value={stop.cargo}
-                        onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-2 bottom-2 text-accent hover:bg-accent/10"
-                        title="AI ช่วยสร้างรายการสินค้า"
-                        onClick={() => handleAiDescription(stop.id, stop.cargo)}
-                        disabled={isLoadingAi === stop.id}
-                      >
+                      <Textarea placeholder="รายละเอียดของที่ส่ง..." className="min-h-[80px] resize-none" value={stop.cargo} onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)} />
+                      <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-accent" onClick={() => handleAiDescription(stop.id, stop.cargo)} disabled={isLoadingAi === stop.id}>
                         <Sparkles className={cn("h-4 w-4", isLoadingAi === stop.id && "animate-pulse")} />
                       </Button>
                     </div>
@@ -519,56 +516,17 @@ export default function TripPlanPage() {
           <div className="bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg max-w-xs">
             <h4 className="text-sm font-bold text-accent mb-2">สรุปเส้นทาง</h4>
             <div className="space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span>ระยะทางรวม:</span>
-                <span className="font-bold text-primary-foreground">{routeStats?.distance || "-- กม."}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>เวลาเดินทางรวม:</span>
-                <span className="font-bold text-primary-foreground">{routeStats?.duration || "-- ชม. -- นาที"}</span>
-              </div>
+              <div className="flex justify-between"><span>ระยะทางรวม:</span><span className="font-bold">{routeStats?.distance || "-- กม."}</span></div>
+              <div className="flex justify-between"><span>เวลาเดินทางรวม:</span><span className="font-bold">{routeStats?.duration || "-- ชม. -- นาที"}</span></div>
             </div>
             <div className="flex gap-2 mt-3">
-              <Button 
-                size="sm" 
-                className="flex-1 h-8 text-[10px] bg-primary hover:bg-primary/90" 
-                onClick={() => calculateRoute(false)}
-                disabled={isOptimizing}
-              >
-                {isOptimizing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Navigation className="mr-1 h-3 w-3" />}
-                คำนวณเส้นทาง
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline"
-                className="flex-1 h-8 text-[10px]" 
-                onClick={() => calculateRoute(true)}
-                disabled={isOptimizing}
-              >
-                <Sparkles className="mr-1 h-3 w-3 text-accent" />
-                เส้นทางสั้นที่สุด
-              </Button>
+              <Button size="sm" className="flex-1 h-8 text-[10px] bg-primary" onClick={() => calculateRoute(false)} disabled={isOptimizing}>คำนวณเส้นทาง</Button>
+              <Button size="sm" variant="outline" className="flex-1 h-8 text-[10px]" onClick={() => calculateRoute(true)} disabled={isOptimizing}>เส้นทางสั้นที่สุด</Button>
             </div>
           </div>
         </div>
-
-        {/* Dedicated container for Google Maps to avoid React removeChild issues */}
         <div className="absolute inset-0 z-0">
           <div ref={mapRef} className="w-full h-full bg-muted/20" />
-        </div>
-
-        {/* Status overlay managed by React outside of the map container */}
-        {!map && (
-          <div className="absolute inset-0 flex items-center justify-center flex-col text-muted-foreground p-8 text-center bg-card/50 backdrop-blur-sm z-20">
-            <Loader2 className="h-12 w-12 mb-4 animate-spin text-accent" />
-            <p className="text-lg font-medium">กำลังโหลด Google Maps...</p>
-          </div>
-        )}
-        
-        <div className="absolute bottom-4 right-4 z-10">
-          <Badge variant="outline" className="bg-background/95 backdrop-blur px-3 py-1 text-xs">
-            Live Map Preview
-          </Badge>
         </div>
       </div>
     </div>

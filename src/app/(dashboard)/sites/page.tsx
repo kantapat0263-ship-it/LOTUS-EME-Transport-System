@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2, ExternalLink } from "lucide-react"
+import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2, ExternalLink, Map as MapIcon, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { 
@@ -52,11 +52,16 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
+import { Loader } from "@googlemaps/js-api-loader"
+
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
 
 const siteSchema = z.object({
   name: z.string().min(2, "กรุณาระบุชื่อไซน์งาน"),
-  address: z.string().min(5, "กรุณาระบุที่อยู่หรือพิกัดจาก Google Map"),
+  address: z.string().min(5, "กรุณาระบุที่อยู่"),
   projectTypeTag: z.enum(['LOTUS EME', 'P-ADVANCED']),
+  latitude: z.coerce.number().optional(),
+  longitude: z.coerce.number().optional(),
 })
 
 type SiteFormValues = z.infer<typeof siteSchema>
@@ -66,7 +71,11 @@ export default function SitesPage() {
   const db = useFirestore()
   const [searchTerm, setSearchTerm] = React.useState("")
   const [isDialogOpen, setIsDialogOpen] = React.useState(false)
+  const [isMapPickerOpen, setIsMapPickerOpen] = React.useState(false)
   const [editingSite, setEditingSite] = React.useState<Site | null>(null)
+  const mapPickerRef = React.useRef<HTMLDivElement>(null)
+  const [map, setMap] = React.useState<google.maps.Map | null>(null)
+  const [marker, setMarker] = React.useState<google.maps.Marker | null>(null)
 
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: sites, isLoading } = useCollection<Site>(sitesRef)
@@ -77,8 +86,61 @@ export default function SitesPage() {
       name: "",
       address: "",
       projectTypeTag: "LOTUS EME",
+      latitude: undefined,
+      longitude: undefined,
     },
   })
+
+  // Initialize Map Picker
+  React.useEffect(() => {
+    if (isMapPickerOpen && mapPickerRef.current && GOOGLE_MAPS_API_KEY) {
+      const loader = new Loader({
+        apiKey: GOOGLE_MAPS_API_KEY,
+        version: "weekly"
+      })
+
+      loader.load().then(() => {
+        const center = { 
+          lat: form.getValues("latitude") || 13.7563, 
+          lng: form.getValues("longitude") || 100.5018 
+        }
+        
+        const google = window.google
+        const newMap = new google.maps.Map(mapPickerRef.current!, {
+          center,
+          zoom: 15,
+          mapTypeControl: false,
+          streetViewControl: false,
+        })
+
+        const newMarker = new google.maps.Marker({
+          position: center,
+          map: newMap,
+          draggable: true,
+          animation: google.maps.Animation.DROP,
+        })
+
+        newMap.addListener("click", (e: google.maps.MapMouseEvent) => {
+          if (e.latLng) {
+            newMarker.setPosition(e.latLng)
+            form.setValue("latitude", e.latLng.lat())
+            form.setValue("longitude", e.latLng.lng())
+          }
+        })
+
+        newMarker.addListener("dragend", () => {
+          const pos = newMarker.getPosition()
+          if (pos) {
+            form.setValue("latitude", pos.lat())
+            form.setValue("longitude", pos.lng())
+          }
+        })
+
+        setMap(newMap)
+        setMarker(newMarker)
+      })
+    }
+  }, [isMapPickerOpen, GOOGLE_MAPS_API_KEY, form])
 
   const filteredSites = sites?.filter(site => 
     site.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -115,6 +177,8 @@ export default function SitesPage() {
       name: site.name,
       address: site.address,
       projectTypeTag: site.projectTypeTag as ProjectType,
+      latitude: site.latitude,
+      longitude: site.longitude,
     })
     setIsDialogOpen(true)
   }
@@ -129,17 +193,8 @@ export default function SitesPage() {
 
   const handleOpenMap = (address: string) => {
     if (!address) return;
-    
-    let url = "";
-    if (address.startsWith('http')) {
-      url = address;
-    } else {
-      url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
-    }
-    
-    // ใช้ window.open แบบระบุพารามิเตอร์เพื่อให้รองรับ browser ส่วนใหญ่
-    const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
-    if (newWindow) newWindow.focus();
+    const url = address.startsWith('http') ? address : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   const getTagColor = (type: ProjectType) => {
@@ -155,7 +210,7 @@ export default function SitesPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">จัดการไซน์งาน</h2>
-          <p className="text-muted-foreground">เพิ่ม แก้ไข และจัดการข้อมูลไซน์งานก่อสร้างทั้งหมด</p>
+          <p className="text-muted-foreground">เพิ่ม แก้ไข และจัดการข้อมูลไซน์งานทั้งหมด</p>
         </div>
         <Button 
           className="bg-accent hover:bg-accent/90" 
@@ -165,6 +220,8 @@ export default function SitesPage() {
               name: "",
               address: "",
               projectTypeTag: "LOTUS EME",
+              latitude: undefined,
+              longitude: undefined,
             })
             setIsDialogOpen(true)
           }}
@@ -185,11 +242,6 @@ export default function SitesPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <Button variant="outline" size="sm">
-                <Filter className="mr-2 h-4 w-4" /> กรองข้อมูล
-              </Button>
-            </div>
           </div>
 
           <Table>
@@ -197,7 +249,7 @@ export default function SitesPage() {
               <TableRow>
                 <TableHead>ชื่อไซน์งาน</TableHead>
                 <TableHead>บริษัทที่รับผิดชอบ</TableHead>
-                <TableHead>ที่อยู่/พิกัด</TableHead>
+                <TableHead>พิกัด/ที่อยู่</TableHead>
                 <TableHead className="text-right">จัดการ</TableHead>
               </TableRow>
             </TableHeader>
@@ -210,7 +262,16 @@ export default function SitesPage() {
                 </TableRow>
               ) : filteredSites.map((site) => (
                 <TableRow key={site.id}>
-                  <TableCell className="font-medium">{site.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2">
+                      {site.name}
+                      {site.latitude && site.longitude && (
+                        <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-500 border-green-500/20">
+                          <Check className="h-2 w-2 mr-1" /> ปักหมุดแล้ว
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={getTagColor(site.projectTypeTag as ProjectType)}>
                       {site.projectTypeTag}
@@ -249,24 +310,17 @@ export default function SitesPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {!isLoading && filteredSites.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                    ไม่พบข้อมูลไซน์งาน
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>{editingSite ? "แก้ไขข้อมูลไซน์งาน" : "เพิ่มไซน์งานใหม่"}</DialogTitle>
             <DialogDescription>
-              ระบุรายละเอียดโครงการและพิกัดจาก Google Maps
+              ระบุรายละเอียดโครงการและพิกัดที่แน่นอนบนแผนที่
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -289,14 +343,53 @@ export default function SitesPage() {
                 name="address"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>ที่อยู่ / พิกัด Google Maps</FormLabel>
+                    <FormLabel>ที่อยู่ (สำหรับแสดงผล)</FormLabel>
                     <FormControl>
-                      <Input placeholder="วางที่อยู่ หรือ ลิงก์พิกัดที่นี่..." {...field} />
+                      <Input placeholder="ระบุที่อยู่หรือลิงก์พิกัด..." {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+              
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="latitude"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Latitude</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="any" placeholder="0.0000" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="longitude"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Longitude</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="any" placeholder="0.0000" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <Button 
+                type="button" 
+                variant="outline" 
+                className="w-full border-accent text-accent hover:bg-accent/10"
+                onClick={() => setIsMapPickerOpen(true)}
+              >
+                <MapIcon className="mr-2 h-4 w-4" /> ปักหมุดบนแผนที่
+              </Button>
+
               <FormField
                 control={form.control}
                 name="projectTypeTag"
@@ -325,6 +418,25 @@ export default function SitesPage() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Map Picker Modal */}
+      <Dialog open={isMapPickerOpen} onOpenChange={setIsMapPickerOpen}>
+        <DialogContent className="sm:max-w-[700px] h-[600px] flex flex-col p-0 overflow-hidden">
+          <div className="p-4 border-b bg-background">
+            <h3 className="font-bold">คลิกบนแผนที่เพื่อเลือกพิกัดไซน์งาน</h3>
+            <p className="text-xs text-muted-foreground">คุณสามารถคลิกหรือลากหมุดเพื่อเปลี่ยนตำแหน่งได้</p>
+          </div>
+          <div ref={mapPickerRef} className="flex-1 w-full bg-muted" />
+          <div className="p-4 border-t bg-background flex justify-between items-center">
+            <div className="text-xs">
+              <span className="font-bold">พิกัดที่เลือก:</span> {form.watch("latitude")?.toFixed(6)}, {form.watch("longitude")?.toFixed(6)}
+            </div>
+            <Button onClick={() => setIsMapPickerOpen(false)} className="bg-accent">
+              ยืนยันตำแหน่ง
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
