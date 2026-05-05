@@ -2,10 +2,11 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
-import { useUser } from "@/firebase"
+import { useUser, useAuth, useFirestore } from "@/firebase"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { Loader2 } from "lucide-react"
+import { signInAnonymously } from "firebase/auth"
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
 
 export default function DashboardLayout({
   children,
@@ -13,21 +14,49 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { user, isUserLoading } = useUser()
-  const router = useRouter()
+  const auth = useAuth()
+  const db = useFirestore()
+  const [isInitializing, setIsInitializing] = React.useState(true)
 
-  // Auth Guard
+  // Automatic Anonymous Auth & Profile Creation
   React.useEffect(() => {
-    if (!isUserLoading && !user) {
-      router.push("/login")
-    }
-  }, [user, isUserLoading, router])
+    async function initAuth() {
+      if (isUserLoading) return
 
-  if (isUserLoading || !user) {
+      if (!user) {
+        try {
+          const userCredential = await signInAnonymously(auth)
+          const anonUser = userCredential.user
+          
+          const profileRef = doc(db, "userProfiles", anonUser.uid)
+          const profileSnap = await getDoc(profileRef)
+          
+          if (!profileSnap.exists()) {
+            await setDoc(profileRef, {
+              id: anonUser.uid,
+              email: "guest@lotuseme.com",
+              name: "Guest User",
+              role: "Admin", // Default to Admin for full access in prototype
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            })
+          }
+        } catch (error) {
+          console.error("Silent auth failed", error)
+        }
+      }
+      setIsInitializing(false)
+    }
+
+    initAuth()
+  }, [user, isUserLoading, auth, db])
+
+  if (isUserLoading || isInitializing || !user) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-10 w-10 animate-spin text-accent" />
-          <p className="text-sm font-medium animate-pulse">กำลังยืนยันตัวตน...</p>
+          <p className="text-sm font-medium animate-pulse">กำลังเตรียมความพร้อมของระบบ...</p>
         </div>
       </div>
     )
