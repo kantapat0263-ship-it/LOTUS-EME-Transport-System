@@ -1,8 +1,9 @@
+
 "use client"
 
 import * as React from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard,
   MapPin,
@@ -11,11 +12,22 @@ import {
   History,
   Settings,
   Menu,
-  ChevronLeft
+  ChevronLeft,
+  LogOut,
+  User as UserIcon
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { useUser, useAuth } from "@/firebase"
+import { signOut } from "firebase/auth"
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu"
 
 const navItems = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -28,7 +40,19 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const auth = useAuth()
+  const { user } = useUser()
   const [collapsed, setCollapsed] = React.useState(false)
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth)
+      router.push("/login")
+    } catch (error) {
+      console.error("Logout failed", error)
+    }
+  }
 
   return (
     <aside 
@@ -80,21 +104,37 @@ export function AppSidebar() {
       </nav>
 
       <div className="p-4 border-t">
-        {!collapsed ? (
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center font-bold">
-              JD
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-medium">John Dispatcher</span>
-              <span className="text-xs text-muted-foreground">Admin</span>
-            </div>
-          </div>
-        ) : (
-          <div className="w-8 h-8 rounded-full bg-primary mx-auto flex items-center justify-center font-bold text-xs">
-            JD
-          </div>
-        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className={cn("w-full p-0 flex items-center gap-3 justify-start hover:bg-transparent", collapsed && "justify-center")}>
+              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center font-bold text-accent shrink-0">
+                {user?.displayName?.charAt(0) || user?.email?.charAt(0) || "U"}
+              </div>
+              {!collapsed && (
+                <div className="flex flex-col items-start overflow-hidden">
+                  <span className="text-sm font-medium truncate w-full text-left">
+                    {user?.displayName || "User"}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate w-full text-left">
+                    {user?.email}
+                  </span>
+                </div>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align={collapsed ? "center" : "end"} className="w-56">
+            <DropdownMenuItem disabled>
+              <UserIcon className="mr-2 h-4 w-4" /> โปรไฟล์
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              <Settings className="mr-2 h-4 w-4" /> ตั้งค่า
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive focus:bg-destructive/10 focus:text-destructive" onClick={handleLogout}>
+              <LogOut className="mr-2 h-4 w-4" /> ออกจากระบบ
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   )

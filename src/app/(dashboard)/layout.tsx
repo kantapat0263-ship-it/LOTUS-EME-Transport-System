@@ -1,10 +1,38 @@
-import { AppSidebar } from "@/components/layout/app-sidebar";
+
+"use client"
+
+import * as React from "react"
+import { useRouter } from "next/navigation"
+import { useUser } from "@/firebase"
+import { AppSidebar } from "@/components/layout/app-sidebar"
+import { Loader2 } from "lucide-react"
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { user, isUserLoading } = useUser()
+  const router = useRouter()
+
+  // Auth Guard
+  React.useEffect(() => {
+    if (!isUserLoading && !user) {
+      router.push("/login")
+    }
+  }, [user, isUserLoading, router])
+
+  if (isUserLoading || !user) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-10 w-10 animate-spin text-accent" />
+          <p className="text-sm font-medium animate-pulse">กำลังยืนยันตัวตน...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <AppSidebar />
