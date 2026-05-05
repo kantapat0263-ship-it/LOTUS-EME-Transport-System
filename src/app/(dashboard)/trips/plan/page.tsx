@@ -19,7 +19,6 @@ import {
   Table as TableIcon,
   ChevronDown,
   ChevronUp,
-  Maximize2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -47,7 +46,6 @@ import {
 } from "@/components/ui/collapsible"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
-import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useDoc } from "@/firebase"
 import { collection, serverTimestamp, doc } from "firebase/firestore"
@@ -57,8 +55,6 @@ import { useRouter } from "next/navigation"
 import { Loader } from "@googlemaps/js-api-loader"
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
-
-// LOTUS EME Fixed Warehouse Coordinates
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
 
@@ -93,7 +89,7 @@ export default function TripPlanPage() {
   const [map, setMap] = React.useState<google.maps.Map | null>(null)
   const [directionsRenderer, setDirectionsRenderer] = React.useState<google.maps.DirectionsRenderer | null>(null)
   const [markers, setMarkers] = React.useState<google.maps.Marker[]>([])
-  const [routeStats, setRouteStats] = React.useState<{ distance: string, duration: string } | null>(null)
+  const [routeStats, setRouteStats] = React.useState<{ distance: string, duration: string, distanceNum: number, durationNum: number } | null>(null)
   const [isOptimizing, setIsOptimizing] = React.useState(false)
   const [infoWindow, setInfoWindow] = React.useState<google.maps.InfoWindow | null>(null)
 
@@ -164,7 +160,6 @@ export default function TripPlanPage() {
     const matrixService = new google.maps.DistanceMatrixService()
     const newMatrix: Record<string, Record<string, number>> = {}
 
-    // Batch requests (max 25 destinations/origins per request)
     try {
       const response = await matrixService.getDistanceMatrix({
         origins: origins,
@@ -173,7 +168,6 @@ export default function TripPlanPage() {
         unitSystem: google.maps.UnitSystem.METRIC,
       })
 
-      const allLabels = ["LOTUS WH", ...validSites.map(s => s.name)]
       const allIds = ["warehouse", ...validSites.map(s => s.id)]
 
       response.rows.forEach((row, i) => {
@@ -183,15 +177,6 @@ export default function TripPlanPage() {
           const destId = allIds[j]
           if (element.status === "OK") {
             newMatrix[originId][destId] = element.distance.value / 1000
-          } else {
-            // Fallback to straight line if API fails
-            const p1 = origins[i]
-            const p2 = destinations[j]
-            const dist = google.maps.geometry.spherical.computeDistanceBetween(
-              new google.maps.LatLng(p1.lat, p1.lng),
-              new google.maps.LatLng(p2.lat, p2.lng)
-            )
-            newMatrix[originId][destId] = dist / 1000
           }
         })
       })
@@ -199,11 +184,10 @@ export default function TripPlanPage() {
       setDistanceMatrix(newMatrix)
     } catch (error) {
       console.error("Distance Matrix Error:", error)
-      toast({ title: "คำเตือน", description: "ไม่สามารถเรียกข้อมูลระยะทางถนนจริงได้ ระบบจะใช้ระยะเส้นตรงแทน", variant: "destructive" })
     } finally {
       setIsMatrixLoading(false)
     }
-  }, [sites, toast])
+  }, [sites])
 
   React.useEffect(() => {
     if (sites && window.google) {
@@ -216,7 +200,6 @@ export default function TripPlanPage() {
     if (!map || !sites || !window.google) return
     const google = window.google
 
-    // Clear existing lines
     distanceLinesRef.current.forEach(l => l.setMap(null))
     distanceLabelsRef.current.forEach(l => l.setMap(null))
     distanceLinesRef.current = []
@@ -251,7 +234,6 @@ export default function TripPlanPage() {
       })
       distanceLinesRef.current.push(line)
 
-      // Add label at midpoint
       const dist = distanceMatrix[targetId]?.[dest.id]
       if (dist) {
         const midPoint = google.maps.geometry.spherical.interpolate(
@@ -263,7 +245,7 @@ export default function TripPlanPage() {
         const label = new google.maps.Marker({
           position: midPoint,
           map,
-          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 }, // Invisible marker
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
           label: {
             text: `${dist.toFixed(1)} km`,
             color: "#ffffff",
@@ -277,7 +259,6 @@ export default function TripPlanPage() {
     })
   }, [map, hoveredSiteId, pinnedSiteId, sites, distanceMatrix])
 
-  // Action: Add stop from InfoWindow
   const addStopBySiteId = React.useCallback((siteId: string) => {
     setStops(prev => {
       const emptyStopIndex = prev.findIndex(s => !s.siteId)
@@ -295,20 +276,15 @@ export default function TripPlanPage() {
     infoWindow?.close()
   }, [infoWindow, toast])
 
-  // Update Markers and Fit Bounds
   React.useEffect(() => {
     if (!map || !sites || !window.google || !infoWindow) return
 
-    markers.forEach(m => {
-      window.google.maps.event.clearInstanceListeners(m)
-      m.setMap(null)
-    })
+    markers.forEach(m => m.setMap(null))
     
     const newMarkers: google.maps.Marker[] = []
     const google = window.google
     const bounds = new google.maps.LatLngBounds()
 
-    // 1. Warehouse
     const warehousePos = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
     const startMarker = new google.maps.Marker({
       position: warehousePos,
@@ -331,7 +307,6 @@ export default function TripPlanPage() {
     newMarkers.push(startMarker)
     bounds.extend(warehousePos)
 
-    // 2. Sites
     sites.forEach((site) => {
       if (!site.latitude || !site.longitude) return
       
@@ -340,8 +315,6 @@ export default function TripPlanPage() {
 
       const stopIndex = stops.findIndex(s => s.siteId === site.id)
       const isSelected = stopIndex !== -1
-
-      // Distance from warehouse
       const distFromWh = distanceMatrix["warehouse"]?.[site.id]
 
       const marker = new google.maps.Marker({
@@ -418,7 +391,6 @@ export default function TripPlanPage() {
     
     try {
       const origin = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
-      
       const waypointPromises = stops.map(async (s) => {
         const site = sites?.find(site => site.id === s.siteId)
         if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซน์งาน: ${s.siteId}`)
@@ -450,18 +422,12 @@ export default function TripPlanPage() {
 
           setRouteStats({
             distance: (totalDistance / 1000).toFixed(1) + " กม.",
-            duration: Math.floor(totalDuration / 3600) + " ชม. " + Math.floor((totalDuration % 3600) / 60) + " นาที"
+            duration: Math.floor(totalDuration / 3600) + " ชม. " + Math.floor((totalDuration % 3600) / 60) + " นาที",
+            distanceNum: totalDistance / 1000,
+            durationNum: totalDuration / 60
           })
 
           if (optimize) {
-            // Update stops order based on optimized waypoints
-            const order = result.routes[0].waypoint_order
-            const currentStops = [...stops]
-            const optimizedStops = []
-            
-            // Reconstruct stops list
-            // Note: Directions API optimize waypoints excluding origin and destination
-            // Handle with care if mapping back to UI
             toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
           }
         } else {
@@ -514,34 +480,37 @@ export default function TripPlanPage() {
 
     setIsSaving(true)
     try {
-      const tripsRef = collection(db, "trips")
-      const newTripRef = doc(tripsRef)
-      const tripId = newTripRef.id
+      const selectedVehicle = vehicles?.find(v => v.id === vehicleId)
+      const selectedDriver = drivers?.find(d => d.id === driverId)
       
-      setDocumentNonBlocking(newTripRef, {
+      const tripId = `T-${Math.floor(1000 + Math.random() * 9000)}`
+      const tripRef = doc(db, "trips", tripId)
+
+      const tripStops = stops.map((s, index) => {
+        const site = sites?.find(site => site.id === s.siteId)
+        return {
+          siteId: s.siteId,
+          siteName: site?.name || "Unknown Site",
+          order: index,
+          cargoDetails: s.cargo
+        }
+      })
+      
+      setDocumentNonBlocking(tripRef, {
         id: tripId,
         tripDate,
         vehicleId,
+        vehiclePlate: selectedVehicle?.licensePlate || "",
         driverId,
-        status: "Planned",
+        driverName: selectedDriver?.name || "",
         departureSiteId: "warehouse",
-        stopIds: [],
+        stops: tripStops,
+        totalDistanceKm: routeStats?.distanceNum || 0,
+        totalEstimatedTimeMinutes: routeStats?.durationNum || 0,
+        status: "Planned",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       }, { merge: true })
-
-      stops.forEach((stop, index) => {
-        const stopRef = doc(collection(db, "trips", tripId, "tripStops"))
-        setDocumentNonBlocking(stopRef, {
-          id: stopRef.id,
-          tripId: tripId,
-          siteId: stop.siteId,
-          orderIndex: index,
-          plannedCargoDescription: stop.cargo,
-          driverId: driverId,
-          createdAt: serverTimestamp(),
-        }, { merge: true })
-      })
 
       toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
       router.push("/trips/history")
@@ -552,7 +521,6 @@ export default function TripPlanPage() {
     }
   }
 
-  // Distance Analysis Grid
   const validSites = sites?.filter(s => s.latitude && s.longitude) || []
   const matrixHeaders = ["LOTUS WH", ...validSites.map(s => s.name)]
   const matrixIds = ["warehouse", ...validSites.map(s => s.id)]
@@ -568,8 +536,7 @@ export default function TripPlanPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden">
-      <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-200px)]">
-        {/* Left Panel: Form */}
+      <div className="flex flex-col lg:flex-row gap-6 h-auto lg:min-h-[calc(100vh-250px)]">
         <div className="w-full lg:w-1/2 flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
           <Card className="border-accent/20 bg-card/50">
             <CardHeader className="pb-4">
@@ -669,7 +636,6 @@ export default function TripPlanPage() {
           </div>
         </div>
 
-        {/* Right Panel: Map */}
         <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card min-h-[400px]">
           <div className="absolute top-4 left-4 z-10 space-y-2 pointer-events-none">
             <div className="bg-background/90 backdrop-blur p-4 rounded-lg border shadow-xl max-w-xs pointer-events-auto">
@@ -714,7 +680,6 @@ export default function TripPlanPage() {
         </div>
       </div>
 
-      {/* Distance Matrix Table Panel */}
       <Collapsible open={isMatrixOpen} onOpenChange={setIsMatrixOpen} className="w-full border rounded-xl overflow-hidden bg-card">
         <CollapsibleTrigger asChild>
           <Button variant="ghost" className="w-full flex items-center justify-between p-4 h-14 hover:bg-secondary/50">
@@ -744,12 +709,9 @@ export default function TripPlanPage() {
                     {matrixIds.map((destId, j) => {
                       const dist = distanceMatrix[originId]?.[destId]
                       const isSame = originId === destId
-                      
-                      // Calculate row min/max for highlighting
                       const rowDistances = Object.values(distanceMatrix[originId] || {}).filter(d => d > 0)
                       const min = Math.min(...rowDistances)
                       const max = Math.max(...rowDistances)
-                      
                       const isMin = !isSame && dist === min
                       const isMax = !isSame && dist === max
 
@@ -771,11 +733,6 @@ export default function TripPlanPage() {
                 ))}
               </TableBody>
             </Table>
-            <div className="mt-4 flex gap-4 text-[10px] text-muted-foreground px-2">
-              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500/20 rounded" /> ใกล้ที่สุดในแถว</div>
-              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500/20 rounded" /> ไกลที่สุดในแถว</div>
-              <div>* ระยะทางที่แสดงเป็นระยะทางจริงบนท้องถนน (Road Distance)</div>
-            </div>
           </div>
         </CollapsibleContent>
       </Collapsible>
