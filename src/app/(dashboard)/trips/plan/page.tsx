@@ -46,7 +46,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { Alert, AlertDescription, AlertTitle } from "@/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
