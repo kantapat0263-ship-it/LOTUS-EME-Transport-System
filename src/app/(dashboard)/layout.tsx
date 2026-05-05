@@ -17,6 +17,17 @@ export default function DashboardLayout({
   const auth = useAuth()
   const db = useFirestore()
   const [isInitializing, setIsInitializing] = React.useState(true)
+  const [currentDate, setCurrentDate] = React.useState<string | null>(null)
+
+  // Fix hydration mismatch for date
+  React.useEffect(() => {
+    setCurrentDate(new Date().toLocaleDateString('th-TH', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    }))
+  }, [])
 
   // Automatic Anonymous Auth & Profile Creation
   React.useEffect(() => {
@@ -72,12 +83,7 @@ export default function DashboardLayout({
           </div>
           <div className="flex items-center gap-4">
             <div className="text-sm text-muted-foreground hidden sm:block">
-              {new Date().toLocaleDateString('th-TH', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
-              })}
+              {currentDate}
             </div>
           </div>
         </header>

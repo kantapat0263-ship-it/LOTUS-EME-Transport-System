@@ -101,7 +101,7 @@ export default function TripPlanPage() {
 
       const renderer = new google.maps.DirectionsRenderer({
         map: newMap,
-        suppressMarkers: true, // We will draw our own markers
+        suppressMarkers: true,
         polylineOptions: {
           strokeColor: "#F0890D",
           strokeWeight: 5,
@@ -197,7 +197,6 @@ export default function TripPlanPage() {
       return { location: site?.address || "", stopover: true }
     })
 
-    // Remove the last waypoint to use it as destination
     const destination = waypoints.pop()?.location || ""
 
     directionsService.route({
@@ -211,7 +210,6 @@ export default function TripPlanPage() {
       if (status === "OK" && result) {
         directionsRenderer.setDirections(result)
         
-        // Calculate totals
         const legs = result.routes[0].legs
         let totalDistance = 0
         let totalDuration = 0
@@ -300,7 +298,6 @@ export default function TripPlanPage() {
       const newTripRef = doc(tripsRef)
       const tripId = newTripRef.id
       
-      // Save Main Trip
       setDocumentNonBlocking(newTripRef, {
         id: tripId,
         tripDate,
@@ -313,7 +310,6 @@ export default function TripPlanPage() {
         updatedAt: serverTimestamp(),
       }, { merge: true })
 
-      // Save Trip Stops
       stops.forEach((stop, index) => {
         const stopRef = doc(collection(db, "trips", tripId, "tripStops"))
         setDocumentNonBlocking(stopRef, {
@@ -525,14 +521,18 @@ export default function TripPlanPage() {
           </div>
         </div>
 
-        <div ref={mapRef} className="map-container flex items-center justify-center bg-muted/20 relative h-full">
-          {!map && (
-            <div className="absolute inset-0 flex items-center justify-center flex-col text-muted-foreground p-8 text-center">
-              <Loader2 className="h-12 w-12 mb-4 animate-spin text-accent" />
-              <p className="text-lg font-medium">กำลังโหลด Google Maps...</p>
-            </div>
-          )}
+        {/* Dedicated container for Google Maps to avoid React removeChild issues */}
+        <div className="absolute inset-0 z-0">
+          <div ref={mapRef} className="w-full h-full bg-muted/20" />
         </div>
+
+        {/* Status overlay managed by React outside of the map container */}
+        {!map && (
+          <div className="absolute inset-0 flex items-center justify-center flex-col text-muted-foreground p-8 text-center bg-card/50 backdrop-blur-sm z-20">
+            <Loader2 className="h-12 w-12 mb-4 animate-spin text-accent" />
+            <p className="text-lg font-medium">กำลังโหลด Google Maps...</p>
+          </div>
+        )}
         
         <div className="absolute bottom-4 right-4 z-10">
           <Badge variant="outline" className="bg-background/95 backdrop-blur px-3 py-1 text-xs">
