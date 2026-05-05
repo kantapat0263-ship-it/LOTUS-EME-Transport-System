@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -40,6 +39,10 @@ import { useRouter } from "next/navigation"
 import { Loader } from "@googlemaps/js-api-loader"
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
+
+// LOTUS EME Fixed Warehouse Coordinates
+const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
+const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
 
 export default function TripPlanPage() {
   const { toast } = useToast()
@@ -89,7 +92,7 @@ export default function TripPlanPage() {
     loader.load().then(() => {
       const google = window.google
       const newMap = new google.maps.Map(mapRef.current!, {
-        center: { lat: 13.7563, lng: 100.5018 },
+        center: { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG },
         zoom: 12,
         styles: [
           { featureType: "all", elementType: "labels.text.fill", color: "#ffffff" },
@@ -124,14 +127,12 @@ export default function TripPlanPage() {
   // Action: Add stop from InfoWindow
   const addStopBySiteId = React.useCallback((siteId: string) => {
     setStops(prev => {
-      // Check if we already have an empty stop to fill
       const emptyStopIndex = prev.findIndex(s => !s.siteId)
       if (emptyStopIndex !== -1) {
         const newStops = [...prev]
         newStops[emptyStopIndex] = { ...newStops[emptyStopIndex], siteId }
         return newStops
       }
-      // Otherwise add new
       if (prev.length < 10) {
         return [...prev, { id: Date.now().toString(), siteId, cargo: '' }]
       }
@@ -145,7 +146,6 @@ export default function TripPlanPage() {
   React.useEffect(() => {
     if (!map || !sites || !window.google || !infoWindow) return
 
-    // Clear old markers
     markers.forEach(m => {
       window.google.maps.event.clearInstanceListeners(m)
       m.setMap(null)
@@ -155,19 +155,17 @@ export default function TripPlanPage() {
     const google = window.google
     const bounds = new google.maps.LatLngBounds()
 
-    // 1. Warehouse (Start Point)
-    const warehouseLat = companySettings?.warehouseLatitude || 13.7563
-    const warehouseLng = companySettings?.warehouseLongitude || 100.5018
-    const warehousePos = { lat: warehouseLat, lng: warehouseLng }
+    // 1. Fixed Warehouse (Start Point)
+    const warehousePos = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
     
     const startMarker = new google.maps.Marker({
       position: warehousePos,
       map,
-      title: "จุดเริ่มต้น (คลังสินค้า)",
+      title: "จุดเริ่มต้น (คลังสินค้า LOTUS EME)",
       icon: {
         path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
         scale: 7,
-        fillColor: "#10b981", // GREEN
+        fillColor: "#10b981",
         fillOpacity: 1,
         strokeWeight: 2,
         strokeColor: "#ffffff"
@@ -183,7 +181,6 @@ export default function TripPlanPage() {
       const pos = { lat: site.latitude, lng: site.longitude }
       bounds.extend(pos)
 
-      // Find if this site is selected as a stop
       const stopIndex = stops.findIndex(s => s.siteId === site.id)
       const isSelected = stopIndex !== -1
 
@@ -199,14 +196,13 @@ export default function TripPlanPage() {
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: isSelected ? 14 : 10,
-          fillColor: isSelected ? "#3b82f6" : "#f59e0b", // BLUE if selected, ORANGE if not
+          fillColor: isSelected ? "#3b82f6" : "#f59e0b",
           fillOpacity: 1,
           strokeWeight: 2,
           strokeColor: "#ffffff"
         }
       })
 
-      // Info Window Listener
       marker.addListener("click", () => {
         const content = document.createElement("div")
         content.className = "p-2 min-w-[200px] text-foreground"
@@ -223,7 +219,6 @@ export default function TripPlanPage() {
         infoWindow.setContent(content)
         infoWindow.open(map, marker)
 
-        // Bind button click (need to wait for DOM)
         setTimeout(() => {
           const btn = document.getElementById(`btn-add-${site.id}`)
           if (btn) {
@@ -235,10 +230,8 @@ export default function TripPlanPage() {
       newMarkers.push(marker)
     })
 
-    // Auto-fit map bounds
     if (sites.length > 0) {
       map.fitBounds(bounds)
-      // Don't zoom in too much if only 1 marker
       const listener = google.maps.event.addListener(map, 'idle', () => {
         if (map.getZoom()! > 15) map.setZoom(15)
         google.maps.event.removeListener(listener)
@@ -246,7 +239,7 @@ export default function TripPlanPage() {
     }
 
     setMarkers(newMarkers)
-  }, [map, sites, stops, companySettings, infoWindow, addStopBySiteId])
+  }, [map, sites, stops, infoWindow, addStopBySiteId])
 
   const calculateRoute = async (optimize: boolean = false) => {
     if (!map || !directionsRenderer || stops.some(s => !s.siteId)) {
@@ -259,10 +252,7 @@ export default function TripPlanPage() {
     const directionsService = new google.maps.DirectionsService()
     
     try {
-      const origin = { 
-        lat: companySettings?.warehouseLatitude || 13.7563, 
-        lng: companySettings?.warehouseLongitude || 100.5018 
-      }
+      const origin = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
       
       const waypointPromises = stops.map(async (s) => {
         const site = sites?.find(site => site.id === s.siteId)
@@ -303,7 +293,6 @@ export default function TripPlanPage() {
 
           if (optimize) {
             toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
-            // Note: In real app, we should update the stops state order based on result.routes[0].waypoint_order
           }
         } else {
           toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
@@ -440,7 +429,7 @@ export default function TripPlanPage() {
                 <Select defaultValue="warehouse">
                   <SelectTrigger><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="warehouse">คลังสินค้า ({companySettings?.warehouseName || "สำนักงานใหญ่"})</SelectItem>
+                    <SelectItem value="warehouse">คลังสินค้า LOTUS EME</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -502,7 +491,6 @@ export default function TripPlanPage() {
       </div>
 
       <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card">
-        {/* Map UI Overlays */}
         <div className="absolute top-4 left-4 z-10 space-y-2">
           <div className="bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg max-w-xs">
             <h4 className="text-sm font-bold text-accent mb-2">สรุปเส้นทาง</h4>
@@ -517,7 +505,6 @@ export default function TripPlanPage() {
           </div>
         </div>
 
-        {/* Legend */}
         <div className="absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-2 rounded-lg border shadow-lg text-[10px] space-y-1">
           <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งานทั้งหมด</div>
           <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>

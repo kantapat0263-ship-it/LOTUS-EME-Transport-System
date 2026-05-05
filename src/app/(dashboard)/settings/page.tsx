@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -22,8 +21,8 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = React.useState(false)
   const [formData, setFormData] = React.useState({
     companyName: "LOTUS EME",
-    warehouseName: "คลังสินค้าหลัก",
-    warehouseAddress: "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9",
+    warehouseName: "คลังสินค้าหลัก LOTUS EME",
+    warehouseAddress: "14.094126450195006, 100.6893810570115",
     googleMapsApiKeyReference: ""
   })
 
@@ -31,8 +30,8 @@ export default function SettingsPage() {
     if (settings) {
       setFormData({
         companyName: settings.companyName || "LOTUS EME",
-        warehouseName: settings.warehouseName || "คลังสินค้าหลัก",
-        warehouseAddress: settings.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9",
+        warehouseName: settings.warehouseName || "คลังสินค้าหลัก LOTUS EME",
+        warehouseAddress: settings.warehouseAddress || "14.094126450195006, 100.6893810570115",
         googleMapsApiKeyReference: settings.googleMapsApiKeyReference || ""
       })
     }
@@ -40,9 +39,15 @@ export default function SettingsPage() {
 
   const handleSave = () => {
     setIsSaving(true)
+    
+    // Always parse the address to ensure the lat/lng is saved as numbers
+    const [lat, lng] = formData.warehouseAddress.split(',').map(s => parseFloat(s.trim()))
+
     setDocumentNonBlocking(settingRef, {
       ...formData,
       id: "default",
+      warehouseLatitude: isNaN(lat) ? 14.094126450195006 : lat,
+      warehouseLongitude: isNaN(lng) ? 100.6893810570115 : lng,
       updatedAt: serverTimestamp(),
     }, { merge: true })
     
@@ -95,13 +100,16 @@ export default function SettingsPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="warehouseAddress">ที่อยู่คลังสินค้า (จุดเริ่มต้นการเดินทาง)</Label>
+              <Label htmlFor="warehouseAddress">พิกัดคลังสินค้า (lat, lng)</Label>
               <Input 
                 id="warehouseAddress" 
-                placeholder="ระบุที่อยู่หรือพิกัด..."
+                placeholder="เช่น 14.094126, 100.689381"
                 value={formData.warehouseAddress}
                 onChange={(e) => setFormData({...formData, warehouseAddress: e.target.value})}
               />
+              <p className="text-[10px] text-muted-foreground">
+                * พิกัดจุดเริ่มต้นถูกกำหนดไว้ที่: 14.094126450195006, 100.6893810570115 (สำนักงาน LOTUS)
+              </p>
             </div>
           </CardContent>
         </Card>
