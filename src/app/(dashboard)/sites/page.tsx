@@ -129,11 +129,17 @@ export default function SitesPage() {
 
   const handleOpenMap = (address: string) => {
     if (!address) return;
-    // ตรวจสอบว่าเป็นลิงก์ URL หรือเป็นที่อยู่ข้อความ
-    const url = address.startsWith('http') 
-      ? address 
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    
+    let url = "";
+    if (address.startsWith('http')) {
+      url = address;
+    } else {
+      url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    }
+    
+    // ใช้ window.open แบบระบุพารามิเตอร์เพื่อให้รองรับ browser ส่วนใหญ่
+    const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+    if (newWindow) newWindow.focus();
   }
 
   const getTagColor = (type: ProjectType) => {
@@ -216,11 +222,11 @@ export default function SitesPage() {
                       <Button 
                         variant="ghost" 
                         size="icon" 
-                        className="h-6 w-6 shrink-0" 
+                        className="h-8 w-8 shrink-0 hover:bg-accent/10 hover:text-accent" 
                         onClick={() => handleOpenMap(site.address)}
                         title="ดูใน Google Maps"
                       >
-                        <ExternalLink className="h-3 w-3 text-accent" />
+                        <ExternalLink className="h-4 w-4" />
                       </Button>
                     </div>
                   </TableCell>

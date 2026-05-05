@@ -32,6 +32,20 @@ export interface Driver {
   updatedAt?: any;
 }
 
+export interface CompanySetting {
+  id: string;
+  companyName: string;
+  warehouseName: string;
+  warehouseAddress: string;
+  warehouseLatitude?: number;
+  warehouseLongitude?: number;
+  googleMapsApiKeyReference?: string;
+  defaultMapCenterLatitude?: number;
+  defaultMapCenterLongitude?: number;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
 export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
 
 export interface TripStop {
