@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { useUser, useAuth, useFirestore, useDoc, useMemoFirebase } from "@/firebase"
+import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { Loader2 } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
@@ -43,11 +43,9 @@ export default function DashboardLayout({
 
   // Auth & Role Protection
   React.useEffect(() => {
-    // If we've timed out and still don't have a user, we follow point 1: redirect to login
-    // BUT point 4 says show dashboard anyway for testing. 
-    // We will prioritize the bypass (Point 4) by only redirecting if we definitely know there's NO user.
     if (isUserLoading || isProfileLoading) return
 
+    // If no user found and not timed out, go to login
     if (!user && !isTimedOut) {
       router.push("/login")
       return
@@ -59,13 +57,16 @@ export default function DashboardLayout({
         return
       }
 
-      // Viewer restrictions
+      // Viewer restrictions: Can only see Dashboard and History
       const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings"]
-      if (profile.role === "viewer" && viewerRestrictedPaths.some(p => pathname.startsWith(p))) {
-        router.push("/trips/history")
+      if (profile.role === "viewer") {
+        const isRestricted = viewerRestrictedPaths.some(p => pathname.startsWith(p))
+        if (isRestricted) {
+          router.push("/trips/history")
+        }
       }
 
-      // Dispatcher restrictions
+      // Dispatcher restrictions: Cannot see User Management
       if (profile.role === "dispatcher" && pathname.startsWith("/settings/users")) {
         router.push("/dashboard")
       }

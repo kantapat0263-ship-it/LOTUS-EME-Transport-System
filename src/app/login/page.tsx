@@ -9,7 +9,7 @@ import {
   createUserWithEmailAndPassword,
   updateProfile 
 } from "firebase/auth"
-import { doc, setDoc, serverTimestamp, getDoc } from "firebase/firestore"
+import { doc, setDoc, serverTimestamp, getDoc, updateDoc } from "firebase/firestore"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -30,8 +30,8 @@ export default function LoginPage() {
   const [password, setPassword] = React.useState("")
   const [name, setName] = React.useState("")
 
-  // Hardcoded Admin Email for initial setup
-  const ADMIN_EMAIL = "admin@lotuseme.com"
+  // Hardcoded Admin Email
+  const ADMIN_EMAIL = "ownchang@hotmail.com"
 
   React.useEffect(() => {
     if (!isUserLoading && user) {
@@ -46,16 +46,53 @@ export default function LoginPage() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
       const loggedUser = userCredential.user
       
-      // Check if user is active
-      const userDoc = await getDoc(doc(db, "users", loggedUser.uid))
-      if (userDoc.exists() && userDoc.data().active === false) {
-        await auth.signOut()
-        toast({ 
-          title: "เข้าสู่ระบบไม่สำเร็จ", 
-          description: "บัญชีของคุณถูกระงับ กรุณาติดต่อ Admin", 
-          variant: "destructive" 
-        })
-        return
+      const userRef = doc(db, "users", loggedUser.uid)
+      const userDoc = await getDoc(userRef)
+      
+      // Auto-update or create admin profile for specific email
+      if (loggedUser.email === ADMIN_EMAIL) {
+        if (userDoc.exists()) {
+          await updateDoc(userRef, {
+            role: "admin",
+            active: true,
+            updatedAt: serverTimestamp()
+          })
+        } else {
+          await setDoc(userRef, {
+            id: loggedUser.uid,
+            email: loggedUser.email,
+            name: loggedUser.displayName || "Admin",
+            role: "admin",
+            active: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        }
+      } else {
+        // For other users, check active status
+        if (userDoc.exists() && userDoc.data().active === false) {
+          await auth.signOut()
+          toast({ 
+            title: "เข้าสู่ระบบไม่สำเร็จ", 
+            description: "บัญชีของคุณถูกระงับ กรุณาติดต่อ Admin", 
+            variant: "destructive" 
+          })
+          setIsLoading(false)
+          return
+        }
+        
+        // If user doesn't have a doc yet (shouldn't happen with standard flow, but for safety)
+        if (!userDoc.exists()) {
+          await setDoc(userRef, {
+            id: loggedUser.uid,
+            email: loggedUser.email,
+            name: loggedUser.displayName || "User",
+            role: "viewer",
+            active: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        }
       }
 
       toast({ title: "เข้าสู่ระบบสำเร็จ", description: "กำลังนำคุณไปยังหน้าแดชบอร์ด" })
