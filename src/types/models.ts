@@ -50,6 +50,7 @@ export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
 
 export interface Trip {
   id: string;
+  tripId: string;
   tripDate: string;
   driverId: string;
   driverName: string;
@@ -69,4 +70,16 @@ export interface Trip {
   routePolyline?: string;
   createdAt?: any;
   updatedAt?: any;
+}
+
+export type UserRole = 'admin' | 'dispatcher' | 'viewer';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: any;
+  updatedAt: any;
 }

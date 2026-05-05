@@ -45,8 +45,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Site, ProjectType } from "@/types/models"
-import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
+import { Site, ProjectType, UserProfile } from "@/types/models"
+import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
 import { collection, doc, serverTimestamp } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -73,6 +73,12 @@ type SiteFormValues = z.infer<typeof siteSchema>
 export default function SitesPage() {
   const { toast } = useToast()
   const db = useFirestore()
+  const { user } = useUser()
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile } = useDoc<UserProfile>(userProfileRef)
+  
+  const isViewer = profile?.role === 'viewer'
+
   const [searchTerm, setSearchTerm] = React.useState("")
   const [isDialogOpen, setIsDialogOpen] = React.useState(false)
   const [isMapPickerOpen, setIsMapPickerOpen] = React.useState(false)
@@ -94,7 +100,6 @@ export default function SitesPage() {
     },
   })
 
-  // Initialize Map Picker
   React.useEffect(() => {
     if (isMapPickerOpen && mapPickerRef.current && GOOGLE_MAPS_API_KEY) {
       const loader = new Loader({
@@ -154,6 +159,8 @@ export default function SitesPage() {
   ) || []
 
   function onSubmit(values: SiteFormValues) {
+    if (isViewer) return
+
     let latitude: number | undefined = undefined
     let longitude: number | undefined = undefined
 
@@ -192,6 +199,7 @@ export default function SitesPage() {
   }
 
   function handleEdit(site: Site) {
+    if (isViewer) return
     setEditingSite(site)
     form.reset({
       name: site.name,
@@ -203,6 +211,7 @@ export default function SitesPage() {
   }
 
   function handleDelete(siteId: string) {
+    if (isViewer) return
     if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลไซน์งานนี้?")) {
       const siteRef = doc(db, "sites", siteId)
       deleteDocumentNonBlocking(siteRef)
@@ -236,21 +245,23 @@ export default function SitesPage() {
           <h2 className="text-3xl font-bold tracking-tight">จัดการไซน์งาน</h2>
           <p className="text-muted-foreground">เพิ่ม แก้ไข และจัดการข้อมูลไซน์งานทั้งหมด</p>
         </div>
-        <Button 
-          className="bg-accent hover:bg-accent/90" 
-          onClick={() => {
-            setEditingSite(null)
-            form.reset({
-              name: "",
-              address: "",
-              coordinates: "",
-              projectTypeTag: "LOTUS EME",
-            })
-            setIsDialogOpen(true)
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" /> เพิ่มไซน์งานใหม่
-        </Button>
+        {!isViewer && (
+          <Button 
+            className="bg-accent hover:bg-accent/90" 
+            onClick={() => {
+              setEditingSite(null)
+              form.reset({
+                name: "",
+                address: "",
+                coordinates: "",
+                projectTypeTag: "LOTUS EME",
+              })
+              setIsDialogOpen(true)
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" /> เพิ่มไซน์งานใหม่
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -273,14 +284,14 @@ export default function SitesPage() {
                 <TableHead>ชื่อไซน์งาน</TableHead>
                 <TableHead>บริษัทที่รับผิดชอบ</TableHead>
                 <TableHead>ที่อยู่/พิกัด</TableHead>
-                <TableHead className="text-right">จัดการ</TableHead>
+                <TableHead className="text-right">{!isViewer && "จัดการ"}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
                   <TableCell colSpan={4} className="h-24 text-center">
-                    <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-accent" />
                   </TableCell>
                 </TableRow>
               ) : filteredSites.map((site) => (
@@ -319,21 +330,23 @@ export default function SitesPage() {
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(site)}>
-                          <Edit className="mr-2 h-4 w-4" /> แก้ไขข้อมูล
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(site.id)}>
-                          <Trash2 className="mr-2 h-4 w-4" /> ลบข้อมูล
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {!isViewer && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(site)}>
+                            <Edit className="mr-2 h-4 w-4" /> แก้ไขข้อมูล
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(site.id)}>
+                            <Trash2 className="mr-2 h-4 w-4" /> ลบข้อมูล
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

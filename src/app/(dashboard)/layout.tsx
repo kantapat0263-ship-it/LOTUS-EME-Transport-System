@@ -2,11 +2,12 @@
 "use client"
 
 import * as React from "react"
-import { useUser, useAuth, useFirestore } from "@/firebase"
+import { useUser, useAuth, useFirestore, useDoc, useMemoFirebase } from "@/firebase"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { Loader2 } from "lucide-react"
-import { signInAnonymously } from "firebase/auth"
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
+import { useRouter, usePathname } from "next/navigation"
+import { doc } from "firebase/firestore"
+import { UserProfile } from "@/types/models"
 
 export default function DashboardLayout({
   children,
@@ -14,12 +15,15 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { user, isUserLoading } = useUser()
-  const auth = useAuth()
   const db = useFirestore()
-  const [isInitializing, setIsInitializing] = React.useState(true)
+  const router = useRouter()
+  const pathname = usePathname()
+  
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
+
   const [currentDate, setCurrentDate] = React.useState<string | null>(null)
 
-  // Fix hydration mismatch for date
   React.useEffect(() => {
     setCurrentDate(new Date().toLocaleDateString('th-TH', { 
       weekday: 'long', 
@@ -29,45 +33,40 @@ export default function DashboardLayout({
     }))
   }, [])
 
-  // Automatic Anonymous Auth & Profile Creation
+  // Auth & Role Protection
   React.useEffect(() => {
-    async function initAuth() {
-      if (isUserLoading) return
+    if (isUserLoading || isProfileLoading) return
 
-      if (!user) {
-        try {
-          const userCredential = await signInAnonymously(auth)
-          const anonUser = userCredential.user
-          
-          const profileRef = doc(db, "userProfiles", anonUser.uid)
-          const profileSnap = await getDoc(profileRef)
-          
-          if (!profileSnap.exists()) {
-            await setDoc(profileRef, {
-              id: anonUser.uid,
-              email: "guest@lotuseme.com",
-              name: "Guest User",
-              role: "Admin", // Default to Admin for full access in prototype
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            })
-          }
-        } catch (error) {
-          console.error("Silent auth failed", error)
-        }
-      }
-      setIsInitializing(false)
+    if (!user) {
+      router.push("/login")
+      return
     }
 
-    initAuth()
-  }, [user, isUserLoading, auth, db])
+    if (profile) {
+      if (!profile.active) {
+        router.push("/login")
+        return
+      }
 
-  if (isUserLoading || isInitializing || !user) {
+      // Viewer restrictions
+      const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings"]
+      if (profile.role === "viewer" && viewerRestrictedPaths.some(p => pathname.startsWith(p))) {
+        router.push("/trips/history")
+      }
+
+      // Dispatcher restrictions
+      if (profile.role === "dispatcher" && pathname.startsWith("/settings/users")) {
+        router.push("/dashboard")
+      }
+    }
+  }, [user, isUserLoading, profile, isProfileLoading, router, pathname])
+
+  if (isUserLoading || isProfileLoading || (user && !profile)) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-10 w-10 animate-spin text-accent" />
-          <p className="text-sm font-medium animate-pulse">กำลังเตรียมความพร้อมของระบบ...</p>
+          <p className="text-sm font-medium animate-pulse">กำลังตรวจสอบสิทธิ์การใช้งาน...</p>
         </div>
       </div>
     )
@@ -75,9 +74,9 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <AppSidebar />
+      <AppSidebar userRole={profile?.role || 'viewer'} profileName={profile?.name} />
       <main className="flex-1 relative overflow-y-auto overflow-x-hidden">
-        <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b bg-background/95 px-8 backdrop-blur">
+        <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b bg-background/95 px-8 backdrop-blur no-print">
           <div className="flex items-center gap-4">
             <h1 className="text-lg font-semibold text-accent">LOTUS EME Transport System</h1>
           </div>

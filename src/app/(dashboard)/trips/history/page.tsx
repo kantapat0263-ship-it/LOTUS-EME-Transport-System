@@ -28,9 +28,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
+import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
 import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc } from "firebase/firestore"
-import { Trip, TripStatus } from "@/types/models"
+import { Trip, TripStatus, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
@@ -39,6 +39,12 @@ export default function TripHistoryPage() {
   const router = useRouter()
   const { toast } = useToast()
   const db = useFirestore()
+  const { user } = useUser()
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile } = useDoc<UserProfile>(userProfileRef)
+  
+  const isViewer = profile?.role === 'viewer'
+
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedStatus, setSelectedStatus] = React.useState("all")
   const [selectedTrip, setSelectedTrip] = React.useState<any | null>(null)
@@ -60,6 +66,7 @@ export default function TripHistoryPage() {
   }) || []
 
   const handleStatusChange = async (tripId: string, newStatus: TripStatus) => {
+    if (isViewer) return
     const tripRef = doc(db, "trips", tripId)
     await updateDoc(tripRef, { 
       status: newStatus,
@@ -69,6 +76,7 @@ export default function TripHistoryPage() {
   }
 
   const handleDeleteTrip = async (tripId: string) => {
+    if (isViewer) return
     if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบทริปนี้?")) {
       await deleteDoc(doc(db, "trips", tripId))
       toast({ title: "ลบทริปสำเร็จ" })
@@ -76,6 +84,7 @@ export default function TripHistoryPage() {
   }
 
   const handleCleanup = async () => {
+    if (isViewer) return
     const incomplete = trips?.filter(t => !t.tripId || t.stops?.length === 0 || !t.vehiclePlate);
     if (!incomplete || incomplete.length === 0) {
       toast({ title: "ไม่พบข้อมูลที่ไม่สมบูรณ์" });
@@ -108,9 +117,11 @@ export default function TripHistoryPage() {
           <p className="text-muted-foreground">รายการเที่ยววิ่งทั้งหมดและการติดตามสถานะ</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleCleanup} className="text-destructive border-destructive hover:bg-destructive/10">
-            <Trash2 className="mr-2 h-4 w-4" /> ลบรายการที่ไม่สมบูรณ์
-          </Button>
+          {!isViewer && (
+            <Button variant="outline" onClick={handleCleanup} className="text-destructive border-destructive hover:bg-destructive/10">
+              <Trash2 className="mr-2 h-4 w-4" /> ลบรายการที่ไม่สมบูรณ์
+            </Button>
+          )}
           <Button variant="outline">
             <Download className="mr-2 h-4 w-4" /> Export Excel
           </Button>
@@ -169,19 +180,25 @@ export default function TripHistoryPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-lg">{trip.tripId || "ID Error"}</span>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Badge className={cn("cursor-pointer", getStatusColor(trip.status))}>
-                          {trip.status}
-                        </Badge>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent>
-                        <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Planned')}>Planned</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'In Progress')}>In Progress</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Completed')}>Completed</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Cancelled')}>Cancelled</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {isViewer ? (
+                      <Badge className={cn(getStatusColor(trip.status))}>
+                        {trip.status}
+                      </Badge>
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Badge className={cn("cursor-pointer", getStatusColor(trip.status))}>
+                            {trip.status}
+                          </Badge>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent>
+                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Planned')}>Planned</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'In Progress')}>In Progress</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Completed')}>Completed</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Cancelled')}>Cancelled</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground">{trip.tripDate} • {trip.stops?.[trip.stops.length - 1]?.siteName || "No stops"}</p>
                 </div>
@@ -207,7 +224,8 @@ export default function TripHistoryPage() {
                   variant="ghost" 
                   size="sm" 
                   className="hidden sm:flex hover:bg-accent/10 hover:text-accent"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setSelectedTrip(trip);
                     setIsWorksheetOpen(true);
                   }}
@@ -248,7 +266,6 @@ export default function TripHistoryPage() {
                 <p className="text-sm">วันที่: {selectedTrip?.tripDate}</p>
               </div>
             </div>
-            {/* ... rest of worksheet content ... */}
             <div className="grid grid-cols-2 gap-8 mb-8">
               <div className="space-y-1">
                 <p className="text-xs font-bold uppercase text-gray-500">ข้อมูลคนขับ</p>

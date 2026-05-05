@@ -6,8 +6,7 @@ import { useRouter } from "next/navigation"
 import { useAuth, useFirestore, useUser } from "@/firebase"
 import { 
   signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signInAnonymously,
+  createUserWithEmailAndPassword,
   updateProfile 
 } from "firebase/auth"
 import { doc, setDoc, serverTimestamp, getDoc } from "firebase/firestore"
@@ -31,7 +30,9 @@ export default function LoginPage() {
   const [password, setPassword] = React.useState("")
   const [name, setName] = React.useState("")
 
-  // Redirect if already logged in
+  // Hardcoded Admin Email for initial setup
+  const ADMIN_EMAIL = "admin@lotuseme.com"
+
   React.useEffect(() => {
     if (!isUserLoading && user) {
       router.push("/dashboard")
@@ -42,13 +43,27 @@ export default function LoginPage() {
     e.preventDefault()
     setIsLoading(true)
     try {
-      await signInWithEmailAndPassword(auth, email, password)
+      const userCredential = await signInWithEmailAndPassword(auth, email, password)
+      const loggedUser = userCredential.user
+      
+      // Check if user is active
+      const userDoc = await getDoc(doc(db, "users", loggedUser.uid))
+      if (userDoc.exists() && userDoc.data().active === false) {
+        await auth.signOut()
+        toast({ 
+          title: "เข้าสู่ระบบไม่สำเร็จ", 
+          description: "บัญชีของคุณถูกระงับ กรุณาติดต่อ Admin", 
+          variant: "destructive" 
+        })
+        return
+      }
+
       toast({ title: "เข้าสู่ระบบสำเร็จ", description: "กำลังนำคุณไปยังหน้าแดชบอร์ด" })
       router.push("/dashboard")
     } catch (error: any) {
       toast({ 
         title: "เข้าสู่ระบบไม่สำเร็จ", 
-        description: error.message || "กรุณาตรวจสอบอีเมลและรหัสผ่าน", 
+        description: "กรุณาตรวจสอบอีเมลและรหัสผ่าน", 
         variant: "destructive" 
       })
     } finally {
@@ -63,20 +78,22 @@ export default function LoginPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
       const newUser = userCredential.user
       
-      // Update Auth Profile
       await updateProfile(newUser, { displayName: name })
       
-      // Create User Profile in Firestore
-      await setDoc(doc(db, "userProfiles", newUser.uid), {
+      // Determine initial role
+      const role = email.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? "admin" : "viewer"
+      
+      await setDoc(doc(db, "users", newUser.uid), {
         id: newUser.uid,
         email: newUser.email,
         name: name,
-        role: "Admin", // Default role for prototype
+        role: role,
+        active: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       })
 
-      toast({ title: "ลงทะเบียนสำเร็จ", description: "สร้างบัญชีผู้ใช้งานเรียบร้อยแล้ว" })
+      toast({ title: "ลงทะเบียนสำเร็จ", description: `สร้างบัญชีผู้ใช้งานบทบาท ${role} เรียบร้อยแล้ว` })
       router.push("/dashboard")
     } catch (error: any) {
       toast({ 
@@ -84,35 +101,6 @@ export default function LoginPage() {
         description: error.message, 
         variant: "destructive" 
       })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleAnonymousLogin = async () => {
-    setIsLoading(true)
-    try {
-      const userCredential = await signInAnonymously(auth)
-      const anonUser = userCredential.user
-      
-      // Check if profile exists, if not create one
-      const profileRef = doc(db, "userProfiles", anonUser.uid)
-      const profileSnap = await getDoc(profileRef)
-      
-      if (!profileSnap.exists()) {
-        await setDoc(profileRef, {
-          id: anonUser.uid,
-          email: "anonymous@lotuseme.com",
-          name: "Anonymous User",
-          role: "Viewer",
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        })
-      }
-      
-      router.push("/dashboard")
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" })
     } finally {
       setIsLoading(false)
     }
@@ -175,20 +163,9 @@ export default function LoginPage() {
                     />
                   </div>
                 </CardContent>
-                <CardFooter className="flex flex-col gap-4">
+                <CardFooter>
                   <Button type="submit" className="w-full bg-accent hover:bg-accent/90" disabled={isLoading}>
                     {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} เข้าสู่ระบบ
-                  </Button>
-                  <div className="relative w-full">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t border-muted" />
-                    </div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-card px-2 text-muted-foreground">หรือ</span>
-                    </div>
-                  </div>
-                  <Button variant="outline" type="button" className="w-full" onClick={handleAnonymousLogin} disabled={isLoading}>
-                    เข้าใช้งานแบบทดลอง (Anonymous)
                   </Button>
                 </CardFooter>
               </form>

@@ -38,14 +38,14 @@ import {
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
+import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
 import { collection, doc, serverTimestamp } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
-import { Vehicle, Driver } from "@/types/models"
+import { Vehicle, Driver, UserProfile } from "@/types/models"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
@@ -61,7 +61,12 @@ const driverSchema = z.object({
 export default function FleetPage() {
   const { toast } = useToast()
   const db = useFirestore()
+  const { user } = useUser()
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile } = useDoc<UserProfile>(userProfileRef)
   
+  const isViewer = profile?.role === 'viewer'
+
   // Vehicles State
   const [isVehicleDialogOpen, setIsVehicleDialogOpen] = React.useState(false)
   const [editingVehicle, setEditingVehicle] = React.useState<Vehicle | null>(null)
@@ -86,6 +91,7 @@ export default function FleetPage() {
 
   // CRUD Handlers
   function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
+    if (isViewer) return
     if (editingVehicle) {
       updateDocumentNonBlocking(doc(db, "vehicles", editingVehicle.id), { ...values, updatedAt: serverTimestamp() })
       toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลรถเรียบร้อยแล้ว" })
@@ -105,6 +111,7 @@ export default function FleetPage() {
   }
 
   function onDriverSubmit(values: z.infer<typeof driverSchema>) {
+    if (isViewer) return
     if (editingDriver) {
       updateDocumentNonBlocking(doc(db, "drivers", editingDriver.id), { ...values, updatedAt: serverTimestamp() })
       toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลคนขับเรียบร้อยแล้ว" })
@@ -139,32 +146,35 @@ export default function FleetPage() {
         </TabsList>
 
         <TabsContent value="vehicles" className="space-y-4">
-          <div className="flex justify-end">
-            <Button className="bg-primary hover:bg-primary/90" onClick={() => { setEditingVehicle(null); vehicleForm.reset(); setIsVehicleDialogOpen(true); }}>
-              <Plus className="mr-2 h-4 w-4" /> เพิ่มรถยนต์ใหม่
-            </Button>
-          </div>
-          {isLoadingVehicles ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin" /></div> : (
+          {!isViewer && (
+            <div className="flex justify-end">
+              <Button className="bg-primary hover:bg-primary/90" onClick={() => { setEditingVehicle(null); vehicleForm.reset(); setIsVehicleDialogOpen(true); }}>
+                <Plus className="mr-2 h-4 w-4" /> เพิ่มรถยนต์ใหม่
+              </Button>
+            </div>
+          )}
+          {isLoadingVehicles ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {vehicles?.map((v) => (
                 <Card key={v.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-start">
                       <Badge variant="outline" className="mb-2 uppercase tracking-wider text-[10px]">{v.type}</Badge>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => { setEditingVehicle(v); vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg }); setIsVehicleDialogOpen(true); }}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive" onClick={() => { if(confirm("ลบรถคันนี้?")) deleteDocumentNonBlocking(doc(db, "vehicles", v.id)) }}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {!isViewer && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => { setEditingVehicle(v); vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg }); setIsVehicleDialogOpen(true); }}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive" onClick={() => { if(confirm("ลบรถคันนี้?")) deleteDocumentNonBlocking(doc(db, "vehicles", v.id)) }}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
                     <CardTitle className="text-2xl font-bold text-accent">{v.licensePlate}</CardTitle>
-                    <CardDescription>ID: {v.id}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-0">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -179,12 +189,14 @@ export default function FleetPage() {
         </TabsContent>
 
         <TabsContent value="drivers" className="space-y-4">
-          <div className="flex justify-end">
-            <Button className="bg-primary hover:bg-primary/90" onClick={() => { setEditingDriver(null); driverForm.reset(); setIsDriverDialogOpen(true); }}>
-              <Plus className="mr-2 h-4 w-4" /> เพิ่มคนขับใหม่
-            </Button>
-          </div>
-          {isLoadingDrivers ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin" /></div> : (
+          {!isViewer && (
+            <div className="flex justify-end">
+              <Button className="bg-primary hover:bg-primary/90" onClick={() => { setEditingDriver(null); driverForm.reset(); setIsDriverDialogOpen(true); }}>
+                <Plus className="mr-2 h-4 w-4" /> เพิ่มคนขับใหม่
+              </Button>
+            </div>
+          )}
+          {isLoadingDrivers ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {drivers?.map((d) => (
                 <Card key={d.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
@@ -193,17 +205,19 @@ export default function FleetPage() {
                       <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center text-xl font-bold text-accent">
                         {d.name.charAt(0)}
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => { setEditingDriver(d); driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); setIsDriverDialogOpen(true); }}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive" onClick={() => { if(confirm("ลบคนขับคนนี้?")) deleteDocumentNonBlocking(doc(db, "drivers", d.id)) }}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {!isViewer && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => { setEditingDriver(d); driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); setIsDriverDialogOpen(true); }}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive" onClick={() => { if(confirm("ลบคนขับคนนี้?")) deleteDocumentNonBlocking(doc(db, "drivers", d.id)) }}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
                     <CardTitle className="text-xl font-bold mt-2">{d.name}</CardTitle>
                   </CardHeader>
