@@ -15,7 +15,8 @@ import {
   ChevronLeft,
   User as UserIcon,
   Users,
-  LogOut
+  LogOut,
+  X
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -27,9 +28,10 @@ import { UserRole } from "@/types/models"
 interface AppSidebarProps {
   userRole: UserRole;
   profileName?: string;
+  isMobile?: boolean;
 }
 
-export function AppSidebar({ userRole, profileName }: AppSidebarProps) {
+export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const auth = useAuth()
@@ -61,25 +63,34 @@ export function AppSidebar({ userRole, profileName }: AppSidebarProps) {
     }
   }
 
+  const isActuallyCollapsed = !isMobile && collapsed
+
   return (
     <aside 
       className={cn(
-        "flex flex-col border-r bg-sidebar h-screen transition-all duration-300 ease-in-out no-print",
-        collapsed ? "w-16" : "w-64"
+        "flex flex-col border-r bg-sidebar h-full transition-all duration-300 ease-in-out no-print",
+        isActuallyCollapsed ? "w-16" : "w-64",
+        isMobile && "w-full border-r-0"
       )}
     >
       <div className="flex h-16 items-center justify-between px-4 py-4 border-b">
-        {!collapsed && (
+        {!isActuallyCollapsed && (
           <span className="text-xl font-bold text-accent">LOTUS EME</span>
         )}
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          onClick={() => setCollapsed(!collapsed)}
-          className="hover:bg-sidebar-accent"
-        >
-          {collapsed ? <Menu className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
-        </Button>
+        {!isMobile ? (
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => setCollapsed(!collapsed)}
+            className="hover:bg-sidebar-accent"
+          >
+            {isActuallyCollapsed ? <Menu className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
+          </Button>
+        ) : (
+          <Button variant="ghost" size="icon" className="lg:hidden">
+            {/* The Sheet component handles its own X usually, but we could add one here if needed */}
+          </Button>
+        )}
       </div>
 
       <nav className="flex-1 space-y-1 px-2 py-4 overflow-y-auto">
@@ -90,19 +101,19 @@ export function AppSidebar({ userRole, profileName }: AppSidebarProps) {
               key={item.name}
               href={item.href}
               className={cn(
-                "group flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                "group flex items-center px-3 py-3 md:py-2 text-sm md:text-sm font-medium rounded-md transition-colors",
                 isActive 
                   ? "bg-primary text-primary-foreground" 
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                collapsed && "justify-center"
+                isActuallyCollapsed && "justify-center"
               )}
             >
               <item.icon className={cn(
                 "h-5 w-5 shrink-0",
-                !collapsed && "mr-3"
+                !isActuallyCollapsed && "mr-3"
               )} />
-              {!collapsed && <span>{item.name}</span>}
-              {isActive && !collapsed && (
+              {!isActuallyCollapsed && <span>{item.name}</span>}
+              {isActive && !isActuallyCollapsed && (
                 <div className="ml-auto w-1.5 h-1.5 rounded-full bg-accent" />
               )}
             </Link>
@@ -111,11 +122,11 @@ export function AppSidebar({ userRole, profileName }: AppSidebarProps) {
       </nav>
 
       <div className="p-4 border-t space-y-4">
-        <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+        <div className={cn("flex items-center gap-3", isActuallyCollapsed && "justify-center")}>
           <div className="w-10 h-10 rounded-full bg-primary flex flex-col items-center justify-center font-bold text-accent shrink-0 relative">
             {profileName?.charAt(0) || user?.email?.charAt(0) || "U"}
           </div>
-          {!collapsed && (
+          {!isActuallyCollapsed && (
             <div className="flex flex-col items-start overflow-hidden flex-1">
               <div className="flex items-center gap-2 w-full">
                 <span className="text-sm font-medium truncate">{profileName || "User"}</span>
@@ -127,11 +138,11 @@ export function AppSidebar({ userRole, profileName }: AppSidebarProps) {
             </div>
           )}
         </div>
-        {!collapsed && (
+        {!isActuallyCollapsed && (
           <Button 
             variant="outline" 
             size="sm" 
-            className="w-full justify-start text-destructive border-destructive/20 hover:bg-destructive/10"
+            className="w-full justify-start text-destructive border-destructive/20 hover:bg-destructive/10 h-11 md:h-9"
             onClick={handleLogout}
           >
             <LogOut className="mr-2 h-4 w-4" /> ออกจากระบบ

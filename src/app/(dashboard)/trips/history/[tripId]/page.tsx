@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -125,18 +126,18 @@ export default function TripDetailPage() {
     <>
       {/* SCREEN VIEW */}
       <div className="space-y-6 animate-in fade-in duration-500 no-print">
-        <div className="flex items-center justify-between">
-          <Button variant="ghost" onClick={() => router.push('/trips/history')}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <Button variant="ghost" onClick={() => router.push('/trips/history')} className="w-full sm:w-auto justify-start">
             <ChevronLeft className="mr-2 h-4 w-4" /> กลับหน้าประวัติ
           </Button>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => window.print()}>
-              <Printer className="mr-2 h-4 w-4" /> พิมพ์ใบงาน
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none h-11 sm:h-9">
+              <Printer className="mr-2 h-4 w-4" /> พิมพ์
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button className={cn("hover:opacity-90", getStatusColor(trip.status))}>
-                  เปลี่ยนสถานะ: {trip.status}
+                <Button className={cn("flex-1 sm:flex-none h-11 sm:h-9 hover:opacity-90", getStatusColor(trip.status))}>
+                  สถานะ: {trip.status}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -152,52 +153,52 @@ export default function TripDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <Card>
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-2xl">Trip ID: {trip.id}</CardTitle>
-                    <CardDescription>สร้างเมื่อ: {trip.createdAt?.toDate()?.toLocaleString('th-TH')}</CardDescription>
+              <CardHeader className="p-4 md:p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+                  <div className="overflow-hidden">
+                    <CardTitle className="text-xl md:text-2xl truncate">Trip ID: {trip.id}</CardTitle>
+                    <CardDescription className="text-xs">สร้างเมื่อ: {trip.createdAt?.toDate()?.toLocaleString('th-TH')}</CardDescription>
                   </div>
-                  <Badge className={cn("text-lg px-4 py-1", getStatusColor(trip.status))}>{trip.status}</Badge>
+                  <Badge className={cn("text-base md:text-lg px-3 md:px-4 py-1 self-start sm:self-auto", getStatusColor(trip.status))}>{trip.status}</Badge>
                 </div>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <CardContent className="p-4 md:p-6 pt-0">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6">
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3" /> วันที่ส่งของ</p>
-                    <p className="font-bold">{trip.tripDate}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3" /> วันที่ส่ง</p>
+                    <p className="font-bold text-sm md:text-base">{trip.tripDate}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground uppercase flex items-center gap-1"><User className="h-3 w-3" /> คนขับ</p>
-                    <p className="font-bold">{trip.driverName}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><User className="h-3 w-3" /> คนขับ</p>
+                    <p className="font-bold text-sm md:text-base">{trip.driverName}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground uppercase flex items-center gap-1"><Truck className="h-3 w-3" /> ทะเบียนรถ</p>
-                    <p className="font-bold">{trip.vehiclePlate}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><Truck className="h-3 w-3" /> ทะเบียนรถ</p>
+                    <p className="font-bold text-sm md:text-base">{trip.vehiclePlate}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground uppercase flex items-center gap-1"><RouteIcon className="h-3 w-3" /> ระยะทางรวม</p>
-                    <p className="font-bold">{trip.totalDistanceKm?.toFixed(1) || 0} กม.</p>
+                    <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><RouteIcon className="h-3 w-3" /> ระยะทาง</p>
+                    <p className="font-bold text-sm md:text-base">{trip.totalDistanceKm?.toFixed(1) || 0} กม.</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><MapPin className="h-5 w-5 text-accent" /> ลำดับจุดส่งของ</CardTitle>
+              <CardHeader className="p-4 md:p-6">
+                <CardTitle className="flex items-center gap-2 text-lg"><MapPin className="h-5 w-5 text-accent" /> ลำดับจุดส่งของ</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="p-4 md:p-6 space-y-4 pt-0">
                 {trip.stops?.map((stop: any, index: number) => (
-                  <div key={index} className="flex gap-4 p-4 rounded-lg bg-secondary/30 relative border border-border/50">
-                    <div className="w-8 h-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-bold shrink-0">
+                  <div key={index} className="flex gap-3 md:gap-4 p-3 md:p-4 rounded-lg bg-secondary/30 relative border border-border/50">
+                    <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-bold shrink-0 text-sm">
                       {index + 1}
                     </div>
-                    <div className="flex-1 space-y-2">
-                      <p className="font-bold text-lg text-accent">{stop.siteName}</p>
-                      <div className="bg-background/50 p-3 rounded border border-dashed border-border">
-                        <p className="text-xs font-bold text-muted-foreground mb-1">รายการสินค้า:</p>
-                        <p className="text-sm whitespace-pre-wrap">{stop.cargoDetails || "ไม่มีรายละเอียด"}</p>
+                    <div className="flex-1 space-y-2 overflow-hidden">
+                      <p className="font-bold text-base md:text-lg text-accent truncate">{stop.siteName}</p>
+                      <div className="bg-background/50 p-2 md:p-3 rounded border border-dashed border-border">
+                        <p className="text-[10px] font-bold text-muted-foreground mb-1">รายการสินค้า:</p>
+                        <p className="text-xs md:text-sm whitespace-pre-wrap">{stop.cargoDetails || "ไม่มีรายละเอียด"}</p>
                       </div>
                     </div>
                   </div>
@@ -207,30 +208,30 @@ export default function TripDetailPage() {
           </div>
 
           <div className="space-y-6">
-            <Card className="h-[400px] overflow-hidden sticky top-24">
-              <CardHeader className="bg-background/80 backdrop-blur z-10 border-b">
-                <CardTitle className="text-sm">แผนที่เส้นทาง</CardTitle>
+            <Card className="h-[250px] sm:h-[400px] overflow-hidden sticky top-20 md:top-24">
+              <CardHeader className="bg-background/80 backdrop-blur z-10 border-b p-3">
+                <CardTitle className="text-xs md:text-sm">แผนที่เส้นทาง</CardTitle>
               </CardHeader>
               <div ref={mapRef} className="w-full h-full bg-muted" />
             </Card>
             
             <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">สรุปเวลาเดินทาง</CardTitle>
+              <CardHeader className="p-4">
+                <CardTitle className="text-xs md:text-sm">สรุปเวลาเดินทาง</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2 text-2xl font-bold">
-                  <Clock className="h-6 w-6 text-accent" />
+              <CardContent className="p-4 pt-0">
+                <div className="flex items-center gap-2 text-xl md:text-2xl font-bold">
+                  <Clock className="h-5 w-5 md:h-6 md:w-6 text-accent" />
                   {formatTime(trip.totalEstimatedTimeMinutes || 0)}
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">* เป็นเวลาเดินทางโดยประมาณการ (ไม่รวมเวลาลงของ)</p>
+                <p className="text-[10px] text-muted-foreground mt-2">* เป็นเวลาเดินทางโดยประมาณการ</p>
               </CardContent>
             </Card>
           </div>
         </div>
       </div>
 
-      {/* PRINT VIEW (Clean Document) */}
+      {/* PRINT VIEW */}
       <div className="print-only w-full bg-white text-black p-4 font-sans leading-relaxed">
         <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
           <div>
@@ -301,10 +302,6 @@ export default function TripDetailPage() {
             <p className="text-sm font-semibold">( ลงชื่อผู้อนุมัติ )</p>
             <p className="text-xs">วันที่: ____/____/____</p>
           </div>
-        </div>
-
-        <div className="mt-12 text-center text-[10px] text-gray-400">
-          เอกสารนี้สร้างขึ้นโดยระบบอัตโนมัติ LOTUS EME Transport Management System
         </div>
       </div>
     </>

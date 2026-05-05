@@ -90,7 +90,7 @@ export default function DashboardPage() {
     allTrips.forEach(t => {
       const d = new Date(t.tripDate)
       if (isWithinInterval(d, { start: weekStart, end: weekEnd })) {
-        const dayIdx = (d.getDay() + 6) % 7 // Convert Sun(0) to 6, Mon(1) to 0
+        const dayIdx = (d.getDay() + 6) % 7 
         result[dayIdx].trips += 1
       }
     })
@@ -162,20 +162,20 @@ export default function DashboardPage() {
       <div className="flex h-[80vh] items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-10 w-10 animate-spin text-accent" />
-          <p className="text-muted-foreground animate-pulse">กำลังประมวลผลข้อมูลสดจากคลาวด์...</p>
+          <p className="text-sm md:text-base text-muted-foreground animate-pulse text-center px-4">กำลังประมวลผลข้อมูลสดจากคลาวด์...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-        <p className="text-muted-foreground">ภาพรวมการขนส่งและผลงานประจำวันของคุณ (ข้อมูลเรียลไทม์)</p>
+        <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
+        <p className="text-sm md:text-base text-muted-foreground">ภาพรวมการขนส่งและผลงานประจำวันของคุณ</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">เที่ยววิ่งวันนี้</CardTitle>
@@ -225,16 +225,16 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4">
+      <div className="grid gap-4 grid-cols-1 lg:grid-cols-7">
+        <Card className="col-span-1 lg:col-span-4">
           <CardHeader>
-            <CardTitle>สถิติการส่งของสัปดาห์นี้</CardTitle>
-            <CardDescription>จำนวนเที่ยววิ่งแยกตามวัน (จันทร์ - อาทิตย์)</CardDescription>
+            <CardTitle className="text-lg">สถิติการส่งของสัปดาห์นี้</CardTitle>
+            <CardDescription>จำนวนเที่ยววิ่งแยกตามวัน</CardDescription>
           </CardHeader>
-          <CardContent className="pl-2">
-            <div className="h-[300px]">
+          <CardContent className="pl-0 md:pl-2">
+            <div className="h-[250px] md:h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={weeklyData}>
+                <LineChart data={weeklyData} margin={{ left: -20, right: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2D3139" vertical={false} />
                   <XAxis dataKey="name" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
                   <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
@@ -256,23 +256,23 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="col-span-3">
+        <Card className="col-span-1 lg:col-span-3">
           <CardHeader>
-            <CardTitle>ไซน์งานที่มีการเข้าบ่อยที่สุด</CardTitle>
-            <CardDescription>จำนวนครั้งที่ส่งของแยกตามโครงการ (Top 5)</CardDescription>
+            <CardTitle className="text-lg">ไซน์งานที่เข้าบ่อย</CardTitle>
+            <CardDescription>Top 5 โครงการที่มีการเข้าบ่อยที่สุด</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px]">
+            <div className="h-[250px] md:h-[300px]">
               {topSitesData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topSitesData} layout="vertical">
+                  <BarChart data={topSitesData} layout="vertical" margin={{ left: -10 }}>
                     <XAxis type="number" hide />
                     <YAxis 
                       dataKey="name" 
                       type="category" 
                       stroke="#666" 
                       fontSize={11} 
-                      width={100} 
+                      width={90} 
                       tickLine={false} 
                       axisLine={false} 
                     />
@@ -280,7 +280,7 @@ export default function DashboardPage() {
                       cursor={{fill: 'transparent'}}
                       contentStyle={{ backgroundColor: '#1A1C23', border: '1px solid #2D3139', color: '#fff' }} 
                     />
-                    <Bar dataKey="visits" radius={[0, 4, 4, 0]}>
+                    <Bar dataKey="visits" radius={[0, 4, 4, 0]} barSize={20}>
                       {topSitesData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
@@ -295,45 +295,45 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
+      <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>สถานะการส่งวันนี้</CardTitle>
-              <CardDescription>ข้อมูลประจำวันที่ {format(new Date(), 'dd/MM/yyyy')}</CardDescription>
+            <div className="space-y-1">
+              <CardTitle className="text-lg">สถานะการส่งวันนี้</CardTitle>
+              <CardDescription className="text-xs md:text-sm">{format(new Date(), 'dd/MM/yyyy')}</CardDescription>
             </div>
-            <Button variant="outline" size="sm" asChild>
+            <Button variant="outline" size="sm" asChild className="h-8 text-xs">
               <Link href="/trips/history">
-                ดูประวัติทั้งหมด <ExternalLink className="ml-2 h-4 w-4" />
+                ดูทั้งหมด <ExternalLink className="ml-1 md:ml-2 h-3 w-3 md:h-4 md:w-4" />
               </Link>
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {todayTrips.length > 0 ? todayTrips.slice(0, 5).map((trip) => (
-                <div key={trip.id} className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-transparent hover:border-accent/30 transition-all">
-                  <div className="flex items-center gap-4">
+                <div key={trip.id} className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-transparent hover:border-accent/30 transition-all">
+                  <div className="flex items-center gap-3">
                     <div className={cn(
-                      "p-2 rounded-full",
+                      "p-1.5 md:p-2 rounded-full",
                       trip.status === 'Completed' ? "bg-green-500/10 text-green-500" :
                       trip.status === 'In Progress' ? "bg-blue-500/10 text-blue-500" : 
                       trip.status === 'Cancelled' ? "bg-red-500/10 text-red-500" : "bg-orange-500/10 text-orange-500"
                     )}>
-                      {trip.status === 'Completed' ? <CheckCircle2 className="h-5 w-5" /> :
-                       trip.status === 'In Progress' ? <Clock className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+                      {trip.status === 'Completed' ? <CheckCircle2 className="h-4 w-4 md:h-5 md:w-5" /> :
+                       trip.status === 'In Progress' ? <Clock className="h-4 w-4 md:h-5 md:w-5" /> : <AlertCircle className="h-4 w-4 md:h-5 md:w-5" />}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium">{trip.stops?.[trip.stops.length - 1]?.siteName || "ไม่ระบุไซน์งาน"}</p>
-                      <p className="text-xs text-muted-foreground">{trip.tripId} • คนขับ: {trip.driverName || "-"}</p>
+                    <div className="overflow-hidden">
+                      <p className="text-sm font-medium truncate">{trip.stops?.[trip.stops.length - 1]?.siteName || "ไม่ระบุไซน์งาน"}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{trip.tripId} • {trip.driverName || "-"}</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold">{trip.status}</p>
-                    <p className="text-xs text-muted-foreground">{trip.vehiclePlate || "-"}</p>
+                  <div className="text-right shrink-0">
+                    <p className="text-[10px] md:text-xs font-semibold">{trip.status}</p>
+                    <p className="text-[10px] text-muted-foreground">{trip.vehiclePlate || "-"}</p>
                   </div>
                 </div>
               )) : (
-                <div className="text-center py-8 text-muted-foreground">ไม่มีเที่ยววิ่งในวันนี้</div>
+                <div className="text-center py-8 text-muted-foreground text-sm">ไม่มีเที่ยววิ่งในวันนี้</div>
               )}
             </div>
           </CardContent>
@@ -341,21 +341,21 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Insights (Data Analysis)</CardTitle>
-            <CardDescription>ข้อมูลวิเคราะห์จากการขนส่งในระบบปัจจุบัน</CardDescription>
+            <CardTitle className="text-lg">Insights (Data Analysis)</CardTitle>
+            <CardDescription className="text-xs md:text-sm">ข้อมูลวิเคราะห์จากการขนส่งในระบบปัจจุบัน</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {insights.map((insight, idx) => (
-                <div key={idx} className={cn("p-4 rounded-lg border", insight.bg, insight.border)}>
-                  <h4 className={cn("font-semibold mb-1", insight.color)}>{insight.title}</h4>
-                  <p className="text-sm text-muted-foreground">
+                <div key={idx} className={cn("p-3 md:p-4 rounded-lg border", insight.bg, insight.border)}>
+                  <h4 className={cn("font-semibold mb-1 text-sm md:text-base", insight.color)}>{insight.title}</h4>
+                  <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
                     "{insight.desc}"
                   </p>
                 </div>
               ))}
               {insights.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">ยังไม่มีข้อมูลเพียงพอสำหรับการวิเคราะห์</div>
+                <div className="text-center py-8 text-muted-foreground text-sm">ยังไม่มีข้อมูลเพียงพอสำหรับการวิเคราะห์</div>
               )}
             </div>
           </CardContent>

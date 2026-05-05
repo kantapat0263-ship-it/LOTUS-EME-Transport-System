@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -45,7 +46,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/alert"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
@@ -190,11 +191,10 @@ export default function TripPlanPage() {
       const newMap = new google.maps.Map(mapRef.current!, {
         center: { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG },
         zoom: 12,
+        mapTypeControl: false,
+        streetViewControl: false,
         styles: [
-          { featureType: "all", elementType: "labels.text.fill", color: "#ffffff" },
-          { featureType: "all", elementType: "labels.text.stroke", color: "#000000" },
           { featureType: "landscape", elementType: "all", color: "#2d3139" },
-          { featureType: "poi", elementType: "all", color: "#2d3139" },
           { featureType: "road", elementType: "all", color: "#1a1c23" },
           { featureType: "water", elementType: "all", color: "#172899" }
         ]
@@ -205,8 +205,7 @@ export default function TripPlanPage() {
         suppressMarkers: true,
         polylineOptions: {
           strokeColor: "#F0890D",
-          strokeWeight: 5,
-          strokeOpacity: 0.8
+          strokeWeight: 5
         }
       })
 
@@ -428,7 +427,7 @@ export default function TripPlanPage() {
             <div class="text-[10px] text-muted-foreground mb-3">${site.address}</div>
             <div class="text-[10px] mb-2">ห่างจากคลังสินค้า: <strong>${distFromWh?.toFixed(1) || '--'} กม.</strong></div>
             ${!isSelected ? `
-              <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-1 px-2 rounded hover:bg-accent/80 transition-colors">
+              <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-2 px-2 rounded hover:bg-accent/80 transition-colors h-10">
                 + เพิ่มเป็นจุดส่ง
               </button>
             ` : `<div class="text-[10px] font-bold text-blue-500">✓ เลือกเป็นจุดส่งที่ ${stopIndex+1} แล้ว</div>`}
@@ -603,67 +602,63 @@ export default function TripPlanPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden no-print">
       {showDraftBanner && (
-        <Alert className="bg-accent/10 border-accent/50 text-accent-foreground animate-in slide-in-from-top duration-300">
+        <Alert className="bg-accent/10 border-accent/50 text-accent-foreground animate-in slide-in-from-top duration-300 mb-4">
           <RotateCcw className="h-4 w-4" />
-          <AlertTitle className="font-bold flex items-center gap-2">
+          <AlertTitle className="font-bold flex items-center gap-2 text-sm">
             📋 พบข้อมูลค้างจากครั้งที่แล้ว
-            {draftTime && (
-              <span className="text-[10px] font-normal opacity-70">
-                (ข้อมูลนี้บันทึกเมื่อ {Math.floor((Date.now() - draftTime) / (1000 * 60 * 60))} ชั่วโมงที่แล้ว)
-              </span>
-            )}
           </AlertTitle>
-          <AlertDescription className="flex items-center justify-between mt-2">
-            <span>คุณต้องการนำข้อมูลที่บันทึกไว้อัตโนมัติกลับมาใช้งานต่อหรือไม่?</span>
+          <AlertDescription className="flex flex-col sm:flex-row sm:items-center justify-between mt-2 gap-3">
+            <span className="text-xs">คุณต้องการนำข้อมูลที่บันทึกไว้อัตโนมัติกลับมาใช้งานต่อหรือไม่?</span>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="h-7 text-xs border-accent text-accent hover:bg-accent/10" onClick={useDraftData}>ใช้ข้อมูลเดิม</Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { localStorage.removeItem(STORAGE_KEY); setShowDraftBanner(false); }}>เริ่มใหม่</Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs border-accent text-accent hover:bg-accent/10 flex-1 sm:flex-none" onClick={useDraftData}>ใช้ข้อมูลเดิม</Button>
+              <Button size="sm" variant="ghost" className="h-8 text-xs flex-1 sm:flex-none" onClick={() => { localStorage.removeItem(STORAGE_KEY); setShowDraftBanner(false); }}>เริ่มใหม่</Button>
             </div>
           </AlertDescription>
         </Alert>
       )}
 
-      <div className="flex flex-col lg:flex-row gap-6 h-auto lg:min-h-[calc(100vh-250px)]">
-        <div className="w-full lg:w-1/2 flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
+      <div className="flex flex-col lg:flex-row gap-6 h-auto">
+        {/* Left Panel - Form */}
+        <div className="w-full lg:w-1/2 flex flex-col gap-6">
           <Card className="border-accent/20 bg-card/50">
             <CardHeader className="pb-4 flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-xl flex items-center gap-2">
-                <RouteIcon className="text-accent" /> ข้อมูลทั่วไปของเที่ยววิ่ง
+              <CardTitle className="text-lg md:text-xl flex items-center gap-2">
+                <RouteIcon className="text-accent" /> ข้อมูลทั่วไป
               </CardTitle>
               {showSaveIndicator && (
                 <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground animate-pulse">
-                  <CheckCircle2 className="h-3 w-3 text-green-500" /> บันทึกร่างอัตโนมัติ...
+                  <CheckCircle2 className="h-3 w-3 text-green-500" />
                 </div>
               )}
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">รถขนส่ง</label>
+                  <label className="text-xs font-medium">รถขนส่ง</label>
                   <Select value={vehicleId} onValueChange={setVehicleId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกพาหนะ" /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกพาหนะ" /></SelectTrigger>
                     <SelectContent>
                       {vehicles?.map(v => <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">คนขับรถ</label>
+                  <label className="text-xs font-medium">คนขับรถ</label>
                   <Select value={driverId} onValueChange={setDriverId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกคนขับ" /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกคนขับ" /></SelectTrigger>
                     <SelectContent>
                       {drivers?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">วันที่ส่งของ</label>
-                  <Input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
+                  <label className="text-xs font-medium">วันที่ส่งของ</label>
+                  <Input type="date" className="h-11" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">จุดเริ่มต้น</label>
+                  <label className="text-xs font-medium">จุดเริ่มต้น</label>
                   <Select value={departurePointId} onValueChange={setDeparturePointId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="warehouse">คลังสินค้า LOTUS EME</SelectItem>
                     </SelectContent>
@@ -675,8 +670,8 @@ export default function TripPlanPage() {
 
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold">ลำดับจุดส่งของ ({stops.length}/10)</h3>
-              <Button variant="outline" size="sm" onClick={addStop} className="border-accent text-accent hover:bg-accent/10">
+              <h3 className="text-base font-bold">ลำดับจุดส่งของ ({stops.length}/10)</h3>
+              <Button variant="outline" size="sm" onClick={addStop} className="h-9 border-accent text-accent hover:bg-accent/10">
                 <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดส่ง
               </Button>
             </div>
@@ -684,32 +679,31 @@ export default function TripPlanPage() {
             <div className="space-y-4">
               {stops.map((stop, index) => (
                 <Card key={stop.id} className="relative border-l-4 border-l-primary hover:border-accent transition-colors overflow-hidden">
-                  <CardContent className="p-4 flex gap-4 bg-secondary/20">
-                    <div className="flex flex-col items-center justify-center text-muted-foreground">
-                      <GripVertical className="h-5 w-5" />
-                      <span className="text-xs font-bold mt-2 bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center">
+                  <CardContent className="p-3 md:p-4 flex gap-3 md:gap-4 bg-secondary/20">
+                    <div className="flex flex-col items-center justify-center text-muted-foreground shrink-0">
+                      <span className="text-xs font-bold bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center">
                         {index + 1}
                       </span>
                     </div>
                     <div className="flex-1 space-y-3">
-                      <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center justify-between gap-2">
                         <div className="flex-1">
                           <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
-                            <SelectTrigger><SelectValue placeholder="เลือกไซน์งานปลายทาง" /></SelectTrigger>
+                            <SelectTrigger className="h-11"><SelectValue placeholder="เลือกไซน์งาน" /></SelectTrigger>
                             <SelectContent>
                               {sites?.map(s => (
                                 <SelectItem key={s.id} value={s.id}>
-                                  {s.name} {s.latitude && s.longitude ? `(${distanceMatrix["warehouse"]?.[s.id]?.toFixed(0) || '--'} กม.)` : "(⚠️ ไม่มีพิกัด)"}
+                                  {s.name}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeStop(stop.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => removeStop(stop.id)} className="h-10 w-10 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                       </div>
                       <div className="relative">
-                        <Textarea placeholder="รายละเอียดของที่ส่ง..." className="min-h-[80px] bg-background/50 resize-none border-dashed" value={stop.cargo} onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)} />
-                        <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-accent" onClick={() => handleAiDescription(stop.id, stop.cargo)} disabled={isLoadingAi === stop.id}>
+                        <Textarea placeholder="รายละเอียดของที่ส่ง..." className="min-h-[80px] bg-background/50 resize-none border-dashed text-sm" value={stop.cargo} onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)} />
+                        <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-accent h-8 w-8" onClick={() => handleAiDescription(stop.id, stop.cargo)} disabled={isLoadingAi === stop.id}>
                           <Sparkles className={cn("h-4 w-4", isLoadingAi === stop.id && "animate-pulse")} />
                         </Button>
                       </div>
@@ -720,44 +714,46 @@ export default function TripPlanPage() {
             </div>
           </div>
 
-          <div className="flex gap-3 pt-4 sticky bottom-0 bg-background/80 backdrop-blur pb-4 z-20">
-            <Button className="flex-[2] bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20" onClick={handleSaveTrip} disabled={isSaving}>
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Navigation className="mr-2 h-4 w-4" />} บันทึกแผนเที่ยววิ่ง
+          <div className="flex flex-col sm:flex-row gap-3 pt-4 sticky bottom-0 bg-background/80 backdrop-blur pb-4 z-20">
+            <Button className="flex-[2] bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 h-12" onClick={handleSaveTrip} disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Navigation className="mr-2 h-4 w-4" />} บันทึกแผน
             </Button>
-            <Button variant="outline" className="flex-1 border-destructive text-destructive hover:bg-destructive/10" onClick={resetForm}>
+            <Button variant="outline" className="flex-1 border-destructive text-destructive hover:bg-destructive/10 h-12" onClick={resetForm}>
               <Trash2 className="mr-2 h-4 w-4" /> ล้างข้อมูล
             </Button>
           </div>
         </div>
 
-        <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card min-h-[400px]">
-          <div className="absolute top-4 left-4 z-10 space-y-2 pointer-events-none">
-            <div className="bg-background/90 backdrop-blur p-4 rounded-lg border shadow-xl max-w-xs pointer-events-auto">
-              <h4 className="text-sm font-bold text-accent mb-2 flex items-center gap-2">
+        {/* Right Panel - Map */}
+        <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card min-h-[350px] md:min-h-[500px] lg:min-h-0">
+          <div className="absolute top-2 left-2 md:top-4 md:left-4 z-10 space-y-2 w-[calc(100%-16px)] sm:w-auto">
+            <div className="bg-background/90 backdrop-blur p-3 md:p-4 rounded-lg border shadow-xl sm:max-w-xs">
+              <h4 className="text-xs md:text-sm font-bold text-accent mb-2 flex items-center gap-2">
                 <RouteIcon className="h-4 w-4" /> สรุปเส้นทาง
               </h4>
-              <div className="space-y-2 text-xs">
+              <div className="space-y-1 md:space-y-2 text-[10px] md:text-xs">
                 <div className="flex justify-between items-center py-1 border-b border-border/50">
                   <span className="text-muted-foreground">ระยะทางรวม:</span>
-                  <span className="font-bold text-base text-white">{routeStats?.distance || "-- กม."}</span>
+                  <span className="font-bold text-sm md:text-base text-white">{routeStats?.distance || "-- กม."}</span>
                 </div>
                 <div className="flex justify-between items-center py-1 border-b border-border/50">
-                  <span className="text-muted-foreground">เวลาเดินทางรวม:</span>
+                  <span className="text-muted-foreground">เวลาเดินทาง:</span>
                   <span className="font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
                 </div>
               </div>
-              <div className="flex gap-2 mt-4">
-                <Button size="sm" className="flex-1 h-9 text-[11px] bg-primary hover:bg-primary/90" onClick={() => calculateRoute(false)} disabled={isOptimizing}>คำนวณเส้นทาง</Button>
-                <Button size="sm" variant="outline" className="flex-1 h-9 text-[11px] border-accent text-accent" onClick={() => calculateRoute(true)} disabled={isOptimizing}>เส้นทางสั้นที่สุด</Button>
+              <div className="flex gap-2 mt-3 md:mt-4">
+                <Button size="sm" className="flex-1 h-9 text-[10px] md:text-[11px] bg-primary hover:bg-primary/90" onClick={() => calculateRoute(false)} disabled={isOptimizing}>คำนวณ</Button>
+                <Button size="sm" variant="outline" className="flex-1 h-9 text-[10px] md:text-[11px] border-accent text-accent" onClick={() => calculateRoute(true)} disabled={isOptimizing}>สั้นที่สุด</Button>
               </div>
             </div>
           </div>
 
-          <div className="absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg text-[10px] space-y-2">
+          {/* Map Legend - Desktop Only or simplified mobile */}
+          <div className="hidden sm:block absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-2 md:p-3 rounded-lg border shadow-lg text-[9px] md:text-[10px] space-y-2">
             <h5 className="font-bold border-b pb-1 mb-1">คำอธิบาย</h5>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งานทั้งหมด</div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#3b82f6] border border-white" /> จุดส่งของที่เลือก</div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งาน</div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#3b82f6] border border-white" /> จุดส่งของ</div>
           </div>
 
           <div className="absolute inset-0 z-0">
@@ -766,70 +762,73 @@ export default function TripPlanPage() {
         </div>
       </div>
 
-      <Collapsible open={isMatrixOpen} onOpenChange={setIsMatrixOpen} className="w-full border rounded-xl overflow-hidden bg-card">
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" className="w-full flex items-center justify-between p-4 h-14 hover:bg-secondary/50">
-            <div className="flex items-center gap-2 font-bold">
-              <TableIcon className="h-5 w-5 text-accent" />
-              <span>ตารางวิเคราะห์ระยะทางระหว่างไซน์งาน (Distance Matrix)</span>
-              {isMatrixLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-            </div>
-            {isMatrixOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="p-4 overflow-x-auto">
-            {isMatrixLoading ? (
-              <div className="flex flex-col items-center justify-center p-12 gap-4">
-                <Loader2 className="h-8 w-8 animate-spin text-accent" />
-                <p className="text-sm text-muted-foreground">กำลังประมวลผลระยะทางจริงจาก Google Maps...</p>
+      {/* Distance Matrix - Desktop Only mostly, but collapsible on mobile */}
+      <div className="mt-6">
+        <Collapsible open={isMatrixOpen} onOpenChange={setIsMatrixOpen} className="w-full border rounded-xl overflow-hidden bg-card">
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" className="w-full flex items-center justify-between p-4 h-14 hover:bg-secondary/50">
+              <div className="flex items-center gap-2 font-bold text-sm md:text-base">
+                <TableIcon className="h-5 w-5 text-accent" />
+                <span>ตารางวิเคราะห์ระยะทาง (Distance Matrix)</span>
+                {isMatrixLoading && <Loader2 className="h-4 w-4 animate-spin" />}
               </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="bg-muted/50">ต้นทาง \ ปลายทาง</TableHead>
-                    <TableHead className="text-center font-bold text-accent">คลังสินค้า</TableHead>
-                    {sites?.filter(s => s.latitude).map(s => (
-                      <TableHead key={s.id} className="text-center min-w-[120px]">{s.name}</TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow>
-                    <TableCell className="font-bold text-accent">คลังสินค้า LOTUS</TableCell>
-                    <TableCell className="text-center text-muted-foreground">-</TableCell>
-                    {sites?.filter(s => s.latitude).map(dest => (
-                      <TableCell key={dest.id} className="text-center">
-                        {distanceMatrix["warehouse"]?.[dest.id]?.toFixed(1) || '--'} กม.
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                  {sites?.filter(s => s.latitude).map(origin => (
-                    <TableRow key={origin.id}>
-                      <TableCell className="font-medium">{origin.name}</TableCell>
-                      <TableCell className="text-center">
-                        {distanceMatrix[origin.id]?.["warehouse"]?.toFixed(1) || '--'} กม.
-                      </TableCell>
+              {isMatrixOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="p-2 md:p-4 overflow-x-auto">
+              {isMatrixLoading ? (
+                <div className="flex flex-col items-center justify-center p-8 md:p-12 gap-4">
+                  <Loader2 className="h-8 w-8 animate-spin text-accent" />
+                  <p className="text-xs md:text-sm text-muted-foreground text-center">กำลังประมวลผลระยะทางจาก Google Maps...</p>
+                </div>
+              ) : (
+                <Table className="min-w-[600px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="bg-muted/50 text-[10px] md:text-xs">ต้นทาง \ ปลายทาง</TableHead>
+                      <TableHead className="text-center font-bold text-accent text-[10px] md:text-xs">คลังสินค้า</TableHead>
+                      {sites?.filter(s => s.latitude).map(s => (
+                        <TableHead key={s.id} className="text-center min-w-[100px] text-[10px] md:text-xs">{s.name}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="text-[10px] md:text-xs">
+                    <TableRow>
+                      <TableCell className="font-bold text-accent">คลังสินค้า LOTUS</TableCell>
+                      <TableCell className="text-center text-muted-foreground">-</TableCell>
                       {sites?.filter(s => s.latitude).map(dest => (
-                        <TableCell 
-                          key={dest.id} 
-                          className={cn(
-                            "text-center",
-                            origin.id === dest.id && "text-muted-foreground"
-                          )}
-                        >
-                          {origin.id === dest.id ? '-' : (distanceMatrix[origin.id]?.[dest.id]?.toFixed(1) || '--') + ' กม.'}
+                        <TableCell key={dest.id} className="text-center">
+                          {distanceMatrix["warehouse"]?.[dest.id]?.toFixed(1) || '--'} กม.
                         </TableCell>
                       ))}
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+                    {sites?.filter(s => s.latitude).map(origin => (
+                      <TableRow key={origin.id}>
+                        <TableCell className="font-medium">{origin.name}</TableCell>
+                        <TableCell className="text-center">
+                          {distanceMatrix[origin.id]?.["warehouse"]?.toFixed(1) || '--'} กม.
+                        </TableCell>
+                        {sites?.filter(s => s.latitude).map(dest => (
+                          <TableCell 
+                            key={dest.id} 
+                            className={cn(
+                              "text-center",
+                              origin.id === dest.id && "text-muted-foreground"
+                            )}
+                          >
+                            {origin.id === dest.id ? '-' : (distanceMatrix[origin.id]?.[dest.id]?.toFixed(1) || '--') + ' กม.'}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
     </div>
   )
 }

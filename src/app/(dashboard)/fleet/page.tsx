@@ -67,7 +67,6 @@ export default function FleetPage() {
   
   const isViewer = profile?.role === 'viewer'
 
-  // Vehicles State
   const [isVehicleDialogOpen, setIsVehicleDialogOpen] = React.useState(false)
   const [editingVehicle, setEditingVehicle] = React.useState<Vehicle | null>(null)
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
@@ -78,7 +77,6 @@ export default function FleetPage() {
     defaultValues: { licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500 }
   })
 
-  // Drivers State
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
   const [editingDriver, setEditingDriver] = React.useState<Driver | null>(null)
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -89,7 +87,6 @@ export default function FleetPage() {
     defaultValues: { name: "", phoneNumber: "" }
   })
 
-  // CRUD Handlers
   function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
     if (isViewer) return
     if (editingVehicle) {
@@ -132,29 +129,27 @@ export default function FleetPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">ฟลีทรถและคนขับ</h2>
-          <p className="text-muted-foreground">จัดการยานพาหนะและการมอบหมายงานให้คนขับ</p>
-        </div>
+      <div className="flex flex-col gap-2">
+        <h2 className="text-2xl md:text-3xl font-bold tracking-tight">ฟลีทรถและคนขับ</h2>
+        <p className="text-sm md:text-base text-muted-foreground">จัดการยานพาหนะและการมอบหมายงานให้คนขับ</p>
       </div>
 
       <Tabs defaultValue="vehicles" className="space-y-4">
-        <TabsList className="bg-secondary/50 p-1">
-          <TabsTrigger value="vehicles" className="data-[state=active]:bg-accent">ยานพาหนะ (Vehicles)</TabsTrigger>
-          <TabsTrigger value="drivers" className="data-[state=active]:bg-accent">คนขับ (Drivers)</TabsTrigger>
+        <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto overflow-x-auto justify-start">
+          <TabsTrigger value="vehicles" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ยานพาหนะ</TabsTrigger>
+          <TabsTrigger value="drivers" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">คนขับรถ</TabsTrigger>
         </TabsList>
 
         <TabsContent value="vehicles" className="space-y-4">
           {!isViewer && (
             <div className="flex justify-end">
-              <Button className="bg-primary hover:bg-primary/90" onClick={() => { setEditingVehicle(null); vehicleForm.reset(); setIsVehicleDialogOpen(true); }}>
+              <Button className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" onClick={() => { setEditingVehicle(null); vehicleForm.reset(); setIsVehicleDialogOpen(true); }}>
                 <Plus className="mr-2 h-4 w-4" /> เพิ่มรถยนต์ใหม่
               </Button>
             </div>
           )}
           {isLoadingVehicles ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {vehicles?.map((v) => (
                 <Card key={v.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
                   <CardHeader className="pb-2">
@@ -184,6 +179,7 @@ export default function FleetPage() {
                   </CardContent>
                 </Card>
               ))}
+              {vehicles?.length === 0 && <div className="col-span-full py-12 text-center text-muted-foreground">ไม่มีข้อมูลรถในระบบ</div>}
             </div>
           )}
         </TabsContent>
@@ -191,13 +187,13 @@ export default function FleetPage() {
         <TabsContent value="drivers" className="space-y-4">
           {!isViewer && (
             <div className="flex justify-end">
-              <Button className="bg-primary hover:bg-primary/90" onClick={() => { setEditingDriver(null); driverForm.reset(); setIsDriverDialogOpen(true); }}>
+              <Button className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" onClick={() => { setEditingDriver(null); driverForm.reset(); setIsDriverDialogOpen(true); }}>
                 <Plus className="mr-2 h-4 w-4" /> เพิ่มคนขับใหม่
               </Button>
             </div>
           )}
           {isLoadingDrivers ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {drivers?.map((d) => (
                 <Card key={d.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
                   <CardHeader className="pb-2">
@@ -229,6 +225,7 @@ export default function FleetPage() {
                   </CardContent>
                 </Card>
               ))}
+              {drivers?.length === 0 && <div className="col-span-full py-12 text-center text-muted-foreground">ไม่มีข้อมูลคนขับในระบบ</div>}
             </div>
           )}
         </TabsContent>
@@ -236,20 +233,20 @@ export default function FleetPage() {
 
       {/* Vehicle Dialog */}
       <Dialog open={isVehicleDialogOpen} onOpenChange={setIsVehicleDialogOpen}>
-        <DialogContent>
+        <DialogContent className="w-[95%] rounded-lg">
           <DialogHeader><DialogTitle>{editingVehicle ? "แก้ไขข้อมูลรถ" : "เพิ่มรถใหม่"}</DialogTitle></DialogHeader>
           <Form {...vehicleForm}>
             <form onSubmit={vehicleForm.handleSubmit(onVehicleSubmit)} className="space-y-4">
               <FormField control={vehicleForm.control} name="licensePlate" render={({ field }) => (
-                <FormItem><FormLabel>ทะเบียนรถ</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>ทะเบียนรถ</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={vehicleForm.control} name="type" render={({ field }) => (
-                <FormItem><FormLabel>ประเภทรถ</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}><FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="Pickup">Pickup</SelectItem><SelectItem value="4-wheel truck">4-wheel truck</SelectItem><SelectItem value="6-wheel truck">6-wheel truck</SelectItem></SelectContent></Select><FormMessage /></FormItem>
+                <FormItem><FormLabel>ประเภทรถ</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}><FormControl><SelectTrigger className="h-11"><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="Pickup">Pickup</SelectItem><SelectItem value="4-wheel truck">4-wheel truck</SelectItem><SelectItem value="6-wheel truck">6-wheel truck</SelectItem></SelectContent></Select><FormMessage /></FormItem>
               )} />
               <FormField control={vehicleForm.control} name="maxLoadCapacityKg" render={({ field }) => (
-                <FormItem><FormLabel>น้ำหนักบรรทุกสูงสุด (kg)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>น้ำหนักบรรทุกสูงสุด (kg)</FormLabel><FormControl><Input className="h-11" type="number" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
-              <Button type="submit" className="w-full bg-accent">บันทึก</Button>
+              <Button type="submit" className="w-full bg-accent h-12">บันทึก</Button>
             </form>
           </Form>
         </DialogContent>
@@ -257,17 +254,17 @@ export default function FleetPage() {
 
       {/* Driver Dialog */}
       <Dialog open={isDriverDialogOpen} onOpenChange={setIsDriverDialogOpen}>
-        <DialogContent>
+        <DialogContent className="w-[95%] rounded-lg">
           <DialogHeader><DialogTitle>{editingDriver ? "แก้ไขข้อมูลคนขับ" : "เพิ่มคนขับใหม่"}</DialogTitle></DialogHeader>
           <Form {...driverForm}>
             <form onSubmit={driverForm.handleSubmit(onDriverSubmit)} className="space-y-4">
               <FormField control={driverForm.control} name="name" render={({ field }) => (
-                <FormItem><FormLabel>ชื่อคนขับ</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>ชื่อคนขับ</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={driverForm.control} name="phoneNumber" render={({ field }) => (
-                <FormItem><FormLabel>เบอร์โทรศัพท์</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>เบอร์โทรศัพท์</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
-              <Button type="submit" className="w-full bg-accent">บันทึก</Button>
+              <Button type="submit" className="w-full bg-accent h-12">บันทึก</Button>
             </form>
           </Form>
         </DialogContent>

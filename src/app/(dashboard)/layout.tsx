@@ -4,10 +4,13 @@
 import * as React from "react"
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase"
 import { AppSidebar } from "@/components/layout/app-sidebar"
-import { Loader2 } from "lucide-react"
+import { Loader2, Menu, X } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
 import { doc } from "firebase/firestore"
 import { UserProfile } from "@/types/models"
+import { Button } from "@/components/ui/button"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { cn } from "@/lib/utils"
 
 export default function DashboardLayout({
   children,
@@ -24,6 +27,7 @@ export default function DashboardLayout({
 
   const [currentDate, setCurrentDate] = React.useState<string | null>(null)
   const [isTimedOut, setIsTimedOut] = React.useState(false)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false)
 
   React.useEffect(() => {
     setCurrentDate(new Date().toLocaleDateString('th-TH', { 
@@ -33,7 +37,6 @@ export default function DashboardLayout({
       day: 'numeric' 
     }))
 
-    // Timeout mechanism: 3 seconds
     const timer = setTimeout(() => {
       setIsTimedOut(true)
     }, 3000)
@@ -41,11 +44,9 @@ export default function DashboardLayout({
     return () => clearTimeout(timer)
   }, [])
 
-  // Auth & Role Protection
   React.useEffect(() => {
     if (isUserLoading || isProfileLoading) return
 
-    // If no user found and not timed out, go to login
     if (!user && !isTimedOut) {
       router.push("/login")
       return
@@ -57,7 +58,6 @@ export default function DashboardLayout({
         return
       }
 
-      // Viewer restrictions: Can only see Dashboard and History
       const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings"]
       if (profile.role === "viewer") {
         const isRestricted = viewerRestrictedPaths.some(p => pathname.startsWith(p))
@@ -66,14 +66,17 @@ export default function DashboardLayout({
         }
       }
 
-      // Dispatcher restrictions: Cannot see User Management
       if (profile.role === "dispatcher" && pathname.startsWith("/settings/users")) {
         router.push("/dashboard")
       }
     }
   }, [user, isUserLoading, profile, isProfileLoading, router, pathname, isTimedOut])
 
-  // Show loading spinner ONLY if we haven't timed out AND we are still loading
+  // Close mobile menu on route change
+  React.useEffect(() => {
+    setIsMobileMenuOpen(false)
+  }, [pathname])
+
   const showLoading = !isTimedOut && (isUserLoading || isProfileLoading || (user && !profile))
 
   if (showLoading) {
@@ -89,19 +92,38 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <AppSidebar userRole={profile?.role || 'viewer'} profileName={profile?.name} />
+      {/* Desktop Sidebar */}
+      <div className="hidden lg:block">
+        <AppSidebar userRole={profile?.role || 'viewer'} profileName={profile?.name} />
+      </div>
+
       <main className="flex-1 relative overflow-y-auto overflow-x-hidden">
-        <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b bg-background/95 px-8 backdrop-blur no-print">
+        <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b bg-background/95 px-4 md:px-8 backdrop-blur no-print">
           <div className="flex items-center gap-4">
-            <h1 className="text-lg font-semibold text-accent">LOTUS EME Transport System</h1>
+            {/* Mobile Menu Trigger */}
+            <div className="lg:hidden">
+              <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-10 w-10">
+                    <Menu className="h-6 w-6" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="p-0 w-72 bg-sidebar border-r-0">
+                  <AppSidebar userRole={profile?.role || 'viewer'} profileName={profile?.name} isMobile />
+                </SheetContent>
+              </Sheet>
+            </div>
+            <h1 className="text-base md:text-lg font-semibold text-accent truncate max-w-[150px] sm:max-w-none">
+              LOTUS EME Transport
+            </h1>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-sm text-muted-foreground hidden sm:block">
+            <div className="text-xs md:text-sm text-muted-foreground hidden sm:block">
               {currentDate}
             </div>
           </div>
         </header>
-        <div className="p-8">
+        <div className="p-4 md:p-8">
           {children}
         </div>
       </main>

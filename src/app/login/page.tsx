@@ -30,7 +30,6 @@ export default function LoginPage() {
   const [password, setPassword] = React.useState("")
   const [name, setName] = React.useState("")
 
-  // Hardcoded Admin Email
   const ADMIN_EMAIL = "ownchang@hotmail.com"
 
   React.useEffect(() => {
@@ -49,7 +48,6 @@ export default function LoginPage() {
       const userRef = doc(db, "users", loggedUser.uid)
       const userDoc = await getDoc(userRef)
       
-      // Auto-update or create admin profile for specific email
       if (loggedUser.email === ADMIN_EMAIL) {
         if (userDoc.exists()) {
           await updateDoc(userRef, {
@@ -69,7 +67,6 @@ export default function LoginPage() {
           })
         }
       } else {
-        // For other users, check active status
         if (userDoc.exists() && userDoc.data().active === false) {
           await auth.signOut()
           toast({ 
@@ -81,7 +78,6 @@ export default function LoginPage() {
           return
         }
         
-        // If user doesn't have a doc yet (shouldn't happen with standard flow, but for safety)
         if (!userDoc.exists()) {
           await setDoc(userRef, {
             id: loggedUser.uid,
@@ -117,7 +113,6 @@ export default function LoginPage() {
       
       await updateProfile(newUser, { displayName: name })
       
-      // Determine initial role
       const role = email.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? "admin" : "viewer"
       
       await setDoc(doc(db, "users", newUser.uid), {
@@ -152,29 +147,29 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center bg-[#1A1C23] px-4">
-      <div className="w-full max-w-md space-y-8">
+    <div className="min-h-screen w-screen flex items-center justify-center bg-[#1A1C23] px-4 py-8">
+      <div className="w-full max-w-md space-y-6 md:space-y-8">
         <div className="text-center space-y-2">
           <div className="flex justify-center">
             <div className="bg-primary p-3 rounded-2xl">
-              <Truck className="h-10 w-10 text-accent" />
+              <Truck className="h-10 w-10 md:h-12 md:w-12 text-accent" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-white">LOTUS EME</h1>
-          <p className="text-muted-foreground">ระบบจัดการขนส่งและวัสดุก่อสร้าง</p>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">LOTUS EME</h1>
+          <p className="text-sm md:text-base text-muted-foreground">ระบบจัดการขนส่งและวัสดุก่อสร้าง</p>
         </div>
 
         <Tabs defaultValue="login" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 bg-secondary/50">
-            <TabsTrigger value="login">เข้าสู่ระบบ</TabsTrigger>
-            <TabsTrigger value="signup">สมัครสมาชิก</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 bg-secondary/50 h-11 md:h-10">
+            <TabsTrigger value="login" className="text-xs md:text-sm">เข้าสู่ระบบ</TabsTrigger>
+            <TabsTrigger value="signup" className="text-xs md:text-sm">สมัครสมาชิก</TabsTrigger>
           </TabsList>
           
-          <TabsContent value="login">
-            <Card>
-              <CardHeader>
-                <CardTitle>เข้าสู่ระบบ</CardTitle>
-                <CardDescription>ระบุอีเมลและรหัสผ่านเพื่อเข้าใช้งานระบบ</CardDescription>
+          <TabsContent value="login" className="mt-4">
+            <Card className="border-border/50">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl">เข้าสู่ระบบ</CardTitle>
+                <CardDescription className="text-xs">ระบุอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</CardDescription>
               </CardHeader>
               <form onSubmit={handleLogin}>
                 <CardContent className="space-y-4">
@@ -185,6 +180,7 @@ export default function LoginPage() {
                       type="email" 
                       placeholder="name@example.com" 
                       required 
+                      className="h-11"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
@@ -195,13 +191,14 @@ export default function LoginPage() {
                       id="password" 
                       type="password" 
                       required 
+                      className="h-11"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
                   </div>
                 </CardContent>
                 <CardFooter>
-                  <Button type="submit" className="w-full bg-accent hover:bg-accent/90" disabled={isLoading}>
+                  <Button type="submit" className="w-full bg-accent hover:bg-accent/90 h-12" disabled={isLoading}>
                     {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} เข้าสู่ระบบ
                   </Button>
                 </CardFooter>
@@ -209,11 +206,11 @@ export default function LoginPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="signup">
-            <Card>
-              <CardHeader>
-                <CardTitle>สมัครสมาชิกใหม่</CardTitle>
-                <CardDescription>สร้างบัญชีเพื่อเริ่มต้นจัดการระบบขนส่ง</CardDescription>
+          <TabsContent value="signup" className="mt-4">
+            <Card className="border-border/50">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl">สมัครสมาชิกใหม่</CardTitle>
+                <CardDescription className="text-xs">สร้างบัญชีเพื่อเริ่มต้นใช้งาน</CardDescription>
               </CardHeader>
               <form onSubmit={handleSignUp}>
                 <CardContent className="space-y-4">
@@ -223,6 +220,7 @@ export default function LoginPage() {
                       id="signup-name" 
                       placeholder="สมชาย ใจดี" 
                       required 
+                      className="h-11"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                     />
@@ -234,6 +232,7 @@ export default function LoginPage() {
                       type="email" 
                       placeholder="name@example.com" 
                       required 
+                      className="h-11"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
@@ -244,13 +243,14 @@ export default function LoginPage() {
                       id="signup-password" 
                       type="password" 
                       required 
+                      className="h-11"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
                   </div>
                 </CardContent>
                 <CardFooter>
-                  <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isLoading}>
+                  <Button type="submit" className="w-full bg-primary hover:bg-primary/90 h-12" disabled={isLoading}>
                     {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} สร้างบัญชีผู้ใช้
                   </Button>
                 </CardFooter>
@@ -260,7 +260,7 @@ export default function LoginPage() {
         </Tabs>
 
         <div className="text-center">
-          <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+          <p className="text-[10px] md:text-xs text-muted-foreground flex items-center justify-center gap-1">
             <ShieldCheck className="h-3 w-3" /> ข้อมูลของคุณถูกรักษาอย่างปลอดภัยด้วย Firebase Auth
           </p>
         </div>
