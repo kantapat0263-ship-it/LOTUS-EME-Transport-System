@@ -125,7 +125,7 @@ export default function TripPlanPage() {
     const newMarkers: google.maps.Marker[] = []
 
     // Start Marker (Warehouse)
-    const warehouseAddr = companySettings?.warehouseAddress || "Bangkok"
+    const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
     const geocoder = new google.maps.Geocoder()
 
     geocoder.geocode({ address: warehouseAddr }, (results, status) => {
@@ -191,7 +191,7 @@ export default function TripPlanPage() {
     const google = window.google
     const directionsService = new google.maps.DirectionsService()
     
-    const warehouseAddr = companySettings?.warehouseAddress || "Bangkok"
+    const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
     const waypoints = stops.map(s => {
       const site = sites?.find(site => site.id === s.siteId)
       return { location: site?.address || "", stopover: true }

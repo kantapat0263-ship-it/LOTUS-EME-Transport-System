@@ -23,7 +23,7 @@ export default function SettingsPage() {
   const [formData, setFormData] = React.useState({
     companyName: "LOTUS EME",
     warehouseName: "คลังสินค้าหลัก",
-    warehouseAddress: "",
+    warehouseAddress: "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9",
     googleMapsApiKeyReference: ""
   })
 
@@ -32,7 +32,7 @@ export default function SettingsPage() {
       setFormData({
         companyName: settings.companyName || "LOTUS EME",
         warehouseName: settings.warehouseName || "คลังสินค้าหลัก",
-        warehouseAddress: settings.warehouseAddress || "",
+        warehouseAddress: settings.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9",
         googleMapsApiKeyReference: settings.googleMapsApiKeyReference || ""
       })
     }
