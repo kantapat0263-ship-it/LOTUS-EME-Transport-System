@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2 } from "lucide-react"
+import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { 
@@ -127,6 +127,15 @@ export default function SitesPage() {
     }
   }
 
+  const handleOpenMap = (address: string) => {
+    if (!address) return;
+    // ตรวจสอบว่าเป็นลิงก์ URL หรือเป็นที่อยู่ข้อความ
+    const url = address.startsWith('http') 
+      ? address 
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
   const getTagColor = (type: ProjectType) => {
     switch (type) {
       case 'LOTUS EME': return 'bg-primary/20 text-primary border-primary/30';
@@ -201,7 +210,20 @@ export default function SitesPage() {
                       {site.projectTypeTag}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground max-w-xs truncate">{site.address}</TableCell>
+                  <TableCell className="text-muted-foreground max-w-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate">{site.address}</span>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 shrink-0" 
+                        onClick={() => handleOpenMap(site.address)}
+                        title="ดูใน Google Maps"
+                      >
+                        <ExternalLink className="h-3 w-3 text-accent" />
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
