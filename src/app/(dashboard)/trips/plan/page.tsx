@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -585,7 +584,7 @@ export default function TripPlanPage() {
         departureSiteId: departurePointId,
         stops: tripStops,
         totalDistanceKm: routeStats?.distanceNum || 0,
-        totalEstimatedTimeMinutes: routeStats?.durationNum || 0,
+        totalEstimatedTimeMinutes: Math.round(routeStats?.durationNum || 0),
         status: "Planned",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -602,7 +601,7 @@ export default function TripPlanPage() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden">
+    <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden no-print">
       {showDraftBanner && (
         <Alert className="bg-accent/10 border-accent/50 text-accent-foreground animate-in slide-in-from-top duration-300">
           <RotateCcw className="h-4 w-4" />
@@ -779,7 +778,56 @@ export default function TripPlanPage() {
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          {/* Matrix table content... */}
+          <div className="p-4 overflow-x-auto">
+            {isMatrixLoading ? (
+              <div className="flex flex-col items-center justify-center p-12 gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-accent" />
+                <p className="text-sm text-muted-foreground">กำลังประมวลผลระยะทางจริงจาก Google Maps...</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="bg-muted/50">ต้นทาง \ ปลายทาง</TableHead>
+                    <TableHead className="text-center font-bold text-accent">คลังสินค้า</TableHead>
+                    {sites?.filter(s => s.latitude).map(s => (
+                      <TableHead key={s.id} className="text-center min-w-[120px]">{s.name}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="font-bold text-accent">คลังสินค้า LOTUS</TableCell>
+                    <TableCell className="text-center text-muted-foreground">-</TableCell>
+                    {sites?.filter(s => s.latitude).map(dest => (
+                      <TableCell key={dest.id} className="text-center">
+                        {distanceMatrix["warehouse"]?.[dest.id]?.toFixed(1) || '--'} กม.
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                  {sites?.filter(s => s.latitude).map(origin => (
+                    <TableRow key={origin.id}>
+                      <TableCell className="font-medium">{origin.name}</TableCell>
+                      <TableCell className="text-center">
+                        {distanceMatrix[origin.id]?.["warehouse"]?.toFixed(1) || '--'} กม.
+                      </TableCell>
+                      {sites?.filter(s => s.latitude).map(dest => (
+                        <TableCell 
+                          key={dest.id} 
+                          className={cn(
+                            "text-center",
+                            origin.id === dest.id && "text-muted-foreground"
+                          )}
+                        >
+                          {origin.id === dest.id ? '-' : (distanceMatrix[origin.id]?.[dest.id]?.toFixed(1) || '--') + ' กม.'}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
         </CollapsibleContent>
       </Collapsible>
     </div>

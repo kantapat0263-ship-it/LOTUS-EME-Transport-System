@@ -72,3 +72,48 @@
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-muted-foreground;
 }
+
+/* Print Styles */
+@media print {
+  nav, aside, header, 
+  .no-print, button, 
+  [role="navigation"],
+  [role="menubar"],
+  .print-hide {
+    display: none !important;
+  }
+  
+  body { 
+    background: white !important;
+    color: black !important;
+  }
+  
+  main { 
+    margin: 0 !important; 
+    padding: 0 !important; 
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Reset layout for print */
+  .p-8 { padding: 0 !important; }
+  
+  @page {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+
+  /* Ensure text is black for printing */
+  * {
+    color: black !important;
+    border-color: #000 !important;
+  }
+}
+
+.print-only {
+  display: none;
+}
