@@ -118,16 +118,16 @@ export default function TripPlanPage() {
 
   // Update Markers
   React.useEffect(() => {
-    if (!map || !sites) return
+    if (!map || !sites || !window.google) return
 
     // Clear old markers
     markers.forEach(m => m.setMap(null))
     const newMarkers: google.maps.Marker[] = []
 
-    // Start Marker (Warehouse)
-    const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
     const geocoder = new google.maps.Geocoder()
+    const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
 
+    // Start Marker (Warehouse)
     geocoder.geocode({ address: warehouseAddr }, (results, status) => {
       if (status === "OK" && results![0]) {
         const marker = new google.maps.Marker({
@@ -190,46 +190,77 @@ export default function TripPlanPage() {
     setIsOptimizing(true)
     const google = window.google
     const directionsService = new google.maps.DirectionsService()
+    const geocoder = new google.maps.Geocoder()
     
     const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
-    const waypoints = stops.map(s => {
-      const site = sites?.find(site => site.id === s.siteId)
-      return { location: site?.address || "", stopover: true }
-    })
 
-    const destination = waypoints.pop()?.location || ""
-
-    directionsService.route({
-      origin: warehouseAddr,
-      destination: destination,
-      waypoints: waypoints,
-      optimizeWaypoints: optimize,
-      travelMode: google.maps.TravelMode.DRIVING
-    }, (result, status) => {
-      setIsOptimizing(false)
-      if (status === "OK" && result) {
-        directionsRenderer.setDirections(result)
-        
-        const legs = result.routes[0].legs
-        let totalDistance = 0
-        let totalDuration = 0
-        legs.forEach(leg => {
-          totalDistance += leg.distance?.value || 0
-          totalDuration += leg.duration?.value || 0
+    // Helper to geocode a single address
+    const geocodePoint = (address: string): Promise<google.maps.LatLng> => {
+      return new Promise((resolve, reject) => {
+        geocoder.geocode({ address }, (results, status) => {
+          if (status === "OK" && results?.[0]?.geometry?.location) {
+            resolve(results[0].geometry.location)
+          } else {
+            reject(new Error(`Geocode failed for ${address}: ${status}`))
+          }
         })
+      })
+    }
 
-        setRouteStats({
-          distance: (totalDistance / 1000).toFixed(1) + " กม.",
-          duration: Math.floor(totalDuration / 3600) + " ชม. " + Math.floor((totalDuration % 3600) / 60) + " นาที"
-        })
+    try {
+      // Resolve all locations to LatLng first for reliable routing
+      const originLatLng = await geocodePoint(warehouseAddr)
+      
+      const waypointPromises = stops.map(async (s) => {
+        const site = sites?.find(site => site.id === s.siteId)
+        if (!site) throw new Error("Site not found")
+        const latLng = await geocodePoint(site.address)
+        return { location: latLng, stopover: true }
+      })
 
-        if (optimize) {
-          toast({ title: "Optimized!", description: "จัดเรียงเส้นทางให้สั้นที่สุดเรียบร้อยแล้ว" })
-        }
-      } else {
-        toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้ กรุณาตรวจสอบที่อยู่ของไซน์งาน", variant: "destructive" })
+      const resolvedWaypoints = await Promise.all(waypointPromises)
+      const destinationLatLng = resolvedWaypoints.pop()?.location
+
+      if (!destinationLatLng) {
+        throw new Error("No destination found")
       }
-    })
+
+      directionsService.route({
+        origin: originLatLng,
+        destination: destinationLatLng,
+        waypoints: resolvedWaypoints,
+        optimizeWaypoints: optimize,
+        travelMode: google.maps.TravelMode.DRIVING
+      }, (result, status) => {
+        setIsOptimizing(false)
+        if (status === "OK" && result) {
+          directionsRenderer.setDirections(result)
+          
+          const legs = result.routes[0].legs
+          let totalDistance = 0
+          let totalDuration = 0
+          legs.forEach(leg => {
+            totalDistance += leg.distance?.value || 0
+            totalDuration += leg.duration?.value || 0
+          })
+
+          setRouteStats({
+            distance: (totalDistance / 1000).toFixed(1) + " กม.",
+            duration: Math.floor(totalDuration / 3600) + " ชม. " + Math.floor((totalDuration % 3600) / 60) + " นาที"
+          })
+
+          if (optimize) {
+            toast({ title: "Optimized!", description: "จัดเรียงเส้นทางให้สั้นที่สุดเรียบร้อยแล้ว" })
+          }
+        } else {
+          toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
+        }
+      })
+    } catch (error: any) {
+      setIsOptimizing(false)
+      console.error("Routing error:", error)
+      toast({ title: "Error", description: "พบปัญหาในการระบุตำแหน่งพิกัด: " + error.message, variant: "destructive" })
+    }
   }
 
   const addStop = () => {
