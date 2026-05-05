@@ -23,6 +23,7 @@ export default function DashboardLayout({
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
   const [currentDate, setCurrentDate] = React.useState<string | null>(null)
+  const [isTimedOut, setIsTimedOut] = React.useState(false)
 
   React.useEffect(() => {
     setCurrentDate(new Date().toLocaleDateString('th-TH', { 
@@ -31,13 +32,23 @@ export default function DashboardLayout({
       month: 'long', 
       day: 'numeric' 
     }))
+
+    // Timeout mechanism: 3 seconds
+    const timer = setTimeout(() => {
+      setIsTimedOut(true)
+    }, 3000)
+
+    return () => clearTimeout(timer)
   }, [])
 
   // Auth & Role Protection
   React.useEffect(() => {
+    // If we've timed out and still don't have a user, we follow point 1: redirect to login
+    // BUT point 4 says show dashboard anyway for testing. 
+    // We will prioritize the bypass (Point 4) by only redirecting if we definitely know there's NO user.
     if (isUserLoading || isProfileLoading) return
 
-    if (!user) {
+    if (!user && !isTimedOut) {
       router.push("/login")
       return
     }
@@ -59,9 +70,12 @@ export default function DashboardLayout({
         router.push("/dashboard")
       }
     }
-  }, [user, isUserLoading, profile, isProfileLoading, router, pathname])
+  }, [user, isUserLoading, profile, isProfileLoading, router, pathname, isTimedOut])
 
-  if (isUserLoading || isProfileLoading || (user && !profile)) {
+  // Show loading spinner ONLY if we haven't timed out AND we are still loading
+  const showLoading = !isTimedOut && (isUserLoading || isProfileLoading || (user && !profile))
+
+  if (showLoading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-4">
