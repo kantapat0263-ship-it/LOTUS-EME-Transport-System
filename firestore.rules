@@ -2,74 +2,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // --- Helper Functions ---
-
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
-    function isActive() {
-      return isSignedIn() && getUserData().active == true;
-    }
-
-    function hasRole(role) {
-      return isSignedIn() && getUserData().role == role;
-    }
-
-    function isAdmin() {
-      return hasRole('admin');
-    }
-
-    function isDispatcher() {
-      return hasRole('dispatcher');
-    }
-
-    function canManageLogistics() {
-      return isActive() && (isAdmin() || isDispatcher());
-    }
-
-    // --- Collection Rules ---
-
-    match /users/{userId} {
-      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow list: if isAdmin();
-      allow create: if isSignedIn(); // Allow initial profile creation
-      allow update, delete: if isAdmin();
-    }
-
-    match /sites/{siteId} {
-      allow read: if isActive();
-      allow write: if canManageLogistics();
-    }
-
-    match /vehicles/{vehicleId} {
-      allow read: if isActive();
-      allow write: if canManageLogistics();
-    }
-
-    match /drivers/{driverId} {
-      allow read: if isActive();
-      allow write: if canManageLogistics();
-    }
-
-    match /trips/{tripId} {
-      allow read: if isActive();
-      allow write: if canManageLogistics();
-      
-      match /stops/{stopId} {
-        allow read: if isActive();
-        allow write: if canManageLogistics();
-      }
-    }
-
-    match /companySettings/{settingId} {
-      allow read: if isActive();
-      allow write: if isAdmin();
+    match /{document=**} {
+      allow read, write: if request.auth != null;
     }
   }
 }
