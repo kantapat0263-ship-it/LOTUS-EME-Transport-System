@@ -93,6 +93,7 @@ export default function TripPlanPage() {
   const [showDraftBanner, setShowDraftBanner] = React.useState(false)
   const [draftTime, setDraftTime] = React.useState<number | null>(null)
   const [showSaveIndicator, setShowSaveIndicator] = React.useState(false)
+  const [isApiLoaded, setIsApiLoaded] = React.useState(false)
 
   // Map State
   const mapRef = React.useRef<HTMLDivElement>(null)
@@ -213,6 +214,7 @@ export default function TripPlanPage() {
       setMap(newMap)
       setDirectionsRenderer(renderer)
       setInfoWindow(new google.maps.InfoWindow())
+      setIsApiLoaded(true)
     }).catch(err => {
       console.error("Map load error:", err)
     })
@@ -220,8 +222,9 @@ export default function TripPlanPage() {
 
   // Calculate Distance Matrix
   const fetchDistanceMatrix = React.useCallback(async () => {
-    if (!sites || sites.length === 0 || !window.google) return
-    
+    if (!sites || sites.length === 0 || !window.google || !isApiLoaded) return
+    if (!google.maps.DistanceMatrixService) return
+
     setIsMatrixLoading(true)
     const validSites = sites.filter(s => s.latitude && s.longitude)
     const origins = [
@@ -260,17 +263,17 @@ export default function TripPlanPage() {
     } finally {
       setIsMatrixLoading(false)
     }
-  }, [sites])
+  }, [sites, isApiLoaded])
 
   React.useEffect(() => {
-    if (sites && window.google) {
+    if (sites && isApiLoaded) {
       fetchDistanceMatrix()
     }
-  }, [sites, fetchDistanceMatrix])
+  }, [sites, isApiLoaded, fetchDistanceMatrix])
 
   // Draw Hover/Pinned Distance Lines
   React.useEffect(() => {
-    if (!map || !sites || !window.google) return
+    if (!map || !sites || !window.google || !isApiLoaded) return
     const google = window.google
 
     distanceLinesRef.current.forEach(l => l.setMap(null))
@@ -330,7 +333,7 @@ export default function TripPlanPage() {
         distanceLabelsRef.current.push(label)
       }
     })
-  }, [map, hoveredSiteId, pinnedSiteId, sites, distanceMatrix])
+  }, [map, hoveredSiteId, pinnedSiteId, sites, distanceMatrix, isApiLoaded])
 
   const addStopBySiteId = React.useCallback((siteId: string) => {
     setStops(prev => {
@@ -350,7 +353,7 @@ export default function TripPlanPage() {
   }, [infoWindow, toast])
 
   React.useEffect(() => {
-    if (!map || !sites || !window.google || !infoWindow) return
+    if (!map || !sites || !window.google || !infoWindow || !isApiLoaded) return
 
     markers.forEach(m => m.setMap(null))
     
@@ -450,10 +453,10 @@ export default function TripPlanPage() {
     }
 
     setMarkers(newMarkers)
-  }, [map, sites, stops, infoWindow, addStopBySiteId, distanceMatrix, pinnedSiteId])
+  }, [map, sites, stops, infoWindow, addStopBySiteId, distanceMatrix, pinnedSiteId, isApiLoaded])
 
   const calculateRoute = async (optimize: boolean = false) => {
-    if (!map || !directionsRenderer || stops.some(s => !s.siteId)) {
+    if (!map || !directionsRenderer || stops.some(s => !s.siteId) || !isApiLoaded) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุจุดส่งของให้ครบถ้วนก่อนคำนวณเส้นทาง", variant: "destructive" })
       return
     }
