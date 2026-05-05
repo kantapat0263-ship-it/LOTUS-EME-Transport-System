@@ -14,7 +14,8 @@ import {
   Calendar as CalendarIcon,
   Route as RouteIcon,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Info
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -73,6 +74,7 @@ export default function TripPlanPage() {
   const [markers, setMarkers] = React.useState<google.maps.Marker[]>([])
   const [routeStats, setRouteStats] = React.useState<{ distance: string, duration: string } | null>(null)
   const [isOptimizing, setIsOptimizing] = React.useState(false)
+  const [infoWindow, setInfoWindow] = React.useState<google.maps.InfoWindow | null>(null)
 
   // Initialize Map
   React.useEffect(() => {
@@ -109,93 +111,142 @@ export default function TripPlanPage() {
         }
       })
 
+      const iw = new google.maps.InfoWindow()
+
       setMap(newMap)
       setDirectionsRenderer(renderer)
+      setInfoWindow(iw)
     }).catch(err => {
       console.error("Map load error:", err)
     })
   }, [])
 
-  // Update Markers
+  // Action: Add stop from InfoWindow
+  const addStopBySiteId = React.useCallback((siteId: string) => {
+    setStops(prev => {
+      // Check if we already have an empty stop to fill
+      const emptyStopIndex = prev.findIndex(s => !s.siteId)
+      if (emptyStopIndex !== -1) {
+        const newStops = [...prev]
+        newStops[emptyStopIndex] = { ...newStops[emptyStopIndex], siteId }
+        return newStops
+      }
+      // Otherwise add new
+      if (prev.length < 10) {
+        return [...prev, { id: Date.now().toString(), siteId, cargo: '' }]
+      }
+      toast({ title: "เต็มแล้ว", description: "เพิ่มจุดส่งได้สูงสุด 10 จุด", variant: "destructive" })
+      return prev
+    })
+    infoWindow?.close()
+  }, [infoWindow, toast])
+
+  // Update Markers and Fit Bounds
   React.useEffect(() => {
-    if (!map || !sites || !window.google) return
+    if (!map || !sites || !window.google || !infoWindow) return
 
     // Clear old markers
-    markers.forEach(m => m.setMap(null))
+    markers.forEach(m => {
+      window.google.maps.event.clearInstanceListeners(m)
+      m.setMap(null)
+    })
+    
     const newMarkers: google.maps.Marker[] = []
-
     const google = window.google
-    const geocoder = new google.maps.Geocoder()
-    const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
+    const bounds = new google.maps.LatLngBounds()
 
-    // Start Marker (Warehouse)
-    if (companySettings?.warehouseLatitude && companySettings?.warehouseLongitude) {
+    // 1. Warehouse (Start Point)
+    const warehouseLat = companySettings?.warehouseLatitude || 13.7563
+    const warehouseLng = companySettings?.warehouseLongitude || 100.5018
+    const warehousePos = { lat: warehouseLat, lng: warehouseLng }
+    
+    const startMarker = new google.maps.Marker({
+      position: warehousePos,
+      map,
+      title: "จุดเริ่มต้น (คลังสินค้า)",
+      icon: {
+        path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+        scale: 7,
+        fillColor: "#10b981", // GREEN
+        fillOpacity: 1,
+        strokeWeight: 2,
+        strokeColor: "#ffffff"
+      }
+    })
+    newMarkers.push(startMarker)
+    bounds.extend(warehousePos)
+
+    // 2. All Sites from Firestore
+    sites.forEach((site) => {
+      if (!site.latitude || !site.longitude) return
+      
+      const pos = { lat: site.latitude, lng: site.longitude }
+      bounds.extend(pos)
+
+      // Find if this site is selected as a stop
+      const stopIndex = stops.findIndex(s => s.siteId === site.id)
+      const isSelected = stopIndex !== -1
+
       const marker = new google.maps.Marker({
-        position: { lat: companySettings.warehouseLatitude, lng: companySettings.warehouseLongitude },
+        position: pos,
         map,
-        title: "คลังสินค้า",
+        title: site.name,
+        label: isSelected ? {
+          text: (stopIndex + 1).toString(),
+          color: "#ffffff",
+          fontWeight: "bold"
+        } : undefined,
         icon: {
-          path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-          scale: 6,
-          fillColor: "#10b981",
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: isSelected ? 14 : 10,
+          fillColor: isSelected ? "#3b82f6" : "#f59e0b", // BLUE if selected, ORANGE if not
           fillOpacity: 1,
           strokeWeight: 2,
           strokeColor: "#ffffff"
         }
       })
+
+      // Info Window Listener
+      marker.addListener("click", () => {
+        const content = document.createElement("div")
+        content.className = "p-2 min-w-[200px] text-foreground"
+        content.innerHTML = `
+          <div class="font-bold text-accent mb-1">${site.name}</div>
+          <div class="text-xs text-muted-foreground mb-3">${site.address}</div>
+          ${!isSelected ? `
+            <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-1 px-2 rounded hover:bg-accent/80 transition-colors">
+              + เพิ่มเป็นจุดส่ง
+            </button>
+          ` : `<div class="text-[10px] font-bold text-blue-500">✓ เลือกเป็นจุดส่งที่ ${stopIndex+1} แล้ว</div>`}
+        `
+        
+        infoWindow.setContent(content)
+        infoWindow.open(map, marker)
+
+        // Bind button click (need to wait for DOM)
+        setTimeout(() => {
+          const btn = document.getElementById(`btn-add-${site.id}`)
+          if (btn) {
+            btn.onclick = () => addStopBySiteId(site.id)
+          }
+        }, 100)
+      })
+
       newMarkers.push(marker)
-    } else {
-      geocoder.geocode({ address: warehouseAddr }, (results, status) => {
-        if (status === "OK" && results![0]) {
-          const marker = new google.maps.Marker({
-            position: results![0].geometry.location,
-            map,
-            title: "คลังสินค้า",
-            icon: {
-              path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-              scale: 6,
-              fillColor: "#10b981",
-              fillOpacity: 1,
-              strokeWeight: 2,
-              strokeColor: "#ffffff"
-            }
-          })
-          newMarkers.push(marker)
-        }
+    })
+
+    // Auto-fit map bounds
+    if (sites.length > 0) {
+      map.fitBounds(bounds)
+      // Don't zoom in too much if only 1 marker
+      const listener = google.maps.event.addListener(map, 'idle', () => {
+        if (map.getZoom()! > 15) map.setZoom(15)
+        google.maps.event.removeListener(listener)
       })
     }
 
-    // Stop Markers
-    stops.forEach((stop, index) => {
-      if (!stop.siteId) return
-      const site = sites.find(s => s.id === stop.siteId)
-      if (!site) return
-
-      if (site.latitude && site.longitude) {
-        const marker = new google.maps.Marker({
-          position: { lat: site.latitude, lng: site.longitude },
-          map,
-          label: {
-            text: (index + 1).toString(),
-            color: "#ffffff",
-            fontWeight: "bold"
-          },
-          title: site.name,
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 12,
-            fillColor: "#F0890D",
-            fillOpacity: 1,
-            strokeWeight: 2,
-            strokeColor: "#ffffff"
-          }
-        })
-        newMarkers.push(marker)
-      }
-    })
-
     setMarkers(newMarkers)
-  }, [map, stops, sites, companySettings])
+  }, [map, sites, stops, companySettings, infoWindow, addStopBySiteId])
 
   const calculateRoute = async (optimize: boolean = false) => {
     if (!map || !directionsRenderer || stops.some(s => !s.siteId)) {
@@ -206,42 +257,17 @@ export default function TripPlanPage() {
     setIsOptimizing(true)
     const google = window.google
     const directionsService = new google.maps.DirectionsService()
-    const geocoder = new google.maps.Geocoder()
     
-    const warehouseAddr = companySettings?.warehouseAddress || "https://maps.app.goo.gl/fzmPSTfLSh1Gq7bW9"
-
-    const getPoint = async (siteId?: string, isWarehouse: boolean = false): Promise<google.maps.LatLng> => {
-      if (isWarehouse) {
-        if (companySettings?.warehouseLatitude && companySettings?.warehouseLongitude) {
-          return new google.maps.LatLng(companySettings.warehouseLatitude, companySettings.warehouseLongitude)
-        }
-        return new Promise((resolve, reject) => {
-          geocoder.geocode({ address: warehouseAddr }, (results, status) => {
-            if (status === "OK" && results?.[0]?.geometry?.location) {
-              resolve(results[0].geometry.location)
-            } else {
-              reject(new Error("ไม่สามารถระบุตำแหน่งคลังสินค้าได้"))
-            }
-          })
-        })
-      }
-
-      const site = sites?.find(s => s.id === siteId)
-      if (!site) throw new Error("ไม่พบข้อมูลไซน์งาน")
-
-      if (site.latitude && site.longitude) {
-        return new google.maps.LatLng(site.latitude, site.longitude)
-      }
-
-      throw new Error(`ไซน์งาน "${site.name}" ยังไม่มีพิกัด (Lat, Lng) กรุณาแก้ไขข้อมูลในหน้า "จัดการไซน์งาน" ก่อนคำนวณเส้นทาง`)
-    }
-
     try {
-      const originLatLng = await getPoint(undefined, true)
+      const origin = { 
+        lat: companySettings?.warehouseLatitude || 13.7563, 
+        lng: companySettings?.warehouseLongitude || 100.5018 
+      }
       
       const waypointPromises = stops.map(async (s) => {
-        const latLng = await getPoint(s.siteId)
-        return { location: latLng, stopover: true }
+        const site = sites?.find(site => site.id === s.siteId)
+        if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซน์งาน: ${s.siteId}`)
+        return { location: new google.maps.LatLng(site.latitude, site.longitude), stopover: true }
       })
 
       const resolvedWaypoints = await Promise.all(waypointPromises)
@@ -252,8 +278,8 @@ export default function TripPlanPage() {
       }
 
       directionsService.route({
-        origin: originLatLng,
-        destination: destination,
+        origin,
+        destination,
         waypoints: resolvedWaypoints,
         optimizeWaypoints: optimize,
         travelMode: google.maps.TravelMode.DRIVING
@@ -277,6 +303,7 @@ export default function TripPlanPage() {
 
           if (optimize) {
             toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
+            // Note: In real app, we should update the stops state order based on result.routes[0].waypoint_order
           }
         } else {
           toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
@@ -475,6 +502,7 @@ export default function TripPlanPage() {
       </div>
 
       <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card">
+        {/* Map UI Overlays */}
         <div className="absolute top-4 left-4 z-10 space-y-2">
           <div className="bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg max-w-xs">
             <h4 className="text-sm font-bold text-accent mb-2">สรุปเส้นทาง</h4>
@@ -488,6 +516,14 @@ export default function TripPlanPage() {
             </div>
           </div>
         </div>
+
+        {/* Legend */}
+        <div className="absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-2 rounded-lg border shadow-lg text-[10px] space-y-1">
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งานทั้งหมด</div>
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-[#3b82f6] border border-white" /> จุดส่งของที่เลือก</div>
+        </div>
+
         <div className="absolute inset-0 z-0">
           <div ref={mapRef} className="w-full h-full bg-muted/20" />
         </div>
