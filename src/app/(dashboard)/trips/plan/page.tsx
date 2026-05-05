@@ -11,8 +11,8 @@ import {
   Truck,
   User,
   Calendar as CalendarIcon,
-  Search,
-  Route as RouteIcon
+  Route as RouteIcon,
+  Loader2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -29,30 +29,35 @@ import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-descripti
 import { useToast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-
-const MOCK_VEHICLES = [
-  { id: 'v1', plate: '1กก 1234', type: 'Pickup', capacity: 1500 },
-  { id: 'v2', plate: 'ผห 5678', type: '4-wheel truck', capacity: 3500 },
-  { id: 'v3', plate: '7กก 9012', type: '6-wheel truck', capacity: 7000 },
-]
-
-const MOCK_DRIVERS = [
-  { id: 'd1', name: 'นายสมชาย รักดี', phone: '081-234-5678' },
-  { id: 'd2', name: 'นายวิชัย ใจตรง', phone: '089-876-5432' },
-]
-
-const MOCK_SITES = [
-  { id: 's1', name: 'โครงการ ABC สุขุมวิท 50' },
-  { id: 's2', name: 'อาคารสำนักงาน XYZ บางนา' },
-  { id: 's3', name: 'The Base Park West' },
-]
+import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
+import { collection, serverTimestamp, doc } from "firebase/firestore"
+import { Site, Vehicle, Driver } from "@/types/models"
+import { addDocumentNonBlocking } from "@/firebase/non-blocking-updates"
+import { useRouter } from "next/navigation"
 
 export default function TripPlanPage() {
   const { toast } = useToast()
+  const db = useFirestore()
+  const router = useRouter()
+  
+  // Data Fetching
+  const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
+  const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
+  const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
+  
+  const { data: sites } = useCollection<Site>(sitesRef)
+  const { data: vehicles } = useCollection<Vehicle>(vehiclesRef)
+  const { data: drivers } = useCollection<Driver>(driversRef)
+
+  // Form State
+  const [vehicleId, setVehicleId] = React.useState("")
+  const [driverId, setDriverId] = React.useState("")
+  const [tripDate, setTripDate] = React.useState(new Date().toISOString().split('T')[0])
   const [stops, setStops] = React.useState([
     { id: '1', siteId: '', cargo: '' }
   ])
   const [isLoadingAi, setIsLoadingAi] = React.useState<string | null>(null)
+  const [isSaving, setIsSaving] = React.useState(false)
 
   const addStop = () => {
     if (stops.length < 10) {
@@ -103,9 +108,60 @@ export default function TripPlanPage() {
     }
   }
 
+  const handleSaveTrip = async () => {
+    if (!vehicleId || !driverId || !tripDate) {
+      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกรถ คนขับ และวันที่", variant: "destructive" })
+      return
+    }
+
+    if (stops.some(s => !s.siteId)) {
+      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกไซน์งานให้ครบทุกจุดจอด", variant: "destructive" })
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      const tripsRef = collection(db, "trips")
+      const tripId = `T-${Date.now()}`
+      
+      // Save Main Trip
+      addDocumentNonBlocking(tripsRef, {
+        id: tripId,
+        tripDate,
+        vehicleId,
+        driverId,
+        status: "Planned",
+        departureSiteId: "warehouse",
+        stopIds: [], // Will update later or handle via subcollection
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+
+      // Save Trip Stops as subcollection
+      stops.forEach((stop, index) => {
+        const stopRef = collection(db, "trips", tripId, "tripStops")
+        addDocumentNonBlocking(stopRef, {
+          id: `S-${tripId}-${index}`,
+          tripId: tripId,
+          siteId: stop.siteId,
+          orderIndex: index,
+          plannedCargoDescription: stop.cargo,
+          driverId: driverId, // Denormalized for security
+          createdAt: serverTimestamp(),
+        })
+      })
+
+      toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
+      router.push("/trips/history")
+    } catch (error) {
+      toast({ title: "Error", description: "เกิดข้อผิดพลาดในการบันทึก", variant: "destructive" })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
     <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-160px)] animate-in slide-in-from-bottom-4 duration-700">
-      {/* Left Panel: Configuration */}
       <div className="w-full lg:w-1/2 flex flex-col gap-6 overflow-y-auto pr-2">
         <Card className="border-accent/20">
           <CardHeader>
@@ -120,13 +176,13 @@ export default function TripPlanPage() {
                 <label className="text-sm font-medium flex items-center gap-2">
                   <Truck className="h-4 w-4 text-muted-foreground" /> รถขนส่ง
                 </label>
-                <Select>
+                <Select value={vehicleId} onValueChange={setVehicleId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="เลือกยพาหนะ" />
+                    <SelectValue placeholder="เลือกพาหนะ" />
                   </SelectTrigger>
                   <SelectContent>
-                    {MOCK_VEHICLES.map(v => (
-                      <SelectItem key={v.id} value={v.id}>{v.plate} ({v.type})</SelectItem>
+                    {vehicles?.map(v => (
+                      <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -135,12 +191,12 @@ export default function TripPlanPage() {
                 <label className="text-sm font-medium flex items-center gap-2">
                   <User className="h-4 w-4 text-muted-foreground" /> คนขับรถ
                 </label>
-                <Select>
+                <Select value={driverId} onValueChange={setDriverId}>
                   <SelectTrigger>
                     <SelectValue placeholder="เลือกคนขับ" />
                   </SelectTrigger>
                   <SelectContent>
-                    {MOCK_DRIVERS.map(d => (
+                    {drivers?.map(d => (
                       <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -150,7 +206,7 @@ export default function TripPlanPage() {
                 <label className="text-sm font-medium flex items-center gap-2">
                   <CalendarIcon className="h-4 w-4 text-muted-foreground" /> วันที่ส่งของ
                 </label>
-                <Input type="date" />
+                <Input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium flex items-center gap-2">
@@ -197,7 +253,7 @@ export default function TripPlanPage() {
                             <SelectValue placeholder="เลือกไซน์งานปลายทาง" />
                           </SelectTrigger>
                           <SelectContent>
-                            {MOCK_SITES.map(s => (
+                            {sites?.map(s => (
                               <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                             ))}
                           </SelectContent>
@@ -238,12 +294,13 @@ export default function TripPlanPage() {
         </div>
 
         <div className="flex gap-4 pt-4 sticky bottom-0 bg-background/80 backdrop-blur pb-4">
-          <Button className="flex-1 bg-accent hover:bg-accent/90">บันทึกแผนเที่ยววิ่ง</Button>
-          <Button variant="outline" className="flex-1">พิมพ์ใบงานขนส่ง</Button>
+          <Button className="flex-1 bg-accent hover:bg-accent/90" onClick={handleSaveTrip} disabled={isSaving}>
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} บันทึกแผนเที่ยววิ่ง
+          </Button>
+          <Button variant="outline" className="flex-1" onClick={() => window.print()}>พิมพ์ใบงานขนส่ง</Button>
         </div>
       </div>
 
-      {/* Right Panel: Interactive Map */}
       <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card">
         <div className="absolute top-4 left-4 z-10 space-y-2">
           <div className="bg-background/90 backdrop-blur p-3 rounded-lg border shadow-lg max-w-xs">
@@ -251,35 +308,24 @@ export default function TripPlanPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span>ระยะทางรวม:</span>
-                <span className="font-bold text-primary-foreground">24.5 กม.</span>
+                <span className="font-bold text-primary-foreground">-- กม.</span>
               </div>
               <div className="flex justify-between">
                 <span>เวลาเดินทางรวม:</span>
-                <span className="font-bold text-primary-foreground">1 ชม. 15 นาที</span>
+                <span className="font-bold text-primary-foreground">-- ชม. -- นาที</span>
               </div>
             </div>
-            <Button size="sm" className="w-full mt-3 h-8 text-xs bg-primary hover:bg-primary/90">
+            <Button size="sm" className="w-full mt-3 h-8 text-xs bg-primary hover:bg-primary/90" onClick={() => toast({ title: "Optimization", description: "ระบบกำลังคำนวณเส้นทางที่ดีที่สุด..." })}>
               <Navigation className="mr-2 h-3 w-3" /> Auto-Optimize Route
             </Button>
           </div>
         </div>
 
         <div className="map-container flex items-center justify-center bg-muted/20 relative">
-          {/* Placeholder for Google Map */}
           <div className="absolute inset-0 flex items-center justify-center flex-col text-muted-foreground p-8 text-center">
             <MapPin className="h-12 w-12 mb-4 animate-bounce" />
             <p className="text-lg font-medium">Google Maps Interface</p>
-            <p className="text-sm opacity-70">เส้นทางจะปรากฏที่นี่เมื่อคุณเลือกจุดส่งของ</p>
-            <div className="mt-8 grid grid-cols-2 gap-4 w-full max-w-sm">
-              <div className="p-4 rounded-lg bg-background/50 border flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full bg-accent text-white flex items-center justify-center text-xs font-bold">W</div>
-                <div className="text-left text-xs">Warehouse</div>
-              </div>
-              <div className="p-4 rounded-lg bg-background/50 border flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">1</div>
-                <div className="text-left text-xs">Site Destination</div>
-              </div>
-            </div>
+            <p className="text-sm opacity-70">เชื่อมต่อกับ Google Maps API เพื่อแสดงเส้นทาง</p>
           </div>
           
           <div className="absolute bottom-4 right-4 z-10">
