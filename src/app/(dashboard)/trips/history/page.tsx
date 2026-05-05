@@ -203,6 +203,12 @@ export default function TripHistoryPage() {
       {/* Worksheet Dialog */}
       <Dialog open={isWorksheetOpen} onOpenChange={setIsWorksheetOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="sr-only">
+            <DialogTitle>ใบงานการขนส่ง (Delivery Worksheet)</DialogTitle>
+            <DialogDescription>
+              รายละเอียดและใบกำกับการขนส่งสำหรับ Trip ID: {selectedTrip?.id}
+            </DialogDescription>
+          </DialogHeader>
           <div id="worksheet-content" className="p-4 bg-white text-black rounded-lg">
             <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
               <div>
