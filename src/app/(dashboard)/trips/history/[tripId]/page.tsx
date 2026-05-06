@@ -14,7 +14,9 @@ import {
   Route as RouteIcon,
   Loader2,
   AlertCircle,
-  Phone
+  Phone,
+  History,
+  Info
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -26,10 +28,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useDoc, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, updateDoc, serverTimestamp, collection } from "firebase/firestore"
-import { Trip, TripStatus, CompanySetting, Site, Driver } from "@/types/models"
+import { doc, updateDoc, serverTimestamp, collection, query, orderBy } from "firebase/firestore"
+import { Trip, TripStatus, CompanySetting, Site, Driver, TripEditLog } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
+import { format } from "date-fns"
+import { th } from "date-fns/locale"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
@@ -41,7 +45,7 @@ export default function TripDetailPage() {
   const tripId = params.tripId as string
   
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
-  const { data: trip, isLoading: isTripLoading } = useDoc<any>(tripRef)
+  const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
   
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: allSites, isLoading: isSitesLoading } = useCollection<Site>(sitesRef)
@@ -51,6 +55,10 @@ export default function TripDetailPage() {
   
   const driverRef = useMemoFirebase(() => trip?.driverId ? doc(db, "drivers", trip.driverId) : null, [db, trip?.driverId])
   const { data: driverData } = useDoc<Driver>(driverRef)
+
+  // Fetch Edit Logs
+  const editLogsRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "editLogs"), orderBy("editedAt", "desc")), [db, tripId])
+  const { data: editLogs } = useCollection<TripEditLog>(editLogsRef)
 
   const mapRef = React.useRef<HTMLDivElement>(null)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
@@ -130,6 +138,8 @@ export default function TripDetailPage() {
   }, [companySettings])
 
   const handleStatusChange = async (newStatus: TripStatus) => {
+    if (!trip) return
+    const tripRef = doc(db, "trips", trip.id)
     await updateDoc(tripRef, { 
       status: newStatus,
       updatedAt: serverTimestamp()
@@ -243,6 +253,52 @@ export default function TripDetailPage() {
                 ))}
               </CardContent>
             </Card>
+
+            {/* Edit History Section */}
+            {editLogs && editLogs.length > 0 && (
+              <Card className="border-accent/20">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <History className="h-5 w-5 text-accent" /> ประวัติการแก้ไข
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {editLogs.map((log) => (
+                    <div key={log.id} className="p-4 rounded-lg bg-secondary/10 border border-border/50 text-sm space-y-2">
+                      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-1">
+                        <p className="font-bold text-accent">
+                          แก้ไขเมื่อ {log.editedAt?.toDate() ? format(log.editedAt.toDate(), "dd/MM/yyyy HH:mm", { locale: th }) : "-"}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">โดย {log.editedBy}</p>
+                      </div>
+                      
+                      <div className="space-y-1 pl-2 border-l-2 border-accent/20">
+                        {log.changes.vehicle && (
+                          <p className="text-xs">🚗 เปลี่ยนรถ: {log.changes.vehicle.from} → {log.changes.vehicle.to}</p>
+                        )}
+                        {log.changes.driver && (
+                          <p className="text-xs">👤 เปลี่ยนคนขับ: {log.changes.driver.from} → {log.changes.driver.to}</p>
+                        )}
+                        {log.changes.stopsAdded && log.changes.stopsAdded.length > 0 && (
+                          <p className="text-xs">➕ เพิ่มจุดส่ง: {log.changes.stopsAdded.join(", ")}</p>
+                        )}
+                        {log.changes.stopsRemoved && log.changes.stopsRemoved.length > 0 && (
+                          <p className="text-xs">❌ ลบจุดส่ง: {log.changes.stopsRemoved.join(", ")}</p>
+                        )}
+                        {log.changes.cargoChanged && (
+                          <p className="text-xs">📦 มีการแก้ไขรายละเอียดสินค้า</p>
+                        )}
+                      </div>
+
+                      <div className="mt-2 flex items-start gap-2 text-xs italic text-muted-foreground bg-secondary/5 p-2 rounded">
+                        <Info className="h-3 w-3 shrink-0 mt-0.5" />
+                        <span>หมายเหตุ: {log.note}</span>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           <div className="space-y-6">

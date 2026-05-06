@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Filter, Calendar, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, Phone } from "lucide-react"
+import { Search, Filter, Calendar, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, Phone, Edit, Plus, AlertTriangle, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -29,9 +29,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
-import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc } from "firebase/firestore"
-import { Trip, TripStatus, UserProfile, Driver } from "@/types/models"
+import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc, addDoc } from "firebase/firestore"
+import { Trip, TripStatus, UserProfile, Driver, Vehicle, Site, TripStop } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
@@ -46,10 +48,11 @@ export default function TripHistoryPage() {
   const { data: profile } = useDoc<UserProfile>(userProfileRef)
   
   const isViewer = profile?.role === 'viewer'
+  const isAdmin = profile?.role === 'admin'
 
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedStatus, setSelectedStatus] = React.useState("all")
-  const [selectedTrip, setSelectedTrip] = React.useState<any | null>(null)
+  const [selectedTrip, setSelectedTrip] = React.useState<Trip | null>(null)
   const [isWorksheetOpen, setIsWorksheetOpen] = React.useState(false)
 
   const [tripToDelete, setTripToDelete] = React.useState<any | null>(null)
@@ -58,11 +61,32 @@ export default function TripHistoryPage() {
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = React.useState(false)
 
+  // Edit Trip States
+  const [isEditOpen, setIsEditOpen] = React.useState(false)
+  const [editingTrip, setEditingTrip] = React.useState<Trip | null>(null)
+  const [editFormData, setEditFormData] = React.useState<{
+    vehicleId: string;
+    driverId: string;
+    stops: TripStop[];
+    note: string;
+  }>({
+    vehicleId: "",
+    driverId: "",
+    stops: [],
+    note: ""
+  })
+
   const tripsRef = useMemoFirebase(() => query(collection(db, "trips"), orderBy("createdAt", "desc")), [db])
-  const { data: trips, isLoading } = useCollection<any>(tripsRef)
+  const { data: trips, isLoading } = useCollection<Trip>(tripsRef)
 
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: drivers } = useCollection<Driver>(driversRef)
+
+  const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
+  const { data: vehicles } = useCollection<Vehicle>(vehiclesRef)
+
+  const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
+  const { data: sites } = useCollection<Site>(sitesRef)
 
   const filteredTrips = trips?.filter(trip => {
     const searchStr = (trip.tripId || trip.id || "").toLowerCase();
@@ -84,6 +108,87 @@ export default function TripHistoryPage() {
       updatedAt: serverTimestamp()
     })
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} แล้ว` })
+  }
+
+  const handleOpenEdit = (trip: Trip) => {
+    if (isViewer) return
+    
+    const canEdit = isAdmin || (profile?.role === 'dispatcher' && (trip.status === 'Planned' || trip.status === 'In Progress'))
+    if (!canEdit) {
+      toast({ title: "สิทธิ์ไม่เพียงพอ", description: "ไม่สามารถแก้ไขเที่ยววิ่งที่เสร็จสิ้นหรือยกเลิกแล้วได้", variant: "destructive" })
+      return
+    }
+
+    if (trip.status === 'Completed' && !confirm("เที่ยววิ่งนี้เสร็จสิ้นแล้ว ต้องการแก้ไขจริงหรือไม่?")) {
+      return
+    }
+
+    setEditingTrip(trip)
+    setEditFormData({
+      vehicleId: trip.vehicleId,
+      driverId: trip.driverId,
+      stops: [...trip.stops],
+      note: ""
+    })
+    setIsEditOpen(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editingTrip || !user) return
+    if (!editFormData.note.trim()) {
+      toast({ title: "กรุณาระบุหมายเหตุ", description: "ต้องระบุเหตุผลในการแก้ไขเพื่อบันทึกประวัติ", variant: "destructive" })
+      return
+    }
+
+    try {
+      const tripRef = doc(db, "trips", editingTrip.id)
+      const selectedVehicle = vehicles?.find(v => v.id === editFormData.vehicleId)
+      const selectedDriver = drivers?.find(d => d.id === editFormData.driverId)
+
+      const changes: any = {}
+      if (editingTrip.vehicleId !== editFormData.vehicleId) {
+        changes.vehicle = { from: editingTrip.vehiclePlate, to: selectedVehicle?.licensePlate || "" }
+      }
+      if (editingTrip.driverId !== editFormData.driverId) {
+        changes.driver = { from: editingTrip.driverName, to: selectedDriver?.name || "" }
+      }
+
+      const oldStops = editingTrip.stops.map(s => s.siteName)
+      const newStops = editFormData.stops.map(s => s.siteName)
+      
+      const added = newStops.filter(s => !oldStops.includes(s))
+      const removed = oldStops.filter(s => !newStops.includes(s))
+      
+      if (added.length > 0) changes.stopsAdded = added
+      if (removed.length > 0) changes.stopsRemoved = removed
+      
+      const cargoChanged = JSON.stringify(editingTrip.stops.map(s => s.cargoDetails)) !== JSON.stringify(editFormData.stops.map(s => s.cargoDetails))
+      if (cargoChanged) changes.cargoChanged = true
+
+      // Update Trip
+      await updateDoc(tripRef, {
+        vehicleId: editFormData.vehicleId,
+        vehiclePlate: selectedVehicle?.licensePlate || "",
+        driverId: editFormData.driverId,
+        driverName: selectedDriver?.name || "",
+        stops: editFormData.stops.map((s, idx) => ({ ...s, order: idx })),
+        updatedAt: serverTimestamp()
+      })
+
+      // Add Log
+      const logRef = collection(db, "trips", editingTrip.id, "editLogs")
+      await addDoc(logRef, {
+        editedAt: serverTimestamp(),
+        editedBy: user.email,
+        note: editFormData.note,
+        changes
+      })
+
+      toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลเที่ยววิ่ง ${editingTrip.tripId} เรียบร้อยแล้ว` })
+      setIsEditOpen(false)
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })
+    }
   }
 
   const initiateDelete = (trip: any) => {
@@ -332,17 +437,30 @@ export default function TripHistoryPage() {
                 </Button>
                 
                 {!isViewer && (
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      initiateDelete(trip);
-                    }}
-                  >
-                    <Trash2 className="h-5 w-5" />
-                  </Button>
+                  <>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-9 w-9 text-muted-foreground hover:text-accent hover:bg-accent/10"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenEdit(trip);
+                      }}
+                    >
+                      <Edit className="h-5 w-5" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        initiateDelete(trip);
+                      }}
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </Button>
+                  </>
                 )}
                 
                 <div className="flex items-center justify-center h-9 w-9">
@@ -353,6 +471,125 @@ export default function TripHistoryPage() {
           </Card>
         ))}
       </div>
+
+      {/* Edit Trip Dialog */}
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="max-w-[95%] sm:max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit className="h-5 w-5 text-accent" /> แก้ไขเที่ยววิ่ง {editingTrip?.tripId}
+            </DialogTitle>
+            <DialogDescription>
+              ปรับปรุงข้อมูลรถ คนขับ หรือจุดส่งของ พร้อมบันทึกเหตุผลการแก้ไข
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>เปลี่ยนรถ</Label>
+                <Select 
+                  value={editFormData.vehicleId} 
+                  onValueChange={(val) => setEditFormData({...editFormData, vehicleId: val})}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {vehicles?.map(v => <SelectItem key={v.id} value={v.id}>{v.licensePlate} ({v.type})</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>เปลี่ยนคนขับ</Label>
+                <Select 
+                  value={editFormData.driverId} 
+                  onValueChange={(val) => setEditFormData({...editFormData, driverId: val})}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {drivers?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-bold">จัดการจุดส่งของ</Label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 border-accent text-accent">
+                      <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดแวะ
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                    {sites?.map(site => (
+                      <DropdownMenuItem key={site.id} onClick={() => {
+                        setEditFormData({
+                          ...editFormData,
+                          stops: [...editFormData.stops, { siteId: site.id, siteName: site.name, order: editFormData.stops.length, cargoDetails: "" }]
+                        })
+                      }}>
+                        {site.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+
+              <div className="space-y-3">
+                {editFormData.stops.map((stop, idx) => (
+                  <div key={idx} className="flex gap-3 p-3 bg-secondary/20 rounded-lg border border-border/50">
+                    <div className="w-6 h-6 rounded-full bg-accent text-accent-foreground flex items-center justify-center text-xs font-bold shrink-0">
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <p className="font-bold text-sm text-accent">{stop.siteName}</p>
+                      <Textarea 
+                        placeholder="รายละเอียดสินค้า..." 
+                        className="text-xs min-h-[60px]"
+                        value={stop.cargoDetails}
+                        onChange={(e) => {
+                          const newStops = [...editFormData.stops]
+                          newStops[idx].cargoDetails = e.target.value
+                          setEditFormData({...editFormData, stops: newStops})
+                        }}
+                      />
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-muted-foreground hover:text-destructive h-8 w-8"
+                      onClick={() => {
+                        const newStops = editFormData.stops.filter((_, i) => i !== idx)
+                        setEditFormData({...editFormData, stops: newStops})
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-destructive">หมายเหตุการแก้ไข *</Label>
+              <Textarea 
+                placeholder="เช่น เปลี่ยนรถเพราะรถเสีย, เพิ่มจุดส่งตามที่แจ้งเพิ่ม"
+                className="bg-destructive/5 border-destructive/20"
+                value={editFormData.note}
+                onChange={(e) => setEditFormData({...editFormData, note: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-row gap-2 mt-4">
+            <Button variant="outline" className="flex-1 h-11" onClick={() => setIsEditOpen(false)}>ยกเลิก</Button>
+            <Button className="flex-1 h-11 bg-accent" onClick={handleSaveEdit}>
+              <Save className="mr-2 h-4 w-4" /> บันทึกการแก้ไข
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <DialogContent className="sm:max-w-[425px] rounded-xl w-[95%]">

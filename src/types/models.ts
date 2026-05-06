@@ -48,6 +48,14 @@ export interface CompanySetting {
 
 export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
 
+export interface TripStop {
+  siteId: string;
+  siteName: string;
+  order: number;
+  cargoDetails: string;
+  actualCargoDescription?: string;
+}
+
 export interface Trip {
   id: string;
   tripId: string;
@@ -57,19 +65,27 @@ export interface Trip {
   vehicleId: string;
   vehiclePlate: string;
   departureSiteId: string;
-  stops: {
-    siteId: string;
-    siteName: string;
-    order: number;
-    cargoDetails: string;
-    actualCargoDescription?: string;
-  }[];
+  stops: TripStop[];
   status: TripStatus;
   totalDistanceKm?: number;
   totalEstimatedTimeMinutes?: number;
   routePolyline?: string;
   createdAt?: any;
   updatedAt?: any;
+}
+
+export interface TripEditLog {
+  id: string;
+  editedAt: any;
+  editedBy: string;
+  note: string;
+  changes: {
+    vehicle?: { from: string; to: string };
+    driver?: { from: string; to: string };
+    stopsAdded?: string[];
+    stopsRemoved?: string[];
+    cargoChanged?: boolean;
+  };
 }
 
 export type UserRole = 'admin' | 'dispatcher' | 'viewer';
