@@ -93,6 +93,7 @@ export default function TripPlanPage() {
   const [draftTime, setDraftTime] = React.useState<number | null>(null)
   const [showSaveIndicator, setShowSaveIndicator] = React.useState(false)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
+  const [isAutoCalculating, setIsAutoCalculating] = React.useState(false)
 
   // Map State
   const mapRef = React.useRef<HTMLDivElement>(null)
@@ -104,6 +105,9 @@ export default function TripPlanPage() {
   const [infoWindow, setInfoWindow] = React.useState<google.maps.InfoWindow | null>(null)
   const [hoveredSiteId, setHoveredSiteId] = React.useState<string | null>(null)
   const [pinnedSiteId, setPinnedSiteId] = React.useState<string | null>(null)
+
+  // Tracker for auto-calculation
+  const hasInitialLoaded = React.useRef(false)
 
   // Distance Caching & Visuals
   const distanceCache = React.useRef<Map<string, number>>(new Map())
@@ -127,6 +131,10 @@ export default function TripPlanPage() {
         console.error("Failed to parse draft", e)
       }
     }
+    // Set initial load to true after draft logic
+    setTimeout(() => {
+      hasInitialLoaded.current = true
+    }, 500)
   }, [])
 
   // Persistence: Auto-save Effect
@@ -150,6 +158,92 @@ export default function TripPlanPage() {
 
     return () => clearTimeout(timeout)
   }, [vehicleId, driverId, tripDate, departurePointId, stops, isSaving])
+
+  const calculateRoute = React.useCallback(async (optimize: boolean = false, isAuto: boolean = false) => {
+    if (!map || !directionsRenderer || stops.some(s => !s.siteId) || !isApiLoaded) {
+      if (!isAuto) {
+        toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุจุดส่งของให้ครบถ้วนก่อนคำนวณเส้นทาง", variant: "destructive" })
+      }
+      return
+    }
+
+    if (isAuto) setIsAutoCalculating(true)
+    else setIsOptimizing(true)
+    
+    const google = window.google
+    const directionsService = new google.maps.DirectionsService()
+    
+    try {
+      const origin = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
+      const waypointPromises = stops.map(async (s) => {
+        const site = sites?.find(site => site.id === s.siteId)
+        if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซน์งาน: ${site?.name || s.siteId}`)
+        return { location: new google.maps.LatLng(site.latitude, site.longitude), stopover: true }
+      })
+
+      const resolvedWaypoints = await Promise.all(waypointPromises)
+      const destination = resolvedWaypoints.pop()?.location
+
+      if (!destination) throw new Error("กรุณาระบุจุดส่งของอย่างน้อย 1 จุด")
+
+      directionsService.route({
+        origin,
+        destination,
+        waypoints: resolvedWaypoints,
+        optimizeWaypoints: optimize,
+        travelMode: google.maps.TravelMode.DRIVING
+      }, (result, status) => {
+        setIsOptimizing(false)
+        setIsAutoCalculating(false)
+        if (status === "OK" && result) {
+          directionsRenderer.setDirections(result)
+          const legs = result.routes[0].legs
+          let totalDistance = 0
+          let totalDuration = 0
+          legs.forEach(leg => {
+            totalDistance += leg.distance?.value || 0
+            totalDuration += leg.duration?.value || 0
+          })
+
+          setRouteStats({
+            distance: (totalDistance / 1000).toFixed(1) + " กม.",
+            duration: Math.floor(totalDuration / 3600) + " ชม. " + Math.floor((totalDuration % 3600) / 60) + " นาที",
+            distanceNum: totalDistance / 1000,
+            durationNum: totalDuration / 60
+          })
+
+          if (optimize) {
+            toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
+          }
+        } else {
+          if (!isAuto) {
+            toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
+          }
+        }
+      })
+    } catch (error: any) {
+      setIsOptimizing(false)
+      setIsAutoCalculating(false)
+      if (!isAuto) {
+        toast({ title: "แจ้งเตือน", description: error.message, variant: "destructive" })
+      }
+    }
+  }, [map, directionsRenderer, stops, isApiLoaded, sites, toast]);
+
+  // Auto-calculate Effect
+  React.useEffect(() => {
+    if (!hasInitialLoaded.current || !isApiLoaded) return;
+    
+    // Check if we have valid stops
+    const hasValidStops = stops.every(s => s.siteId !== "");
+    if (!hasValidStops) return;
+
+    const timer = setTimeout(() => {
+      calculateRoute(false, true)
+    }, 1000)
+
+    return () => clearTimeout(timer)
+  }, [stops, departurePointId, isApiLoaded, calculateRoute])
 
   const useDraftData = () => {
     const draftJson = localStorage.getItem(STORAGE_KEY)
@@ -591,67 +685,6 @@ export default function TripPlanPage() {
     setMarkers(newMarkers)
   }, [map, sites, stops, infoWindow, addStopBySiteId, isApiLoaded])
 
-  const calculateRoute = async (optimize: boolean = false) => {
-    if (!map || !directionsRenderer || stops.some(s => !s.siteId) || !isApiLoaded) {
-      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุจุดส่งของให้ครบถ้วนก่อนคำนวณเส้นทาง", variant: "destructive" })
-      return
-    }
-
-    setIsOptimizing(true)
-    const google = window.google
-    const directionsService = new google.maps.DirectionsService()
-    
-    try {
-      const origin = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
-      const waypointPromises = stops.map(async (s) => {
-        const site = sites?.find(site => site.id === s.siteId)
-        if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซน์งาน: ${s.siteId}`)
-        return { location: new google.maps.LatLng(site.latitude, site.longitude), stopover: true }
-      })
-
-      const resolvedWaypoints = await Promise.all(waypointPromises)
-      const destination = resolvedWaypoints.pop()?.location
-
-      if (!destination) throw new Error("กรุณาระบุจุดส่งของอย่างน้อย 1 จุด")
-
-      directionsService.route({
-        origin,
-        destination,
-        waypoints: resolvedWaypoints,
-        optimizeWaypoints: optimize,
-        travelMode: google.maps.TravelMode.DRIVING
-      }, (result, status) => {
-        setIsOptimizing(false)
-        if (status === "OK" && result) {
-          directionsRenderer.setDirections(result)
-          const legs = result.routes[0].legs
-          let totalDistance = 0
-          let totalDuration = 0
-          legs.forEach(leg => {
-            totalDistance += leg.distance?.value || 0
-            totalDuration += leg.duration?.value || 0
-          })
-
-          setRouteStats({
-            distance: (totalDistance / 1000).toFixed(1) + " กม.",
-            duration: Math.floor(totalDuration / 3600) + " ชม. " + Math.floor((totalDuration % 3600) / 60) + " นาที",
-            distanceNum: totalDistance / 1000,
-            durationNum: totalDuration / 60
-          })
-
-          if (optimize) {
-            toast({ title: "สำเร็จ!", description: "จัดเรียงลำดับจุดจอดที่สั้นที่สุดให้เรียบร้อยแล้ว" })
-          }
-        } else {
-          toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
-        }
-      })
-    } catch (error: any) {
-      setIsOptimizing(false)
-      toast({ title: "แจ้งเตือน", description: error.message, variant: "destructive" })
-    }
-  }
-
   const addStop = () => {
     if (stops.length < 10) {
       setStops([...stops, { id: Date.now().toString(), siteId: '', cargo: '' }])
@@ -692,7 +725,14 @@ export default function TripPlanPage() {
     }
 
     setIsSaving(true)
+    
     try {
+      // Ensure we have a calculated route before saving
+      if (!routeStats || routeStats.distanceNum === 0) {
+        toast({ title: "ระบบคำนวณอัตโนมัติ", description: "กำลังคำนวณเส้นทางก่อนบันทึก..." })
+        await calculateRoute(false, true);
+      }
+
       const selectedVehicle = vehicles?.find(v => v.id === vehicleId)
       const selectedDriver = drivers?.find(d => d.id === driverId)
       
@@ -712,6 +752,16 @@ export default function TripPlanPage() {
           }
         })
       
+      const distanceAvailable = routeStats && routeStats.distanceNum > 0;
+      
+      if (!distanceAvailable) {
+        toast({ 
+          title: "แจ้งเตือน", 
+          description: "ไซน์งานบางแห่งไม่มีพิกัด ระยะทางอาจไม่ถูกต้อง", 
+          variant: "destructive" 
+        });
+      }
+
       await setDoc(tripRef, {
         id: tripId,
         tripId: tripId,
@@ -725,6 +775,7 @@ export default function TripPlanPage() {
         totalDistanceKm: routeStats?.distanceNum || 0,
         totalEstimatedTimeMinutes: Math.round(routeStats?.durationNum || 0),
         status: "Planned",
+        distanceCalculated: distanceAvailable,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -870,20 +921,29 @@ export default function TripPlanPage() {
             <div className="bg-background/90 backdrop-blur p-3 md:p-4 rounded-lg border shadow-xl sm:max-w-xs">
               <h4 className="text-xs md:text-sm font-bold text-accent mb-2 flex items-center gap-2">
                 <RouteIcon className="h-4 w-4" /> สรุปเส้นทาง
+                {(isOptimizing || isAutoCalculating) && (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                )}
               </h4>
               <div className="space-y-1 md:space-y-2 text-[10px] md:text-xs">
-                <div className="flex justify-between items-center py-1 border-b border-border/50">
-                  <span className="text-muted-foreground">ระยะทางรวม:</span>
-                  <span className="font-bold text-sm md:text-base text-white">{routeStats?.distance || "-- กม."}</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-border/50">
-                  <span className="text-muted-foreground">เวลาเดินทาง:</span>
-                  <span className="font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
-                </div>
+                {isAutoCalculating && !routeStats ? (
+                  <p className="py-2 text-muted-foreground animate-pulse">กำลังคำนวณ...</p>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center py-1 border-b border-border/50">
+                      <span className="text-muted-foreground">ระยะทางรวม:</span>
+                      <span className="font-bold text-sm md:text-base text-white">{routeStats?.distance || "-- กม."}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-1 border-b border-border/50">
+                      <span className="text-muted-foreground">เวลาเดินทาง:</span>
+                      <span className="font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
+                    </div>
+                  </>
+                )}
               </div>
               <div className="flex gap-2 mt-3 md:mt-4">
-                <Button size="sm" className="flex-1 h-9 text-[10px] md:text-[11px] bg-primary hover:bg-primary/90" onClick={() => calculateRoute(false)} disabled={isOptimizing}>คำนวณ</Button>
-                <Button size="sm" variant="outline" className="flex-1 h-9 text-[10px] md:text-[11px] border-accent text-accent" onClick={() => calculateRoute(true)} disabled={isOptimizing}>สั้นที่สุด</Button>
+                <Button size="sm" className="flex-1 h-9 text-[10px] md:text-[11px] bg-primary hover:bg-primary/90" onClick={() => calculateRoute(false)} disabled={isOptimizing || isAutoCalculating}>คำนวณ</Button>
+                <Button size="sm" variant="outline" className="flex-1 h-9 text-[10px] md:text-[11px] border-accent text-accent" onClick={() => calculateRoute(true)} disabled={isOptimizing || isAutoCalculating}>สั้นที่สุด</Button>
               </div>
             </div>
           </div>
