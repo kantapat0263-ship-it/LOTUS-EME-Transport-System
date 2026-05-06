@@ -9,7 +9,7 @@ import { useRouter, usePathname } from "next/navigation"
 import { doc } from "firebase/firestore"
 import { UserProfile } from "@/types/models"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 
 export default function DashboardLayout({
@@ -109,6 +109,10 @@ export default function DashboardLayout({
                   </Button>
                 </SheetTrigger>
                 <SheetContent side="left" className="p-0 w-72 bg-sidebar border-r-0">
+                  <SheetHeader className="sr-only">
+                    <SheetTitle>เมนูนำทาง</SheetTitle>
+                    <SheetDescription>เข้าถึงส่วนต่างๆ ของระบบบริหารการขนส่ง</SheetDescription>
+                  </SheetHeader>
                   <AppSidebar userRole={profile?.role || 'viewer'} profileName={profile?.name} isMobile />
                 </SheetContent>
               </Sheet>

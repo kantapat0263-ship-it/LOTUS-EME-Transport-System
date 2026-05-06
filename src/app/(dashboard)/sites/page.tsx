@@ -531,15 +531,15 @@ export default function SitesPage() {
       {/* Map Picker Modal */}
       <Dialog open={isMapPickerOpen} onOpenChange={setIsMapPickerOpen}>
         <DialogContent className="sm:max-w-[700px] h-screen sm:h-[600px] flex flex-col p-0 overflow-hidden w-full sm:w-auto">
-          <div className="p-4 border-b bg-background flex justify-between items-center">
-            <div>
-              <h3 className="font-bold text-sm md:text-base">เลือกพิกัดไซน์งาน</h3>
-              <p className="text-[10px] md:text-xs text-muted-foreground">คลิกบนแผนที่เพื่อปักหมุด</p>
+          <DialogHeader className="p-4 border-b bg-background flex justify-between items-center space-y-0">
+            <div className="flex flex-col">
+              <DialogTitle className="font-bold text-sm md:text-base">เลือกพิกัดไซน์งาน</DialogTitle>
+              <DialogDescription className="text-[10px] md:text-xs text-muted-foreground">คลิกบนแผนที่เพื่อปักหมุด</DialogDescription>
             </div>
             <Button size="sm" variant="ghost" onClick={() => setIsMapPickerOpen(false)} className="h-8 w-8 p-0">
                <AlertCircle className="h-5 w-5" />
             </Button>
-          </div>
+          </DialogHeader>
           <div ref={mapPickerRef} className="flex-1 w-full bg-muted" />
           <div className="p-4 border-t bg-background flex flex-col sm:flex-row gap-3 justify-between items-center">
             <div className="text-[10px] md:text-xs text-center sm:text-left">
