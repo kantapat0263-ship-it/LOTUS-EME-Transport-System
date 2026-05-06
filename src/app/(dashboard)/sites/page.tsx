@@ -45,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Site, ProjectType, UserProfile } from "@/types/models"
+import { Site, ProjectType, UserProfile, CompanySetting } from "@/types/models"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
 import { collection, doc, serverTimestamp } from "firebase/firestore"
 import { useForm } from "react-hook-form"
@@ -55,8 +55,6 @@ import { setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlo
 import { useToast } from "@/hooks/use-toast"
 import { Loader } from "@googlemaps/js-api-loader"
 import { cn } from "@/lib/utils"
-
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
 
 const siteSchema = z.object({
   name: z.string().min(2, "กรุณาระบุชื่อไซน์งาน"),
@@ -78,6 +76,10 @@ export default function SitesPage() {
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile } = useDoc<UserProfile>(userProfileRef)
   
+  // Fetch settings for Google Maps API Key fallback
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+  const { data: companySettings } = useDoc<CompanySetting>(settingsRef)
+  
   const isViewer = profile?.role === 'viewer'
 
   const [searchTerm, setSearchTerm] = React.useState("")
@@ -88,7 +90,6 @@ export default function SitesPage() {
   const [map, setMap] = React.useState<google.maps.Map | null>(null)
   const [marker, setMarker] = React.useState<google.maps.Marker | null>(null)
 
-  // Only query if user is authenticated to prevent permission errors
   const sitesRef = useMemoFirebase(() => (db && user) ? collection(db, "sites") : null, [db, user])
   const { data: sites, isLoading } = useCollection<Site>(sitesRef)
 
@@ -103,9 +104,12 @@ export default function SitesPage() {
   })
 
   React.useEffect(() => {
-    if (isMapPickerOpen && mapPickerRef.current && GOOGLE_MAPS_API_KEY) {
+    // Dynamic API Key from Env or Firestore Settings
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
+    
+    if (isMapPickerOpen && mapPickerRef.current && apiKey) {
       const loader = new Loader({
-        apiKey: GOOGLE_MAPS_API_KEY,
+        apiKey: apiKey,
         version: "weekly"
       })
 
@@ -153,7 +157,7 @@ export default function SitesPage() {
         setMarker(newMarker)
       })
     }
-  }, [isMapPickerOpen, GOOGLE_MAPS_API_KEY, form])
+  }, [isMapPickerOpen, companySettings, form])
 
   const filteredSites = sites?.filter(site => 
     site.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -288,7 +292,6 @@ export default function SitesPage() {
             </div>
           </div>
 
-          {/* Desktop Table View */}
           <div className="hidden md:block">
             <Table>
               <TableHeader>
@@ -372,7 +375,6 @@ export default function SitesPage() {
             </Table>
           </div>
 
-          {/* Mobile Card View */}
           <div className="md:hidden">
             {isLoading ? (
               <div className="p-8 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
@@ -537,7 +539,6 @@ export default function SitesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Map Picker Modal */}
       <Dialog open={isMapPickerOpen} onOpenChange={setIsMapPickerOpen}>
         <DialogContent className="sm:max-w-[700px] h-screen sm:h-[600px] flex flex-col p-0 overflow-hidden w-full sm:w-auto">
           <DialogHeader className="p-4 border-b bg-background flex justify-between items-center space-y-0">

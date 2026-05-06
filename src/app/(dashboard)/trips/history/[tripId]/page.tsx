@@ -26,11 +26,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useDoc, useFirestore, useMemoFirebase } from "@/firebase"
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore"
-import { Trip, TripStatus } from "@/types/models"
+import { Trip, TripStatus, CompanySetting } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
 
@@ -43,12 +42,16 @@ export default function TripDetailPage() {
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading } = useDoc<any>(tripRef)
   
+  // Fetch settings for Google Maps API Key fallback
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+  const { data: companySettings } = useDoc<CompanySetting>(settingsRef)
+  
   const mapRef = React.useRef<HTMLDivElement>(null)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
 
   // Initialize Map
   React.useEffect(() => {
-    if (!mapRef.current || !GOOGLE_MAPS_API_KEY || !trip || !isApiLoaded) return
+    if (!mapRef.current || !trip || !isApiLoaded) return
 
     const google = window.google
     const map = new google.maps.Map(mapRef.current!, {
@@ -75,7 +78,8 @@ export default function TripDetailPage() {
         location: s.siteName,
         stopover: true
       }))
-      const destination = waypoints.pop().location
+      const lastStop = waypoints.pop()
+      const destination = lastStop.location
 
       directionsService.route({
         origin,
@@ -88,12 +92,14 @@ export default function TripDetailPage() {
     }
   }, [trip, isApiLoaded])
 
-  // Load Google Maps API
+  // Load Google Maps API with fallback
   React.useEffect(() => {
-    if (!GOOGLE_MAPS_API_KEY) return
-    const loader = new Loader({ apiKey: GOOGLE_MAPS_API_KEY, version: "weekly" })
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
+    if (!apiKey) return
+    
+    const loader = new Loader({ apiKey: apiKey, version: "weekly" })
     loader.load().then(() => setIsApiLoaded(true))
-  }, [])
+  }, [companySettings])
 
   const handleStatusChange = async (newStatus: TripStatus) => {
     await updateDoc(tripRef, { 

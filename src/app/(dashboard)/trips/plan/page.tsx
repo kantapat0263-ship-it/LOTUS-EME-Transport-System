@@ -57,7 +57,6 @@ import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
 import { Loader } from "@googlemaps/js-api-loader"
 
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
 const STORAGE_KEY = "lotus_trip_draft"
@@ -176,12 +175,14 @@ export default function TripPlanPage() {
     toast({ title: "ล้างข้อมูลเรียบร้อย", description: "เริ่มต้นเขียนแผนใหม่แล้ว" })
   }
 
-  // Initialize Map
+  // Initialize Map with API Key fallback
   React.useEffect(() => {
-    if (!mapRef.current || !GOOGLE_MAPS_API_KEY) return
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
+    
+    if (!mapRef.current || !apiKey) return
 
     const loader = new Loader({
-      apiKey: GOOGLE_MAPS_API_KEY,
+      apiKey: apiKey,
       version: "weekly",
       libraries: ["places", "geometry"]
     })
@@ -214,7 +215,7 @@ export default function TripPlanPage() {
       setInfoWindow(new google.maps.InfoWindow())
       setIsApiLoaded(true)
     })
-  }, [])
+  }, [companySettings])
 
   // Calculate Distance Matrix
   const fetchDistanceMatrix = React.useCallback(async () => {
