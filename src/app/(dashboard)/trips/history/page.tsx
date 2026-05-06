@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Filter, Calendar, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, CheckCircle2 } from "lucide-react"
+import { Search, Filter, Calendar, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, Phone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -31,7 +31,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
 import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc } from "firebase/firestore"
-import { Trip, TripStatus, UserProfile } from "@/types/models"
+import { Trip, TripStatus, UserProfile, Driver } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
@@ -60,6 +60,9 @@ export default function TripHistoryPage() {
 
   const tripsRef = useMemoFirebase(() => query(collection(db, "trips"), orderBy("createdAt", "desc")), [db])
   const { data: trips, isLoading } = useCollection<any>(tripsRef)
+
+  const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
+  const { data: drivers } = useCollection<Driver>(driversRef)
 
   const filteredTrips = trips?.filter(trip => {
     const searchStr = (trip.tripId || trip.id || "").toLowerCase();
@@ -158,6 +161,11 @@ export default function TripHistoryPage() {
       case 'Cancelled': return 'bg-destructive text-white hover:bg-destructive/90';
       default: return '';
     }
+  }
+
+  const getDriverPhone = (driverId: string) => {
+    const driver = drivers?.find(d => d.id === driverId);
+    return driver?.phoneNumber || "ไม่มีข้อมูลเบอร์ติดต่อ";
   }
 
   return (
@@ -403,6 +411,10 @@ export default function TripHistoryPage() {
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase text-gray-500">ข้อมูลคนขับ</p>
                 <p className="text-base md:text-lg font-bold">{selectedTrip?.driverName}</p>
+                <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                  <Phone className="h-3 w-3" />
+                  <span>เบอร์ติดต่อ: {selectedTrip ? getDriverPhone(selectedTrip.driverId) : ""}</span>
+                </div>
               </div>
               <div className="space-y-1 text-left sm:text-right">
                 <p className="text-[10px] font-bold uppercase text-gray-500">ข้อมูลยานพาหนะ</p>

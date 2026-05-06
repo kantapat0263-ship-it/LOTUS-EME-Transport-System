@@ -13,7 +13,8 @@ import {
   Clock, 
   Route as RouteIcon,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Phone
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useDoc, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, updateDoc, serverTimestamp, collection } from "firebase/firestore"
-import { Trip, TripStatus, CompanySetting, Site } from "@/types/models"
+import { Trip, TripStatus, CompanySetting, Site, Driver } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 
@@ -48,6 +49,9 @@ export default function TripDetailPage() {
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<CompanySetting>(settingsRef)
   
+  const driverRef = useMemoFirebase(() => trip?.driverId ? doc(db, "drivers", trip.driverId) : null, [db, trip?.driverId])
+  const { data: driverData } = useDoc<Driver>(driverRef)
+
   const mapRef = React.useRef<HTMLDivElement>(null)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
 
@@ -201,6 +205,10 @@ export default function TripDetailPage() {
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><User className="h-3 w-3" /> คนขับ</p>
                     <p className="font-bold text-sm md:text-base">{trip.driverName}</p>
+                    <p className="text-[10px] text-accent flex items-center gap-1">
+                      <Phone className="h-2.5 w-2.5" />
+                      {driverData?.phoneNumber || "ไม่ระบุเบอร์"}
+                    </p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><Truck className="h-3 w-3" /> ทะเบียนรถ</p>
@@ -288,6 +296,7 @@ export default function TripDetailPage() {
             <p className="text-xs font-bold text-gray-600 uppercase">ข้อมูลคนขับและรถ</p>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <span className="font-semibold text-gray-700">ชื่อคนขับ:</span> <span>{trip.driverName}</span>
+              <span className="font-semibold text-gray-700">เบอร์ติดต่อ:</span> <span>{driverData?.phoneNumber || "ไม่มีข้อมูลเบอร์ติดต่อ"}</span>
               <span className="font-semibold text-gray-700">ทะเบียนรถ:</span> <span>{trip.vehiclePlate}</span>
               <span className="font-semibold text-gray-700">พิกัดเริ่มต้น:</span> <span>คลังสินค้าหลัก LOTUS</span>
             </div>
