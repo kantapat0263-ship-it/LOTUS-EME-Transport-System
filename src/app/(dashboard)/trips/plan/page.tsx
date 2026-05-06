@@ -59,7 +59,6 @@ import { Loader } from "@googlemaps/js-api-loader"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
-const STORAGE_KEY = "lotus_trip_draft"
 
 export default function TripPlanPage() {
   const { toast } = useToast()
@@ -89,9 +88,6 @@ export default function TripPlanPage() {
   // UI State
   const [isLoadingAi, setIsLoadingAi] = React.useState<string | null>(null)
   const [isSaving, setIsSaving] = React.useState(false)
-  const [showDraftBanner, setShowDraftBanner] = React.useState(false)
-  const [draftTime, setDraftTime] = React.useState<number | null>(null)
-  const [showSaveIndicator, setShowSaveIndicator] = React.useState(false)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
   const [isAutoCalculating, setIsAutoCalculating] = React.useState(false)
 
@@ -106,9 +102,6 @@ export default function TripPlanPage() {
   const [hoveredSiteId, setHoveredSiteId] = React.useState<string | null>(null)
   const [pinnedSiteId, setPinnedSiteId] = React.useState<string | null>(null)
 
-  // Tracker for auto-calculation
-  const hasInitialLoaded = React.useRef(false)
-
   // Distance Caching & Visuals
   const distanceCache = React.useRef<Map<string, number>>(new Map())
   const distanceLinesRef = React.useRef<google.maps.Polyline[]>([])
@@ -118,46 +111,6 @@ export default function TripPlanPage() {
   const [distanceMatrix, setDistanceMatrix] = React.useState<Record<string, Record<string, number>>>({})
   const [isMatrixLoading, setIsMatrixLoading] = React.useState(false)
   const [isMatrixOpen, setIsMatrixOpen] = React.useState(false)
-  
-  // Persistence: Restore Draft on Mount
-  React.useEffect(() => {
-    const draftJson = localStorage.getItem(STORAGE_KEY)
-    if (draftJson) {
-      try {
-        const draft = JSON.parse(draftJson)
-        setDraftTime(draft.lastUpdated)
-        setShowDraftBanner(true)
-      } catch (e) {
-        console.error("Failed to parse draft", e)
-      }
-    }
-    // Set initial load to true after draft logic
-    setTimeout(() => {
-      hasInitialLoaded.current = true
-    }, 500)
-  }, [])
-
-  // Persistence: Auto-save Effect
-  React.useEffect(() => {
-    if (isSaving) return;
-    
-    const draftData = {
-      vehicleId,
-      driverId,
-      date: tripDate,
-      departurePointId,
-      stops,
-      lastUpdated: Date.now()
-    }
-    
-    const timeout = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(draftData))
-      setShowSaveIndicator(true)
-      setTimeout(() => setShowSaveIndicator(false), 2000)
-    }, 1000)
-
-    return () => clearTimeout(timeout)
-  }, [vehicleId, driverId, tripDate, departurePointId, stops, isSaving])
 
   const calculateRoute = React.useCallback(async (optimize: boolean = false, isAuto: boolean = false) => {
     if (!map || !directionsRenderer || stops.some(s => !s.siteId) || !isApiLoaded) {
@@ -232,9 +185,8 @@ export default function TripPlanPage() {
 
   // Auto-calculate Effect
   React.useEffect(() => {
-    if (!hasInitialLoaded.current || !isApiLoaded) return;
+    if (!isApiLoaded) return;
     
-    // Check if we have valid stops
     const hasValidStops = stops.every(s => s.siteId !== "");
     if (!hasValidStops) return;
 
@@ -245,20 +197,6 @@ export default function TripPlanPage() {
     return () => clearTimeout(timer)
   }, [stops, departurePointId, isApiLoaded, calculateRoute])
 
-  const useDraftData = () => {
-    const draftJson = localStorage.getItem(STORAGE_KEY)
-    if (draftJson) {
-      const draft = JSON.parse(draftJson)
-      setVehicleId(draft.vehicleId || "")
-      setDriverId(draft.driverId || "")
-      setTripDate(draft.date || new Date().toISOString().split('T')[0])
-      setDeparturePointId(draft.departurePointId || "warehouse")
-      setStops(draft.stops || [{ id: '1', siteId: '', cargo: '' }])
-      setShowDraftBanner(false)
-      toast({ title: "กู้คืนข้อมูลสำเร็จ", description: "ข้อมูลร่างถูกนำมาใช้งานแล้ว" })
-    }
-  }
-
   const resetForm = () => {
     setVehicleId("")
     setDriverId("")
@@ -266,8 +204,6 @@ export default function TripPlanPage() {
     setDeparturePointId("warehouse")
     setStops([{ id: '1', siteId: '', cargo: '' }])
     setRouteStats(null)
-    localStorage.removeItem(STORAGE_KEY)
-    setShowDraftBanner(false)
     if (directionsRenderer) directionsRenderer.setDirections({ routes: [] } as any)
     toast({ title: "ล้างข้อมูลเรียบร้อย", description: "เริ่มต้นเขียนแผนใหม่แล้ว" })
   }
@@ -322,7 +258,7 @@ export default function TripPlanPage() {
     }
   }, [])
 
-  // Calculate Distance Matrix (for the table) - Batch to avoid MAX_ELEMENTS error
+  // Calculate Distance Matrix (for the table)
   const fetchDistanceMatrix = React.useCallback(async () => {
     if (!sites || sites.length === 0 || !window.google || !isApiLoaded) return
     if (!google.maps.DistanceMatrixService) return
@@ -444,7 +380,7 @@ export default function TripPlanPage() {
     return bestId
   }, [distanceMatrix, sites])
 
-  // Draw Hover/Pinned Distance Lines with REAL ROAD DISTANCE
+  // Draw Hover/Pinned Distance Lines
   React.useEffect(() => {
     if (!map || !sites || !window.google || !isApiLoaded) return
     const google = window.google
@@ -780,7 +716,6 @@ export default function TripPlanPage() {
         updatedAt: serverTimestamp(),
       })
 
-      localStorage.removeItem(STORAGE_KEY)
       toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
       router.push("/trips/history")
     } catch (error) {
@@ -794,22 +729,6 @@ export default function TripPlanPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden no-print">
-      {showDraftBanner && (
-        <Alert className="bg-accent/10 border-accent/50 text-accent-foreground animate-in slide-in-from-top duration-300 mb-4">
-          <RotateCcw className="h-4 w-4" />
-          <AlertTitle className="font-bold flex items-center gap-2 text-sm">
-            📋 พบข้อมูลค้างจากครั้งที่แล้ว
-          </AlertTitle>
-          <AlertDescription className="flex flex-col sm:flex-row sm:items-center justify-between mt-2 gap-3">
-            <span className="text-xs">คุณต้องการนำข้อมูลที่บันทึกไว้อัตโนมัติกลับมาใช้งานต่อหรือไม่?</span>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="h-8 text-xs border-accent text-accent hover:bg-accent/10 flex-1 sm:flex-none" onClick={useDraftData}>ใช้ข้อมูลเดิม</Button>
-              <Button size="sm" variant="ghost" className="h-8 text-xs flex-1 sm:flex-none" onClick={() => { localStorage.removeItem(STORAGE_KEY); setShowDraftBanner(false); }}>เริ่มใหม่</Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
-
       <div className="flex flex-col lg:flex-row gap-6 h-auto">
         <div className="w-full lg:w-1/2 flex flex-col gap-6">
           <Card className="border-accent/20 bg-card/50">
@@ -817,11 +736,6 @@ export default function TripPlanPage() {
               <CardTitle className="text-lg md:text-xl flex items-center gap-2">
                 <RouteIcon className="text-accent" /> ข้อมูลทั่วไป
               </CardTitle>
-              {showSaveIndicator && (
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground animate-pulse">
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
-                </div>
-              )}
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
