@@ -277,7 +277,7 @@ export default function TripDetailPage() {
                           <p className="text-xs">🚗 เปลี่ยนรถ: {log.changes.vehicle.from} → {log.changes.vehicle.to}</p>
                         )}
                         {log.changes.driver && (
-                          <p className="text-xs">👤 เปลี่ยนคนขับ: {log.changes.driver.from} → {log.changes.driver.to}</p>
+                          <p className="text-xs">👤 เปลี่ยนคนับ: {log.changes.driver.from} → {log.changes.driver.to}</p>
                         )}
                         {log.changes.stopsAdded && log.changes.stopsAdded.length > 0 && (
                           <p className="text-xs">➕ เพิ่มจุดส่ง: {log.changes.stopsAdded.join(", ")}</p>
@@ -308,7 +308,7 @@ export default function TripDetailPage() {
                   <RouteIcon className="h-4 w-4 text-accent" /> เส้นทางการเดินทาง
                 </CardTitle>
               </CardHeader>
-              <div ref={mapRef} className="w-full h-full bg-muted" />
+              <div ref={mapRef} className="w-full h-full bg-muted/20" />
             </Card>
             
             <Card>
@@ -330,7 +330,7 @@ export default function TripDetailPage() {
       <div className="print-only w-full bg-white text-black p-4 font-sans leading-relaxed">
         <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
           <div>
-            <h1 className="text-3xl font-bold uppercase tracking-tighter">LOTUS EME</h1>
+            <h1 className="text-3xl font-bold uppercase tracking-tighter">LOTUS GROUP</h1>
             <h2 className="text-xl font-semibold">ใบงานการขนส่ง (Delivery Worksheet)</h2>
           </div>
           <div className="text-right">

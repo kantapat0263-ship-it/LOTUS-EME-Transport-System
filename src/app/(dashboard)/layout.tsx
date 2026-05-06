@@ -118,7 +118,7 @@ export default function DashboardLayout({
               </Sheet>
             </div>
             <h1 className="text-base md:text-lg font-semibold text-accent truncate max-w-[150px] sm:max-w-none">
-              LOTUS EME Transport
+              LOTUS GROUP Transport
             </h1>
           </div>
           <div className="flex items-center gap-4">

@@ -155,7 +155,7 @@ export default function LoginPage() {
               <Truck className="h-10 w-10 md:h-12 md:w-12 text-accent" />
             </div>
           </div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">LOTUS EME</h1>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">LOTUS GROUP</h1>
           <p className="text-sm md:text-base text-muted-foreground">ระบบจัดการขนส่งและวัสดุก่อสร้าง</p>
         </div>
 

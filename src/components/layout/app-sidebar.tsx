@@ -75,7 +75,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     >
       <div className="flex h-16 items-center justify-between px-4 py-4 border-b">
         {!isActuallyCollapsed && (
-          <span className="text-xl font-bold text-accent">LOTUS EME</span>
+          <span className="text-xl font-bold text-accent">LOTUS GROUP</span>
         )}
         {!isMobile ? (
           <Button 
@@ -88,7 +88,6 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
           </Button>
         ) : (
           <Button variant="ghost" size="icon" className="lg:hidden">
-            {/* The Sheet component handles its own X usually, but we could add one here if needed */}
           </Button>
         )}
       </div>

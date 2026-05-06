@@ -4,8 +4,8 @@ import {Toaster} from '@/components/ui/toaster';
 import { FirebaseClientProvider } from '@/firebase';
 
 export const metadata: Metadata = {
-  title: 'LOTUS EME Transport Management',
-  description: 'Logistics and material delivery management for LOTUS EME',
+  title: 'LOTUS GROUP Transport Management',
+  description: 'Logistics and material delivery management for LOTUS GROUP',
 };
 
 export default function RootLayout({

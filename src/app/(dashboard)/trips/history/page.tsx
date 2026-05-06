@@ -636,7 +636,7 @@ export default function TripHistoryPage() {
           <div id="worksheet-content" className="p-2 md:p-4 bg-white text-black rounded-lg">
             <div className="flex flex-col sm:flex-row justify-between items-start border-b-2 border-black pb-4 mb-6 gap-2">
               <div>
-                <h1 className="text-xl md:text-2xl font-bold uppercase">LOTUS EME Delivery</h1>
+                <h1 className="text-xl md:text-2xl font-bold uppercase">LOTUS GROUP Delivery</h1>
                 <p className="text-[10px] md:text-sm">ใบกำกับการขนส่งวัสดุและสินค้า</p>
               </div>
               <div className="text-left sm:text-right">

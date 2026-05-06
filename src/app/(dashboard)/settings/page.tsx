@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -20,8 +21,8 @@ export default function SettingsPage() {
   
   const [isSaving, setIsSaving] = React.useState(false)
   const [formData, setFormData] = React.useState({
-    companyName: "LOTUS EME",
-    warehouseName: "คลังสินค้าหลัก LOTUS EME",
+    companyName: "LOTUS GROUP",
+    warehouseName: "คลังสินค้าหลัก LOTUS GROUP",
     warehouseAddress: "14.094126450195006, 100.6893810570115",
     googleMapsApiKeyReference: ""
   })
@@ -29,8 +30,8 @@ export default function SettingsPage() {
   React.useEffect(() => {
     if (settings) {
       setFormData({
-        companyName: settings.companyName || "LOTUS EME",
-        warehouseName: settings.warehouseName || "คลังสินค้าหลัก LOTUS EME",
+        companyName: settings.companyName || "LOTUS GROUP",
+        warehouseName: settings.warehouseName || "คลังสินค้าหลัก LOTUS GROUP",
         warehouseAddress: settings.warehouseAddress || "14.094126450195006, 100.6893810570115",
         googleMapsApiKeyReference: settings.googleMapsApiKeyReference || ""
       })
