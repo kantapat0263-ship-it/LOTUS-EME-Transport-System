@@ -51,7 +51,6 @@ export default function TripDetailPage() {
   const mapRef = React.useRef<HTMLDivElement>(null)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
 
-  // Initialize Map and Draw Route
   React.useEffect(() => {
     if (!mapRef.current || !trip || !isApiLoaded || !allSites) return
 
@@ -79,12 +78,10 @@ export default function TripDetailPage() {
     })
 
     if (trip.stops && trip.stops.length > 0) {
-      // 1. Determine Origin (Warehouse)
       const originLat = companySettings?.warehouseLatitude || DEFAULT_WAREHOUSE_LAT
       const originLng = companySettings?.warehouseLongitude || DEFAULT_WAREHOUSE_LNG
       const origin = new google.maps.LatLng(originLat, originLng)
 
-      // 2. Map Stop IDs to Coordinates
       const stopPoints = trip.stops.map((s: any) => {
         const site = allSites.find(site => site.id === s.siteId)
         if (site && site.latitude && site.longitude) {
@@ -116,7 +113,6 @@ export default function TripDetailPage() {
     }
   }, [trip, isApiLoaded, allSites, companySettings])
 
-  // Load Google Maps API with fallback
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     if (!apiKey) return
@@ -159,7 +155,6 @@ export default function TripDetailPage() {
 
   return (
     <>
-      {/* SCREEN VIEW */}
       <div className="space-y-6 animate-in fade-in duration-500 no-print">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <Button variant="ghost" onClick={() => router.push('/trips/history')} className="w-full sm:w-auto justify-start">
@@ -200,7 +195,7 @@ export default function TripDetailPage() {
               <CardContent className="p-4 md:p-6 pt-0">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6">
                   <div className="space-y-1">
-                    <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3" /> วันที่ส่ง</p>
+                    <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3 text-white" /> วันที่ส่ง</p>
                     <p className="font-bold text-sm md:text-base">{trip.tripDate}</p>
                   </div>
                   <div className="space-y-1">
@@ -268,7 +263,6 @@ export default function TripDetailPage() {
         </div>
       </div>
 
-      {/* PRINT VIEW */}
       <div className="print-only w-full bg-white text-black p-4 font-sans leading-relaxed">
         <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
           <div>
@@ -322,7 +316,6 @@ export default function TripDetailPage() {
           </div>
         </div>
 
-        {/* Signature Area */}
         <div className="mt-20 grid grid-cols-3 gap-8">
           <div className="text-center space-y-12">
             <div className="border-b border-black w-full" />

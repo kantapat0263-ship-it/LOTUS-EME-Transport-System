@@ -45,7 +45,6 @@ export default function TripHistoryPage() {
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile } = useDoc<UserProfile>(userProfileRef)
   
-  // Default to non-viewer during loading to avoid UI flickering
   const isViewer = profile?.role === 'viewer'
 
   const [searchTerm, setSearchTerm] = React.useState("")
@@ -53,11 +52,9 @@ export default function TripHistoryPage() {
   const [selectedTrip, setSelectedTrip] = React.useState<any | null>(null)
   const [isWorksheetOpen, setIsWorksheetOpen] = React.useState(false)
 
-  // Single Delete State
   const [tripToDelete, setTripToDelete] = React.useState<any | null>(null)
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
 
-  // Bulk Delete State
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = React.useState(false)
 
@@ -207,7 +204,7 @@ export default function TripHistoryPage() {
               </SelectContent>
             </Select>
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white" />
               <Input type="date" className="pl-10 h-11 md:h-10" />
             </div>
             <Button variant="outline" className="w-full h-11 md:h-10">

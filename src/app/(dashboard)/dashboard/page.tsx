@@ -43,14 +43,12 @@ export default function DashboardPage() {
   const todayStr = new Date().toISOString().split('T')[0]
   const yesterdayStr = subDays(new Date(), 1).toISOString().split('T')[0]
   
-  // Only query if both db and user are available to avoid permission errors
   const tripsRef = useMemoFirebase(() => (db && user) ? collection(db, "trips") : null, [db, user])
   const { data: allTrips, isLoading: isLoadingTrips } = useCollection<Trip>(tripsRef)
   
   const sitesRef = useMemoFirebase(() => (db && user) ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db, user])
   const { data: activeSites, isLoading: isLoadingSites } = useCollection<Site>(sitesRef)
 
-  // 1. Stats Calculations
   const stats = React.useMemo(() => {
     if (!allTrips) return { today: 0, yesterday: 0, monthDist: 0, onTimeRate: 0, siteCount: activeSites?.length || 0 }
     
@@ -78,7 +76,6 @@ export default function DashboardPage() {
     }
   }, [allTrips, activeSites, todayStr, yesterdayStr])
 
-  // 2. Weekly Chart Data
   const weeklyData = React.useMemo(() => {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     const result = days.map(day => ({ name: day, trips: 0 }))
@@ -99,7 +96,6 @@ export default function DashboardPage() {
     return result
   }, [allTrips])
 
-  // 3. Most Frequent Sites Data
   const topSitesData = React.useMemo(() => {
     if (!allTrips) return []
     
@@ -116,12 +112,10 @@ export default function DashboardPage() {
       .slice(0, 5)
   }, [allTrips])
 
-  // 4. Today's Trips
   const todayTrips = React.useMemo(() => {
     return allTrips?.filter(t => t.tripDate === todayStr) || []
   }, [allTrips, todayStr])
 
-  // 5. Insights
   const insights = React.useMemo(() => {
     if (!allTrips || allTrips.length === 0) return []
     
@@ -218,7 +212,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">ไซน์งานที่ดูแล</CardTitle>
-            <Calendar className="h-4 w-4 text-accent" />
+            <Calendar className="h-4 w-4 text-white" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.siteCount} แห่ง</div>

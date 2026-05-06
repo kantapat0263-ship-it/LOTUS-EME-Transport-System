@@ -245,13 +245,11 @@ export default function TripPlanPage() {
     const newMatrix: Record<string, Record<string, number>> = {}
 
     try {
-      // Fix: Process row by row to stay within MAX_ELEMENTS (25) per request
       for (let i = 0; i < allPoints.length; i++) {
         const originId = allIds[i]
         const originLatLng = allPoints[i]
         newMatrix[originId] = {}
 
-        // Batch destinations (max 25 per request)
         for (let j = 0; j < allPoints.length; j += 25) {
           const destinationBatch = allPoints.slice(j, j + 25)
           const destinationIdsBatch = allIds.slice(j, j + 25)
@@ -304,7 +302,6 @@ export default function TripPlanPage() {
     const row = distanceMatrix[originId]
     if (!row) return ''
     
-    // Filter out same origin/destination and non-number values for comparison
     const validValues = Object.entries(row)
       .filter(([id, val]) => id !== originId && typeof val === 'number' && val > 0)
       .map(([_, val]) => val as number)
@@ -358,7 +355,6 @@ export default function TripPlanPage() {
     if (!map || !sites || !window.google || !isApiLoaded) return
     const google = window.google
 
-    // Clean up existing visual aids
     distanceLinesRef.current.forEach(l => l.setMap(null))
     distanceLabelsRef.current.forEach(l => l.setMap(null))
     distanceLinesRef.current = []
@@ -388,7 +384,6 @@ export default function TripPlanPage() {
         { lat: dest.latitude!, lng: dest.longitude! }
       ]
 
-      // Draw dotted line (visual only)
       const line = new google.maps.Polyline({
         path,
         map,
@@ -409,7 +404,6 @@ export default function TripPlanPage() {
       })
       distanceLinesRef.current.push(line)
 
-      // Calculate label position (middle of dotted line)
       const midPoint = google.maps.geometry.spherical.interpolate(originLatLng, destLatLng, 0.5)
       
       const cacheKey = `${originSite.latitude},${originSite.longitude}->${dest.latitude},${dest.longitude}`
@@ -438,9 +432,7 @@ export default function TripPlanPage() {
       }
     })
 
-    // Fetch real road distances for uncached destinations
     if (destinationsToFetch.length > 0) {
-      // Batch destinations (max 25 per request)
       for (let i = 0; i < destinationsToFetch.length; i += 25) {
         const batch = destinationsToFetch.slice(i, i + 25)
         
@@ -463,7 +455,6 @@ export default function TripPlanPage() {
                 distanceCache.current.set(cacheKey, roadDistKm)
                 displayText = `${roadDistKm.toFixed(1)} กม.`
               } else {
-                // Fallback to straight line if road calculation fails
                 const straightDistMeters = google.maps.geometry.spherical.computeDistanceBetween(originLatLng, destItem.latLng)
                 const straightDistKm = straightDistMeters / 1000
                 displayText = `${straightDistKm.toFixed(1)} กม. (เส้นตรง)`
@@ -546,11 +537,13 @@ export default function TripPlanPage() {
         position: pos,
         map,
         title: site.name,
-        label: isSelected ? {
-          text: (stopIndex + 1).toString(),
+        label: {
+          text: isSelected ? `${stopIndex + 1}: ${site.name}` : site.name,
           color: "#ffffff",
-          fontWeight: "bold"
-        } : undefined,
+          fontSize: "10px",
+          fontWeight: "bold",
+          className: "bg-black/60 px-1.5 py-0.5 rounded border border-white/20 translate-y-6 whitespace-nowrap"
+        },
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: isSelected ? 14 : 10,
@@ -767,7 +760,6 @@ export default function TripPlanPage() {
       )}
 
       <div className="flex flex-col lg:flex-row gap-6 h-auto">
-        {/* Left Panel - Form */}
         <div className="w-full lg:w-1/2 flex flex-col gap-6">
           <Card className="border-accent/20 bg-card/50">
             <CardHeader className="pb-4 flex flex-row items-center justify-between space-y-0">
@@ -873,7 +865,6 @@ export default function TripPlanPage() {
           </div>
         </div>
 
-        {/* Right Panel - Map */}
         <div className="w-full lg:w-1/2 relative rounded-xl overflow-hidden border border-border shadow-2xl bg-card min-h-[350px] md:min-h-[500px] lg:min-h-0">
           <div className="absolute top-2 left-2 md:top-4 md:left-4 z-10 space-y-2 w-[calc(100%-16px)] sm:w-auto">
             <div className="bg-background/90 backdrop-blur p-3 md:p-4 rounded-lg border shadow-xl sm:max-w-xs">
