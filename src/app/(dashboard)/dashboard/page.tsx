@@ -43,11 +43,11 @@ export default function DashboardPage() {
   const todayStr = new Date().toISOString().split('T')[0]
   const yesterdayStr = subDays(new Date(), 1).toISOString().split('T')[0]
   
-  // Queries - Only run if firestore is ready
-  const tripsRef = useMemoFirebase(() => db ? collection(db, "trips") : null, [db])
+  // Only query if both db and user are available to avoid permission errors
+  const tripsRef = useMemoFirebase(() => (db && user) ? collection(db, "trips") : null, [db, user])
   const { data: allTrips, isLoading: isLoadingTrips } = useCollection<Trip>(tripsRef)
   
-  const sitesRef = useMemoFirebase(() => db ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db])
+  const sitesRef = useMemoFirebase(() => (db && user) ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db, user])
   const { data: activeSites, isLoading: isLoadingSites } = useCollection<Site>(sitesRef)
 
   // 1. Stats Calculations
@@ -131,7 +131,8 @@ export default function DashboardPage() {
     })
     const topDriver = Object.entries(driverCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "-"
     
-    const avgDist = allTrips.reduce((acc, t) => acc + (t.totalDistanceKm || 0), 0) / allTrips.length
+    const totalDist = allTrips.reduce((acc, t) => acc + (t.totalDistanceKm || 0), 0)
+    const avgDist = allTrips.length > 0 ? totalDist / allTrips.length : 0
     
     return [
       {
@@ -158,7 +159,7 @@ export default function DashboardPage() {
     ]
   }, [allTrips])
 
-  if (isLoadingTrips || isLoadingSites) {
+  if (isLoadingTrips || isLoadingSites || !user) {
     return (
       <div className="flex h-[80vh] items-center justify-center">
         <div className="flex flex-col items-center gap-4">

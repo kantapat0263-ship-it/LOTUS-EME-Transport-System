@@ -88,7 +88,8 @@ export default function SitesPage() {
   const [map, setMap] = React.useState<google.maps.Map | null>(null)
   const [marker, setMarker] = React.useState<google.maps.Marker | null>(null)
 
-  const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
+  // Only query if user is authenticated to prevent permission errors
+  const sitesRef = useMemoFirebase(() => (db && user) ? collection(db, "sites") : null, [db, user])
   const { data: sites, isLoading } = useCollection<Site>(sitesRef)
 
   const form = useForm<SiteFormValues>({
@@ -160,7 +161,7 @@ export default function SitesPage() {
   ) || []
 
   function onSubmit(values: SiteFormValues) {
-    if (isViewer) return
+    if (isViewer || !user) return
 
     let latitude: number | undefined = undefined
     let longitude: number | undefined = undefined
@@ -237,6 +238,14 @@ export default function SitesPage() {
       case 'P-ADVANCED': return 'bg-accent/20 text-accent border-accent/30';
       default: return 'bg-gray-500/10 text-gray-500 border-gray-500/20';
     }
+  }
+
+  if (!user) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin text-accent" />
+      </div>
+    )
   }
 
   return (
