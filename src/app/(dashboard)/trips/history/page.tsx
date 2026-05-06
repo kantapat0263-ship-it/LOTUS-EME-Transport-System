@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Filter, Calendar, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2 } from "lucide-react"
+import { Search, Filter, Calendar, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -28,6 +28,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
 import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc } from "firebase/firestore"
 import { Trip, TripStatus, UserProfile } from "@/types/models"
@@ -49,6 +50,14 @@ export default function TripHistoryPage() {
   const [selectedStatus, setSelectedStatus] = React.useState("all")
   const [selectedTrip, setSelectedTrip] = React.useState<any | null>(null)
   const [isWorksheetOpen, setIsWorksheetOpen] = React.useState(false)
+
+  // Single Delete State
+  const [tripToDelete, setTripToDelete] = React.useState<any | null>(null)
+  const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
+
+  // Bulk Delete State
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = React.useState(false)
 
   const tripsRef = useMemoFirebase(() => query(collection(db, "trips"), orderBy("createdAt", "desc")), [db])
   const { data: trips, isLoading } = useCollection<any>(tripsRef)
@@ -75,11 +84,57 @@ export default function TripHistoryPage() {
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} แล้ว` })
   }
 
-  const handleDeleteTrip = async (tripId: string) => {
+  // Single Delete Logic
+  const initiateDelete = (trip: any) => {
     if (isViewer) return
-    if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบทริปนี้?")) {
-      await deleteDoc(doc(db, "trips", tripId))
-      toast({ title: "ลบทริปสำเร็จ" })
+    setTripToDelete(trip)
+    setIsDeleteOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!tripToDelete) return
+    try {
+      await deleteDoc(doc(db, "trips", tripToDelete.id))
+      toast({ title: "ลบสำเร็จ", description: `ลบเที่ยววิ่ง ${tripToDelete.tripId || tripToDelete.id} เรียบร้อยแล้ว` })
+      setIsDeleteOpen(false)
+      setTripToDelete(null)
+      // Remove from selection if it was there
+      const newSelection = new Set(selectedIds)
+      newSelection.delete(tripToDelete.id)
+      setSelectedIds(newSelection)
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
+    }
+  }
+
+  // Bulk Selection Logic
+  const toggleSelect = (id: string) => {
+    const newSelection = new Set(selectedIds)
+    if (newSelection.has(id)) {
+      newSelection.delete(id)
+    } else {
+      newSelection.add(id)
+    }
+    setSelectedIds(newSelection)
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredTrips.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredTrips.map(t => t.id)))
+    }
+  }
+
+  const confirmBulkDelete = async () => {
+    try {
+      const promises = Array.from(selectedIds).map(id => deleteDoc(doc(db, "trips", id)))
+      await Promise.all(promises)
+      toast({ title: "ลบสำเร็จ", description: `ลบทั้งหมด ${selectedIds.size} รายการเรียบร้อยแล้ว` })
+      setSelectedIds(new Set())
+      setIsBulkDeleteOpen(false)
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถลบบางรายการได้", variant: "destructive" })
     }
   }
 
@@ -163,6 +218,32 @@ export default function TripHistoryPage() {
         </CardContent>
       </Card>
 
+      {/* Selection Bar for Bulk Actions */}
+      {!isViewer && filteredTrips.length > 0 && (
+        <div className="flex items-center justify-between bg-secondary/20 p-3 px-4 rounded-xl border border-dashed border-accent/20">
+          <div className="flex items-center gap-3">
+            <Checkbox 
+              id="select-all"
+              checked={selectedIds.size === filteredTrips.length && filteredTrips.length > 0}
+              onCheckedChange={toggleSelectAll}
+            />
+            <label htmlFor="select-all" className="text-xs md:text-sm font-semibold cursor-pointer select-none">
+              เลือกทั้งหมด ({selectedIds.size} รายการ)
+            </label>
+          </div>
+          {selectedIds.size > 0 && (
+            <Button 
+              variant="destructive" 
+              size="sm" 
+              onClick={() => setIsBulkDeleteOpen(true)}
+              className="h-8 md:h-9 px-4 animate-in zoom-in duration-200"
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> ลบที่เลือก
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="space-y-3">
         {isLoading ? (
           <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
@@ -171,9 +252,21 @@ export default function TripHistoryPage() {
             ไม่พบรายการเที่ยววิ่ง
           </div>
         ) : filteredTrips.map((trip) => (
-          <Card key={trip.id} className="hover:border-accent/30 transition-all cursor-pointer overflow-hidden group">
+          <Card key={trip.id} className={cn(
+            "hover:border-accent/30 transition-all cursor-pointer overflow-hidden group relative",
+            selectedIds.has(trip.id) && "border-accent bg-accent/5"
+          )} onClick={() => router.push(`/trips/history/${trip.id}`)}>
             <div className="flex flex-col lg:flex-row items-stretch lg:items-center p-4 gap-4">
+              
               <div className="flex items-center gap-4 w-full lg:w-auto">
+                {!isViewer && (
+                  <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox 
+                      checked={selectedIds.has(trip.id)}
+                      onCheckedChange={() => toggleSelect(trip.id)}
+                    />
+                  </div>
+                )}
                 <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg bg-secondary flex items-center justify-center shrink-0">
                   <Truck className="h-5 w-5 md:h-6 md:w-6 text-accent" />
                 </div>
@@ -186,12 +279,12 @@ export default function TripHistoryPage() {
                       </Badge>
                     ) : (
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                           <Badge className={cn("cursor-pointer text-[10px] h-5", getStatusColor(trip.status))}>
                             {trip.status}
                           </Badge>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent>
+                        <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
                           <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Planned')}>Planned</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'In Progress')}>In Progress</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Completed')}>Completed</DropdownMenuItem>
@@ -232,11 +325,23 @@ export default function TripHistoryPage() {
                 >
                   <FileText className="mr-2 h-4 w-4" /> ใบงาน
                 </Button>
+                {!isViewer && (
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      initiateDelete(trip);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button 
                   variant="ghost" 
                   size="icon" 
                   className="h-9 w-9 group-hover:translate-x-1 transition-transform"
-                  onClick={() => router.push(`/trips/history/${trip.id}`)}
                 >
                   <ChevronRight className="h-5 w-5" />
                 </Button>
@@ -245,6 +350,42 @@ export default function TripHistoryPage() {
           </Card>
         ))}
       </div>
+
+      {/* Single Delete Confirmation Dialog */}
+      <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <DialogContent className="sm:max-w-[425px] rounded-xl w-[95%]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" /> ยืนยันการลบเที่ยววิ่ง
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              คุณต้องการลบเที่ยววิ่ง <span className="font-bold text-foreground">{tripToDelete?.tripId || tripToDelete?.id}</span> ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-row gap-2 mt-4">
+            <Button variant="outline" className="flex-1 h-11" onClick={() => setIsDeleteOpen(false)}>ยกเลิก</Button>
+            <Button variant="destructive" className="flex-1 h-11" onClick={confirmDelete}>ยืนยันลบ</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog open={isBulkDeleteOpen} onOpenChange={setIsBulkDeleteOpen}>
+        <DialogContent className="sm:max-w-[425px] rounded-xl w-[95%]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" /> ยืนยันการลบหลายรายการ
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              คุณต้องการลบเที่ยววิ่งที่เลือกทั้งหมด <span className="font-bold text-foreground">{selectedIds.size} รายการ</span> ใช่หรือไม่? ข้อมูลทั้งหมดจะถูกลบออกจากระบบอย่างถาวร
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-row gap-2 mt-4">
+            <Button variant="outline" className="flex-1 h-11" onClick={() => setIsBulkDeleteOpen(false)}>ยกเลิก</Button>
+            <Button variant="destructive" className="flex-1 h-11" onClick={confirmBulkDelete}>ยืนยันลบ</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Worksheet Dialog */}
       <Dialog open={isWorksheetOpen} onOpenChange={setIsWorksheetOpen}>
