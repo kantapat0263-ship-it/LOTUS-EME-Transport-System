@@ -24,9 +24,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useDoc, useFirestore, useMemoFirebase } from "@/firebase"
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore"
-import { Trip, TripStatus, CompanySetting } from "@/types/models"
+import { useDoc, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
+import { doc, updateDoc, serverTimestamp, collection } from "firebase/firestore"
+import { Trip, TripStatus, CompanySetting, Site } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 
@@ -40,18 +40,20 @@ export default function TripDetailPage() {
   const tripId = params.tripId as string
   
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
-  const { data: trip, isLoading } = useDoc<any>(tripRef)
+  const { data: trip, isLoading: isTripLoading } = useDoc<any>(tripRef)
   
-  // Fetch settings for Google Maps API Key fallback
+  const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
+  const { data: allSites, isLoading: isSitesLoading } = useCollection<Site>(sitesRef)
+  
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<CompanySetting>(settingsRef)
   
   const mapRef = React.useRef<HTMLDivElement>(null)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
 
-  // Initialize Map
+  // Initialize Map and Draw Route
   React.useEffect(() => {
-    if (!mapRef.current || !trip || !isApiLoaded) return
+    if (!mapRef.current || !trip || !isApiLoaded || !allSites) return
 
     const google = window.google
     const map = new google.maps.Map(mapRef.current!, {
@@ -69,35 +71,61 @@ export default function TripDetailPage() {
     const directionsRenderer = new google.maps.DirectionsRenderer({
       map,
       suppressMarkers: false,
-      polylineOptions: { strokeColor: "#F0890D", strokeWeight: 5 }
+      polylineOptions: { 
+        strokeColor: "#F0890D", 
+        strokeWeight: 6,
+        strokeOpacity: 0.8
+      }
     })
 
     if (trip.stops && trip.stops.length > 0) {
-      const origin = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
-      const waypoints = trip.stops.map((s: any) => ({
-        location: s.siteName,
-        stopover: true
-      }))
-      const lastStop = waypoints.pop()
-      const destination = lastStop.location
+      // 1. Determine Origin (Warehouse)
+      const originLat = companySettings?.warehouseLatitude || DEFAULT_WAREHOUSE_LAT
+      const originLng = companySettings?.warehouseLongitude || DEFAULT_WAREHOUSE_LNG
+      const origin = new google.maps.LatLng(originLat, originLng)
 
-      directionsService.route({
-        origin,
-        destination,
-        waypoints,
-        travelMode: google.maps.TravelMode.DRIVING
-      }, (result, status) => {
-        if (status === "OK") directionsRenderer.setDirections(result)
-      })
+      // 2. Map Stop IDs to Coordinates
+      const stopPoints = trip.stops.map((s: any) => {
+        const site = allSites.find(site => site.id === s.siteId)
+        if (site && site.latitude && site.longitude) {
+          return new google.maps.LatLng(site.latitude, site.longitude)
+        }
+        return null
+      }).filter((p: any) => p !== null)
+
+      if (stopPoints.length > 0) {
+        const destination = stopPoints[stopPoints.length - 1]
+        const waypoints = stopPoints.slice(0, -1).map((p: any) => ({
+          location: p,
+          stopover: true
+        }))
+
+        directionsService.route({
+          origin,
+          destination,
+          waypoints,
+          travelMode: google.maps.TravelMode.DRIVING
+        }, (result, status) => {
+          if (status === "OK" && result) {
+            directionsRenderer.setDirections(result)
+          } else {
+            console.warn("Directions request failed due to " + status)
+          }
+        })
+      }
     }
-  }, [trip, isApiLoaded])
+  }, [trip, isApiLoaded, allSites, companySettings])
 
   // Load Google Maps API with fallback
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     if (!apiKey) return
     
-    const loader = new Loader({ apiKey: apiKey, version: "weekly" })
+    const loader = new Loader({ 
+      apiKey: apiKey, 
+      version: "weekly",
+      libraries: ["places", "geometry"]
+    })
     loader.load().then(() => setIsApiLoaded(true))
   }, [companySettings])
 
@@ -118,12 +146,13 @@ export default function TripDetailPage() {
     }
   }
 
-  // Format time properly
   const formatTime = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
     const mins = Math.round(minutes % 60);
-    return `${hours} ชม. ${mins} นาที`;
+    return hours > 0 ? `${hours} ชม. ${mins} นาที` : `${mins} นาที`;
   }
+
+  const isLoading = isTripLoading || isSitesLoading
 
   if (isLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   if (!trip) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><AlertCircle className="h-12 w-12 text-destructive" /><p>ไม่พบข้อมูลเที่ยววิ่ง</p><Button onClick={() => router.push('/trips/history')}>กลับไปหน้าประวัติ</Button></div>
@@ -214,9 +243,11 @@ export default function TripDetailPage() {
           </div>
 
           <div className="space-y-6">
-            <Card className="h-[250px] sm:h-[400px] overflow-hidden sticky top-20 md:top-24">
+            <Card className="h-[300px] sm:h-[450px] overflow-hidden sticky top-20 md:top-24">
               <CardHeader className="bg-background/80 backdrop-blur z-10 border-b p-3">
-                <CardTitle className="text-xs md:text-sm">แผนที่เส้นทาง</CardTitle>
+                <CardTitle className="text-xs md:text-sm flex items-center gap-2">
+                  <RouteIcon className="h-4 w-4 text-accent" /> เส้นทางการเดินทาง
+                </CardTitle>
               </CardHeader>
               <div ref={mapRef} className="w-full h-full bg-muted" />
             </Card>
