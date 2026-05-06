@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { useUser } from '../provider';
 
 /** Utility type to add an 'id' field to a given type T. */
 type WithId<T> = T & { id: string };
@@ -46,9 +47,13 @@ export function useDoc<T = any>(
   const [data, setData] = useState<StateDataType>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<FirestoreError | Error | null>(null);
+  
+  // Access auth state to prevent unauthorized calls
+  const { user, isUserLoading } = useUser();
 
   useEffect(() => {
-    if (!memoizedDocRef) {
+    // CRITICAL: Only subscribe to Firestore AFTER auth is resolved and user is authenticated.
+    if (!memoizedDocRef || isUserLoading || !user) {
       setData(null);
       setIsLoading(false);
       setError(null);
@@ -57,7 +62,6 @@ export function useDoc<T = any>(
 
     setIsLoading(true);
     setError(null);
-    // Optional: setData(null); // Clear previous data instantly
 
     const unsubscribe = onSnapshot(
       memoizedDocRef,
@@ -68,7 +72,7 @@ export function useDoc<T = any>(
           // Document does not exist
           setData(null);
         }
-        setError(null); // Clear any previous error on successful snapshot (even if doc doesn't exist)
+        setError(null);
         setIsLoading(false);
       },
       (error: FirestoreError) => {
@@ -87,7 +91,7 @@ export function useDoc<T = any>(
     );
 
     return () => unsubscribe();
-  }, [memoizedDocRef]); // Re-run if the memoizedDocRef changes.
+  }, [memoizedDocRef, user, isUserLoading]); // Re-run if auth state or docRef changes.
 
   return { data, isLoading, error };
 }

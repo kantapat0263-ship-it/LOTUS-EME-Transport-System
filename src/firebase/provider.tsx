@@ -5,6 +5,7 @@ import { FirebaseApp } from 'firebase/app';
 import { Firestore } from 'firebase/firestore';
 import { Auth, User, onAuthStateChanged } from 'firebase/auth';
 import { FirebaseErrorListener } from '@/components/FirebaseErrorListener'
+import { Loader2 } from 'lucide-react';
 
 interface FirebaseProviderProps {
   children: ReactNode;
@@ -43,7 +44,7 @@ export interface FirebaseServicesAndUser {
 }
 
 // Return type for useUser() - specific to user auth state
-export interface UserHookResult { // Renamed from UserAuthHookResult for consistency if desired, or keep as UserAuthHookResult
+export interface UserHookResult { 
   user: User | null;
   isUserLoading: boolean;
   userError: Error | null;
@@ -67,10 +68,13 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
     userError: null,
   });
 
+  const [authInitialized, setAuthInitialized] = useState(false);
+
   // Effect to subscribe to Firebase auth state changes
   useEffect(() => {
     if (!auth) { // If no Auth service instance, cannot determine user state
       setUserAuthState({ user: null, isUserLoading: false, userError: new Error("Auth service not provided.") });
+      setAuthInitialized(true);
       return;
     }
 
@@ -80,10 +84,12 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
       auth,
       (firebaseUser) => { // Auth state determined
         setUserAuthState({ user: firebaseUser, isUserLoading: false, userError: null });
+        setAuthInitialized(true);
       },
       (error) => { // Auth listener error
         console.error("FirebaseProvider: onAuthStateChanged error:", error);
         setUserAuthState({ user: null, isUserLoading: false, userError: error });
+        setAuthInitialized(true);
       }
     );
     return () => unsubscribe(); // Cleanup
@@ -106,7 +112,14 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
   return (
     <FirebaseContext.Provider value={contextValue}>
       <FirebaseErrorListener />
-      {children}
+      {authInitialized ? children : (
+        <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-10 w-10 animate-spin text-accent" />
+            <p className="text-sm font-medium animate-pulse text-muted-foreground">กำลังเชื่อมต่อระบบรักษาความปลอดภัย...</p>
+          </div>
+        </div>
+      )}
     </FirebaseContext.Provider>
   );
 };
@@ -170,7 +183,7 @@ export function useMemoFirebase<T>(factory: () => T, deps: DependencyList): T | 
  * This provides the User object, loading status, and any auth errors.
  * @returns {UserHookResult} Object with user, isUserLoading, userError.
  */
-export const useUser = (): UserHookResult => { // Renamed from useAuthUser
-  const { user, isUserLoading, userError } = useFirebase(); // Leverages the main hook
+export const useUser = (): UserHookResult => { 
+  const { user, isUserLoading, userError } = useFirebase(); 
   return { user, isUserLoading, userError };
 };
