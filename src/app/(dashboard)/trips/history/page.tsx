@@ -41,9 +41,11 @@ export default function TripHistoryPage() {
   const { toast } = useToast()
   const db = useFirestore()
   const { user } = useUser()
+  
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile } = useDoc<UserProfile>(userProfileRef)
   
+  // Default to non-viewer during loading to avoid UI flickering
   const isViewer = profile?.role === 'viewer'
 
   const [searchTerm, setSearchTerm] = React.useState("")
@@ -84,7 +86,6 @@ export default function TripHistoryPage() {
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} แล้ว` })
   }
 
-  // Single Delete Logic
   const initiateDelete = (trip: any) => {
     if (isViewer) return
     setTripToDelete(trip)
@@ -98,7 +99,6 @@ export default function TripHistoryPage() {
       toast({ title: "ลบสำเร็จ", description: `ลบเที่ยววิ่ง ${tripToDelete.tripId || tripToDelete.id} เรียบร้อยแล้ว` })
       setIsDeleteOpen(false)
       setTripToDelete(null)
-      // Remove from selection if it was there
       const newSelection = new Set(selectedIds)
       newSelection.delete(tripToDelete.id)
       setSelectedIds(newSelection)
@@ -107,7 +107,6 @@ export default function TripHistoryPage() {
     }
   }
 
-  // Bulk Selection Logic
   const toggleSelect = (id: string) => {
     const newSelection = new Set(selectedIds)
     if (newSelection.has(id)) {
@@ -218,7 +217,6 @@ export default function TripHistoryPage() {
         </CardContent>
       </Card>
 
-      {/* Selection Bar for Bulk Actions */}
       {!isViewer && filteredTrips.length > 0 && (
         <div className="flex items-center justify-between bg-secondary/20 p-3 px-4 rounded-xl border border-dashed border-accent/20">
           <div className="flex items-center gap-3">
@@ -278,19 +276,21 @@ export default function TripHistoryPage() {
                         {trip.status}
                       </Badge>
                     ) : (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Badge className={cn("cursor-pointer text-[10px] h-5", getStatusColor(trip.status))}>
-                            {trip.status}
-                          </Badge>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
-                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Planned')}>Planned</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'In Progress')}>In Progress</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Completed')}>Completed</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Cancelled')}>Cancelled</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Badge className={cn("cursor-pointer text-[10px] h-5", getStatusColor(trip.status))}>
+                              {trip.status}
+                            </Badge>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent>
+                            <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Planned')}>Planned</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'In Progress')}>In Progress</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Completed')}>Completed</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleStatusChange(trip.id, 'Cancelled')}>Cancelled</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     )}
                   </div>
                   <p className="text-[10px] md:text-xs text-muted-foreground truncate">{trip.tripDate} • {trip.stops?.[trip.stops.length - 1]?.siteName || "No stops"}</p>
@@ -316,7 +316,7 @@ export default function TripHistoryPage() {
                 <Button 
                   variant="ghost" 
                   size="sm" 
-                  className="hover:bg-accent/10 hover:text-accent h-9 px-3 flex-1 sm:flex-none"
+                  className="hover:bg-accent/10 hover:text-accent h-9 px-3"
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedTrip(trip);
@@ -325,6 +325,7 @@ export default function TripHistoryPage() {
                 >
                   <FileText className="mr-2 h-4 w-4" /> ใบงาน
                 </Button>
+                
                 {!isViewer && (
                   <Button 
                     variant="ghost" 
@@ -335,23 +336,19 @@ export default function TripHistoryPage() {
                       initiateDelete(trip);
                     }}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-5 w-5" />
                   </Button>
                 )}
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-9 w-9 group-hover:translate-x-1 transition-transform"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </Button>
+                
+                <div className="flex items-center justify-center h-9 w-9">
+                  <ChevronRight className="h-6 w-6 text-muted-foreground group-hover:text-accent group-hover:translate-x-1 transition-all" />
+                </div>
               </div>
             </div>
           </Card>
         ))}
       </div>
 
-      {/* Single Delete Confirmation Dialog */}
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <DialogContent className="sm:max-w-[425px] rounded-xl w-[95%]">
           <DialogHeader>
@@ -369,7 +366,6 @@ export default function TripHistoryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Delete Confirmation Dialog */}
       <Dialog open={isBulkDeleteOpen} onOpenChange={setIsBulkDeleteOpen}>
         <DialogContent className="sm:max-w-[425px] rounded-xl w-[95%]">
           <DialogHeader>
@@ -387,13 +383,12 @@ export default function TripHistoryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Worksheet Dialog */}
       <Dialog open={isWorksheetOpen} onOpenChange={setIsWorksheetOpen}>
         <DialogContent className="max-w-[95%] sm:max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl">
           <DialogHeader className="sr-only">
             <DialogTitle>ใบงานการขนส่ง (Delivery Worksheet)</DialogTitle>
             <DialogDescription>
-              รายละเอียดและใบกำกับการขนส่งสำหรับ Trip ID: {selectedTrip?.tripId}
+              รายละเอียดสำหรับ Trip ID: {selectedTrip?.tripId}
             </DialogDescription>
           </DialogHeader>
           <div id="worksheet-content" className="p-2 md:p-4 bg-white text-black rounded-lg">
@@ -418,7 +413,7 @@ export default function TripHistoryPage() {
               </div>
             </div>
             <div className="border-t border-b border-black py-4 mb-6">
-              <h3 className="font-bold text-sm md:text-base mb-4">ลำดับการส่งของ (Delivery Sequence)</h3>
+              <h3 className="font-bold text-sm md:text-base mb-4">ลำดับการส่งของ</h3>
               <div className="space-y-6">
                 {selectedTrip?.stops?.map((stop: any, idx: number) => (
                   <div key={idx} className="flex gap-4 border-l-2 border-dashed border-gray-300 pl-4 relative">
