@@ -228,42 +228,60 @@ export default function TripPlanPage() {
     }
   }, [])
 
-  // Calculate Distance Matrix (for the table)
+  // Calculate Distance Matrix (for the table) - Batch to avoid MAX_ELEMENTS error
   const fetchDistanceMatrix = React.useCallback(async () => {
     if (!sites || sites.length === 0 || !window.google || !isApiLoaded) return
     if (!google.maps.DistanceMatrixService) return
 
     setIsMatrixLoading(true)
     const validSites = sites.filter(s => s.latitude && s.longitude)
-    const origins = [
+    const allPoints = [
       { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG },
       ...validSites.map(s => ({ lat: s.latitude!, lng: s.longitude! }))
     ]
-    const destinations = origins
+    const allIds = ["warehouse", ...validSites.map(s => s.id)]
 
     const matrixService = new google.maps.DistanceMatrixService()
     const newMatrix: Record<string, Record<string, number>> = {}
 
     try {
-      const response = await matrixService.getDistanceMatrix({
-        origins: origins,
-        destinations: destinations,
-        travelMode: google.maps.TravelMode.DRIVING,
-        unitSystem: google.maps.UnitSystem.METRIC,
-      })
-
-      const allIds = ["warehouse", ...validSites.map(s => s.id)]
-
-      response.rows.forEach((row, i) => {
+      // Fix: Process row by row to stay within MAX_ELEMENTS (25) per request
+      for (let i = 0; i < allPoints.length; i++) {
         const originId = allIds[i]
+        const originLatLng = allPoints[i]
         newMatrix[originId] = {}
-        row.elements.forEach((element, j) => {
-          const destId = allIds[j]
-          if (element.status === "OK") {
-            newMatrix[originId][destId] = element.distance.value / 1000
+
+        // Batch destinations (max 25 per request)
+        for (let j = 0; j < allPoints.length; j += 25) {
+          const destinationBatch = allPoints.slice(j, j + 25)
+          const destinationIdsBatch = allIds.slice(j, j + 25)
+
+          const response = await new Promise<google.maps.DistanceMatrixResponse | null>((resolve) => {
+            matrixService.getDistanceMatrix({
+              origins: [originLatLng],
+              destinations: destinationBatch,
+              travelMode: google.maps.TravelMode.DRIVING,
+              unitSystem: google.maps.UnitSystem.METRIC,
+            }, (res, status) => {
+              if (status === "OK" && res) {
+                resolve(res)
+              } else {
+                console.warn(`Distance Matrix request failed for origin ${originId} batch ${j}: ${status}`)
+                resolve(null)
+              }
+            })
+          })
+
+          if (response && response.rows[0]) {
+            response.rows[0].elements.forEach((element, k) => {
+              const destId = destinationIdsBatch[k]
+              if (element.status === "OK") {
+                newMatrix[originId][destId] = element.distance.value / 1000
+              }
+            })
           }
-        })
-      })
+        }
+      }
 
       setDistanceMatrix(newMatrix)
     } catch (error) {
@@ -274,10 +292,10 @@ export default function TripPlanPage() {
   }, [sites, isApiLoaded])
 
   React.useEffect(() => {
-    if (sites && isApiLoaded) {
+    if (sites && isApiLoaded && isMatrixOpen) {
       fetchDistanceMatrix()
     }
-  }, [sites, isApiLoaded, fetchDistanceMatrix])
+  }, [sites, isApiLoaded, isMatrixOpen, fetchDistanceMatrix])
 
   // Draw Hover/Pinned Distance Lines with REAL ROAD DISTANCE
   React.useEffect(() => {
