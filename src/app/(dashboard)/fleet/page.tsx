@@ -39,11 +39,10 @@ import {
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
-import { collection, doc, serverTimestamp } from "firebase/firestore"
+import { collection, doc, serverTimestamp, setDoc, updateDoc, deleteDoc } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
-import { setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
 import { Vehicle, Driver, UserProfile } from "@/types/models"
 
@@ -68,6 +67,7 @@ export default function FleetPage() {
   const isViewer = profile?.role === 'viewer'
 
   const [isVehicleDialogOpen, setIsVehicleDialogOpen] = React.useState(false)
+  const [isSavingVehicle, setIsSavingVehicle] = React.useState(false)
   const [editingVehicle, setEditingVehicle] = React.useState<Vehicle | null>(null)
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const { data: vehicles, isLoading: isLoadingVehicles } = useCollection<Vehicle>(vehiclesRef)
@@ -78,6 +78,7 @@ export default function FleetPage() {
   })
 
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
+  const [isSavingDriver, setIsSavingDriver] = React.useState(false)
   const [editingDriver, setEditingDriver] = React.useState<Driver | null>(null)
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: drivers, isLoading: isLoadingDrivers } = useCollection<Driver>(driversRef)
@@ -87,44 +88,84 @@ export default function FleetPage() {
     defaultValues: { name: "", phoneNumber: "" }
   })
 
-  function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
+  async function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
     if (isViewer) return
-    if (editingVehicle) {
-      updateDocumentNonBlocking(doc(db, "vehicles", editingVehicle.id), { ...values, updatedAt: serverTimestamp() })
-      toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลรถเรียบร้อยแล้ว" })
-    } else {
-      const newRef = doc(collection(db, "vehicles"))
-      setDocumentNonBlocking(newRef, { 
-        ...values, 
-        id: newRef.id,
-        createdAt: serverTimestamp(), 
-        updatedAt: serverTimestamp() 
-      }, { merge: true })
-      toast({ title: "สำเร็จ", description: "เพิ่มรถใหม่เรียบร้อยแล้ว" })
+    setIsSavingVehicle(true)
+    try {
+      if (editingVehicle) {
+        const vRef = doc(db, "vehicles", editingVehicle.id)
+        await updateDoc(vRef, { ...values, updatedAt: serverTimestamp() })
+        toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลรถเรียบร้อยแล้ว" })
+      } else {
+        const newRef = doc(collection(db, "vehicles"))
+        await setDoc(newRef, { 
+          ...values, 
+          id: newRef.id,
+          createdAt: serverTimestamp(), 
+          updatedAt: serverTimestamp() 
+        })
+        toast({ title: "สำเร็จ", description: "เพิ่มรถใหม่เรียบร้อยแล้ว" })
+      }
+      setIsVehicleDialogOpen(false)
+      setEditingVehicle(null)
+      vehicleForm.reset()
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกข้อมูลได้", variant: "destructive" })
+    } finally {
+      setIsSavingVehicle(false)
     }
-    setIsVehicleDialogOpen(false)
-    setEditingVehicle(null)
-    vehicleForm.reset()
   }
 
-  function onDriverSubmit(values: z.infer<typeof driverSchema>) {
+  async function onDriverSubmit(values: z.infer<typeof driverSchema>) {
     if (isViewer) return
-    if (editingDriver) {
-      updateDocumentNonBlocking(doc(db, "drivers", editingDriver.id), { ...values, updatedAt: serverTimestamp() })
-      toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลคนขับเรียบร้อยแล้ว" })
-    } else {
-      const newRef = doc(collection(db, "drivers"))
-      setDocumentNonBlocking(newRef, { 
-        ...values, 
-        id: newRef.id,
-        createdAt: serverTimestamp(), 
-        updatedAt: serverTimestamp() 
-      }, { merge: true })
-      toast({ title: "สำเร็จ", description: "เพิ่มคนขับใหม่เรียบร้อยแล้ว" })
+    setIsSavingDriver(true)
+    try {
+      if (editingDriver) {
+        const dRef = doc(db, "drivers", editingDriver.id)
+        await updateDoc(dRef, { ...values, updatedAt: serverTimestamp() })
+        toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลคนขับเรียบร้อยแล้ว" })
+      } else {
+        const newRef = doc(collection(db, "drivers"))
+        await setDoc(newRef, { 
+          ...values, 
+          id: newRef.id,
+          createdAt: serverTimestamp(), 
+          updatedAt: serverTimestamp() 
+        })
+        toast({ title: "สำเร็จ", description: "เพิ่มคนขับใหม่เรียบร้อยแล้ว" })
+      }
+      setIsDriverDialogOpen(false)
+      setEditingDriver(null)
+      driverForm.reset()
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกข้อมูลได้", variant: "destructive" })
+    } finally {
+      setIsSavingDriver(false)
     }
-    setIsDriverDialogOpen(false)
-    setEditingDriver(null)
-    driverForm.reset()
+  }
+
+  const handleDeleteVehicle = async (id: string) => {
+    if (isViewer) return
+    if (!confirm("ลบรถคันนี้?")) return
+    try {
+      await deleteDoc(doc(db, "vehicles", id))
+      toast({ title: "สำเร็จ", description: "ลบข้อมูลรถเรียบร้อยแล้ว" })
+    } catch (e) {
+      toast({ title: "ผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteDriver = async (id: string) => {
+    if (isViewer) return
+    if (!confirm("ลบคนขับคนนี้?")) return
+    try {
+      await deleteDoc(doc(db, "drivers", id))
+      toast({ title: "สำเร็จ", description: "ลบข้อมูลคนขับเรียบร้อยแล้ว" })
+    } catch (e) {
+      toast({ title: "ผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
+    }
   }
 
   return (
@@ -143,7 +184,14 @@ export default function FleetPage() {
         <TabsContent value="vehicles" className="space-y-4">
           {!isViewer && (
             <div className="flex justify-end">
-              <Button className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" onClick={() => { setEditingVehicle(null); vehicleForm.reset(); setIsVehicleDialogOpen(true); }}>
+              <Button 
+                className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
+                onClick={() => { 
+                  setEditingVehicle(null); 
+                  vehicleForm.reset({ licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500 }); 
+                  setIsVehicleDialogOpen(true); 
+                }}
+              >
                 <Plus className="mr-2 h-4 w-4" /> เพิ่มรถยนต์ใหม่
               </Button>
             </div>
@@ -163,8 +211,16 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => { setEditingVehicle(v); vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg }); setIsVehicleDialogOpen(true); }}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive" onClick={() => { if(confirm("ลบรถคันนี้?")) deleteDocumentNonBlocking(doc(db, "vehicles", v.id)) }}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => { 
+                              setEditingVehicle(v); 
+                              vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg }); 
+                              setIsVehicleDialogOpen(true); 
+                            }}>
+                              <Edit className="mr-2 h-4 w-4" /> แก้ไข
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteVehicle(v.id)}>
+                              <Trash2 className="mr-2 h-4 w-4" /> ลบ
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -187,7 +243,14 @@ export default function FleetPage() {
         <TabsContent value="drivers" className="space-y-4">
           {!isViewer && (
             <div className="flex justify-end">
-              <Button className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" onClick={() => { setEditingDriver(null); driverForm.reset(); setIsDriverDialogOpen(true); }}>
+              <Button 
+                className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
+                onClick={() => { 
+                  setEditingDriver(null); 
+                  driverForm.reset({ name: "", phoneNumber: "" }); 
+                  setIsDriverDialogOpen(true); 
+                }}
+              >
                 <Plus className="mr-2 h-4 w-4" /> เพิ่มคนขับใหม่
               </Button>
             </div>
@@ -209,8 +272,16 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => { setEditingDriver(d); driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); setIsDriverDialogOpen(true); }}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive" onClick={() => { if(confirm("ลบคนขับคนนี้?")) deleteDocumentNonBlocking(doc(db, "drivers", d.id)) }}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => { 
+                              setEditingDriver(d); 
+                              driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); 
+                              setIsDriverDialogOpen(true); 
+                            }}>
+                              <Edit className="mr-2 h-4 w-4" /> แก้ไข
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteDriver(d.id)}>
+                              <Trash2 className="mr-2 h-4 w-4" /> ลบ
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -232,30 +303,56 @@ export default function FleetPage() {
       </Tabs>
 
       {/* Vehicle Dialog */}
-      <Dialog open={isVehicleDialogOpen} onOpenChange={setIsVehicleDialogOpen}>
+      <Dialog 
+        open={isVehicleDialogOpen} 
+        onOpenChange={(open) => {
+          setIsVehicleDialogOpen(open);
+          if (!open) {
+            setEditingVehicle(null);
+            vehicleForm.reset();
+          }
+        }}
+      >
         <DialogContent className="w-[95%] rounded-lg">
-          <DialogHeader><DialogTitle>{editingVehicle ? "แก้ไขข้อมูลรถ" : "เพิ่มรถใหม่"}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingVehicle ? "แก้ไขข้อมูลรถ" : "เพิ่มรถใหม่"}</DialogTitle>
+            <DialogDescription>ระบุรายละเอียดของยานพาหนะให้ครบถ้วน</DialogDescription>
+          </DialogHeader>
           <Form {...vehicleForm}>
             <form onSubmit={vehicleForm.handleSubmit(onVehicleSubmit)} className="space-y-4">
               <FormField control={vehicleForm.control} name="licensePlate" render={({ field }) => (
                 <FormItem><FormLabel>ทะเบียนรถ</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={vehicleForm.control} name="type" render={({ field }) => (
-                <FormItem><FormLabel>ประเภทรถ</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}><FormControl><SelectTrigger className="h-11"><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="Pickup">Pickup</SelectItem><SelectItem value="4-wheel truck">4-wheel truck</SelectItem><SelectItem value="6-wheel truck">6-wheel truck</SelectItem></SelectContent></Select><FormMessage /></FormItem>
+                <FormItem><FormLabel>ประเภทรถ</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger className="h-11"><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="Pickup">Pickup</SelectItem><SelectItem value="4-wheel truck">4-wheel truck</SelectItem><SelectItem value="6-wheel truck">6-wheel truck</SelectItem></SelectContent></Select><FormMessage /></FormItem>
               )} />
               <FormField control={vehicleForm.control} name="maxLoadCapacityKg" render={({ field }) => (
                 <FormItem><FormLabel>น้ำหนักบรรทุกสูงสุด (kg)</FormLabel><FormControl><Input className="h-11" type="number" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
-              <Button type="submit" className="w-full bg-accent h-12">บันทึก</Button>
+              <Button type="submit" className="w-full bg-accent h-12" disabled={isSavingVehicle}>
+                {isSavingVehicle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} บันทึก
+              </Button>
             </form>
           </Form>
         </DialogContent>
       </Dialog>
 
       {/* Driver Dialog */}
-      <Dialog open={isDriverDialogOpen} onOpenChange={setIsDriverDialogOpen}>
+      <Dialog 
+        open={isDriverDialogOpen} 
+        onOpenChange={(open) => {
+          setIsDriverDialogOpen(open);
+          if (!open) {
+            setEditingDriver(null);
+            driverForm.reset();
+          }
+        }}
+      >
         <DialogContent className="w-[95%] rounded-lg">
-          <DialogHeader><DialogTitle>{editingDriver ? "แก้ไขข้อมูลคนขับ" : "เพิ่มคนขับใหม่"}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingDriver ? "แก้ไขข้อมูลคนขับ" : "เพิ่มคนขับใหม่"}</DialogTitle>
+            <DialogDescription>ระบุชื่อและเบอร์โทรศัพท์สำหรับติดต่อคนขับ</DialogDescription>
+          </DialogHeader>
           <Form {...driverForm}>
             <form onSubmit={driverForm.handleSubmit(onDriverSubmit)} className="space-y-4">
               <FormField control={driverForm.control} name="name" render={({ field }) => (
@@ -264,7 +361,9 @@ export default function FleetPage() {
               <FormField control={driverForm.control} name="phoneNumber" render={({ field }) => (
                 <FormItem><FormLabel>เบอร์โทรศัพท์</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
-              <Button type="submit" className="w-full bg-accent h-12">บันทึก</Button>
+              <Button type="submit" className="w-full bg-accent h-12" disabled={isSavingDriver}>
+                {isSavingDriver ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} บันทึก
+              </Button>
             </form>
           </Form>
         </DialogContent>
