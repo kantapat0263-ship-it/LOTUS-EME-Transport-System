@@ -297,6 +297,62 @@ export default function TripPlanPage() {
     }
   }, [sites, isApiLoaded, isMatrixOpen, fetchDistanceMatrix])
 
+  // Cell color helper logic
+  const getCellColor = (originId: string, destId: string, value: number | undefined) => {
+    if (!value || originId === destId || value === 0) return ''
+    
+    const row = distanceMatrix[originId]
+    if (!row) return ''
+    
+    // Filter out same origin/destination and non-number values for comparison
+    const validValues = Object.entries(row)
+      .filter(([id, val]) => id !== originId && typeof val === 'number' && val > 0)
+      .map(([_, val]) => val as number)
+    
+    if (validValues.length === 0) return ''
+    
+    const min = Math.min(...validValues)
+    const max = Math.max(...validValues)
+    
+    if (value === min) return 'bg-green-900 text-green-300 font-bold ring-1 ring-green-500'
+    if (value === max) return 'bg-red-900 text-red-300'
+    return ''
+  }
+
+  // Column average analysis logic
+  const bestColumnId = React.useMemo(() => {
+    if (!distanceMatrix || Object.keys(distanceMatrix).length === 0) return null
+    
+    const allIds = ["warehouse", ...(sites?.filter(s => s.latitude).map(s => s.id) || [])]
+    const columnStats: Record<string, { sum: number, count: number }> = {}
+    
+    allIds.forEach(destId => {
+      columnStats[destId] = { sum: 0, count: 0 }
+      allIds.forEach(originId => {
+        const val = distanceMatrix[originId]?.[destId]
+        if (typeof val === 'number' && val > 0 && originId !== destId) {
+          columnStats[destId].sum += val
+          columnStats[destId].count += 1
+        }
+      })
+    })
+    
+    let minAvg = Infinity
+    let bestId = null
+    
+    Object.entries(columnStats).forEach(([id, stat]) => {
+      if (stat.count > 0) {
+        const avg = stat.sum / stat.count
+        if (avg < minAvg) {
+          minAvg = avg
+          bestId = id
+        }
+      }
+    })
+    
+    return bestId
+  }, [distanceMatrix, sites])
+
   // Draw Hover/Pinned Distance Lines with REAL ROAD DISTANCE
   React.useEffect(() => {
     if (!map || !sites || !window.google || !isApiLoaded) return
@@ -690,6 +746,8 @@ export default function TripPlanPage() {
     }
   }
 
+  const activeSites = sites?.filter(s => s.latitude) || []
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden no-print">
       {showDraftBanner && (
@@ -865,54 +923,89 @@ export default function TripPlanPage() {
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div className="p-2 md:p-4 overflow-x-auto">
-              {isMatrixLoading ? (
-                <div className="flex flex-col items-center justify-center p-8 md:p-12 gap-4">
-                  <Loader2 className="h-8 w-8 animate-spin text-accent" />
-                  <p className="text-xs md:text-sm text-muted-foreground text-center">กำลังประมวลผลระยะทางจาก Google Maps...</p>
-                </div>
-              ) : (
-                <Table className="min-w-[600px]">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="bg-muted/50 text-[10px] md:text-xs">ต้นทาง \ ปลายทาง</TableHead>
-                      <TableHead className="text-center font-bold text-accent text-[10px] md:text-xs">คลังสินค้า</TableHead>
-                      {sites?.filter(s => s.latitude).map(s => (
-                        <TableHead key={s.id} className="text-center min-w-[100px] text-[10px] md:text-xs">{s.name}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="text-[10px] md:text-xs">
-                    <TableRow>
-                      <TableCell className="font-bold text-accent">คลังสินค้า LOTUS</TableCell>
-                      <TableCell className="text-center text-muted-foreground">-</TableCell>
-                      {sites?.filter(s => s.latitude).map(dest => (
-                        <TableCell key={dest.id} className="text-center">
-                          {distanceMatrix["warehouse"]?.[dest.id]?.toFixed(1) || '--'} กม.
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                    {sites?.filter(s => s.latitude).map(origin => (
-                      <TableRow key={origin.id}>
-                        <TableCell className="font-medium">{origin.name}</TableCell>
-                        <TableCell className="text-center">
-                          {distanceMatrix[origin.id]?.["warehouse"]?.toFixed(1) || '--'} กม.
-                        </TableCell>
-                        {sites?.filter(s => s.latitude).map(dest => (
-                          <TableCell 
-                            key={dest.id} 
+            <div className="flex flex-col">
+              <div className="p-2 md:p-4 overflow-x-auto">
+                {isMatrixLoading ? (
+                  <div className="flex flex-col items-center justify-center p-8 md:p-12 gap-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-accent" />
+                    <p className="text-xs md:text-sm text-muted-foreground text-center">กำลังประมวลผลระยะทางจาก Google Maps...</p>
+                  </div>
+                ) : (
+                  <Table className="min-w-[600px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="bg-muted/50 text-[10px] md:text-xs">ต้นทาง \ ปลายทาง</TableHead>
+                        <TableHead className={cn(
+                          "text-center font-bold text-accent text-[10px] md:text-xs",
+                          bestColumnId === "warehouse" && "border-b-2 border-blue-500"
+                        )}>คลังสินค้า</TableHead>
+                        {activeSites.map(s => (
+                          <TableHead 
+                            key={s.id} 
                             className={cn(
-                              "text-center",
-                              origin.id === dest.id && "text-muted-foreground"
+                              "text-center min-w-[100px] text-[10px] md:text-xs",
+                              bestColumnId === s.id && "border-b-2 border-blue-500"
                             )}
                           >
-                            {origin.id === dest.id ? '-' : (distanceMatrix[origin.id]?.[dest.id]?.toFixed(1) || '--') + ' กม.'}
+                            {s.name}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="text-[10px] md:text-xs">
+                      <TableRow>
+                        <TableCell className="font-bold text-accent">คลังสินค้า LOTUS</TableCell>
+                        <TableCell className="text-center text-muted-foreground">-</TableCell>
+                        {activeSites.map(dest => (
+                          <TableCell 
+                            key={dest.id} 
+                            className={cn("text-center transition-colors duration-200", getCellColor("warehouse", dest.id, distanceMatrix["warehouse"]?.[dest.id]))}
+                          >
+                            {distanceMatrix["warehouse"]?.[dest.id]?.toFixed(1) || '--'} กม.
                           </TableCell>
                         ))}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                      {activeSites.map(origin => (
+                        <TableRow key={origin.id}>
+                          <TableCell className="font-medium">{origin.name}</TableCell>
+                          <TableCell 
+                            className={cn("text-center transition-colors duration-200", getCellColor(origin.id, "warehouse", distanceMatrix[origin.id]?.["warehouse"]))}
+                          >
+                            {distanceMatrix[origin.id]?.["warehouse"]?.toFixed(1) || '--'} กม.
+                          </TableCell>
+                          {activeSites.map(dest => (
+                            <TableCell 
+                              key={dest.id} 
+                              className={cn(
+                                "text-center transition-colors duration-200",
+                                origin.id === dest.id ? "text-muted-foreground" : getCellColor(origin.id, dest.id, distanceMatrix[origin.id]?.[dest.id])
+                              )}
+                            >
+                              {origin.id === dest.id ? '-' : (distanceMatrix[origin.id]?.[dest.id]?.toFixed(1) || '--') + ' กม.'}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+              
+              {!isMatrixLoading && Object.keys(distanceMatrix).length > 0 && (
+                <div className="flex flex-wrap items-center gap-4 px-4 pb-4 text-[10px] md:text-xs border-t pt-4">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-green-900 ring-1 ring-green-500" />
+                    <span className="text-muted-foreground">🟢 สีเขียว = ระยะทางใกล้ที่สุดในแต่ละแถว</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-red-900" />
+                    <span className="text-muted-foreground">🔴 สีแดง = ระยะทางไกลที่สุดในแต่ละแถว</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-0.5 bg-blue-500" />
+                    <span className="text-muted-foreground">🔵 ขอบฟ้า = จุดหมายปลายทางที่เฉลี่ยใกล้ที่สุด (แนะนำ)</span>
+                  </div>
+                </div>
               )}
             </div>
           </CollapsibleContent>
