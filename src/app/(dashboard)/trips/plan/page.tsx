@@ -102,18 +102,19 @@ export default function TripPlanPage() {
   const [routeStats, setRouteStats] = React.useState<{ distance: string, duration: string, distanceNum: number, durationNum: number } | null>(null)
   const [isOptimizing, setIsOptimizing] = React.useState(false)
   const [infoWindow, setInfoWindow] = React.useState<google.maps.InfoWindow | null>(null)
+  const [hoveredSiteId, setHoveredSiteId] = React.useState<string | null>(null)
+  const [pinnedSiteId, setPinnedSiteId] = React.useState<string | null>(null)
+
+  // Distance Caching & Visuals
+  const distanceCache = React.useRef<Map<string, number>>(new Map())
+  const distanceLinesRef = React.useRef<google.maps.Polyline[]>([])
+  const distanceLabelsRef = React.useRef<google.maps.Marker[]>([])
 
   // Distance Matrix State
   const [distanceMatrix, setDistanceMatrix] = React.useState<Record<string, Record<string, number>>>({})
   const [isMatrixLoading, setIsMatrixLoading] = React.useState(false)
   const [isMatrixOpen, setIsMatrixOpen] = React.useState(false)
-  const [hoveredSiteId, setHoveredSiteId] = React.useState<string | null>(null)
-  const [pinnedSiteId, setPinnedSiteId] = React.useState<string | null>(null)
   
-  // Refs for Cleanup
-  const distanceLinesRef = React.useRef<google.maps.Polyline[]>([])
-  const distanceLabelsRef = React.useRef<google.maps.Marker[]>([])
-
   // Persistence: Restore Draft on Mount
   React.useEffect(() => {
     const draftJson = localStorage.getItem(STORAGE_KEY)
@@ -278,7 +279,7 @@ export default function TripPlanPage() {
     }
   }, [sites, isApiLoaded, fetchDistanceMatrix])
 
-  // Draw Hover/Pinned Distance Lines (Using Geometry library for fast calculation)
+  // Draw Hover/Pinned Distance Lines with REAL ROAD DISTANCE
   React.useEffect(() => {
     if (!map || !sites || !window.google || !isApiLoaded) return
     const google = window.google
@@ -294,12 +295,15 @@ export default function TripPlanPage() {
 
     const validSites = sites.filter(s => s.latitude && s.longitude)
     const originSite = targetId === "warehouse" 
-      ? { latitude: DEFAULT_WAREHOUSE_LAT, longitude: DEFAULT_WAREHOUSE_LNG } 
+      ? { id: "warehouse", latitude: DEFAULT_WAREHOUSE_LAT, longitude: DEFAULT_WAREHOUSE_LNG } 
       : sites.find(s => s.id === targetId)
 
     if (!originSite || !originSite.latitude || !originSite.longitude) return
 
     const originLatLng = new google.maps.LatLng(originSite.latitude, originSite.longitude)
+    const matrixService = new google.maps.DistanceMatrixService()
+    const labelMarkersMap = new Map<string, google.maps.Marker>()
+    const destinationsToFetch: { id: string, latLng: google.maps.LatLng, site: Site | any }[] = []
 
     validSites.forEach(dest => {
       if (dest.id === targetId || !dest.latitude || !dest.longitude) return
@@ -310,12 +314,12 @@ export default function TripPlanPage() {
         { lat: dest.latitude!, lng: dest.longitude! }
       ]
 
-      // Draw dotted line
+      // Draw dotted line (visual only)
       const line = new google.maps.Polyline({
         path,
         map,
         strokeColor: "#F0890D",
-        strokeOpacity: 0, // Main line invisible
+        strokeOpacity: 0,
         icons: [{
           icon: {
             path: 'M 0,-1 0,1',
@@ -331,11 +335,11 @@ export default function TripPlanPage() {
       })
       distanceLinesRef.current.push(line)
 
-      // Calculate distance locally using geometry library (spherical)
-      const distMeters = google.maps.geometry.spherical.computeDistanceBetween(originLatLng, destLatLng)
-      const distKm = distMeters / 1000
-      
+      // Calculate label position (middle of dotted line)
       const midPoint = google.maps.geometry.spherical.interpolate(originLatLng, destLatLng, 0.5)
+      
+      const cacheKey = `${originSite.latitude},${originSite.longitude}->${dest.latitude},${dest.longitude}`
+      const cachedDist = distanceCache.current.get(cacheKey)
 
       const labelMarker = new google.maps.Marker({
         position: midPoint,
@@ -345,7 +349,7 @@ export default function TripPlanPage() {
           scale: 0
         },
         label: {
-          text: `${distKm.toFixed(1)} กม.`,
+          text: cachedDist !== undefined ? `${cachedDist.toFixed(1)} กม.` : "กำลังคำนวณ...",
           color: "#ffffff",
           fontSize: "10px",
           fontWeight: "bold",
@@ -353,7 +357,58 @@ export default function TripPlanPage() {
         }
       })
       distanceLabelsRef.current.push(labelMarker)
+      labelMarkersMap.set(dest.id, labelMarker)
+
+      if (cachedDist === undefined) {
+        destinationsToFetch.push({ id: dest.id, latLng: destLatLng, site: dest })
+      }
     })
+
+    // Fetch real road distances for uncached destinations
+    if (destinationsToFetch.length > 0) {
+      // Batch destinations (max 25 per request)
+      for (let i = 0; i < destinationsToFetch.length; i += 25) {
+        const batch = destinationsToFetch.slice(i, i + 25)
+        
+        matrixService.getDistanceMatrix({
+          origins: [originLatLng],
+          destinations: batch.map(b => b.latLng),
+          travelMode: google.maps.TravelMode.DRIVING,
+          unitSystem: google.maps.UnitSystem.METRIC,
+        }, (response, status) => {
+          if (status === 'OK' && response) {
+            const results = response.rows[0].elements
+            results.forEach((element, idx) => {
+              const destItem = batch[idx]
+              const labelMarker = labelMarkersMap.get(destItem.id)
+              const cacheKey = `${originSite.latitude},${originSite.longitude}->${destItem.site.latitude},${destItem.site.longitude}`
+              
+              let displayText = ""
+              if (element.status === 'OK' && element.distance) {
+                const roadDistKm = element.distance.value / 1000
+                distanceCache.current.set(cacheKey, roadDistKm)
+                displayText = `${roadDistKm.toFixed(1)} กม.`
+              } else {
+                // Fallback to straight line if road calculation fails
+                const straightDistMeters = google.maps.geometry.spherical.computeDistanceBetween(originLatLng, destItem.latLng)
+                const straightDistKm = straightDistMeters / 1000
+                displayText = `${straightDistKm.toFixed(1)} กม. (เส้นตรง)`
+              }
+
+              if (labelMarker) {
+                labelMarker.setLabel({
+                  text: displayText,
+                  color: "#ffffff",
+                  fontSize: "10px",
+                  fontWeight: "bold",
+                  className: "bg-black/80 px-1.5 py-0.5 rounded-sm border border-white/20 whitespace-nowrap"
+                })
+              }
+            })
+          }
+        })
+      }
+    }
   }, [map, hoveredSiteId, pinnedSiteId, sites, isApiLoaded])
 
   const addStopBySiteId = React.useCallback((siteId: string) => {
