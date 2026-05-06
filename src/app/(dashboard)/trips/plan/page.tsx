@@ -109,6 +109,8 @@ export default function TripPlanPage() {
   const [isMatrixOpen, setIsMatrixOpen] = React.useState(false)
   const [hoveredSiteId, setHoveredSiteId] = React.useState<string | null>(null)
   const [pinnedSiteId, setPinnedSiteId] = React.useState<string | null>(null)
+  
+  // Refs for Cleanup
   const distanceLinesRef = React.useRef<google.maps.Polyline[]>([])
   const distanceLabelsRef = React.useRef<google.maps.Marker[]>([])
 
@@ -217,7 +219,15 @@ export default function TripPlanPage() {
     })
   }, [companySettings])
 
-  // Calculate Distance Matrix
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      distanceLinesRef.current.forEach(l => l.setMap(null))
+      distanceLabelsRef.current.forEach(l => l.setMap(null))
+    }
+  }, [])
+
+  // Calculate Distance Matrix (for the table)
   const fetchDistanceMatrix = React.useCallback(async () => {
     if (!sites || sites.length === 0 || !window.google || !isApiLoaded) return
     if (!google.maps.DistanceMatrixService) return
@@ -268,11 +278,12 @@ export default function TripPlanPage() {
     }
   }, [sites, isApiLoaded, fetchDistanceMatrix])
 
-  // Draw Hover/Pinned Distance Lines
+  // Draw Hover/Pinned Distance Lines (Using Geometry library for fast calculation)
   React.useEffect(() => {
     if (!map || !sites || !window.google || !isApiLoaded) return
     const google = window.google
 
+    // Clean up existing visual aids
     distanceLinesRef.current.forEach(l => l.setMap(null))
     distanceLabelsRef.current.forEach(l => l.setMap(null))
     distanceLinesRef.current = []
@@ -286,51 +297,64 @@ export default function TripPlanPage() {
       ? { latitude: DEFAULT_WAREHOUSE_LAT, longitude: DEFAULT_WAREHOUSE_LNG } 
       : sites.find(s => s.id === targetId)
 
-    if (!originSite || !originSite.latitude) return
+    if (!originSite || !originSite.latitude || !originSite.longitude) return
+
+    const originLatLng = new google.maps.LatLng(originSite.latitude, originSite.longitude)
 
     validSites.forEach(dest => {
-      if (dest.id === targetId) return
+      if (dest.id === targetId || !dest.latitude || !dest.longitude) return
       
+      const destLatLng = new google.maps.LatLng(dest.latitude, dest.longitude)
       const path = [
         { lat: originSite.latitude!, lng: originSite.longitude! },
         { lat: dest.latitude!, lng: dest.longitude! }
       ]
 
+      // Draw dotted line
       const line = new google.maps.Polyline({
         path,
         map,
         strokeColor: "#F0890D",
-        strokeOpacity: 0.4,
-        strokeWeight: 2,
-        geodesic: true,
-        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 2 }, offset: "0", repeat: "10px" }]
+        strokeOpacity: 0, // Main line invisible
+        icons: [{
+          icon: {
+            path: 'M 0,-1 0,1',
+            strokeOpacity: 1,
+            scale: 2,
+            strokeWeight: 2,
+            strokeColor: '#F0890D'
+          },
+          offset: '0',
+          repeat: '10px'
+        }],
+        geodesic: true
       })
       distanceLinesRef.current.push(line)
 
-      const dist = distanceMatrix[targetId]?.[dest.id]
-      if (dist) {
-        const midPoint = google.maps.geometry.spherical.interpolate(
-          new google.maps.LatLng(path[0].lat, path[0].lng),
-          new google.maps.LatLng(path[1].lat, path[1].lng),
-          0.5
-        )
+      // Calculate distance locally using geometry library (spherical)
+      const distMeters = google.maps.geometry.spherical.computeDistanceBetween(originLatLng, destLatLng)
+      const distKm = distMeters / 1000
+      
+      const midPoint = google.maps.geometry.spherical.interpolate(originLatLng, destLatLng, 0.5)
 
-        const label = new google.maps.Marker({
-          position: midPoint,
-          map,
-          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
-          label: {
-            text: `${dist.toFixed(1)} km`,
-            color: "#ffffff",
-            fontSize: "10px",
-            fontWeight: "bold",
-            className: "bg-black/70 px-1 py-0.5 rounded border border-white/20"
-          }
-        })
-        distanceLabelsRef.current.push(label)
-      }
+      const labelMarker = new google.maps.Marker({
+        position: midPoint,
+        map,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 0
+        },
+        label: {
+          text: `${distKm.toFixed(1)} กม.`,
+          color: "#ffffff",
+          fontSize: "10px",
+          fontWeight: "bold",
+          className: "bg-black/80 px-1.5 py-0.5 rounded-sm border border-white/20 whitespace-nowrap"
+        }
+      })
+      distanceLabelsRef.current.push(labelMarker)
     })
-  }, [map, hoveredSiteId, pinnedSiteId, sites, distanceMatrix, isApiLoaded])
+  }, [map, hoveredSiteId, pinnedSiteId, sites, isApiLoaded])
 
   const addStopBySiteId = React.useCallback((siteId: string) => {
     setStops(prev => {
@@ -388,7 +412,6 @@ export default function TripPlanPage() {
 
       const stopIndex = stops.findIndex(s => s.siteId === site.id)
       const isSelected = stopIndex !== -1
-      const distFromWh = distanceMatrix["warehouse"]?.[site.id]
 
       const marker = new google.maps.Marker({
         position: pos,
@@ -398,12 +421,7 @@ export default function TripPlanPage() {
           text: (stopIndex + 1).toString(),
           color: "#ffffff",
           fontWeight: "bold"
-        } : (distFromWh ? {
-          text: `${distFromWh.toFixed(0)}k`,
-          color: "#ffffff",
-          fontSize: "9px",
-          className: "mt-6 bg-black/50 px-1 rounded"
-        } : undefined),
+        } : undefined,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: isSelected ? 14 : 10,
@@ -424,9 +442,8 @@ export default function TripPlanPage() {
           const content = document.createElement("div")
           content.className = "p-2 min-w-[200px] text-foreground"
           content.innerHTML = `
-            <div class="font-bold text-accent mb-1">${site.name}</div>
+            <div class="font-bold text-accent mb-1 text-xs">${site.name}</div>
             <div class="text-[10px] text-muted-foreground mb-3">${site.address}</div>
-            <div class="text-[10px] mb-2">ห่างจากคลังสินค้า: <strong>${distFromWh?.toFixed(1) || '--'} กม.</strong></div>
             ${!isSelected ? `
               <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-2 px-2 rounded hover:bg-accent/80 transition-colors h-10">
                 + เพิ่มเป็นจุดส่ง
@@ -450,7 +467,7 @@ export default function TripPlanPage() {
     }
 
     setMarkers(newMarkers)
-  }, [map, sites, stops, infoWindow, addStopBySiteId, distanceMatrix, pinnedSiteId, isApiLoaded])
+  }, [map, sites, stops, infoWindow, addStopBySiteId, isApiLoaded])
 
   const calculateRoute = async (optimize: boolean = false) => {
     if (!map || !directionsRenderer || stops.some(s => !s.siteId) || !isApiLoaded) {
@@ -749,7 +766,6 @@ export default function TripPlanPage() {
             </div>
           </div>
 
-          {/* Map Legend - Desktop Only or simplified mobile */}
           <div className="hidden sm:block absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-2 md:p-3 rounded-lg border shadow-lg text-[9px] md:text-[10px] space-y-2">
             <h5 className="font-bold border-b pb-1 mb-1">คำอธิบาย</h5>
             <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งาน</div>
@@ -763,7 +779,6 @@ export default function TripPlanPage() {
         </div>
       </div>
 
-      {/* Distance Matrix - Desktop Only mostly, but collapsible on mobile */}
       <div className="mt-6">
         <Collapsible open={isMatrixOpen} onOpenChange={setIsMatrixOpen} className="w-full border rounded-xl overflow-hidden bg-card">
           <CollapsibleTrigger asChild>
