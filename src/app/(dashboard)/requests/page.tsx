@@ -20,10 +20,11 @@ import {
   MessageSquare,
   Search,
   Truck,
-  Check
+  Check,
+  Trash2
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp } from "firebase/firestore"
+import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch } from "firebase/firestore"
 import { UserProfile } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -40,6 +41,16 @@ import {
   DialogFooter,
   DialogDescription
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -47,7 +58,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Loader } from "@googlemaps/js-api-loader"
 
 // Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
-function InlineRequestManager() {
+function InlineRequestManager({ userRole }: { userRole?: string }) {
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
@@ -68,6 +79,10 @@ function InlineRequestManager() {
   const [rejectReason, setRejectReason] = React.useState("")
   const [isProcessing, setIsStaffProcessing] = React.useState(false)
   const [searchTerm, setSearchTerm] = React.useState("")
+  
+  // Clear Data State
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
+  const [isClearing, setIsClearing] = React.useState(false)
   
   // Split Trip States
   const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
@@ -247,6 +262,26 @@ function InlineRequestManager() {
     }
   }
 
+  const handleClearAllData = async () => {
+    if (userRole !== 'admin') return
+    setIsClearing(true)
+    try {
+      const batch = writeBatch(db)
+      const snapshot = await getDocs(collection(db, "vehicleRequests"))
+      snapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref)
+      })
+      await batch.commit()
+      toast({ title: "ล้างข้อมูลสำเร็จ", description: "ลบข้อมูลคำขอรถทั้งหมดเรียบร้อยแล้ว" })
+      setIsClearConfirmOpen(false)
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
+    } finally {
+      setIsClearing(false)
+    }
+  }
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending": return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
@@ -265,14 +300,25 @@ function InlineRequestManager() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
-      <div className="relative mb-6">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input 
-          placeholder="ค้นหาด้วยรหัส VR หรือชื่อผู้ขอ..." 
-          className="pl-10 bg-secondary/20 h-11"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="ค้นหาด้วยรหัส VR หรือชื่อผู้ขอ..." 
+            className="pl-10 bg-secondary/20 h-11"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        {userRole === 'admin' && (
+          <Button 
+            variant="outline" 
+            className="border-red-500/50 text-red-500 hover:bg-red-500/10 h-11"
+            onClick={() => setIsClearConfirmOpen(true)}
+          >
+            <Trash2 className="mr-2 h-4 w-4" /> ล้างข้อมูลทั้งหมด
+          </Button>
+        )}
       </div>
 
       {filteredRequests.length > 0 ? (
@@ -331,6 +377,29 @@ function InlineRequestManager() {
           ไม่พบรายการคำขอใช้รถ
         </div>
       )}
+
+      {/* Clear Confirmation Dialog */}
+      <AlertDialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-500">ต้องการลบข้อมูลคำขอรถทั้งหมดใช่หรือไม่?</AlertDialogTitle>
+            <AlertDialogDescription>
+              การกระทำนี้จะลบรายการคำขอใช้รถ (Vehicle Requests) ทั้งหมดออกจากระบบ และไม่สามารถกู้คืนได้
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleClearAllData}
+              className="bg-red-500 hover:bg-red-600"
+              disabled={isClearing}
+            >
+              {isClearing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              ยืนยันลบทั้งหมด
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl">
@@ -540,12 +609,17 @@ function InlineRequestManager() {
 export default function RequestsPage() {
   const { user, isUserLoading } = useUser()
   const db = useFirestore()
+  const { toast } = useToast()
   const [activeTab, setActiveTab] = React.useState("form")
   const [myRequests, setMyRequests] = React.useState<any[] | null>(null)
   const [isDataLoading, setIsDataLoading] = React.useState(false)
   
   const userProfileRef = useMemoFirebase(() => (db && user) ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
+
+  // Clear Data State
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
+  const [isClearing, setIsClearing] = React.useState(false)
 
   // Fetch all requests for monitoring
   React.useEffect(() => {
@@ -581,6 +655,26 @@ export default function RequestsPage() {
     }
   }, [myRequests])
 
+  const handleClearAllData = async () => {
+    if (profile?.role !== 'admin') return
+    setIsClearing(true)
+    try {
+      const batch = writeBatch(db)
+      const snapshot = await getDocs(collection(db, "vehicleRequests"))
+      snapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref)
+      })
+      await batch.commit()
+      toast({ title: "ล้างข้อมูลสำเร็จ", description: "ลบข้อมูลคำขอรถทั้งหมดเรียบร้อยแล้ว" })
+      setIsClearConfirmOpen(false)
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
+    } finally {
+      setIsClearing(false)
+    }
+  }
+
   if (isUserLoading || isProfileLoading) {
     return (
       <div className="flex h-[80vh] items-center justify-center">
@@ -590,6 +684,7 @@ export default function RequestsPage() {
   }
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
+  const isAdmin = profile?.role === 'admin'
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -608,10 +703,44 @@ export default function RequestsPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">ระบบขอใช้รถ</h2>
-        <p className="text-sm md:text-base text-muted-foreground">ส่งคำขอและจัดการการขอใช้รถสำหรับงานขนส่งและก่อสร้าง</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col gap-2">
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">ระบบขอใช้รถ</h2>
+          <p className="text-sm md:text-base text-muted-foreground">ส่งคำขอและจัดการการขอใช้รถสำหรับงานขนส่งและก่อสร้าง</p>
+        </div>
+        {isAdmin && (
+          <Button 
+            variant="outline" 
+            className="border-red-500/50 text-red-500 hover:bg-red-500/10 h-10 w-full sm:w-auto"
+            onClick={() => setIsClearConfirmOpen(true)}
+          >
+            <Trash2 className="mr-2 h-4 w-4" /> ล้างข้อมูลทั้งหมด
+          </Button>
+        )}
       </div>
+
+      {/* Global Admin Confirmation Dialog */}
+      <AlertDialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-500">ต้องการลบข้อมูลคำขอรถทั้งหมดใช่หรือไม่?</AlertDialogTitle>
+            <AlertDialogDescription>
+              การกระทำนี้จะลบรายการคำขอใช้รถ (Vehicle Requests) ทั้งหมดออกจากระบบ และไม่สามารถกู้คืนได้
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleClearAllData}
+              className="bg-red-500 hover:bg-red-600"
+              disabled={isClearing}
+            >
+              {isClearing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              ยืนยันลบทั้งหมด
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto">
@@ -746,7 +875,7 @@ export default function RequestsPage() {
 
         {isStaff && (
           <TabsContent value="manage" className="animate-in slide-in-from-bottom-2 duration-300">
-            <InlineRequestManager />
+            <InlineRequestManager userRole={profile?.role} />
           </TabsContent>
         )}
       </Tabs>
