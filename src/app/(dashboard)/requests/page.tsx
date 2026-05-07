@@ -21,11 +21,17 @@ import {
   Search,
   Truck,
   Check,
-  Trash2
+  Trash2,
+  Edit,
+  Plus,
+  Building2,
+  Globe,
+  Eye,
+  EyeOff
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch, where } from "firebase/firestore"
-import { UserProfile } from "@/types/models"
+import { UserProfile, Site } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -55,6 +61,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Loader } from "@googlemaps/js-api-loader"
 
 // Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
@@ -67,12 +75,14 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<any>(settingsRef)
 
-  // Staff should see actionable requests: pending and partial
+  // Staff should see actionable requests: pending, partial and potentially cancelled
+  const [showCancelled, setShowCancelled] = React.useState(false)
+  
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", ["pending", "partial"]),
+    where("status", "in", showCancelled ? ["pending", "partial", "cancelled"] : ["pending", "partial"]),
     orderBy("createdAt", "desc")
-  ), [db])
+  ), [db, showCancelled])
 
   const { data: requests, isLoading } = useCollection<any>(requestsRef)
 
@@ -168,7 +178,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
 
           if (hasCoords) {
             newMap.fitBounds(bounds);
-            // Trigger resize and adjust zoom for single markers
             google.maps.event.addListenerOnce(newMap, "idle", () => {
               google.maps.event.trigger(newMap, 'resize');
               if (newMap.getZoom()! > 15) newMap.setZoom(15);
@@ -178,7 +187,7 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
           setModalMap(newMap);
           setModalMarkers(markers);
         });
-      }, 400); // 400ms delay to be safe
+      }, 400); 
     }
 
     return () => {
@@ -290,6 +299,7 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
       case "partial": return <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
       case "approved": return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
       case "rejected": return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
+      case "cancelled": return <Badge className="bg-gray-500/10 text-gray-400 border-gray-500/20">ยกเลิกแล้ว</Badge>
       default: return null
     }
   }
@@ -312,6 +322,17 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
+        <div className="flex items-center gap-4 bg-secondary/20 px-4 rounded-lg h-11">
+          <Label htmlFor="show-cancelled" className="text-xs font-bold flex items-center gap-2 cursor-pointer">
+            {showCancelled ? <Eye className="h-4 w-4 text-accent" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
+            แสดงรายการที่ยกเลิก
+          </Label>
+          <Switch 
+            id="show-cancelled"
+            checked={showCancelled}
+            onCheckedChange={setShowCancelled}
+          />
+        </div>
         {userRole === 'admin' && (
           <Button 
             variant="outline" 
@@ -330,15 +351,20 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
               key={req.id} 
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
-                (req.status === "pending" || req.status === "partial") && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5"
+                (req.status === "pending" || req.status === "partial") && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5",
+                req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
               )}
               onClick={() => {
                 setSelectedReq(req)
                 setIsDetailOpen(true)
               }}
             >
-              {(req.status === "pending" || req.status === "partial") && (
-                <div className={cn("absolute top-0 left-0 w-1 h-full", req.status === "partial" ? "bg-blue-500" : "bg-yellow-500")} />
+              {(req.status === "pending" || req.status === "partial" || req.status === "cancelled") && (
+                <div className={cn(
+                  "absolute top-0 left-0 w-1 h-full", 
+                  req.status === "partial" ? "bg-blue-500" : 
+                  req.status === "cancelled" ? "bg-gray-500" : "bg-yellow-500"
+                )} />
               )}
               <CardContent className="p-4 space-y-3">
                 <div className="flex justify-between items-start">
@@ -410,23 +436,25 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
               <AlertCircle className="h-5 w-5 text-accent" /> รายละเอียดคำขอ {selectedReq?.requestId}
             </DialogTitle>
             <DialogDescription>
-              ตรวจสอบข้อมูลพิกัดและเลือกจุดหมายที่ต้องการจัดรถ
+              ตรวจสอบข้อมูลพิกัดและรายละเอียดใบงาน
             </DialogDescription>
           </DialogHeader>
 
           {selectedReq && (
             <div className="space-y-6 py-4">
-              {/* Modal Map Fix */}
-              <div className="rounded-xl overflow-hidden border border-border/50 h-[250px] bg-muted/20 relative">
-                {hasCoordinates ? (
-                  <div ref={mapContainerRef} className="w-full h-full" />
-                ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground bg-secondary/10 p-4 text-center">
-                    <MapPin className="h-8 w-8 mb-2 opacity-20" />
-                    <p className="text-xs">ไม่มีข้อมูลพิกัดสำหรับจุดหมายในคำขอนี้</p>
-                  </div>
-                )}
-              </div>
+              {/* Modal Map */}
+              {selectedReq.status !== 'cancelled' && (
+                <div className="rounded-xl overflow-hidden border border-border/50 h-[250px] bg-muted/20 relative">
+                  {hasCoordinates ? (
+                    <div ref={mapContainerRef} className="w-full h-full" />
+                  ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground bg-secondary/10 p-4 text-center">
+                      <MapPin className="h-8 w-8 mb-2 opacity-20" />
+                      <p className="text-xs">ไม่มีข้อมูลพิกัดสำหรับจุดหมายในคำขอนี้</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-secondary/30 p-4 rounded-xl border border-border/50">
                 <div className="space-y-1">
@@ -446,30 +474,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                   <p className="text-sm font-bold flex items-center gap-2 text-white">
                     <MapPin className="h-4 w-4 text-accent" /> จุดหมายปลายทาง ({selectedReq.destinations.length})
                   </p>
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-8 text-[10px] font-bold text-muted-foreground"
-                      onClick={() => {
-                        const assigned = selectedReq.assignedDestinations || []
-                        const available = selectedReq.destinations
-                          .map((_: any, i: number) => i)
-                          .filter((i: number) => !assigned.includes(i))
-                        setSelectedDestIndexes(new Set(available))
-                      }}
-                    >
-                      เลือกทั้งหมด
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-8 text-[10px] font-bold text-muted-foreground"
-                      onClick={() => setSelectedDestIndexes(new Set())}
-                    >
-                      ล้างการเลือก
-                    </Button>
-                  </div>
                 </div>
                 
                 <div className="space-y-3">
@@ -490,7 +494,7 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                           <Checkbox 
                             id={`dest-${idx}`}
                             checked={isSelected || isAssigned}
-                            disabled={isAssigned}
+                            disabled={isAssigned || selectedReq.status === 'cancelled'}
                             onCheckedChange={() => toggleDest(idx)}
                             className={cn(isAssigned && "data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500")}
                           />
@@ -517,17 +521,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                                 {dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}
                               </div>
                             </div>
-                            {dest.lat && dest.lng && (
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-9 w-9 p-0 border-accent/30 text-accent hover:bg-accent hover:text-white"
-                                onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${dest.lat},${dest.lng}`, '_blank')}
-                                title="ดูพิกัดบน Google Maps"
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </Button>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -582,11 +575,15 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
               ) : (
                 <div className={cn(
                   "p-5 rounded-xl border text-center space-y-2",
-                  selectedReq.status === "approved" ? "bg-green-500/10 border-green-500/30 text-green-500" : "bg-red-500/10 border-red-500/30 text-red-500"
+                  selectedReq.status === "approved" ? "bg-green-500/10 border-green-500/30 text-green-500" : 
+                  selectedReq.status === "cancelled" ? "bg-gray-500/10 border-gray-500/30 text-gray-400" :
+                  "bg-red-500/10 border-red-500/30 text-red-500"
                 )}>
                   <div className="flex items-center justify-center gap-2 font-bold text-lg">
-                    {selectedReq.status === "approved" ? <CheckCircle2 className="h-6 w-6" /> : <XCircle className="h-6 w-6" />}
-                    {selectedReq.status === "approved" ? "จัดรถครบถ้วนแล้ว" : "ไม่อนุมัติ"}
+                    {selectedReq.status === "approved" ? <CheckCircle2 className="h-6 w-6" /> : 
+                     selectedReq.status === "cancelled" ? <XCircle className="h-6 w-6" /> : <XCircle className="h-6 w-6" />}
+                    {selectedReq.status === "approved" ? "จัดรถครบถ้วนแล้ว" : 
+                     selectedReq.status === "cancelled" ? "ยกเลิกโดยผู้ใช้งาน" : "ไม่อนุมัติ"}
                   </div>
                   {selectedReq.tripId && (
                     <Badge variant="outline" className="bg-green-500 text-white border-transparent">
@@ -619,6 +616,19 @@ export default function RequestsPage() {
   const userProfileRef = useMemoFirebase(() => (db && user) ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
+  const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
+  const { data: sites } = useCollection<Site>(sitesRef)
+
+  // Edit State
+  const [editingReq, setEditingReq] = React.useState<any | null>(null)
+  const [isEditDialogOpen, setIsEditOpen] = React.useState(false)
+  const [editFormData, setEditFormData] = React.useState<any>(null)
+  const [isSavingEdit, setIsSavingEdit] = React.useState(false)
+
+  // Cancel Confirmation State
+  const [reqToCancel, setReqToCancel] = React.useState<any | null>(null)
+  const [isCancelConfirmOpen, setIsCancelOpen] = React.useState(false)
+
   // Clear Data State
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
@@ -628,26 +638,13 @@ export default function RequestsPage() {
     if (isUserLoading || !user || !db || isProfileLoading || !profile) return
 
     setIsDataLoading(true)
-    
-    // Determine if the user has staff privileges
     const isStaff = profile.role === 'admin' || profile.role === 'dispatcher'
     
-    // Construct the query based on role
-    // NOTE: This might require a Firestore Composite Index if filtering by userId AND ordering by createdAt
     let q;
     if (isStaff) {
-      // Staff can see all requests
-      q = query(
-        collection(db, "vehicleRequests"), 
-        orderBy("createdAt", "desc")
-      )
+      q = query(collection(db, "vehicleRequests"), orderBy("createdAt", "desc"))
     } else {
-      // Regular users only see their own requests
-      q = query(
-        collection(db, "vehicleRequests"),
-        where("userId", "==", user.uid),
-        orderBy("createdAt", "desc")
-      )
+      q = query(collection(db, "vehicleRequests"), where("userId", "==", user.uid), orderBy("createdAt", "desc"))
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -657,7 +654,6 @@ export default function RequestsPage() {
     }, (error) => {
       console.error("Firestore error in RequestsPage:", error)
       setIsDataLoading(false)
-      // Standard handling for index error or permission error
     })
 
     return () => unsubscribe()
@@ -674,6 +670,76 @@ export default function RequestsPage() {
       prevCount.current = myRequests.length
     }
   }, [myRequests])
+
+  const handleCancelRequest = async () => {
+    if (!reqToCancel) return
+    try {
+      await updateDoc(doc(db, "vehicleRequests", reqToCancel.id), {
+        status: "cancelled",
+        cancelledAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
+      toast({ title: "ยกเลิกสำเร็จ", description: `ยกเลิกคำขอ ${reqToCancel.requestId} เรียบร้อยแล้ว` })
+      setIsCancelOpen(false)
+      setReqToCancel(null)
+    } catch (e) {
+      toast({ title: "ผิดพลาด", description: "ไม่สามารถยกเลิกได้ในขณะนี้", variant: "destructive" })
+    }
+  }
+
+  const handleOpenEdit = (req: any) => {
+    setEditingReq(req)
+    setEditFormData({
+      requestDate: req.requestDate,
+      requestTime: req.requestTime,
+      note: req.note || "",
+      destinations: req.destinations.map((d: any, idx: number) => ({
+        id: `edit-${idx}-${Date.now()}`,
+        type: d.type || "site",
+        siteId: d.siteId || "",
+        siteName: d.siteName || "",
+        customName: d.customName || "",
+        coordinates: d.lat && d.lng ? `${d.lat}, ${d.lng}` : "",
+        jobDescription: d.jobDescription || ""
+      }))
+    })
+    setIsEditOpen(true)
+  }
+
+  const handleUpdateEdit = async () => {
+    if (!editingReq) return
+    setIsSavingEdit(true)
+    try {
+      const parsedDestinations = editFormData.destinations.map((d: any) => {
+        const [lat, lng] = d.coordinates.split(',').map((s: string) => parseFloat(s.trim()))
+        return {
+          type: d.type,
+          siteId: d.siteId || null,
+          siteName: d.type === "site" ? d.siteName : d.customName,
+          customName: d.type === "other" ? d.customName : null,
+          lat: isNaN(lat) ? 0 : lat,
+          lng: isNaN(lng) ? 0 : lng,
+          jobDescription: d.jobDescription
+        }
+      })
+
+      await updateDoc(doc(db, "vehicleRequests", editingReq.id), {
+        requestDate: editFormData.requestDate,
+        requestTime: editFormData.requestTime,
+        destinations: parsedDestinations,
+        note: editFormData.note,
+        updatedAt: serverTimestamp()
+      })
+
+      toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลคำขอ ${editingReq.requestId} เรียบร้อยแล้ว` })
+      setIsEditOpen(false)
+      setEditingReq(null)
+    } catch (e) {
+      toast({ title: "ผิดพลาด", description: "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
 
   const handleClearAllData = async () => {
     if (profile?.role !== 'admin') return
@@ -716,6 +782,8 @@ export default function RequestsPage() {
         return <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
       case "rejected":
         return <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
+      case "cancelled":
+        return <Badge variant="outline" className="bg-gray-500/10 text-gray-400 border-gray-500/20">ยกเลิกแล้ว</Badge>
       default:
         return null
     }
@@ -739,7 +807,6 @@ export default function RequestsPage() {
         )}
       </div>
 
-      {/* Global Admin Confirmation Dialog */}
       <AlertDialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -761,6 +828,209 @@ export default function RequestsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={isCancelConfirmOpen} onOpenChange={setIsCancelOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-500">ยืนยันการยกเลิกคำขอใช้รถ</AlertDialogTitle>
+            <AlertDialogDescription>
+              คุณต้องการยกเลิกคำขอ <span className="font-bold text-white">{reqToCancel?.requestId}</span> ใช่หรือไม่? การกระทำนี้ไม่สามารถยกเลิกได้
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setReqToCancel(null)}>ปิด</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleCancelRequest}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              ยืนยันยกเลิก
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Edit className="h-5 w-5 text-accent" /> แก้ไขคำขอ {editingReq?.requestId}
+            </DialogTitle>
+            <DialogDescription>
+              คุณสามารถปรับเปลี่ยนข้อมูลการส่งของและวันเวลาได้
+            </DialogDescription>
+          </DialogHeader>
+
+          {editFormData && (
+            <div className="space-y-6 py-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>วันที่ต้องการรถ</Label>
+                  <Input 
+                    type="date" 
+                    value={editFormData.requestDate}
+                    onChange={(e) => setEditFormData({...editFormData, requestDate: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>เวลาที่ต้องการ</Label>
+                  <Input 
+                    type="time" 
+                    value={editFormData.requestTime}
+                    onChange={(e) => setEditFormData({...editFormData, requestTime: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold">จุดหมายปลายทาง ({editFormData.destinations.length}/10)</Label>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="border-accent text-accent"
+                    onClick={() => setEditFormData({
+                      ...editFormData,
+                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "" }]
+                    })}
+                  >
+                    <Plus className="h-4 w-4 mr-2" /> เพิ่มจุดหมาย
+                  </Button>
+                </div>
+
+                <div className="space-y-4">
+                  {editFormData.destinations.map((dest: any, idx: number) => (
+                    <Card key={dest.id} className="bg-secondary/20 border-border/50 p-4 space-y-4">
+                      <div className="flex justify-between items-center">
+                        <div className="flex bg-background/50 p-1 rounded-md">
+                          <Button 
+                            variant={dest.type === "site" ? "default" : "ghost"} 
+                            size="sm" 
+                            className={cn("h-7 text-[10px]", dest.type === "site" && "bg-accent")}
+                            onClick={() => {
+                              const newDests = [...editFormData.destinations]
+                              newDests[idx].type = "site"
+                              setEditFormData({...editFormData, destinations: newDests})
+                            }}
+                          >
+                            <Building2 className="mr-1 h-3 w-3" /> ไซน์งาน
+                          </Button>
+                          <Button 
+                            variant={dest.type === "other" ? "default" : "ghost"} 
+                            size="sm" 
+                            className={cn("h-7 text-[10px]", dest.type === "other" && "bg-accent")}
+                            onClick={() => {
+                              const newDests = [...editFormData.destinations]
+                              newDests[idx].type = "other"
+                              setEditFormData({...editFormData, destinations: newDests})
+                            }}
+                          >
+                            <Globe className="mr-1 h-3 w-3" /> สถานที่อื่น
+                          </Button>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          disabled={editFormData.destinations.length <= 1}
+                          onClick={() => {
+                            const newDests = editFormData.destinations.filter((_: any, i: number) => i !== idx)
+                            setEditFormData({...editFormData, destinations: newDests})
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {dest.type === 'site' ? (
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] uppercase text-muted-foreground">เลือกไซน์งาน</Label>
+                            <Select 
+                              value={dest.siteId} 
+                              onValueChange={(val) => {
+                                const site = sites?.find(s => s.id === val)
+                                const newDests = [...editFormData.destinations]
+                                newDests[idx].siteId = val
+                                newDests[idx].siteName = site?.name || ""
+                                newDests[idx].coordinates = site?.latitude && site?.longitude ? `${site.latitude}, ${site.longitude}` : ""
+                                setEditFormData({...editFormData, destinations: newDests})
+                              }}
+                            >
+                              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] uppercase text-muted-foreground">ชื่อสถานที่</Label>
+                            <Input 
+                              className="h-9" 
+                              value={dest.customName}
+                              onChange={(e) => {
+                                const newDests = [...editFormData.destinations]
+                                newDests[idx].customName = e.target.value
+                                setEditFormData({...editFormData, destinations: newDests})
+                              }}
+                            />
+                          </div>
+                        )}
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] uppercase text-muted-foreground">พิกัด (lat, lng)</Label>
+                          <Input 
+                            className="h-9" 
+                            value={dest.coordinates}
+                            readOnly={dest.type === 'site'}
+                            onChange={(e) => {
+                              const newDests = [...editFormData.destinations]
+                              newDests[idx].coordinates = e.target.value
+                              setEditFormData({...editFormData, destinations: newDests})
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] uppercase text-muted-foreground">ลักษณะงาน</Label>
+                        <Textarea 
+                          className="min-h-[60px] text-xs" 
+                          value={dest.jobDescription}
+                          onChange={(e) => {
+                            const newDests = [...editFormData.destinations]
+                            newDests[idx].jobDescription = e.target.value
+                            setEditFormData({...editFormData, destinations: newDests})
+                          }}
+                        />
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>หมายเหตุ</Label>
+                <Textarea 
+                  value={editFormData.note}
+                  onChange={(e) => setEditFormData({...editFormData, note: e.target.value})}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex flex-row gap-2 mt-4">
+            <Button variant="outline" className="flex-1 h-11" onClick={() => setIsEditOpen(false)}>ยกเลิก</Button>
+            <Button 
+              className="flex-1 h-11 bg-accent" 
+              onClick={handleUpdateEdit}
+              disabled={isSavingEdit}
+            >
+              {isSavingEdit ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
+              บันทึกการแก้ไข
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto">
@@ -791,14 +1061,18 @@ export default function RequestsPage() {
               </div>
             ) : myRequests && myRequests.length > 0 ? (
               myRequests.map((req: any) => (
-                <Card key={req.id} className="border-border/50 hover:border-accent/30 transition-all overflow-hidden group">
+                <Card key={req.id} className={cn(
+                  "border-border/50 hover:border-accent/30 transition-all overflow-hidden group",
+                  req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
+                )}>
                   <CardContent className="p-0">
                     <div className="flex flex-col sm:flex-row">
                       <div className={cn(
                         "w-full sm:w-1.5 h-1.5 sm:h-auto shrink-0",
                         req.status === "pending" ? "bg-yellow-500" :
                         req.status === "partial" ? "bg-blue-500" :
-                        req.status === "approved" ? "bg-green-500" : "bg-red-500"
+                        req.status === "approved" ? "bg-green-500" :
+                        req.status === "cancelled" ? "bg-gray-500" : "bg-red-500"
                       )} />
                       
                       <div className="flex-1 p-4 md:p-6 space-y-4">
@@ -823,11 +1097,38 @@ export default function RequestsPage() {
                               </div>
                             </div>
                           </div>
-                          <div className="shrink-0">
-                            {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-yellow-500" /> :
-                             req.status === "partial" ? <Clock className="h-5 w-5 text-blue-400" /> :
-                             req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
-                             <XCircle className="h-5 w-5 text-red-500" />}
+                          
+                          <div className="flex items-center gap-2">
+                            {req.status === "pending" && req.userId === user?.uid && (
+                              <>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 text-xs border-border/50 hover:border-accent hover:text-accent"
+                                  onClick={() => handleOpenEdit(req)}
+                                >
+                                  <Edit className="h-3.5 w-3.5 mr-1.5" /> แก้ไข
+                                </Button>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 text-xs border-red-500/30 text-red-500/70 hover:bg-red-500/10 hover:text-red-500"
+                                  onClick={() => {
+                                    setReqToCancel(req)
+                                    setIsCancelOpen(true)
+                                  }}
+                                >
+                                  <XCircle className="h-3.5 w-3.5 mr-1.5" /> ยกเลิก
+                                </Button>
+                              </>
+                            )}
+                            <div className="shrink-0">
+                              {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-yellow-500" /> :
+                               req.status === "partial" ? <Clock className="h-5 w-5 text-blue-400" /> :
+                               req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
+                               req.status === "cancelled" ? <XCircle className="h-5 w-5 text-gray-400" /> :
+                               <XCircle className="h-5 w-5 text-red-500" />}
+                            </div>
                           </div>
                         </div>
 
@@ -859,12 +1160,9 @@ export default function RequestsPage() {
                           </div>
                         )}
 
-                        {req.status === "partial" && (
-                          <div className="bg-blue-500/5 border border-blue-500/20 p-3 rounded-lg flex items-center justify-between animate-in slide-in-from-left-2">
-                            <p className="text-xs text-blue-400 font-medium">จัดรถแล้วบางจุด รอจุดที่เหลือ...</p>
-                            <Badge variant="outline" className="border-blue-500/50 text-blue-400">
-                              สถานะ: กึ่งสำเร็จ
-                            </Badge>
+                        {req.status === "cancelled" && (
+                          <div className="bg-gray-500/5 border border-gray-500/20 p-3 rounded-lg animate-in slide-in-from-top-1">
+                            <p className="text-xs text-gray-400 font-bold">ยกเลิกแล้วเมื่อ: {req.cancelledAt?.toDate()?.toLocaleString('th-TH')}</p>
                           </div>
                         )}
 
