@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -19,8 +18,8 @@ import {
   User as UserIcon,
   ChevronRight
 } from "lucide-react"
-import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, where, orderBy } from "firebase/firestore"
+import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase"
+import { doc, collection, query, where, orderBy, onSnapshot } from "firebase/firestore"
 import { UserProfile } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -28,23 +27,39 @@ import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
 export default function RequestsPage() {
-  const { user } = useUser()
+  const { user, isUserLoading } = useUser()
   const db = useFirestore()
   const [activeTab, setActiveTab] = React.useState("form")
+  const [myRequests, setMyRequests] = React.useState<any[] | null>(null)
+  const [isDataLoading, setIsDataLoading] = React.useState(false)
   
   const userProfileRef = useMemoFirebase(() => (db && user) ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
-  const myRequestsQuery = useMemoFirebase(() => (db && user?.email) ? 
-    query(
+  // Fetch my requests manually to ensure auth is ready
+  React.useEffect(() => {
+    if (isUserLoading || !user || !db) return
+
+    setIsDataLoading(true)
+    const q = query(
       collection(db, "vehicleRequests"), 
       where("requestedByEmail", "==", user.email),
       orderBy("createdAt", "desc")
-    ) : null, 
-  [db, user?.email])
+    )
 
-  const { data: myRequests, isLoading: isLoadingRequests } = useCollection(myRequestsQuery)
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+      setMyRequests(results)
+      setIsDataLoading(false)
+    }, (error) => {
+      console.error("Firestore error in RequestsPage:", error)
+      setIsDataLoading(false)
+    })
 
+    return () => unsubscribe()
+  }, [user, isUserLoading, db])
+
+  // Track if we should auto-switch tabs when a new request is added
   const prevCount = React.useRef<number | null>(null)
   React.useEffect(() => {
     if (myRequests && prevCount.current !== null && myRequests.length > prevCount.current) {
@@ -55,7 +70,7 @@ export default function RequestsPage() {
     }
   }, [myRequests])
 
-  if (isProfileLoading) {
+  if (isUserLoading || isProfileLoading) {
     return (
       <div className="flex h-[80vh] items-center justify-center">
         <Loader2 className="h-10 w-10 animate-spin text-accent" />
@@ -115,7 +130,7 @@ export default function RequestsPage() {
 
         <TabsContent value="list" className="animate-in slide-in-from-right-2 duration-300">
           <div className="max-w-4xl mx-auto space-y-4">
-            {isLoadingRequests ? (
+            {isDataLoading && !myRequests ? (
               <div className="flex flex-col gap-4">
                 {[1, 2, 3].map((i) => (
                   <div key={i} className="h-32 w-full bg-secondary/20 animate-pulse rounded-xl" />
@@ -196,7 +211,7 @@ export default function RequestsPage() {
             ) : (
               <div className="text-center py-20 space-y-4 bg-secondary/10 rounded-2xl border border-dashed border-border/50">
                 <div className="bg-secondary/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-                  <History className="h-8 w-8 text-muted-foreground" />
+                  <ClipboardList className="h-8 w-8 text-muted-foreground" />
                 </div>
                 <div className="space-y-1">
                   <p className="text-foreground font-semibold">ยังไม่มีคำขอรถ</p>

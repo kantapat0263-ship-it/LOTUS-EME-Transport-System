@@ -55,6 +55,8 @@ export const FirebaseContext = createContext<FirebaseContextState | undefined>(u
 
 /**
  * FirebaseProvider manages and provides Firebase services and user authentication state.
+ * Note: Data subscriptions (like vehicleRequests) should be handled at the component/page level,
+ * not globally within this provider to ensure proper auth context.
  */
 export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
   children,
