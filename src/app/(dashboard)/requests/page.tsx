@@ -20,7 +20,8 @@ import {
   ExternalLink,
   MessageSquare,
   Search,
-  Truck
+  Truck,
+  Check
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp } from "firebase/firestore"
@@ -43,14 +44,19 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Loader } from "@googlemaps/js-api-loader"
 
-// Inline modified RequestManager to support "Manage Vehicle" flow
+// Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
 function InlineRequestManager() {
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
   const { user } = useUser()
   
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+  const { data: companySettings } = useDoc<any>(settingsRef)
+
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
     orderBy("createdAt", "desc")
@@ -63,14 +69,131 @@ function InlineRequestManager() {
   const [rejectReason, setRejectReason] = React.useState("")
   const [isProcessing, setIsStaffProcessing] = React.useState(false)
   const [searchTerm, setSearchTerm] = React.useState("")
+  
+  // Split Trip States
+  const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
+  const mapContainerRef = React.useRef<HTMLDivElement>(null)
+  const [modalMap, setModalMap] = React.useState<google.maps.Map | null>(null)
+  const [modalMarkers, setModalMarkers] = React.useState<google.maps.Marker[]>([])
+
+  // Reset selection and map markers when request changes or modal opens
+  React.useEffect(() => {
+    if (selectedReq) {
+      const assigned = selectedReq.assignedDestinations || []
+      const available = selectedReq.destinations
+        .map((_: any, i: number) => i)
+        .filter((i: number) => !assigned.includes(i))
+      
+      setSelectedDestIndexes(new Set(available))
+    }
+  }, [selectedReq])
+
+  // Map initialization and marker rendering
+  React.useEffect(() => {
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
+    
+    if (isDetailOpen && selectedReq && mapContainerRef.current && apiKey) {
+      const loader = new Loader({
+        apiKey: apiKey,
+        version: "weekly"
+      });
+
+      loader.load().then(() => {
+        const google = window.google;
+        const newMap = new google.maps.Map(mapContainerRef.current!, {
+          center: { lat: 13.7563, lng: 100.5018 },
+          zoom: 12,
+          mapTypeControl: false,
+          streetViewControl: false,
+          styles: [
+            { featureType: "landscape", elementType: "all", color: "#2d3139" },
+            { featureType: "road", elementType: "all", color: "#1a1c23" },
+            { featureType: "water", elementType: "all", color: "#172899" }
+          ]
+        });
+
+        const bounds = new google.maps.LatLngBounds();
+        const markers: google.maps.Marker[] = [];
+
+        selectedReq.destinations.forEach((dest: any, idx: number) => {
+          if (dest.lat && dest.lng) {
+            const pos = { lat: dest.lat, lng: dest.lng };
+            bounds.extend(pos);
+
+            const marker = new google.maps.Marker({
+              position: pos,
+              map: newMap,
+              label: {
+                text: (idx + 1).toString(),
+                color: "#ffffff",
+                fontWeight: "bold"
+              },
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 12,
+                fillColor: dest.type === 'site' ? "#f59e0b" : "#9333ea",
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#ffffff"
+              },
+              title: dest.siteName
+            });
+            markers.push(marker);
+          }
+        });
+
+        if (selectedReq.destinations.length > 0) {
+          newMap.fitBounds(bounds);
+          // Don't zoom in too much for a single marker
+          const listener = google.maps.event.addListener(newMap, "idle", () => {
+            if (newMap.getZoom()! > 15) newMap.setZoom(15);
+            google.maps.event.removeListener(listener);
+          });
+        }
+
+        setModalMap(newMap);
+        setModalMarkers(markers);
+      });
+    }
+
+    return () => {
+      modalMarkers.forEach(m => m.setMap(null));
+    }
+  }, [isDetailOpen, selectedReq, companySettings]);
 
   const filteredRequests = requests?.filter(req => 
     req.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
     req.requestedBy.toLowerCase().includes(searchTerm.toLowerCase())
   ) || []
 
+  const toggleDest = (idx: number) => {
+    const newSet = new Set(selectedDestIndexes);
+    if (newSet.has(idx)) {
+      newSet.delete(idx);
+    } else {
+      newSet.add(idx);
+    }
+    setSelectedDestIndexes(newSet);
+  }
+
   const handleManageVehicle = () => {
     if (!selectedReq) return
+    
+    if (selectedDestIndexes.size === 0) {
+      toast({ title: "กรุณาเลือกจุดหมาย", description: "ต้องเลือกอย่างน้อย 1 จุดเพื่อจัดรถ", variant: "destructive" })
+      return
+    }
+
+    const assigned = selectedReq.assignedDestinations || []
+    const availableCount = selectedReq.destinations.length - assigned.length
+    
+    if (selectedDestIndexes.size < availableCount) {
+      if (!confirm(`คุณเลือก ${selectedDestIndexes.size} จาก ${availableCount} จุดที่เหลือ\nจุดที่ไม่ได้เลือกยังต้องรอการจัดรถใน Trip อื่น ต้องการดำเนินการต่อหรือไม่?`)) {
+        return
+      }
+    }
+    
+    const selectedDestinations = selectedReq.destinations.filter((_: any, i: number) => selectedDestIndexes.has(i))
     
     const pendingVR = {
       vrId: selectedReq.requestId,
@@ -78,7 +201,10 @@ function InlineRequestManager() {
       requestDate: selectedReq.requestDate,
       requestTime: selectedReq.requestTime,
       requestedBy: selectedReq.requestedBy,
-      destinations: selectedReq.destinations
+      destinations: selectedDestinations,
+      totalDestinations: selectedReq.destinations.length,
+      selectedCount: selectedDestIndexes.size,
+      assignedIndexes: Array.from(selectedDestIndexes)
     }
     
     sessionStorage.setItem("pendingVR", JSON.stringify(pendingVR))
@@ -115,7 +241,8 @@ function InlineRequestManager() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending": return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
-      case "approved": return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">อนุมัติแล้ว</Badge>
+      case "partial": return <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
+      case "approved": return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
       case "rejected": return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
       default: return null
     }
@@ -144,15 +271,15 @@ function InlineRequestManager() {
               key={req.id} 
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
-                req.status === "pending" && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5"
+                (req.status === "pending" || req.status === "partial") && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5"
               )}
               onClick={() => {
                 setSelectedReq(req)
                 setIsDetailOpen(true)
               }}
             >
-              {req.status === "pending" && (
-                <div className="absolute top-0 left-0 w-1 h-full bg-yellow-500" />
+              {(req.status === "pending" || req.status === "partial") && (
+                <div className={cn("absolute top-0 left-0 w-1 h-full", req.status === "partial" ? "bg-blue-500" : "bg-yellow-500")} />
               )}
               <CardContent className="p-4 space-y-3">
                 <div className="flex justify-between items-start">
@@ -201,12 +328,17 @@ function InlineRequestManager() {
               <AlertCircle className="h-5 w-5 text-accent" /> รายละเอียดคำขอ {selectedReq?.requestId}
             </DialogTitle>
             <DialogDescription>
-              ตรวจสอบข้อมูลพิกัดและรายละเอียดงานเพื่อดำเนินการจัดรถ
+              ตรวจสอบข้อมูลพิกัดและเลือกจุดหมายที่ต้องการจัดรถ
             </DialogDescription>
           </DialogHeader>
 
           {selectedReq && (
             <div className="space-y-6 py-4">
+              {/* Modal Map */}
+              <div className="rounded-xl overflow-hidden border border-border/50 h-[250px] bg-muted/20">
+                <div ref={mapContainerRef} className="w-full h-full" />
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-secondary/30 p-4 rounded-xl border border-border/50">
                 <div className="space-y-1">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">ผู้ขอใช้รถ</p>
@@ -221,33 +353,95 @@ function InlineRequestManager() {
               </div>
 
               <div className="space-y-3">
-                <p className="text-sm font-bold flex items-center gap-2 text-white">
-                  <MapPin className="h-4 w-4 text-accent" /> จุดหมายปลายทาง ({selectedReq.destinations.length})
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-bold flex items-center gap-2 text-white">
+                    <MapPin className="h-4 w-4 text-accent" /> จุดหมายปลายทาง ({selectedReq.destinations.length})
+                  </p>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 text-[10px] font-bold text-muted-foreground"
+                      onClick={() => {
+                        const assigned = selectedReq.assignedDestinations || []
+                        const available = selectedReq.destinations
+                          .map((_: any, i: number) => i)
+                          .filter((i: number) => !assigned.includes(i))
+                        setSelectedDestIndexes(new Set(available))
+                      }}
+                    >
+                      เลือกทั้งหมด
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 text-[10px] font-bold text-muted-foreground"
+                      onClick={() => setSelectedDestIndexes(new Set())}
+                    >
+                      ล้างการเลือก
+                    </Button>
+                  </div>
+                </div>
+                
                 <div className="space-y-3">
-                  {selectedReq.destinations.map((dest: any, idx: number) => (
-                    <div key={idx} className="bg-background/50 border border-border/50 p-4 rounded-xl relative overflow-hidden group/item">
-                      <div className="absolute left-0 top-0 w-1 h-full bg-accent" />
-                      <div className="flex justify-between items-start gap-4">
+                  {selectedReq.destinations.map((dest: any, idx: number) => {
+                    const isAssigned = (selectedReq.assignedDestinations || []).includes(idx);
+                    const isSelected = selectedDestIndexes.has(idx);
+
+                    return (
+                      <div 
+                        key={idx} 
+                        className={cn(
+                          "bg-background/50 border border-border/50 p-4 rounded-xl relative overflow-hidden group/item flex gap-4 items-start",
+                          isSelected && "border-accent/40 bg-accent/5",
+                          isAssigned && "opacity-60 bg-secondary/10"
+                        )}
+                      >
+                        <div className="pt-1">
+                          <Checkbox 
+                            id={`dest-${idx}`}
+                            checked={isSelected || isAssigned}
+                            disabled={isAssigned}
+                            onCheckedChange={() => toggleDest(idx)}
+                            className={cn(isAssigned && "data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500")}
+                          />
+                        </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-accent group-hover/item:text-white transition-colors">{dest.siteName}</p>
-                          <div className="mt-2 bg-secondary/20 p-2 rounded text-xs text-muted-foreground border border-dashed">
-                            <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
-                            {dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}
+                          <div className="flex justify-between items-start gap-4">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold flex items-center gap-2">
+                                <span className={cn(
+                                  "w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0",
+                                  dest.type === 'site' ? "bg-accent/20 text-accent" : "bg-purple-500/20 text-purple-400"
+                                )}>
+                                  {idx + 1}
+                                </span>
+                                <span className={cn(isSelected && "text-accent")}>{dest.siteName}</span>
+                                {isAssigned && (
+                                  <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-[10px] h-5">
+                                    <Check className="h-3 w-3 mr-1" /> จัดแล้ว
+                                  </Badge>
+                                )}
+                              </p>
+                              <div className="mt-2 bg-secondary/20 p-2 rounded text-xs text-muted-foreground border border-dashed">
+                                <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
+                                {dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}
+                              </div>
+                            </div>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-9 w-9 p-0 border-accent/30 text-accent hover:bg-accent hover:text-white"
+                              onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${dest.lat},${dest.lng}`, '_blank')}
+                              title="ดูพิกัดบน Google Maps"
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-9 w-9 p-0 border-accent/30 text-accent hover:bg-accent hover:text-white"
-                          onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${dest.lat},${dest.lng}`, '_blank')}
-                          title="ดูพิกัดบน Google Maps"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                        </Button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -262,7 +456,7 @@ function InlineRequestManager() {
                 </div>
               )}
 
-              {selectedReq.status === "pending" ? (
+              {(selectedReq.status === "pending" || selectedReq.status === "partial") ? (
                 <div className="pt-6 border-t border-border/50 space-y-5">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
@@ -290,7 +484,7 @@ function InlineRequestManager() {
                       disabled={isProcessing}
                     >
                       {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Truck className="mr-2 h-4 w-4" />}
-                      จัดรถสำหรับคำขอนี้
+                      {selectedReq.status === 'partial' ? "จัดรถจุดที่เหลือ" : `จัดรถสำหรับที่เลือก (${selectedDestIndexes.size} จุด)`}
                     </Button>
                   </div>
                 </div>
@@ -301,11 +495,11 @@ function InlineRequestManager() {
                 )}>
                   <div className="flex items-center justify-center gap-2 font-bold text-lg">
                     {selectedReq.status === "approved" ? <CheckCircle2 className="h-6 w-6" /> : <XCircle className="h-6 w-6" />}
-                    {selectedReq.status === "approved" ? "จัดรถเรียบร้อยแล้ว" : "ไม่อนุมัติ"}
+                    {selectedReq.status === "approved" ? "จัดรถครบถ้วนแล้ว" : "ไม่อนุมัติ"}
                   </div>
                   {selectedReq.tripId && (
                     <Badge variant="outline" className="bg-green-500 text-white border-transparent">
-                      Trip ID: {selectedReq.tripId}
+                      Trip ID ล่าสุด: {selectedReq.tripId}
                     </Badge>
                   )}
                   {selectedReq.rejectReason && (
@@ -345,7 +539,6 @@ export default function RequestsPage() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
-      console.log('Requests found:', results.length)
       setMyRequests(results)
       setIsDataLoading(false)
     }, (error) => {
@@ -382,6 +575,8 @@ export default function RequestsPage() {
     switch (status) {
       case "pending":
         return <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
+      case "partial":
+        return <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
       case "approved":
         return <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
       case "rejected":
@@ -433,6 +628,7 @@ export default function RequestsPage() {
                       <div className={cn(
                         "w-full sm:w-1.5 h-1.5 sm:h-auto shrink-0",
                         req.status === "pending" ? "bg-yellow-500" :
+                        req.status === "partial" ? "bg-blue-500" :
                         req.status === "approved" ? "bg-green-500" : "bg-red-500"
                       )} />
                       
@@ -460,6 +656,7 @@ export default function RequestsPage() {
                           </div>
                           <div className="shrink-0">
                             {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-yellow-500" /> :
+                             req.status === "partial" ? <Clock className="h-5 w-5 text-blue-400" /> :
                              req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
                              <XCircle className="h-5 w-5 text-red-500" />}
                           </div>
@@ -468,22 +665,36 @@ export default function RequestsPage() {
                         <Separator className="bg-border/50" />
 
                         <div className="grid grid-cols-1 gap-3">
-                          {req.destinations?.map((dest: any, idx: number) => (
-                            <div key={idx} className="flex gap-3 text-sm">
-                              <div className="font-bold text-accent min-w-[20px]">{idx + 1}.</div>
-                              <div className="space-y-0.5">
-                                <p className="font-semibold text-foreground">{dest.siteName}</p>
-                                <p className="text-xs text-muted-foreground">{dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}</p>
+                          {req.destinations?.map((dest: any, idx: number) => {
+                            const isAssigned = (req.assignedDestinations || []).includes(idx);
+                            return (
+                              <div key={idx} className={cn("flex gap-3 text-sm", isAssigned && "opacity-50")}>
+                                <div className={cn("font-bold min-w-[20px]", isAssigned ? "text-green-500" : "text-accent")}>
+                                  {isAssigned ? <Check className="h-4 w-4" /> : `${idx + 1}.`}
+                                </div>
+                                <div className="space-y-0.5">
+                                  <p className="font-semibold text-foreground">{dest.siteName}</p>
+                                  <p className="text-xs text-muted-foreground">{dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}</p>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
                         {req.status === "approved" && req.tripId && (
                           <div className="bg-green-500/5 border border-green-500/20 p-3 rounded-lg flex items-center justify-between animate-in zoom-in-95">
-                            <p className="text-xs text-green-500 font-medium">จัดสรรงานแล้ว</p>
+                            <p className="text-xs text-green-500 font-medium">จัดสรรงานครบถ้วนแล้ว</p>
                             <Badge className="bg-green-600 text-white border-transparent">
                               Trip ID: {req.tripId}
+                            </Badge>
+                          </div>
+                        )}
+
+                        {req.status === "partial" && (
+                          <div className="bg-blue-500/5 border border-blue-500/20 p-3 rounded-lg flex items-center justify-between animate-in slide-in-from-left-2">
+                            <p className="text-xs text-blue-400 font-medium">จัดรถแล้วบางจุด รอจุดที่เหลือ...</p>
+                            <Badge variant="outline" className="border-blue-500/50 text-blue-400">
+                              สถานะ: กึ่งสำเร็จ
                             </Badge>
                           </div>
                         )}
