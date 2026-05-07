@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -14,7 +13,8 @@ import {
   AlertCircle, 
   CheckCircle2, 
   XCircle,
-  ExternalLink
+  ExternalLink,
+  ClipboardList
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
