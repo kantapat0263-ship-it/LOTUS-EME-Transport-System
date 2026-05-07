@@ -33,6 +33,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
@@ -191,6 +192,7 @@ export default function TripPlanPage() {
 
   // Load Pending VR from SessionStorage
   React.useEffect(() => {
+    if (typeof window === "undefined") return
     const data = sessionStorage.getItem("pendingVR")
     if (data) {
       try {
@@ -325,7 +327,7 @@ export default function TripPlanPage() {
     setStops([{ id: '1', siteId: '', cargo: '', customData: null }])
     setRouteStats(null)
     setPendingVr(null)
-    sessionStorage.removeItem("pendingVR")
+    if (typeof window !== "undefined") sessionStorage.removeItem("pendingVR")
     if (directionsRenderer) directionsRenderer.setDirections({ routes: [] } as any)
     toast({ title: "ล้างข้อมูลเรียบร้อย", description: "เริ่มต้นเขียนแผนใหม่แล้ว" })
   }
@@ -617,7 +619,7 @@ export default function TripPlanPage() {
       // Update VR status if this trip was generated from a request
       if (pendingVr) {
         const vrRef = doc(db, "vehicleRequests", pendingVr.docId)
-        await updateDoc(vrRef, {
+        updateDoc(vrRef, {
           status: "approved",
           tripId: tripId,
           approvedBy: user?.email || "system",
@@ -625,7 +627,7 @@ export default function TripPlanPage() {
           driverName: selectedDriver?.name || "",
           approvedAt: serverTimestamp()
         })
-        sessionStorage.removeItem("pendingVR")
+        if (typeof window !== "undefined") sessionStorage.removeItem("pendingVR")
         toast({ title: "จัดรถสำเร็จ!", description: `${pendingVr.vrId} → Trip ${tripId}` })
       } else {
         toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
