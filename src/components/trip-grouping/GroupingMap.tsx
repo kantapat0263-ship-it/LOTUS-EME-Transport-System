@@ -6,6 +6,9 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { useDoc, useFirestore, useMemoFirebase } from "@/firebase"
 import { doc } from "firebase/firestore"
 import { CompanySetting } from "@/types/models"
+import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Loader2, Route, Zap, RefreshCcw, MapPin } from "lucide-react"
 
 interface GroupingMapProps {
   destinations: any[];
@@ -24,10 +27,19 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
   const markersRef = React.useRef<google.maps.Marker[]>([])
   const infoWindowRef = React.useRef<google.maps.InfoWindow | null>(null)
   
+  // Directions refs
+  const directionsServiceRef = React.useRef<google.maps.DirectionsService | null>(null)
+  const directionsRendererRef = React.useRef<google.maps.DirectionsRenderer | null>(null)
+  
   // Refs for hover visuals
   const hoverPolylinesRef = React.useRef<google.maps.Polyline[]>([])
   const hoverLabelsRef = React.useRef<google.maps.Marker[]>([])
   const distanceCache = React.useRef<Map<string, number>>(new Map())
+
+  // Route calculation state
+  const [routeStats, setRouteStats] = React.useState<{ distance: string, duration: string } | null>(null)
+  const [isCalculating, setIsCalculating] = React.useState(false)
+  const [optimizeMode, setOptimizeMode] = React.useState(false)
 
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingRef)
@@ -38,6 +50,76 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     hoverPolylinesRef.current = []
     hoverLabelsRef.current = []
   }, [])
+
+  const calculateRoute = React.useCallback(async (optimize: boolean = false) => {
+    if (!directionsServiceRef.current || !directionsRendererRef.current || selectedIds.size === 0) {
+      setRouteStats(null)
+      directionsRendererRef.current?.setDirections({ routes: [] } as any)
+      return
+    }
+
+    setIsCalculating(true)
+    const google = window.google
+    const selectedDests = destinations.filter(d => selectedIds.has(d.id))
+    
+    const origin = { 
+      lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
+      lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
+    }
+
+    // Sort waypoints based on current list order or optimized
+    const waypointList = [...selectedDests]
+    const destination = waypointList.pop()
+    const waypoints = waypointList.map(d => ({
+      location: new google.maps.LatLng(d.lat, d.lng),
+      stopover: true
+    }))
+
+    directionsServiceRef.current.route({
+      origin: new google.maps.LatLng(origin.lat, origin.lng),
+      destination: new google.maps.LatLng(destination.lat, destination.lng),
+      waypoints: waypoints,
+      optimizeWaypoints: optimize,
+      travelMode: google.maps.TravelMode.DRIVING,
+    }, (result, status) => {
+      setIsCalculating(false)
+      if (status === 'OK' && result) {
+        directionsRendererRef.current?.setDirections(result)
+        
+        let totalDist = 0
+        let totalTime = 0
+        const route = result.routes[0]
+        
+        route.legs.forEach(leg => {
+          totalDist += leg.distance?.value || 0
+          totalTime += leg.duration?.value || 0
+        })
+
+        const distanceText = (totalDist / 1000).toFixed(1) + " กม."
+        const hours = Math.floor(totalTime / 3600)
+        const mins = Math.round((totalTime % 3600) / 60)
+        const durationText = hours > 0 ? `${hours} ชม. ${mins} นาที` : `${mins} นาที`
+
+        setRouteStats({ distance: distanceText, duration: durationText })
+
+        // Expose stats to window so parent can read it on "Create Trip"
+        if (typeof window !== 'undefined') {
+          (window as any).__lastTripStats = {
+            distance: totalDist / 1000,
+            duration: totalTime / 60
+          }
+        }
+      }
+    })
+  }, [destinations, selectedIds, settings])
+
+  // Debounced auto-calculate
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      calculateRoute(optimizeMode)
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [selectedIds, optimizeMode, calculateRoute])
 
   const getDistanceMatrix = React.useCallback((origin: google.maps.LatLng, targets: google.maps.LatLng[]): Promise<number[]> => {
     return new Promise((resolve) => {
@@ -89,7 +171,7 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
         path: [start, end],
         geodesic: true,
         strokeColor: "#F0890D",
-        strokeOpacity: 0, // invisible line, icons provide visibility
+        strokeOpacity: 0,
         strokeWeight: 2,
         icons: [{
           icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.6, scale: 3 },
@@ -100,7 +182,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
       })
       hoverPolylinesRef.current.push(polyline)
 
-      // Calculate midpoint for label
       const midPoint = google.maps.geometry.spherical.computeOffset(
         start,
         google.maps.geometry.spherical.computeDistanceBetween(start, end) / 2,
@@ -122,10 +203,8 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
       hoverLabelsRef.current.push(label)
     }
 
-    // Draw from cache immediately
     targetsWithCache.forEach(t => drawLine(sourcePos, t.pos, t.dist))
 
-    // Fetch new ones if needed
     if (targetsToFetch.length > 0) {
       getDistanceMatrix(sourcePos, targetsToFetch).then(distances => {
         distances.forEach((distKm, idx) => {
@@ -154,14 +233,12 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     const bounds = new google.maps.LatLngBounds()
     let hasValidPoints = false
 
-    // Origin position
     const officePos = { 
       lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
       lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
     }
     const officeLatLng = new google.maps.LatLng(officePos.lat, officePos.lng)
 
-    // 1. Add LOTUS EME Marker (Origin)
     const officeMarker = new google.maps.Marker({
       position: officePos,
       map,
@@ -204,7 +281,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     bounds.extend(officePos)
     hasValidPoints = true
 
-    // 2. Add Destination Markers
     destinations.forEach((d) => {
       if (d.lat && d.lng) {
         const isSelected = selectedIds.has(d.id)
@@ -212,7 +288,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
         const destLatLng = new google.maps.LatLng(d.lat, d.lng)
         bounds.extend(pos)
 
-        // Truncate name for label
         const truncatedName = d.siteName.length > 15 ? d.siteName.substring(0, 12) + "..." : d.siteName
 
         const marker = new google.maps.Marker({
@@ -238,8 +313,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
 
         marker.addListener("click", () => {
           if (infoWindowRef.current) infoWindowRef.current.close()
-          
-          // Get distance from office for the InfoWindow
           const cacheKey = `${officePos.lat.toFixed(5)},${officePos.lng.toFixed(5)}->${d.lat.toFixed(5)},${d.lng.toFixed(5)}`
           const cachedDist = distanceCache.current.get(cacheKey)
 
@@ -298,7 +371,7 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
       }
     })
 
-    if (hasValidPoints) {
+    if (hasValidPoints && selectedIds.size === 0) {
       map.fitBounds(bounds)
       if (destinations.length === 0) map.setZoom(12)
     }
@@ -333,6 +406,17 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
         streetViewControl: false
       })
       
+      directionsServiceRef.current = new google.maps.DirectionsService()
+      directionsRendererRef.current = new google.maps.DirectionsRenderer({
+        map: newMap,
+        suppressMarkers: true,
+        polylineOptions: {
+          strokeColor: "#F0890D",
+          strokeWeight: 5,
+          strokeOpacity: 0.8
+        }
+      })
+
       mapRef.current = newMap
       updateMarkers()
     })
@@ -357,5 +441,77 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     }
   }, [destinationsHash, selectionHash, updateMarkers])
 
-  return <div ref={mapContainerRef} className="w-full h-full" />
+  return (
+    <div className="relative w-full h-full">
+      <div ref={mapContainerRef} className="w-full h-full" />
+      
+      {/* Route Summary Panel */}
+      {selectedIds.size > 0 && (
+        <Card className="absolute top-4 left-4 z-10 w-64 bg-background/90 backdrop-blur border-accent/30 shadow-2xl animate-in fade-in slide-in-from-left-4 duration-300">
+          <CardContent className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-accent flex items-center gap-2 uppercase tracking-wider">
+                <Route className="h-4 w-4" /> สรุปเส้นทาง
+              </h4>
+              {isCalculating && <Loader2 className="h-3 w-3 animate-spin text-accent" />}
+            </div>
+
+            <div className="space-y-2 border-y border-border/50 py-3">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">จุดหมายที่เลือก:</span>
+                <span className="font-bold text-white">{selectedIds.size} จุด</span>
+              </div>
+              <div className="flex justify-between items-end">
+                <span className="text-[10px] text-muted-foreground mb-0.5">ระยะทางรวม:</span>
+                <span className="text-lg font-bold text-white">{routeStats?.distance || "-- กม."}</span>
+              </div>
+              <div className="flex justify-between items-end">
+                <span className="text-[10px] text-muted-foreground mb-0.5">เวลาเดินทาง:</span>
+                <span className="text-sm font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
+              </div>
+              {isCalculating && (
+                <p className="text-[10px] text-accent animate-pulse text-center pt-1 font-medium">กำลังคำนวณเส้นทางที่ดีที่สุด...</p>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <Button 
+                size="sm" 
+                variant={optimizeMode ? "default" : "outline"}
+                className={cn(
+                  "flex-1 h-9 text-[10px] font-bold transition-all",
+                  optimizeMode ? "bg-accent hover:bg-accent/80" : "border-accent/40 text-accent hover:bg-accent/5"
+                )}
+                onClick={() => setOptimizeMode(!optimizeMode)}
+                disabled={isCalculating}
+              >
+                <Zap className={cn("h-3 w-3 mr-1.5", optimizeMode && "fill-white")} />
+                {optimizeMode ? "โหมดสั้นที่สุด" : "จัดลำดับใหม่"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 w-9 p-0 border-border hover:bg-secondary"
+                onClick={() => calculateRoute(optimizeMode)}
+                disabled={isCalculating}
+                title="คำนวณใหม่"
+              >
+                <RefreshCcw className={cn("h-3.5 w-3.5", isCalculating && "animate-spin")} />
+              </Button>
+            </div>
+            
+            <p className="text-[9px] text-muted-foreground italic text-center leading-tight">
+              * คำนวณจากสำนักงานใหญ่ไปยังจุดหมายตามลำดับ
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Origin Legend (Fixed Bottom Left) */}
+      <div className="absolute bottom-4 left-4 z-10 bg-background/80 backdrop-blur p-2 rounded-lg border border-border/50 flex items-center gap-2 shadow-md">
+        <div className="w-3 h-3 bg-[#10b981] rounded-sm transform rotate-45" />
+        <span className="text-[10px] font-bold text-white uppercase tracking-tighter">จุดเริ่มต้น: คลังสินค้า LOTUS</span>
+      </div>
+    </div>
+  )
 }
