@@ -15,11 +15,10 @@ import {
   AlertCircle, 
   CheckCircle2, 
   XCircle,
-  User as UserIcon,
-  ChevronRight
+  User as UserIcon
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase"
-import { doc, collection, query, where, orderBy, onSnapshot } from "firebase/firestore"
+import { doc, collection, query, orderBy, onSnapshot } from "firebase/firestore"
 import { UserProfile } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -36,19 +35,19 @@ export default function RequestsPage() {
   const userProfileRef = useMemoFirebase(() => (db && user) ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
-  // Fetch my requests manually to ensure auth is ready
+  // Fetch all requests to ensure visibility (Requirement: Query ALL instead of filtering)
   React.useEffect(() => {
     if (isUserLoading || !user || !db) return
 
     setIsDataLoading(true)
     const q = query(
       collection(db, "vehicleRequests"), 
-      where("requestedByEmail", "==", user.email),
       orderBy("createdAt", "desc")
     )
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+      console.log('Requests found:', results.length)
       setMyRequests(results)
       setIsDataLoading(false)
     }, (error) => {
@@ -59,11 +58,13 @@ export default function RequestsPage() {
     return () => unsubscribe()
   }, [user, isUserLoading, db])
 
-  // Track if we should auto-switch tabs when a new request is added
+  // Automatically switch tabs when a new request is detected
   const prevCount = React.useRef<number | null>(null)
   React.useEffect(() => {
     if (myRequests && prevCount.current !== null && myRequests.length > prevCount.current) {
+      console.log('New request detected, switching tab...')
       setActiveTab("list")
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     }
     if (myRequests) {
       prevCount.current = myRequests.length

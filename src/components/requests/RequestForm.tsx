@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -111,7 +110,7 @@ export function RequestForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!requestedBy || !requestDate || !requestTime) {
+    if (!requestedBy || !requestDate || !requestTime || !user) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อผู้ขอ วันที่ และเวลา", variant: "destructive" })
       return
     }
@@ -143,17 +142,22 @@ export function RequestForm() {
         }
       })
 
-      await setDoc(requestRef, {
+      const requestData = {
         requestId,
         requestDate,
         requestTime,
         requestedBy,
-        requestedByEmail: user?.email,
+        requestedByEmail: user.email,
+        userId: user.uid,
+        userEmail: user.email,
         destinations: parsedDestinations,
         note,
         status: "pending",
         createdAt: serverTimestamp(),
-      })
+      }
+
+      console.log('Saving request:', requestData)
+      await setDoc(requestRef, requestData)
 
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
@@ -164,6 +168,7 @@ export function RequestForm() {
       setNote("")
       setDestinations([{ id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "" }])
     } catch (error) {
+      console.error("Error saving request:", error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
     } finally {
       setIsSubmitting(false)
