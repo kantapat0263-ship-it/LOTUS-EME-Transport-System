@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -20,7 +19,8 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
-  CheckCircle2
+  CheckCircle2,
+  ClipboardList
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -33,37 +33,35 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/table"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, serverTimestamp, doc } from "firebase/firestore"
+import { useCollection, useFirestore, useMemoFirebase, useDoc, useUser } from "@/firebase"
+import { collection, serverTimestamp, doc, updateDoc } from "firebase/firestore"
 import { Site, Vehicle, Driver, CompanySetting } from "@/types/models"
-import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
+import { setDocumentNonBlocking, updateDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
 import { Loader } from "@googlemaps/js-api-loader"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
 
+interface StopItem {
+  id: string;
+  siteId: string;
+  cargo: string;
+  customData?: {
+    name: string;
+    lat: number;
+    lng: number;
+  } | null;
+}
+
 export default function TripPlanPage() {
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
+  const { user } = useUser()
   
   // Data Fetching
   const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
@@ -81,10 +79,13 @@ export default function TripPlanPage() {
   const [driverId, setDriverId] = React.useState("")
   const [tripDate, setTripDate] = React.useState(new Date().toISOString().split('T')[0])
   const [departurePointId, setDeparturePointId] = React.useState("warehouse")
-  const [stops, setStops] = React.useState([
-    { id: '1', siteId: '', cargo: '' }
+  const [stops, setStops] = React.useState<StopItem[]>([
+    { id: '1', siteId: '', cargo: '', customData: null }
   ])
   
+  // Pending VR State
+  const [pendingVr, setPendingVr] = React.useState<any>(null)
+
   // UI State
   const [isLoadingAi, setIsLoadingAi] = React.useState<string | null>(null)
   const [isSaving, setIsSaving] = React.useState(false)
@@ -130,7 +131,10 @@ export default function TripPlanPage() {
     
     try {
       const origin = { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG }
-      const waypointPromises = stops.map(async (s) => {
+      const waypointPromises = stops.filter(s => s.siteId).map(async (s) => {
+        if (s.customData) {
+          return { location: new google.maps.LatLng(s.customData.lat, s.customData.lng), stopover: true }
+        }
         const site = sites?.find(site => site.id === s.siteId)
         if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซน์งาน: ${site?.name || s.siteId}`)
         return { location: new google.maps.LatLng(site.latitude, site.longitude), stopover: true }
@@ -172,7 +176,7 @@ export default function TripPlanPage() {
           }
         } else {
           if (!isAuto) {
-            toast({ title: "Error", description: "ไม่สามารถคำนวณเส้นทางได้: " + status, variant: "destructive" })
+            console.warn("Directions request failed due to " + status)
           }
         }
       })
@@ -185,6 +189,29 @@ export default function TripPlanPage() {
     }
   }, [map, directionsRenderer, stops, isApiLoaded, sites, toast]);
 
+  // Load Pending VR from SessionStorage
+  React.useEffect(() => {
+    const data = sessionStorage.getItem("pendingVR")
+    if (data) {
+      try {
+        const vr = JSON.parse(data)
+        setPendingVr(vr)
+        setTripDate(vr.requestDate)
+        // Set stops
+        const newStops: StopItem[] = vr.destinations.map((d: any, idx: number) => ({
+          id: `vr-${idx}`,
+          siteId: d.type === 'site' ? d.siteId : `custom-${idx}`,
+          cargo: d.jobDescription,
+          customData: d.type === 'other' ? { name: d.siteName, lat: d.lat, lng: d.lng } : null
+        }))
+        setStops(newStops)
+        toast({ title: "กู้คืนคำขอรถ", description: `กำลังจัดรถสำหรับคำขอ ${vr.vrId}` })
+      } catch (e) {
+        console.error("Error parsing pendingVR", e)
+      }
+    }
+  }, [toast])
+
   // Effect for distance lines on hover
   React.useEffect(() => {
     if (!map || !hoveredSiteId || !isApiLoaded || markers.length === 0) {
@@ -195,7 +222,13 @@ export default function TripPlanPage() {
     const google = window.google;
     const sourceMarker = markers.find(m => {
       if (hoveredSiteId === "warehouse") return m.getTitle()?.includes("คลังสินค้า");
-      return m.getTitle() === sites?.find(s => s.id === hoveredSiteId)?.name;
+      // Find by title or internal storage
+      const site = sites?.find(s => s.id === hoveredSiteId);
+      if (site && m.getTitle() === site.name) return true;
+      // Handle custom stops
+      const customStop = stops.find(s => s.siteId === hoveredSiteId);
+      if (customStop && m.getTitle() === customStop.customData?.name) return true;
+      return false;
     });
 
     if (!sourceMarker) return;
@@ -268,7 +301,7 @@ export default function TripPlanPage() {
     });
 
     return () => clearDistanceLines();
-  }, [hoveredSiteId, map, markers, isApiLoaded, sites, clearDistanceLines]);
+  }, [hoveredSiteId, map, markers, isApiLoaded, sites, stops, clearDistanceLines]);
 
   // Auto-calculate Effect
   React.useEffect(() => {
@@ -289,8 +322,10 @@ export default function TripPlanPage() {
     setDriverId("")
     setTripDate(new Date().toISOString().split('T')[0])
     setDeparturePointId("warehouse")
-    setStops([{ id: '1', siteId: '', cargo: '' }])
+    setStops([{ id: '1', siteId: '', cargo: '', customData: null }])
     setRouteStats(null)
+    setPendingVr(null)
+    sessionStorage.removeItem("pendingVR")
     if (directionsRenderer) directionsRenderer.setDirections({ routes: [] } as any)
     toast({ title: "ล้างข้อมูลเรียบร้อย", description: "เริ่มต้นเขียนแผนใหม่แล้ว" })
   }
@@ -346,7 +381,7 @@ export default function TripPlanPage() {
         return newStops
       }
       if (prev.length < 10) {
-        return [...prev, { id: Date.now().toString(), siteId, cargo: '' }]
+        return [...prev, { id: Date.now().toString(), siteId, cargo: '', customData: null }]
       }
       toast({ title: "เต็มแล้ว", description: "เพิ่มจุดส่งได้สูงสุด 10 จุด", variant: "destructive" })
       return prev
@@ -445,7 +480,40 @@ export default function TripPlanPage() {
       newMarkers.push(marker)
     })
 
-    if (sites.length > 0) {
+    // Render Custom VR Markers
+    stops.forEach((stop, index) => {
+      if (stop.customData) {
+        const pos = { lat: stop.customData.lat, lng: stop.customData.lng }
+        bounds.extend(pos)
+
+        const marker = new google.maps.Marker({
+          position: pos,
+          map,
+          title: stop.customData.name,
+          label: {
+            text: stop.customData.name,
+            color: "#ffffff",
+            fontSize: "10px",
+            fontWeight: "bold",
+            className: "bg-purple-600/80 px-1.5 py-0.5 rounded border border-white/20 translate-y-6 whitespace-nowrap"
+          },
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 12,
+            fillColor: "#9333ea",
+            fillOpacity: 1,
+            strokeWeight: 2,
+            strokeColor: "#ffffff"
+          }
+        })
+
+        marker.addListener("mouseover", () => setHoveredSiteId(stop.siteId))
+        marker.addListener("mouseout", () => setHoveredSiteId(null))
+        newMarkers.push(marker)
+      }
+    })
+
+    if (sites.length > 0 || stops.some(s => s.customData)) {
       map.fitBounds(bounds)
     }
 
@@ -454,7 +522,7 @@ export default function TripPlanPage() {
 
   const addStop = () => {
     if (stops.length < 10) {
-      setStops([...stops, { id: Date.now().toString(), siteId: '', cargo: '' }])
+      setStops([...stops, { id: Date.now().toString(), siteId: '', cargo: '', customData: null }])
     }
   }
 
@@ -494,9 +562,7 @@ export default function TripPlanPage() {
     setIsSaving(true)
     
     try {
-      // Auto calculate if distance is missing
       if (!routeStats || routeStats.distanceNum === 0) {
-        toast({ title: "ระบบคำนวณอัตโนมัติ", description: "กำลังคำนวณเส้นทางก่อนบันทึก..." })
         await calculateRoute(false, true);
       }
 
@@ -510,6 +576,17 @@ export default function TripPlanPage() {
       const tripStops = stops
         .filter(s => s.siteId !== "")
         .map((s, index) => {
+          if (s.customData) {
+            return {
+              siteId: s.siteId,
+              siteName: s.customData.name,
+              order: index,
+              cargoDetails: s.cargo,
+              isCustom: true,
+              lat: s.customData.lat,
+              lng: s.customData.lng
+            }
+          }
           const site = sites?.find(site => site.id === s.siteId)
           return {
             siteId: s.siteId,
@@ -518,8 +595,6 @@ export default function TripPlanPage() {
             cargoDetails: s.cargo
           }
         })
-      
-      const distanceAvailable = routeStats && routeStats.distanceNum > 0;
       
       setDocumentNonBlocking(tripRef, {
         id: tripId,
@@ -534,14 +609,31 @@ export default function TripPlanPage() {
         totalDistanceKm: routeStats?.distanceNum || 0,
         totalEstimatedTimeMinutes: Math.round(routeStats?.durationNum || 0),
         status: "Planned",
-        distanceCalculated: distanceAvailable,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        vrReferenceId: pendingVr?.vrId || null
       }, { merge: true })
 
-      toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
+      // Update VR status if this trip was generated from a request
+      if (pendingVr) {
+        const vrRef = doc(db, "vehicleRequests", pendingVr.docId)
+        await updateDoc(vrRef, {
+          status: "approved",
+          tripId: tripId,
+          approvedBy: user?.email || "system",
+          vehiclePlate: selectedVehicle?.licensePlate || "",
+          driverName: selectedDriver?.name || "",
+          approvedAt: serverTimestamp()
+        })
+        sessionStorage.removeItem("pendingVR")
+        toast({ title: "จัดรถสำเร็จ!", description: `${pendingVr.vrId} → Trip ${tripId}` })
+      } else {
+        toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
+      }
+
       router.push("/trips/history")
     } catch (error) {
+      console.error(error)
       toast({ title: "Error", description: "เกิดข้อผิดพลาดในการบันทึก", variant: "destructive" })
     } finally {
       setIsSaving(false)
@@ -550,6 +642,16 @@ export default function TripPlanPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden no-print">
+      {pendingVr && (
+        <Alert className="bg-accent/10 border-accent/30 text-accent animate-in slide-in-from-top-4 duration-500">
+          <Truck className="h-5 w-5" />
+          <AlertTitle className="font-bold">📋 กำลังจัดรถสำหรับคำขอ {pendingVr.vrId}</AlertTitle>
+          <AlertDescription>
+            ดึงข้อมูลจุดหมายจาก {pendingVr.requestedBy} เรียบร้อยแล้ว กรุณาเลือกคนขับและพาหนะเพื่อบันทึกงาน
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex flex-col lg:flex-row gap-6 h-auto">
         <div className="w-full lg:w-1/2 flex flex-col gap-6">
           <Card className="border-accent/20 bg-card/50">
@@ -605,26 +707,34 @@ export default function TripPlanPage() {
 
             <div className="space-y-4">
               {stops.map((stop, index) => (
-                <Card key={stop.id} className="relative border-l-4 border-l-primary hover:border-accent transition-colors overflow-hidden">
-                  <CardContent className="p-3 md:p-4 flex gap-3 md:gap-4 bg-secondary/20">
+                <Card key={stop.id} className={cn(
+                  "relative border-l-4 transition-colors overflow-hidden",
+                  stop.customData ? "border-l-purple-600 bg-purple-900/5" : "border-l-primary bg-secondary/20"
+                )}>
+                  <CardContent className="p-3 md:p-4 flex gap-3 md:gap-4">
                     <div className="flex flex-col items-center justify-center text-muted-foreground shrink-0">
-                      <span className="text-xs font-bold bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center">
+                      <span className={cn(
+                        "text-xs font-bold text-white w-6 h-6 rounded-full flex items-center justify-center",
+                        stop.customData ? "bg-purple-600" : "bg-primary"
+                      )}>
                         {index + 1}
                       </span>
                     </div>
                     <div className="flex-1 space-y-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex-1">
-                          <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
-                            <SelectTrigger className="h-11"><SelectValue placeholder="เลือกไซน์งาน" /></SelectTrigger>
-                            <SelectContent>
-                              {sites?.map(s => (
-                                <SelectItem key={s.id} value={s.id}>
-                                  {s.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          {stop.customData ? (
+                            <div className="h-11 px-3 flex items-center bg-background/50 rounded-md border text-sm font-bold text-purple-400">
+                              <MapPin className="h-3 w-3 mr-2" /> {stop.customData.name}
+                            </div>
+                          ) : (
+                            <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
+                              <SelectTrigger className="h-11"><SelectValue placeholder="เลือกไซน์งาน" /></SelectTrigger>
+                              <SelectContent>
+                                {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          )}
                         </div>
                         <Button variant="ghost" size="icon" onClick={() => removeStop(stop.id)} className="h-10 w-10 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                       </div>
@@ -643,10 +753,10 @@ export default function TripPlanPage() {
 
           <div className="flex flex-col sm:flex-row gap-3 pt-4 sticky bottom-0 bg-background/80 backdrop-blur pb-4 z-20">
             <Button className="flex-[2] bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 h-12" onClick={handleSaveTrip} disabled={isSaving}>
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Navigation className="mr-2 h-4 w-4" />} บันทึกแผน
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Navigation className="mr-2 h-4 w-4" />} บันทึกแผนเที่ยววิ่ง
             </Button>
             <Button variant="outline" className="flex-1 border-destructive text-destructive hover:bg-destructive/10 h-12" onClick={resetForm}>
-              <Trash2 className="mr-2 h-4 w-4" /> ล้างข้อมูล
+              <RotateCcw className="mr-2 h-4 w-4" /> ล้างข้อมูล
             </Button>
           </div>
         </div>
