@@ -15,6 +15,7 @@ interface GroupingMapProps {
 
 const DEFAULT_LAT = 13.7563
 const DEFAULT_LNG = 100.5018
+const HEAD_OFFICE_DEFAULT = { lat: 14.0815, lng: 100.7129 }
 
 export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMapProps) {
   const db = useFirestore()
@@ -144,10 +145,55 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     const bounds = new google.maps.LatLngBounds()
     let hasValidPoints = false
 
+    // 1. Add HEAD OFFICE Marker (Origin)
+    const officePos = { 
+      lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
+      lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
+    }
+    const officeMarker = new google.maps.Marker({
+      position: officePos,
+      map,
+      title: "คลังสินค้า LOTUS EME",
+      icon: {
+        path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+        scale: 8,
+        fillColor: "#10b981", // Green for Head Office
+        fillOpacity: 1,
+        strokeWeight: 2,
+        strokeColor: "#ffffff"
+      },
+      label: {
+        text: "HEAD OFFICE",
+        color: "#10b981",
+        fontWeight: "bold",
+        fontSize: "10px",
+        className: "bg-white/90 px-1.5 py-0.5 rounded border border-green-500 translate-y-[-40px]"
+      }
+    })
+
+    officeMarker.addListener("click", () => {
+      const iw = new google.maps.InfoWindow({
+        content: `
+          <div class="p-2 min-w-[150px]">
+            <p class="font-bold text-green-600 mb-1">คลังสินค้า LOTUS EME</p>
+            <p class="text-[10px] text-muted-foreground">จุดเริ่มต้น - นครนายก</p>
+          </div>
+        `
+      })
+      iw.open(map, officeMarker)
+    })
+    
+    officeMarker.addListener("mouseover", () => drawHoverDistances(officeMarker))
+    officeMarker.addListener("mouseout", () => clearHoverVisuals())
+
+    newMarkers.push(officeMarker)
+    bounds.extend(officePos)
+    hasValidPoints = true
+
+    // 2. Add Destination Markers
     destinations.forEach((d, idx) => {
       if (d.lat && d.lng) {
         const isSelected = selectedIds.has(d.id)
-        hasValidPoints = true
         const pos = { lat: d.lat, lng: d.lng }
         bounds.extend(pos)
 
@@ -181,11 +227,12 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
 
     if (hasValidPoints) {
       map.fitBounds(bounds)
-      if (destinations.length === 1) map.setZoom(15)
+      // If only Head Office is there, zoom in a bit more
+      if (destinations.length === 0) map.setZoom(12)
     }
 
     markersRef.current = newMarkers
-  }, [destinations, selectedIds, onSelect, drawHoverDistances, clearHoverVisuals])
+  }, [destinations, selectedIds, onSelect, drawHoverDistances, clearHoverVisuals, settings])
 
   React.useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return
