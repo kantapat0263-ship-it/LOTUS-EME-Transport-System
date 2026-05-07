@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useUser } from "@/firebase"
+import { useFirestore, useCollection, useUser, useMemoFirebase } from "@/firebase"
 import { collection, doc, setDoc, serverTimestamp } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -45,7 +45,7 @@ export function RequestForm() {
   const db = useFirestore()
   const { user } = useUser()
   
-  const sitesRef = React.useMemo(() => collection(db, "sites"), [db])
+  const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -175,7 +175,7 @@ export function RequestForm() {
       <Card className="border-accent/20 bg-card/50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ClipboardList className="h-5 w-5 text-accent" /> ข้อมูลการขอใช้รถ
+            <Building2 className="h-5 w-5 text-accent" /> ข้อมูลการขอใช้รถ
           </CardTitle>
           <CardDescription>กรอกรายละเอียดเพื่อขอรับบริการรถรับ-ส่งหรืองานขนส่ง</CardDescription>
         </CardHeader>
