@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -110,7 +109,8 @@ export default function SitesPage() {
     if (isMapPickerOpen && mapPickerRef.current && apiKey) {
       const loader = new Loader({
         apiKey: apiKey,
-        version: "weekly"
+        version: "weekly",
+        libraries: ["places", "geometry"]
       })
 
       loader.load().then(() => {

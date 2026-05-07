@@ -100,7 +100,7 @@ function InlineRequestManager() {
         const loader = new Loader({
           apiKey: apiKey,
           version: "weekly",
-          libraries: ["places"]
+          libraries: ["places", "geometry"]
         });
 
         loader.load().then(() => {
