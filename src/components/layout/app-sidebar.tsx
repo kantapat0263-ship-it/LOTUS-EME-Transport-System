@@ -16,14 +16,16 @@ import {
   User as UserIcon,
   Users,
   LogOut,
-  X
+  X,
+  Car
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { useUser, useAuth } from "@/firebase"
+import { useUser, useAuth, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
 import { Badge } from "@/components/ui/badge"
 import { UserRole } from "@/types/models"
+import { collection, query, where, onSnapshot } from "firebase/firestore"
 
 interface AppSidebarProps {
   userRole: UserRole;
@@ -35,8 +37,22 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   const pathname = usePathname()
   const router = useRouter()
   const auth = useAuth()
+  const db = useFirestore()
   const { user } = useUser()
   const [collapsed, setCollapsed] = React.useState(false)
+  const [pendingCount, setPendingCount] = React.useState(0)
+
+  // Listen for pending requests if Admin/Dispatcher
+  React.useEffect(() => {
+    if (!db || (userRole !== 'admin' && userRole !== 'dispatcher')) return
+
+    const q = query(collection(db, "vehicleRequests"), where("status", "==", "pending"))
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setPendingCount(snapshot.size)
+    })
+
+    return () => unsubscribe()
+  }, [db, userRole])
 
   const handleLogout = async () => {
     await auth.signOut()
@@ -45,6 +61,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
 
   const navItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ['admin', 'dispatcher', 'viewer'] },
+    { name: "ขอรถ", href: "/requests", icon: Car, roles: ['admin', 'dispatcher', 'viewer'], badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingCount > 0 ? pendingCount : null },
     { name: "จัดการไซน์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
     { name: "วางแผนการส่ง", href: "/trips/plan", icon: Route, roles: ['admin', 'dispatcher'] },
@@ -111,7 +128,12 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
                 "h-5 w-5 shrink-0",
                 !isActuallyCollapsed && "mr-3"
               )} />
-              {!isActuallyCollapsed && <span>{item.name}</span>}
+              {!isActuallyCollapsed && <span className="flex-1">{item.name}</span>}
+              {!isActuallyCollapsed && item.badge && (
+                <Badge variant="destructive" className="ml-auto h-5 min-w-5 flex items-center justify-center p-1 text-[10px]">
+                  {item.badge}
+                </Badge>
+              )}
               {isActive && !isActuallyCollapsed && (
                 <div className="ml-auto w-1.5 h-1.5 rounded-full bg-accent" />
               )}
