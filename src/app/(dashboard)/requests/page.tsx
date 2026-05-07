@@ -32,21 +32,19 @@ export default function RequestsPage() {
   const db = useFirestore()
   const [activeTab, setActiveTab] = React.useState("form")
   
-  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const userProfileRef = useMemoFirebase(() => (db && user) ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
-  // Fetch My Requests for the "My Requests" tab logic
-  const myRequestsQuery = useMemoFirebase(() => (db && user) ? 
+  const myRequestsQuery = useMemoFirebase(() => (db && user?.email) ? 
     query(
       collection(db, "vehicleRequests"), 
       where("requestedByEmail", "==", user.email),
       orderBy("createdAt", "desc")
     ) : null, 
-  [db, user])
+  [db, user?.email])
 
   const { data: myRequests, isLoading: isLoadingRequests } = useCollection(myRequestsQuery)
 
-  // Auto-switch to "list" tab when a new request is detected
   const prevCount = React.useRef<number | null>(null)
   React.useEffect(() => {
     if (myRequests && prevCount.current !== null && myRequests.length > prevCount.current) {

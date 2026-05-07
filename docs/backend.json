@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "User": {
@@ -50,38 +51,21 @@
     "providers": ["password", "anonymous"]
   },
   "firestore": {
-    "structure": [
-      {
-        "path": "/users/{userId}",
-        "definition": {
-          "entityName": "User",
-          "schema": { "$ref": "#/backend/entities/User" },
-          "description": "User profile data."
-        }
-      },
-      {
-        "path": "/vehicleRequests/{requestId}",
-        "definition": {
-          "entityName": "VehicleRequest",
-          "schema": { "$ref": "#/backend/entities/VehicleRequest" },
-          "description": "Store individual vehicle requests from staff."
-        }
-      },
-      {
-        "path": "/sites/{siteId}",
-        "definition": {
-          "entityName": "Site",
-          "description": "Construction site information."
-        }
-      },
-      {
-        "path": "/trips/{tripId}",
-        "definition": {
-          "entityName": "Trip",
-          "description": "Main trip delivery plans."
-        }
-      }
-    ],
-    "reasoning": "Standardizing access for the vehicle request workflow."
+    "/users/{userId}": {
+      "schema": { "$ref": "#/backend/entities/User" },
+      "description": "User profile data."
+    },
+    "/vehicleRequests/{requestId}": {
+      "schema": { "$ref": "#/backend/entities/VehicleRequest" },
+      "description": "Store individual vehicle requests from staff."
+    },
+    "/sites/{siteId}": {
+      "schema": "object",
+      "description": "Construction site information."
+    },
+    "/trips/{tripId}": {
+      "schema": "object",
+      "description": "Main trip delivery plans."
+    }
   }
 }

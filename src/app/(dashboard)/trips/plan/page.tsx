@@ -40,7 +40,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/table"
 import {
   Collapsible,
   CollapsibleContent,
@@ -51,7 +51,7 @@ import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-descripti
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, serverTimestamp, doc, setDoc } from "firebase/firestore"
+import { collection, serverTimestamp, doc } from "firebase/firestore"
 import { Site, Vehicle, Driver, CompanySetting } from "@/types/models"
 import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
@@ -66,10 +66,10 @@ export default function TripPlanPage() {
   const router = useRouter()
   
   // Data Fetching
-  const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
-  const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
-  const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
-  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+  const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
+  const vehiclesRef = useMemoFirebase(() => db ? collection(db, "vehicles") : null, [db])
+  const driversRef = useMemoFirebase(() => db ? collection(db, "drivers") : null, [db])
+  const settingsRef = useMemoFirebase(() => db ? doc(db, "companySettings", "default") : null, [db])
   
   const { data: sites } = useCollection<Site>(sitesRef)
   const { data: vehicles } = useCollection<Vehicle>(vehiclesRef)
@@ -208,7 +208,7 @@ export default function TripPlanPage() {
     toast({ title: "ล้างข้อมูลเรียบร้อย", description: "เริ่มต้นเขียนแผนใหม่แล้ว" })
   }
 
-  // Initialize Map with API Key fallback
+  // Initialize Map
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
@@ -249,262 +249,6 @@ export default function TripPlanPage() {
       setIsApiLoaded(true)
     })
   }, [companySettings])
-
-  // Cleanup on unmount
-  React.useEffect(() => {
-    return () => {
-      distanceLinesRef.current.forEach(l => l.setMap(null))
-      distanceLabelsRef.current.forEach(l => l.setMap(null))
-    }
-  }, [])
-
-  // Calculate Distance Matrix (for the table)
-  const fetchDistanceMatrix = React.useCallback(async () => {
-    if (!sites || sites.length === 0 || !window.google || !isApiLoaded) return
-    if (!google.maps.DistanceMatrixService) return
-
-    setIsMatrixLoading(true)
-    const validSites = sites.filter(s => s.latitude && s.longitude)
-    const allPoints = [
-      { lat: DEFAULT_WAREHOUSE_LAT, lng: DEFAULT_WAREHOUSE_LNG },
-      ...validSites.map(s => ({ lat: s.latitude!, lng: s.longitude! }))
-    ]
-    const allIds = ["warehouse", ...validSites.map(s => s.id)]
-
-    const matrixService = new google.maps.DistanceMatrixService()
-    const newMatrix: Record<string, Record<string, number>> = {}
-
-    try {
-      for (let i = 0; i < allPoints.length; i++) {
-        const originId = allIds[i]
-        const originLatLng = allPoints[i]
-        newMatrix[originId] = {}
-
-        for (let j = 0; j < allPoints.length; j += 25) {
-          const destinationBatch = allPoints.slice(j, j + 25)
-          const destinationIdsBatch = allIds.slice(j, j + 25)
-
-          const response = await new Promise<google.maps.DistanceMatrixResponse | null>((resolve) => {
-            matrixService.getDistanceMatrix({
-              origins: [originLatLng],
-              destinations: destinationBatch,
-              travelMode: google.maps.TravelMode.DRIVING,
-              unitSystem: google.maps.UnitSystem.METRIC,
-            }, (res, status) => {
-              if (status === "OK" && res) {
-                resolve(res)
-              } else {
-                console.warn(`Distance Matrix request failed for origin ${originId} batch ${j}: ${status}`)
-                resolve(null)
-              }
-            })
-          })
-
-          if (response && response.rows[0]) {
-            response.rows[0].elements.forEach((element, k) => {
-              const destId = destinationIdsBatch[k]
-              if (element.status === "OK") {
-                newMatrix[originId][destId] = element.distance.value / 1000
-              }
-            })
-          }
-        }
-      }
-
-      setDistanceMatrix(newMatrix)
-    } catch (error) {
-      console.error("Distance Matrix Error:", error)
-    } finally {
-      setIsMatrixLoading(false)
-    }
-  }, [sites, isApiLoaded])
-
-  React.useEffect(() => {
-    if (sites && isApiLoaded && isMatrixOpen) {
-      fetchDistanceMatrix()
-    }
-  }, [sites, isApiLoaded, isMatrixOpen, fetchDistanceMatrix])
-
-  // Cell color helper logic
-  const getCellColor = (originId: string, destId: string, value: number | undefined) => {
-    if (!value || originId === destId || value === 0) return ''
-    
-    const row = distanceMatrix[originId]
-    if (!row) return ''
-    
-    const validValues = Object.entries(row)
-      .filter(([id, val]) => id !== originId && typeof val === 'number' && val > 0)
-      .map(([_, val]) => val as number)
-    
-    if (validValues.length === 0) return ''
-    
-    const min = Math.min(...validValues)
-    const max = Math.max(...validValues)
-    
-    if (value === min) return 'bg-green-900 text-green-300 font-bold ring-1 ring-green-500'
-    if (value === max) return 'bg-red-900 text-red-300'
-    return ''
-  }
-
-  // Column average analysis logic
-  const bestColumnId = React.useMemo(() => {
-    if (!distanceMatrix || Object.keys(distanceMatrix).length === 0) return null
-    
-    const allIds = ["warehouse", ...(sites?.filter(s => s.latitude).map(s => s.id) || [])]
-    const columnStats: Record<string, { sum: number, count: number }> = {}
-    
-    allIds.forEach(destId => {
-      columnStats[destId] = { sum: 0, count: 0 }
-      allIds.forEach(originId => {
-        const val = distanceMatrix[originId]?.[destId]
-        if (typeof val === 'number' && val > 0 && originId !== destId) {
-          columnStats[destId].sum += val
-          columnStats[destId].count += 1
-        }
-      })
-    })
-    
-    let minAvg = Infinity
-    let bestId = null
-    
-    Object.entries(columnStats).forEach(([id, stat]) => {
-      if (stat.count > 0) {
-        const avg = stat.sum / stat.count
-        if (avg < minAvg) {
-          minAvg = avg
-          bestId = id
-        }
-      }
-    })
-    
-    return bestId
-  }, [distanceMatrix, sites])
-
-  // Draw Hover/Pinned Distance Lines
-  React.useEffect(() => {
-    if (!map || !sites || !window.google || !isApiLoaded) return
-    const google = window.google
-
-    distanceLinesRef.current.forEach(l => l.setMap(null))
-    distanceLabelsRef.current.forEach(l => l.setMap(null))
-    distanceLinesRef.current = []
-    distanceLabelsRef.current = []
-
-    const targetId = pinnedSiteId || hoveredSiteId
-    if (!targetId) return
-
-    const validSites = sites.filter(s => s.latitude && s.longitude)
-    const originSite = targetId === "warehouse" 
-      ? { id: "warehouse", latitude: DEFAULT_WAREHOUSE_LAT, longitude: DEFAULT_WAREHOUSE_LNG } 
-      : sites.find(s => s.id === targetId)
-
-    if (!originSite || !originSite.latitude || !originSite.longitude) return
-
-    const originLatLng = new google.maps.LatLng(originSite.latitude, originSite.longitude)
-    const matrixService = new google.maps.DistanceMatrixService()
-    const labelMarkersMap = new Map<string, google.maps.Marker>()
-    const destinationsToFetch: { id: string, latLng: google.maps.LatLng, site: Site | any }[] = []
-
-    validSites.forEach(dest => {
-      if (dest.id === targetId || !dest.latitude || !dest.longitude) return
-      
-      const destLatLng = new google.maps.LatLng(dest.latitude, dest.longitude)
-      const path = [
-        { lat: originSite.latitude!, lng: originSite.longitude! },
-        { lat: dest.latitude!, lng: dest.longitude! }
-      ]
-
-      const line = new google.maps.Polyline({
-        path,
-        map,
-        strokeColor: "#F0890D",
-        strokeOpacity: 0,
-        icons: [{
-          icon: {
-            path: 'M 0,-1 0,1',
-            strokeOpacity: 1,
-            scale: 2,
-            strokeWeight: 2,
-            strokeColor: '#F0890D'
-          },
-          offset: '0',
-          repeat: '10px'
-        }],
-        geodesic: true
-      })
-      distanceLinesRef.current.push(line)
-
-      const midPoint = google.maps.geometry.spherical.interpolate(originLatLng, destLatLng, 0.5)
-      
-      const cacheKey = `${originSite.latitude},${originSite.longitude}->${dest.latitude},${dest.longitude}`
-      const cachedDist = distanceCache.current.get(cacheKey)
-
-      const labelMarker = new google.maps.Marker({
-        position: midPoint,
-        map,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 0
-        },
-        label: {
-          text: cachedDist !== undefined ? `${cachedDist.toFixed(1)} กม.` : "กำลังคำนวณ...",
-          color: "#ffffff",
-          fontSize: "10px",
-          fontWeight: "bold",
-          className: "bg-black/80 px-1.5 py-0.5 rounded-sm border border-white/20 whitespace-nowrap"
-        }
-      })
-      distanceLabelsRef.current.push(labelMarker)
-      labelMarkersMap.set(dest.id, labelMarker)
-
-      if (cachedDist === undefined) {
-        destinationsToFetch.push({ id: dest.id, latLng: destLatLng, site: dest })
-      }
-    })
-
-    if (destinationsToFetch.length > 0) {
-      for (let i = 0; i < destinationsToFetch.length; i += 25) {
-        const batch = destinationsToFetch.slice(i, i + 25)
-        
-        matrixService.getDistanceMatrix({
-          origins: [originLatLng],
-          destinations: batch.map(b => b.latLng),
-          travelMode: google.maps.TravelMode.DRIVING,
-          unitSystem: google.maps.UnitSystem.METRIC,
-        }, (response, status) => {
-          if (status === 'OK' && response) {
-            const results = response.rows[0].elements
-            results.forEach((element, idx) => {
-              const destItem = batch[idx]
-              const labelMarker = labelMarkersMap.get(destItem.id)
-              const cacheKey = `${originSite.latitude},${originSite.longitude}->${destItem.site.latitude},${destItem.site.longitude}`
-              
-              let displayText = ""
-              if (element.status === 'OK' && element.distance) {
-                const roadDistKm = element.distance.value / 1000
-                distanceCache.current.set(cacheKey, roadDistKm)
-                displayText = `${roadDistKm.toFixed(1)} กม.`
-              } else {
-                const straightDistMeters = google.maps.geometry.spherical.computeDistanceBetween(originLatLng, destItem.latLng)
-                const straightDistKm = straightDistMeters / 1000
-                displayText = `${straightDistKm.toFixed(1)} กม. (เส้นตรง)`
-              }
-
-              if (labelMarker) {
-                labelMarker.setLabel({
-                  text: displayText,
-                  color: "#ffffff",
-                  fontSize: "10px",
-                  fontWeight: "bold",
-                  className: "bg-black/80 px-1.5 py-0.5 rounded-sm border border-white/20 whitespace-nowrap"
-                })
-              }
-            })
-          }
-        })
-      }
-    }
-  }, [map, hoveredSiteId, pinnedSiteId, sites, isApiLoaded])
 
   const addStopBySiteId = React.useCallback((siteId: string) => {
     setStops(prev => {
@@ -568,7 +312,7 @@ export default function TripPlanPage() {
         map,
         title: site.name,
         label: {
-          text: isSelected ? `${stopIndex + 1}: ${site.name}` : site.name,
+          text: site.name,
           color: "#ffffff",
           fontSize: "10px",
           fontWeight: "bold",
@@ -663,7 +407,7 @@ export default function TripPlanPage() {
     setIsSaving(true)
     
     try {
-      // Ensure we have a calculated route before saving
+      // Auto calculate if distance is missing
       if (!routeStats || routeStats.distanceNum === 0) {
         toast({ title: "ระบบคำนวณอัตโนมัติ", description: "กำลังคำนวณเส้นทางก่อนบันทึก..." })
         await calculateRoute(false, true);
@@ -690,15 +434,7 @@ export default function TripPlanPage() {
       
       const distanceAvailable = routeStats && routeStats.distanceNum > 0;
       
-      if (!distanceAvailable) {
-        toast({ 
-          title: "แจ้งเตือน", 
-          description: "ไซน์งานบางแห่งไม่มีพิกัด ระยะทางอาจไม่ถูกต้อง", 
-          variant: "destructive" 
-        });
-      }
-
-      await setDoc(tripRef, {
+      setDocumentNonBlocking(tripRef, {
         id: tripId,
         tripId: tripId,
         tripDate,
@@ -714,7 +450,7 @@ export default function TripPlanPage() {
         distanceCalculated: distanceAvailable,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      })
+      }, { merge: true })
 
       toast({ title: "สำเร็จ", description: "บันทึกแผนเที่ยววิ่งเรียบร้อยแล้ว" })
       router.push("/trips/history")
@@ -724,8 +460,6 @@ export default function TripPlanPage() {
       setIsSaving(false)
     }
   }
-
-  const activeSites = sites?.filter(s => s.latitude) || []
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 overflow-x-hidden no-print">
@@ -840,20 +574,14 @@ export default function TripPlanPage() {
                 )}
               </h4>
               <div className="space-y-1 md:space-y-2 text-[10px] md:text-xs">
-                {isAutoCalculating && !routeStats ? (
-                  <p className="py-2 text-muted-foreground animate-pulse">กำลังคำนวณ...</p>
-                ) : (
-                  <>
-                    <div className="flex justify-between items-center py-1 border-b border-border/50">
-                      <span className="text-muted-foreground">ระยะทางรวม:</span>
-                      <span className="font-bold text-sm md:text-base text-white">{routeStats?.distance || "-- กม."}</span>
-                    </div>
-                    <div className="flex justify-between items-center py-1 border-b border-border/50">
-                      <span className="text-muted-foreground">เวลาเดินทาง:</span>
-                      <span className="font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
-                    </div>
-                  </>
-                )}
+                <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">ระยะทางรวม:</span>
+                  <span className="font-bold text-sm md:text-base text-white">{routeStats?.distance || "-- กม."}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">เวลาเดินทาง:</span>
+                  <span className="font-bold text-white">{routeStats?.duration || "-- ชม. -- นาที"}</span>
+                </div>
               </div>
               <div className="flex gap-2 mt-3 md:mt-4">
                 <Button size="sm" className="flex-1 h-9 text-[10px] md:text-[11px] bg-primary hover:bg-primary/90" onClick={() => calculateRoute(false)} disabled={isOptimizing || isAutoCalculating}>คำนวณ</Button>
@@ -861,120 +589,10 @@ export default function TripPlanPage() {
               </div>
             </div>
           </div>
-
-          <div className="hidden sm:block absolute top-4 right-4 z-10 bg-background/90 backdrop-blur p-2 md:p-3 rounded-lg border shadow-lg text-[9px] md:text-[10px] space-y-2">
-            <h5 className="font-bold border-b pb-1 mb-1">คำอธิบาย</h5>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#f59e0b] border border-white" /> ไซน์งาน</div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#10b981] border border-white" /> จุดเริ่มต้น</div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#3b82f6] border border-white" /> จุดส่งของ</div>
-          </div>
-
           <div className="absolute inset-0 z-0">
             <div ref={mapRef} className="w-full h-full bg-muted/20" />
           </div>
         </div>
-      </div>
-
-      <div className="mt-6">
-        <Collapsible open={isMatrixOpen} onOpenChange={setIsMatrixOpen} className="w-full border rounded-xl overflow-hidden bg-card">
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full flex items-center justify-between p-4 h-14 hover:bg-secondary/50">
-              <div className="flex items-center gap-2 font-bold text-sm md:text-base">
-                <TableIcon className="h-5 w-5 text-accent" />
-                <span>ตารางวิเคราะห์ระยะทาง (Distance Matrix)</span>
-                {isMatrixLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              </div>
-              {isMatrixOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="flex flex-col">
-              <div className="p-2 md:p-4 overflow-x-auto">
-                {isMatrixLoading ? (
-                  <div className="flex flex-col items-center justify-center p-8 md:p-12 gap-4">
-                    <Loader2 className="h-8 w-8 animate-spin text-accent" />
-                    <p className="text-xs md:text-sm text-muted-foreground text-center">กำลังประมวลผลระยะทางจาก Google Maps...</p>
-                  </div>
-                ) : (
-                  <Table className="min-w-[600px]">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="bg-muted/50 text-[10px] md:text-xs">ต้นทาง \ ปลายทาง</TableHead>
-                        <TableHead className={cn(
-                          "text-center font-bold text-accent text-[10px] md:text-xs",
-                          bestColumnId === "warehouse" && "border-b-2 border-blue-500"
-                        )}>คลังสินค้า</TableHead>
-                        {activeSites.map(s => (
-                          <TableHead 
-                            key={s.id} 
-                            className={cn(
-                              "text-center min-w-[100px] text-[10px] md:text-xs",
-                              bestColumnId === s.id && "border-b-2 border-blue-500"
-                            )}
-                          >
-                            {s.name}
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody className="text-[10px] md:text-xs">
-                      <TableRow>
-                        <TableCell className="font-bold text-accent">คลังสินค้า LOTUS</TableCell>
-                        <TableCell className="text-center text-muted-foreground">-</TableCell>
-                        {activeSites.map(dest => (
-                          <TableCell 
-                            key={dest.id} 
-                            className={cn("text-center transition-colors duration-200", getCellColor("warehouse", dest.id, distanceMatrix["warehouse"]?.[dest.id]))}
-                          >
-                            {distanceMatrix["warehouse"]?.[dest.id]?.toFixed(1) || '--'} กม.
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                      {activeSites.map(origin => (
-                        <TableRow key={origin.id}>
-                          <TableCell className="font-medium">{origin.name}</TableCell>
-                          <TableCell 
-                            className={cn("text-center transition-colors duration-200", getCellColor(origin.id, "warehouse", distanceMatrix[origin.id]?.["warehouse"]))}
-                          >
-                            {distanceMatrix[origin.id]?.["warehouse"]?.toFixed(1) || '--'} กม.
-                          </TableCell>
-                          {activeSites.map(dest => (
-                            <TableCell 
-                              key={dest.id} 
-                              className={cn(
-                                "text-center transition-colors duration-200",
-                                origin.id === dest.id ? "text-muted-foreground" : getCellColor(origin.id, dest.id, distanceMatrix[origin.id]?.[dest.id])
-                              )}
-                            >
-                              {origin.id === dest.id ? '-' : (distanceMatrix[origin.id]?.[dest.id]?.toFixed(1) || '--') + ' กม.'}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </div>
-              
-              {!isMatrixLoading && Object.keys(distanceMatrix).length > 0 && (
-                <div className="flex flex-wrap items-center gap-4 px-4 pb-4 text-[10px] md:text-xs border-t pt-4">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-green-900 ring-1 ring-green-500" />
-                    <span className="text-muted-foreground">🟢 สีเขียว = ระยะทางใกล้ที่สุดในแต่ละแถว</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-red-900" />
-                    <span className="text-muted-foreground">🔴 สีแดง = ระยะทางไกลที่สุดในแต่ละแถว</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-0.5 bg-blue-500" />
-                    <span className="text-muted-foreground">🔵 ขอบฟ้า = จุดหมายปลายทางที่เฉลี่ยใกล้ที่สุด (แนะนำ)</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
       </div>
     </div>
   )
