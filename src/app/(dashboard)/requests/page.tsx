@@ -24,7 +24,7 @@ import {
   Trash2
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch } from "firebase/firestore"
+import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch, where } from "firebase/firestore"
 import { UserProfile } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -67,8 +67,10 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<any>(settingsRef)
 
+  // Staff should see actionable requests: pending and partial
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
+    where("status", "in", ["pending", "partial"]),
     orderBy("createdAt", "desc")
   ), [db])
 
@@ -621,15 +623,32 @@ export default function RequestsPage() {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
 
-  // Fetch all requests for monitoring
+  // Fetch requests with role-based filtering
   React.useEffect(() => {
-    if (isUserLoading || !user || !db) return
+    if (isUserLoading || !user || !db || isProfileLoading || !profile) return
 
     setIsDataLoading(true)
-    const q = query(
-      collection(db, "vehicleRequests"), 
-      orderBy("createdAt", "desc")
-    )
+    
+    // Determine if the user has staff privileges
+    const isStaff = profile.role === 'admin' || profile.role === 'dispatcher'
+    
+    // Construct the query based on role
+    // NOTE: This might require a Firestore Composite Index if filtering by userId AND ordering by createdAt
+    let q;
+    if (isStaff) {
+      // Staff can see all requests
+      q = query(
+        collection(db, "vehicleRequests"), 
+        orderBy("createdAt", "desc")
+      )
+    } else {
+      // Regular users only see their own requests
+      q = query(
+        collection(db, "vehicleRequests"),
+        where("userId", "==", user.uid),
+        orderBy("createdAt", "desc")
+      )
+    }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
@@ -638,12 +657,13 @@ export default function RequestsPage() {
     }, (error) => {
       console.error("Firestore error in RequestsPage:", error)
       setIsDataLoading(false)
+      // Standard handling for index error or permission error
     })
 
     return () => unsubscribe()
-  }, [user, isUserLoading, db])
+  }, [user, isUserLoading, db, profile, isProfileLoading])
 
-  // Automatically switch tabs when a new request is detected
+  // Automatically switch tabs when a new request is detected (for the requester)
   const prevCount = React.useRef<number | null>(null)
   React.useEffect(() => {
     if (myRequests && prevCount.current !== null && myRequests.length > prevCount.current) {
