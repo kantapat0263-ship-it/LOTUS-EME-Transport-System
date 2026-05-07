@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -17,7 +16,8 @@ import {
   Users,
   LogOut,
   X,
-  Car
+  Car,
+  Layers
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -41,14 +41,24 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   const { user } = useUser()
   const [collapsed, setCollapsed] = React.useState(false)
   const [pendingCount, setPendingCount] = React.useState(0)
+  const [pendingDestCount, setPendingDestCount] = React.useState(0)
 
   // Listen for pending requests if Admin/Dispatcher
   React.useEffect(() => {
     if (!db || (userRole !== 'admin' && userRole !== 'dispatcher')) return
 
-    const q = query(collection(db, "vehicleRequests"), where("status", "==", "pending"))
+    const q = query(collection(db, "vehicleRequests"), where("status", "in", ["pending", "partial"]))
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setPendingCount(snapshot.size)
+      
+      // Calculate total pending destinations
+      let destCount = 0
+      snapshot.docs.forEach(doc => {
+        const data = doc.data()
+        const assigned = data.assignedDestinations || []
+        destCount += (data.destinations?.length || 0) - assigned.length
+      })
+      setPendingDestCount(destCount)
     })
 
     return () => unsubscribe()
@@ -65,6 +75,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     { name: "จัดการไซน์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
     { name: "วางแผนการส่ง", href: "/trips/plan", icon: Route, roles: ['admin', 'dispatcher'] },
+    { name: "จัดกลุ่มเที่ยววิ่ง", href: "/trip-grouping", icon: Layers, roles: ['admin', 'dispatcher'], badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingDestCount > 0 ? pendingDestCount : null },
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "จัดการผู้ใช้งาน", href: "/settings/users", icon: Users, roles: ['admin'] },
     { name: "ตั้งค่าระบบ", href: "/settings", icon: Settings, roles: ['admin', 'dispatcher'] },
