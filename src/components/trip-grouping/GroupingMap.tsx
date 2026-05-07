@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { Loader } from "@googlemaps/js-api-loader"
-import { useDoc, useFirestore } from "@/firebase"
+import { useDoc, useFirestore, useMemoFirebase } from "@/firebase"
 import { doc } from "firebase/firestore"
 import { CompanySetting } from "@/types/models"
 
@@ -21,50 +21,12 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const markersRef = React.useRef<google.maps.Marker[]>([])
   
-  const settingRef = doc(db, "companySettings", "default")
+  // FIX: Memoize the document reference to prevent useDoc infinite loop
+  const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingRef)
 
-  // Initialization Effect - Run once
-  React.useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return
-
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference
-    if (!apiKey) return
-
-    const loader = new Loader({
-      apiKey: apiKey,
-      version: "weekly",
-      libraries: ["places", "geometry"]
-    })
-
-    loader.load().then(() => {
-      if (!mapContainerRef.current || mapRef.current) return
-
-      const newMap = new google.maps.Map(mapContainerRef.current, {
-        center: { lat: DEFAULT_LAT, lng: DEFAULT_LNG },
-        zoom: 11,
-        styles: [
-          { featureType: "landscape", elementType: "all", color: "#2d3139" },
-          { featureType: "road", elementType: "all", color: "#1a1c23" },
-          { featureType: "water", elementType: "all", color: "#172899" }
-        ],
-        mapTypeControl: false,
-        streetViewControl: false
-      })
-      
-      mapRef.current = newMap
-      updateMarkers()
-    })
-  }, [settings?.googleMapsApiKeyReference]) // Only re-init if API key changes or on mount
-
-  // Marker Update Effect
-  React.useEffect(() => {
-    if (mapRef.current) {
-      updateMarkers()
-    }
-  }, [destinations, selectedIds])
-
-  const updateMarkers = () => {
+  // Marker update logic memoized to prevent recreation
+  const updateMarkers = React.useCallback(() => {
     const map = mapRef.current
     if (!map || !window.google) return
 
@@ -115,7 +77,57 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     }
 
     markersRef.current = newMarkers
-  }
+  }, [destinations, selectedIds, onSelect])
+
+  // Initialization Effect - Run once or when API key changes
+  React.useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return
+
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference
+    if (!apiKey) return
+
+    const loader = new Loader({
+      apiKey: apiKey,
+      version: "weekly",
+      libraries: ["places", "geometry"]
+    })
+
+    loader.load().then(() => {
+      if (!mapContainerRef.current || mapRef.current) return
+
+      const newMap = new google.maps.Map(mapContainerRef.current, {
+        center: { lat: DEFAULT_LAT, lng: DEFAULT_LNG },
+        zoom: 11,
+        styles: [
+          { featureType: "landscape", elementType: "all", color: "#2d3139" },
+          { featureType: "road", elementType: "all", color: "#1a1c23" },
+          { featureType: "water", elementType: "all", color: "#172899" }
+        ],
+        mapTypeControl: false,
+        streetViewControl: false
+      })
+      
+      mapRef.current = newMap
+      updateMarkers()
+    })
+  }, [settings?.googleMapsApiKeyReference, updateMarkers])
+
+  // FIX: Stabilize dependencies for marker updates using primitive strings (Hashes)
+  const destinationsHash = React.useMemo(() => 
+    destinations.map(d => `${d.id}-${d.lat}-${d.lng}`).join('|'), 
+    [destinations]
+  )
+  const selectionHash = React.useMemo(() => 
+    Array.from(selectedIds).sort().join(','), 
+    [selectedIds]
+  )
+
+  // Marker Update Effect - Only triggers when actual data or selection changes
+  React.useEffect(() => {
+    if (mapRef.current) {
+      updateMarkers()
+    }
+  }, [destinationsHash, selectionHash, updateMarkers])
 
   return <div ref={mapContainerRef} className="w-full h-full" />
 }

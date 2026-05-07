@@ -25,7 +25,7 @@ export default function TripGroupingPage() {
   const db = useFirestore()
   const { toast } = useToast()
 
-  // Data Fetching
+  // Data Fetching - Memoized refs to prevent infinite re-subscriptions
   const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const vrRef = useMemoFirebase(() => query(collection(db, "vehicleRequests"), where("status", "in", ["pending", "partial"])), [db])
@@ -41,7 +41,7 @@ export default function TripGroupingPage() {
   const [isConfirmOpen, setIsConfirmOpen] = React.useState(false)
   const [isProcessing, setIsProcessing] = React.useState(false)
 
-  // Flatten destinations from VRs
+  // Flatten destinations from VRs - Stable memoization
   const availableDestinations = React.useMemo(() => {
     if (!requests) return []
     const list: any[] = []
@@ -64,17 +64,23 @@ export default function TripGroupingPage() {
     return list
   }, [requests])
 
-  const selectedDestinations = availableDestinations.filter(d => selectedIds.has(d.id))
+  const selectedDestinations = React.useMemo(() => 
+    availableDestinations.filter(d => selectedIds.has(d.id)),
+    [availableDestinations, selectedIds]
+  )
 
-  const handleToggleSelect = (id: string) => {
-    const newSet = new Set(selectedIds)
-    if (newSet.has(id)) newSet.delete(id)
-    else newSet.add(id)
-    setSelectedIds(newSet)
-  }
+  // Stable callbacks for children
+  const handleToggleSelect = React.useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(id)) newSet.delete(id)
+      else newSet.add(id)
+      return newSet
+    })
+  }, [])
 
-  const handleCreateTrip = async () => {
-    if (selectedDestinations.length === 0) {
+  const handleCreateTrip = React.useCallback(() => {
+    if (selectedIds.size === 0) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกอย่างน้อย 1 จุดหมาย", variant: "destructive" })
       return
     }
@@ -84,7 +90,7 @@ export default function TripGroupingPage() {
     }
 
     setIsConfirmOpen(true)
-  }
+  }, [selectedIds.size, vehicleId, driverId, toast])
 
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
