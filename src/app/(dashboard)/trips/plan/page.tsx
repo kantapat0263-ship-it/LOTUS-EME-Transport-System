@@ -107,15 +107,17 @@ export default function TripPlanPage() {
   const distanceLinesRef = React.useRef<google.maps.Polyline[]>([])
   const distanceLabelsRef = React.useRef<google.maps.Marker[]>([])
 
-  // Distance Matrix State
-  const [distanceMatrix, setDistanceMatrix] = React.useState<Record<string, Record<string, number>>>({})
-  const [isMatrixLoading, setIsMatrixLoading] = React.useState(false)
-  const [isMatrixOpen, setIsMatrixOpen] = React.useState(false)
+  const clearDistanceLines = React.useCallback(() => {
+    distanceLinesRef.current.forEach(l => l.setMap(null));
+    distanceLabelsRef.current.forEach(m => m.setMap(null));
+    distanceLinesRef.current = [];
+    distanceLabelsRef.current = [];
+  }, []);
 
   const calculateRoute = React.useCallback(async (optimize: boolean = false, isAuto: boolean = false) => {
     if (!map || !directionsRenderer || stops.some(s => !s.siteId) || !isApiLoaded) {
       if (!isAuto) {
-        toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุจุดส่งของให้ครบถ้วนก่อนคำนวณเส้นทาง", variant: "destructive" })
+        toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุจุดส่งของให้ครบถ้วนก่อนคำวณเส้นทาง", variant: "destructive" })
       }
       return
     }
@@ -182,6 +184,91 @@ export default function TripPlanPage() {
       }
     }
   }, [map, directionsRenderer, stops, isApiLoaded, sites, toast]);
+
+  // Effect for distance lines on hover
+  React.useEffect(() => {
+    if (!map || !hoveredSiteId || !isApiLoaded || markers.length === 0) {
+      clearDistanceLines();
+      return;
+    }
+
+    const google = window.google;
+    const sourceMarker = markers.find(m => {
+      if (hoveredSiteId === "warehouse") return m.getTitle()?.includes("คลังสินค้า");
+      return m.getTitle() === sites?.find(s => s.id === hoveredSiteId)?.name;
+    });
+
+    if (!sourceMarker) return;
+
+    const sourcePos = sourceMarker.getPosition();
+    if (!sourcePos) return;
+
+    const service = new google.maps.DistanceMatrixService();
+
+    markers.forEach(targetMarker => {
+      if (targetMarker === sourceMarker) return;
+
+      const targetPos = targetMarker.getPosition();
+      if (!targetPos) return;
+
+      const cacheKey = `${sourcePos.lat()},${sourcePos.lng()}-${targetPos.lat()},${targetPos.lng()}`;
+      
+      const drawLine = (distanceText: string) => {
+        const line = new google.maps.Polyline({
+          path: [sourcePos, targetPos],
+          geodesic: true,
+          strokeColor: "#F0890D",
+          strokeOpacity: 0.6,
+          strokeWeight: 2,
+          icons: [{
+            icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 },
+            offset: "0",
+            repeat: "20px"
+          }],
+          map: map
+        });
+        distanceLinesRef.current.push(line);
+
+        const midPoint = google.maps.geometry.spherical.computeOffset(
+          sourcePos,
+          google.maps.geometry.spherical.computeDistanceBetween(sourcePos, targetPos) / 2,
+          google.maps.geometry.spherical.computeHeading(sourcePos, targetPos)
+        );
+
+        const label = new google.maps.Marker({
+          position: midPoint,
+          map: map,
+          label: {
+            text: distanceText,
+            color: "#ffffff",
+            fontSize: "10px",
+            fontWeight: "bold",
+            className: "bg-accent/80 px-1.5 py-0.5 rounded border border-white/20 whitespace-nowrap"
+          },
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 }
+        });
+        distanceLabelsRef.current.push(label);
+      };
+
+      if (distanceCache.current.has(cacheKey)) {
+        drawLine(distanceCache.current.get(cacheKey)!.toString() + " กม.");
+      } else {
+        service.getDistanceMatrix({
+          origins: [sourcePos],
+          destinations: [targetPos],
+          travelMode: google.maps.TravelMode.DRIVING,
+        }, (response, status) => {
+          if (status === "OK" && response && response.rows[0].elements[0].status === "OK") {
+            const distKm = response.rows[0].elements[0].distance.value / 1000;
+            distanceCache.current.set(cacheKey, parseFloat(distKm.toFixed(1)));
+            drawLine(distKm.toFixed(1) + " กม.");
+          }
+        });
+      }
+    });
+
+    return () => clearDistanceLines();
+  }, [hoveredSiteId, map, markers, isApiLoaded, sites, clearDistanceLines]);
 
   // Auto-calculate Effect
   React.useEffect(() => {
@@ -280,7 +367,7 @@ export default function TripPlanPage() {
     const startMarker = new google.maps.Marker({
       position: warehousePos,
       map,
-      title: "จุดเริ่มต้น (คลังสินค้า LOTUS EME)",
+      title: "จุดเริ่มต้น (คลังสินค้า LOTUS GROUP)",
       icon: {
         path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
         scale: 7,
@@ -500,7 +587,7 @@ export default function TripPlanPage() {
                   <Select value={departurePointId} onValueChange={setDeparturePointId}>
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกจุดเริ่มต้น" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="warehouse">คลังสินค้า LOTUS EME</SelectItem>
+                      <SelectItem value="warehouse">คลังสินค้า LOTUS GROUP</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
