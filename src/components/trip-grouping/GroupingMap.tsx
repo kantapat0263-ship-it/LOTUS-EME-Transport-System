@@ -17,16 +17,19 @@ const DEFAULT_LNG = 100.5018
 
 export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMapProps) {
   const db = useFirestore()
-  const mapRef = React.useRef<HTMLDivElement>(null)
-  const [map, setMap] = React.useState<google.maps.Map | null>(null)
-  const [markers, setMarkers] = React.useState<google.maps.Marker[]>([])
+  const mapContainerRef = React.useRef<HTMLDivElement>(null)
+  const mapRef = React.useRef<google.maps.Map | null>(null)
+  const markersRef = React.useRef<google.maps.Marker[]>([])
   
   const settingRef = doc(db, "companySettings", "default")
   const { data: settings } = useDoc<CompanySetting>(settingRef)
 
+  // Initialization Effect - Run once
   React.useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return
+
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference
-    if (!mapRef.current || !apiKey) return
+    if (!apiKey) return
 
     const loader = new Loader({
       apiKey: apiKey,
@@ -35,7 +38,9 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     })
 
     loader.load().then(() => {
-      const newMap = new google.maps.Map(mapRef.current!, {
+      if (!mapContainerRef.current || mapRef.current) return
+
+      const newMap = new google.maps.Map(mapContainerRef.current, {
         center: { lat: DEFAULT_LAT, lng: DEFAULT_LNG },
         zoom: 11,
         styles: [
@@ -46,15 +51,26 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
         mapTypeControl: false,
         streetViewControl: false
       })
-      setMap(newMap)
+      
+      mapRef.current = newMap
+      updateMarkers()
     })
-  }, [settings])
+  }, [settings?.googleMapsApiKeyReference]) // Only re-init if API key changes or on mount
 
+  // Marker Update Effect
   React.useEffect(() => {
+    if (mapRef.current) {
+      updateMarkers()
+    }
+  }, [destinations, selectedIds])
+
+  const updateMarkers = () => {
+    const map = mapRef.current
     if (!map || !window.google) return
 
     // Clear old markers
-    markers.forEach(m => m.setMap(null))
+    markersRef.current.forEach(m => m.setMap(null))
+    markersRef.current = []
     
     const google = window.google
     const newMarkers: google.maps.Marker[] = []
@@ -84,7 +100,7 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
             fillColor: isSelected ? "#3b82f6" : (d.type === 'site' ? "#f59e0b" : "#9333ea"),
             fillOpacity: 1,
             strokeWeight: isSelected ? 4 : 2,
-            strokeColor: isSelected ? "#ffffff" : "#ffffff"
+            strokeColor: "#ffffff"
           }
         })
 
@@ -98,8 +114,8 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
       if (destinations.length === 1) map.setZoom(15)
     }
 
-    setMarkers(newMarkers)
-  }, [map, destinations, selectedIds])
+    markersRef.current = newMarkers
+  }
 
-  return <div ref={mapRef} className="w-full h-full" />
+  return <div ref={mapContainerRef} className="w-full h-full" />
 }
