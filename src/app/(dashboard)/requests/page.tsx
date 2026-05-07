@@ -27,6 +27,7 @@ import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp
 import { UserProfile } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
@@ -48,6 +49,7 @@ function InlineRequestManager() {
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
+  const { user } = useUser()
   
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
@@ -343,6 +345,7 @@ export default function RequestsPage() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+      console.log('Requests found:', results.length)
       setMyRequests(results)
       setIsDataLoading(false)
     }, (error) => {
@@ -423,7 +426,7 @@ export default function RequestsPage() {
                 ))}
               </div>
             ) : myRequests && myRequests.length > 0 ? (
-              myRequests.filter(r => r.userId === user?.uid || isStaff).map((req: any) => (
+              myRequests.map((req: any) => (
                 <Card key={req.id} className="border-border/50 hover:border-accent/30 transition-all overflow-hidden group">
                   <CardContent className="p-0">
                     <div className="flex flex-col sm:flex-row">
