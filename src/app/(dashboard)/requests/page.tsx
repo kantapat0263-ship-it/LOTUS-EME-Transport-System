@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import { RequestForm } from "@/components/requests/RequestForm"
-import { RequestManager } from "@/components/requests/RequestManager"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { 
   ClipboardList, 
@@ -88,75 +87,85 @@ function InlineRequestManager() {
     }
   }, [selectedReq])
 
-  // Map initialization and marker rendering
+  // Map initialization and marker rendering with delay fix
   React.useEffect(() => {
+    let mapTimeout: NodeJS.Timeout;
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
-    if (isDetailOpen && selectedReq && mapContainerRef.current && apiKey) {
-      const loader = new Loader({
-        apiKey: apiKey,
-        version: "weekly"
-      });
+    if (isDetailOpen && selectedReq && apiKey) {
+      // Small delay to ensure the modal and its content area are rendered
+      mapTimeout = setTimeout(() => {
+        if (!mapContainerRef.current) return;
 
-      loader.load().then(() => {
-        const google = window.google;
-        const newMap = new google.maps.Map(mapContainerRef.current!, {
-          center: { lat: 13.7563, lng: 100.5018 },
-          zoom: 12,
-          mapTypeControl: false,
-          streetViewControl: false,
-          styles: [
-            { featureType: "landscape", elementType: "all", color: "#2d3139" },
-            { featureType: "road", elementType: "all", color: "#1a1c23" },
-            { featureType: "water", elementType: "all", color: "#172899" }
-          ]
+        const loader = new Loader({
+          apiKey: apiKey,
+          version: "weekly",
+          libraries: ["places"]
         });
 
-        const bounds = new google.maps.LatLngBounds();
-        const markers: google.maps.Marker[] = [];
-
-        selectedReq.destinations.forEach((dest: any, idx: number) => {
-          if (dest.lat && dest.lng) {
-            const pos = { lat: dest.lat, lng: dest.lng };
-            bounds.extend(pos);
-
-            const marker = new google.maps.Marker({
-              position: pos,
-              map: newMap,
-              label: {
-                text: (idx + 1).toString(),
-                color: "#ffffff",
-                fontWeight: "bold"
-              },
-              icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                scale: 12,
-                fillColor: dest.type === 'site' ? "#f59e0b" : "#9333ea",
-                fillOpacity: 1,
-                strokeWeight: 2,
-                strokeColor: "#ffffff"
-              },
-              title: dest.siteName
-            });
-            markers.push(marker);
-          }
-        });
-
-        if (selectedReq.destinations.length > 0) {
-          newMap.fitBounds(bounds);
-          // Don't zoom in too much for a single marker
-          const listener = google.maps.event.addListener(newMap, "idle", () => {
-            if (newMap.getZoom()! > 15) newMap.setZoom(15);
-            google.maps.event.removeListener(listener);
+        loader.load().then(() => {
+          const google = window.google;
+          const newMap = new google.maps.Map(mapContainerRef.current!, {
+            center: { lat: 13.7563, lng: 100.5018 },
+            zoom: 12,
+            mapTypeControl: false,
+            streetViewControl: false,
+            styles: [
+              { featureType: "landscape", elementType: "all", color: "#2d3139" },
+              { featureType: "road", elementType: "all", color: "#1a1c23" },
+              { featureType: "water", elementType: "all", color: "#172899" }
+            ]
           });
-        }
 
-        setModalMap(newMap);
-        setModalMarkers(markers);
-      });
+          const bounds = new google.maps.LatLngBounds();
+          const markers: google.maps.Marker[] = [];
+          let hasCoords = false;
+
+          selectedReq.destinations.forEach((dest: any, idx: number) => {
+            if (dest.lat && dest.lng) {
+              hasCoords = true;
+              const pos = { lat: dest.lat, lng: dest.lng };
+              bounds.extend(pos);
+
+              const marker = new google.maps.Marker({
+                position: pos,
+                map: newMap,
+                label: {
+                  text: (idx + 1).toString(),
+                  color: "#ffffff",
+                  fontWeight: "bold"
+                },
+                icon: {
+                  path: google.maps.SymbolPath.CIRCLE,
+                  scale: 12,
+                  fillColor: dest.type === 'site' ? "#f59e0b" : "#9333ea",
+                  fillOpacity: 1,
+                  strokeWeight: 2,
+                  strokeColor: "#ffffff"
+                },
+                title: dest.siteName
+              });
+              markers.push(marker);
+            }
+          });
+
+          if (hasCoords) {
+            newMap.fitBounds(bounds);
+            // Trigger resize and adjust zoom for single markers
+            google.maps.event.addListenerOnce(newMap, "idle", () => {
+              google.maps.event.trigger(newMap, 'resize');
+              if (newMap.getZoom()! > 15) newMap.setZoom(15);
+            });
+          }
+
+          setModalMap(newMap);
+          setModalMarkers(markers);
+        });
+      }, 400); // 400ms delay to be safe
     }
 
     return () => {
+      clearTimeout(mapTimeout);
       modalMarkers.forEach(m => m.setMap(null));
     }
   }, [isDetailOpen, selectedReq, companySettings]);
@@ -248,6 +257,8 @@ function InlineRequestManager() {
     }
   }
 
+  const hasCoordinates = selectedReq?.destinations?.some((d: any) => d.lat && d.lng);
+
   if (isLoading) {
     return <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   }
@@ -334,9 +345,16 @@ function InlineRequestManager() {
 
           {selectedReq && (
             <div className="space-y-6 py-4">
-              {/* Modal Map */}
-              <div className="rounded-xl overflow-hidden border border-border/50 h-[250px] bg-muted/20">
-                <div ref={mapContainerRef} className="w-full h-full" />
+              {/* Modal Map Fix */}
+              <div className="rounded-xl overflow-hidden border border-border/50 h-[250px] bg-muted/20 relative">
+                {hasCoordinates ? (
+                  <div ref={mapContainerRef} className="w-full h-full" />
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground bg-secondary/10 p-4 text-center">
+                    <MapPin className="h-8 w-8 mb-2 opacity-20" />
+                    <p className="text-xs">ไม่มีข้อมูลพิกัดสำหรับจุดหมายในคำขอนี้</p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-secondary/30 p-4 rounded-xl border border-border/50">
@@ -409,7 +427,7 @@ function InlineRequestManager() {
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-start gap-4">
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-bold flex items-center gap-2">
+                              <div className="text-sm font-bold flex flex-wrap items-center gap-2">
                                 <span className={cn(
                                   "w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0",
                                   dest.type === 'site' ? "bg-accent/20 text-accent" : "bg-purple-500/20 text-purple-400"
@@ -422,21 +440,23 @@ function InlineRequestManager() {
                                     <Check className="h-3 w-3 mr-1" /> จัดแล้ว
                                   </Badge>
                                 )}
-                              </p>
+                              </div>
                               <div className="mt-2 bg-secondary/20 p-2 rounded text-xs text-muted-foreground border border-dashed">
                                 <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
                                 {dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}
                               </div>
                             </div>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="h-9 w-9 p-0 border-accent/30 text-accent hover:bg-accent hover:text-white"
-                              onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${dest.lat},${dest.lng}`, '_blank')}
-                              title="ดูพิกัดบน Google Maps"
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </Button>
+                            {dest.lat && dest.lng && (
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-9 w-9 p-0 border-accent/30 text-accent hover:bg-accent hover:text-white"
+                                onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${dest.lat},${dest.lng}`, '_blank')}
+                                title="ดูพิกัดบน Google Maps"
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </div>
