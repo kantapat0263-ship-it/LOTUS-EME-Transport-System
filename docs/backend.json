@@ -6,51 +6,48 @@
       "type": "object",
       "description": "Represents a user account within the application with specific roles and access permissions.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the User entity, corresponding to Firebase Authentication UID."
-        },
-        "email": {
-          "type": "string",
-          "description": "The user's email address, used for authentication.",
-          "format": "email"
-        },
-        "name": {
-          "type": "string",
-          "description": "The full name of the user."
-        },
-        "role": {
-          "type": "string",
-          "description": "The role of the user, defining their access permissions within the application.",
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "dispatcher", "viewer"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "email", "name", "role", "createdAt", "active"]
+    },
+    "VehicleRequest": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VehicleRequest",
+      "type": "object",
+      "description": "A request for a vehicle to be dispatched to one or more locations.",
+      "properties": {
+        "requestId": { "type": "string" },
+        "requestDate": { "type": "string" },
+        "requestTime": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "requestedByEmail": { "type": "string", "format": "email" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "destinations": {
+          "type": "array",
           "items": {
-            "type": "string"
+            "type": "object",
+            "properties": {
+              "siteName": { "type": "string" },
+              "lat": { "type": "number" },
+              "lng": { "type": "number" },
+              "jobDescription": { "type": "string" }
+            }
           }
         },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp indicating when the user account was created.",
-          "format": "date-time"
-        },
-        "active": {
-          "type": "boolean",
-          "description": "A boolean flag indicating whether the user account is active or deactivated. Deactivated users cannot log in."
-        }
-      },
-      "required": [
-        "id",
-        "email",
-        "name",
-        "role",
-        "createdAt",
-        "active"
-      ]
+        "note": { "type": "string" },
+        "rejectReason": { "type": "string" },
+        "tripId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "auth": {
-    "providers": [
-      "password",
-      "anonymous"
-    ]
+    "providers": ["password", "anonymous"]
   },
   "firestore": {
     "structure": [
@@ -58,119 +55,33 @@
         "path": "/users/{userId}",
         "definition": {
           "entityName": "User",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "description": "Stores user profiles, including their `uid` (matching Firebase Auth UID), `email`, `name`, `role` ('admin', 'dispatcher', 'viewer'), `createdAt` timestamp, and `active` status. The `role` field is central for server-side authorization. Only ADMINs can create, edit, or deactivate users in this collection.",
-          "params": [
-            {
-              "name": "userId",
-              "description": "The unique identifier of the user, corresponding to their Firebase Authentication UID."
-            }
-          ]
+          "schema": { "$ref": "#/backend/entities/User" },
+          "description": "User profile data."
+        }
+      },
+      {
+        "path": "/vehicleRequests/{requestId}",
+        "definition": {
+          "entityName": "VehicleRequest",
+          "schema": { "$ref": "#/backend/entities/VehicleRequest" },
+          "description": "Store individual vehicle requests from staff."
         }
       },
       {
         "path": "/sites/{siteId}",
         "definition": {
           "entityName": "Site",
-          "schema": {
-            "$ref": "#/backend/entities/Site"
-          },
-          "description": "Stores details for construction sites, including `name`, `address`, `gpsCoordinates` (lat/lng), `projectType` tag, and `active` status. Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
-          "params": [
-            {
-              "name": "siteId",
-              "description": "The unique identifier for a construction site."
-            }
-          ]
-        }
-      },
-      {
-        "path": "/vehicles/{vehicleId}",
-        "definition": {
-          "entityName": "Vehicle",
-          "schema": {
-            "$ref": "#/backend/entities/Vehicle"
-          },
-          "description": "Stores registered vehicle information, including `licensePlate`, `type` ('Pickup', '4-wheel truck', '6-wheel truck'), and `maxLoadCapacity` (kg). Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
-          "params": [
-            {
-              "name": "vehicleId",
-              "description": "The unique identifier for a vehicle."
-            }
-          ]
-        }
-      },
-      {
-        "path": "/drivers/{driverId}",
-        "definition": {
-          "entityName": "Driver",
-          "schema": {
-            "$ref": "#/backend/entities/Driver"
-          },
-          "description": "Stores driver profiles, including `name` and `phoneNumber`. Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
-          "params": [
-            {
-              "name": "driverId",
-              "description": "The unique identifier for a driver."
-            }
-          ]
+          "description": "Construction site information."
         }
       },
       {
         "path": "/trips/{tripId}",
         "definition": {
           "entityName": "Trip",
-          "schema": {
-            "$ref": "#/backend/entities/Trip"
-          },
-          "description": "Stores main trip plan details, including `departurePoint`, `selectedVehicleId`, `selectedDriverId`, `tripDate`, ordered `stopIds`, and `status` ('Planned', 'In Progress', 'Completed', 'Cancelled'). Access: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
-          "params": [
-            {
-              "name": "tripId",
-              "description": "The unique identifier for a delivery trip."
-            }
-          ]
-        }
-      },
-      {
-        "path": "/trips/{tripId}/stops/{stopId}",
-        "definition": {
-          "entityName": "TripStop",
-          "schema": {
-            "$ref": "#/backend/entities/TripStop"
-          },
-          "description": "Stores individual stops for a specific trip, including `siteId`, `orderIndex`, `cargoDescription`, and potentially `actualDeliveredItems`. Access control is inherited from the parent `Trip` document: 'dispatcher' and 'admin' roles can create/edit/delete; all authenticated roles can read.",
-          "params": [
-            {
-              "name": "tripId",
-              "description": "The unique identifier of the parent trip."
-            },
-            {
-              "name": "stopId",
-              "description": "The unique identifier for a specific stop within the trip."
-            }
-          ]
-        }
-      },
-      {
-        "path": "/settings/{settingId}",
-        "definition": {
-          "entityName": "CompanySetting",
-          "schema": {
-            "$ref": "#/backend/entities/CompanySetting"
-          },
-          "description": "Stores global application settings such as the default `warehouseLocation` and `googleMapsApiKeyRef`. Only the 'admin' role can create/edit/delete these settings; all authenticated roles can read them.",
-          "params": [
-            {
-              "name": "settingId",
-              "description": "The unique identifier for a company setting (e.g., 'main')."
-            }
-          ]
+          "description": "Main trip delivery plans."
         }
       }
     ],
-    "reasoning": "The Firestore data structure is designed to support a secure, scalable, and debuggable role-based access control (RBAC) system for the LotusLogistics Pro application, adhering strictly to the core design principles and strategic mandates.\n\n**1. Authorization Independence (CRITICAL) & DBAC:**\nRoles are implemented using a Database Access Control (DBAC) model, where each user's `role` ('admin', 'dispatcher', 'viewer') is stored directly in their respective document within the `/users/{userId}` collection. While strictly avoiding `get()` calls in rules is a core principle, checking the `request.auth.uid`'s own role requires a `get()` call to `/users/$(request.auth.uid)`. This specific `get()` operation is an accepted pattern for user-centric role checks, as it's a direct lookup of the requesting user's own profile and does not create hierarchical dependencies between unrelated documents (e.g., a trip needing to read a site's owner). For all other data (sites, vehicles, drivers, trips, trip stops, settings), authorization is based solely on the requesting user's `uid` and their associated `role` in `/users`, simplifying rules. No denormalization of owner IDs or membership maps is required within `/sites`, `/vehicles`, `/drivers`, or `/trips` documents for authorization purposes because access is purely role-based across these shared resources. This prevents complex multi-document lookups that could break atomic operations or complicate debugging.\n\n**2. Clarity of Intent (Debuggability):**\nThe use of explicit, descriptive collection names (`/users`, `/sites`, `/vehicles`, `/drivers`, `/trips`, `/settings`) and wildcards (`{userId}`, `{siteId}`, etc.) makes the purpose of each path immediately clear. The `role` field in the `User` document explicitly defines permissions, and `active` flags manage user status directly, preventing ambiguous inferred states.\n\n**3. Structural Segregation (Homogeneous Security Posture):**\nEach top-level collection (`/users`, `/sites`, `/vehicles`, `/drivers`, `/trips`, `/settings`) holds documents that share a consistent security posture. For example, all documents in `/sites` are readable by all authenticated users and writable only by 'admin' or 'dispatcher' roles. There is no mixing of public and private data within the same collection. This significantly simplifies Firestore security rules, as rules can be applied uniformly to an entire collection without complex conditional logic based on document content.\n\n**4. QAPs (Rules are not Filters):**\nThe structure inherently supports queryable access patterns (QAPs).\n*   For `/users`, `list` operations are restricted to `admin` role, ensuring that queries by non-admins would not return unauthorized data.\n*   For `/sites`, `/vehicles`, `/drivers`, and `/trips` (including `/trips/{tripId}/stops`), all authenticated users (admin, dispatcher, viewer) have read access. This means `list` queries on these collections will always return data that the requesting user is authorized to see. The application can fetch all data and then apply client-side filtering (e.g., filter trips by driver) without violating security rules. This eliminates the need for complex, inefficient, or insecure server-side filtering via rules.\n*   For `/settings`, all authenticated users have read access, while only admins can write, also supporting QAPs for read operations.\n\n**5. Invariants:**\nTimestamp fields like `createdAt` in `User` documents ensure data integrity. The `status` field in `Trip` documents explicitly models the trip's lifecycle. Ownership for user profiles is naturally tied to the `uid` in the path, preventing unauthorized modification outside of the defined `admin` role.\n\nIn summary, this design leverages explicit role definitions, structural segregation, and careful consideration of `get()` operations for user roles to create a robust, secure, and easily debuggable Firestore structure that aligns with all stated principles and mandates."
+    "reasoning": "Standardizing access for the vehicle request workflow."
   }
 }
