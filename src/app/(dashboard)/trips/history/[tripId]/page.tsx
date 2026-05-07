@@ -63,6 +63,42 @@ export default function TripDetailPage() {
   const mapRef = React.useRef<HTMLDivElement>(null)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
 
+  // Helper Functions for Print
+  const formatThaiShortDate = (dateStr: string | any) => {
+    if (!dateStr) return "-";
+    try {
+      const d = dateStr.toDate ? dateStr.toDate() : new Date(dateStr);
+      const day = d.getDate();
+      const month = d.getMonth() + 1;
+      const year = (d.getFullYear() + 543).toString().slice(-2);
+      return `${day}/${month}/${year}`;
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
+  const formatDurationMinutes = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    return h > 0 ? `${h} ชม. ${m} นาที` : `${m} นาที`;
+  };
+
+  const getUniqueRequesters = (trip: any) => {
+    const names = new Set<string>();
+    if (trip.requestedBy) names.add(trip.requestedBy);
+    if (trip.stops) {
+      trip.stops.forEach((s: any) => {
+        if (s.requestedBy) names.add(s.requestedBy);
+      });
+    }
+    return Array.from(names).filter(Boolean).join(", ") || "-";
+  };
+
+  const getStopLocation = (siteId: string) => {
+    const site = allSites?.find(s => s.id === siteId);
+    return site?.address || "";
+  };
+
   React.useEffect(() => {
     if (!mapRef.current || !trip || !isApiLoaded || !allSites) return
 
@@ -154,12 +190,6 @@ export default function TripDetailPage() {
       case 'Cancelled': return 'bg-destructive text-white';
       default: return '';
     }
-  }
-
-  const formatTime = (minutes: number) => {
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.round(minutes % 60);
-    return hours > 0 ? `${hours} ชม. ${mins} นาที` : `${mins} นาที`;
   }
 
   const isLoading = isTripLoading || isSitesLoading
@@ -277,7 +307,7 @@ export default function TripDetailPage() {
                           <p className="text-xs">🚗 เปลี่ยนรถ: {log.changes.vehicle.from} → {log.changes.vehicle.to}</p>
                         )}
                         {log.changes.driver && (
-                          <p className="text-xs">👤 เปลี่ยนคนับ: {log.changes.driver.from} → {log.changes.driver.to}</p>
+                          <p className="text-xs">👤 เปลี่ยนคนขับ: {log.changes.driver.from} → {log.changes.driver.to}</p>
                         )}
                         {log.changes.stopsAdded && log.changes.stopsAdded.length > 0 && (
                           <p className="text-xs">➕ เพิ่มจุดส่ง: {log.changes.stopsAdded.join(", ")}</p>
@@ -318,7 +348,7 @@ export default function TripDetailPage() {
               <CardContent className="p-4 pt-0">
                 <div className="flex items-center gap-2 text-xl md:text-2xl font-bold">
                   <Clock className="h-5 w-5 md:h-6 md:w-6 text-accent" />
-                  {formatTime(trip.totalEstimatedTimeMinutes || 0)}
+                  {formatDurationMinutes(trip.totalEstimatedTimeMinutes || 0)}
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-2">* เป็นเวลาเดินทางโดยประมาณการ</p>
               </CardContent>
@@ -327,75 +357,105 @@ export default function TripDetailPage() {
         </div>
       </div>
 
-      <div className="print-only w-full bg-white text-black p-4 font-sans leading-relaxed">
-        <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
-          <div>
-            <h1 className="text-3xl font-bold uppercase tracking-tighter">LOTUS GROUP</h1>
-            <h2 className="text-xl font-semibold">ใบงานการขนส่ง (Delivery Worksheet)</h2>
-          </div>
-          <div className="text-right">
-            <p className="text-lg font-bold">Trip ID: {trip.tripId || trip.id}</p>
-            <p className="text-sm">สถานะ: {trip.status}</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-8 mb-8">
-          <div className="space-y-2">
-            <p className="text-xs font-bold text-gray-600 uppercase">ข้อมูลเที่ยววิ่ง</p>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <span className="font-semibold text-gray-700">วันที่ส่งของ:</span> <span>{trip.tripDate}</span>
-              <span className="font-semibold text-gray-700">ระยะทางรวม:</span> <span>{trip.totalDistanceKm?.toFixed(1) || 0} กม.</span>
-              <span className="font-semibold text-gray-700">เวลาเดินทาง:</span> <span>{formatTime(trip.totalEstimatedTimeMinutes || 0)}</span>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <p className="text-xs font-bold text-gray-600 uppercase">ข้อมูลคนขับและรถ</p>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <span className="font-semibold text-gray-700">ชื่อคนขับ:</span> <span>{trip.driverName}</span>
-              <span className="font-semibold text-gray-700">เบอร์ติดต่อ:</span> <span>{driverData?.phoneNumber || "ไม่มีข้อมูลเบอร์ติดต่อ"}</span>
-              <span className="font-semibold text-gray-700">ทะเบียนรถ:</span> <span>{trip.vehiclePlate}</span>
-              <span className="font-semibold text-gray-700">พิกัดเริ่มต้น:</span> <span>คลังสินค้าหลัก LOTUS</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-black pt-6 mb-8">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2 underline">
-            ลำดับจุดส่งของ (Delivery Sequence)
-          </h3>
-          <div className="space-y-6">
-            {trip.stops?.map((stop: any, index: number) => (
-              <div key={index} className="flex gap-6 border-b border-gray-100 pb-4">
-                <div className="w-8 h-8 rounded-full border-2 border-black flex items-center justify-center font-bold text-lg shrink-0">
-                  {index + 1}
-                </div>
-                <div className="flex-1">
-                  <p className="text-xl font-bold">{stop.siteName}</p>
-                  <div className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded">
-                    <p className="text-xs font-bold text-gray-500 mb-1">รายการสินค้าและวัสดุ:</p>
-                    <p className="text-sm whitespace-pre-wrap">{stop.cargoDetails || "ไม่มีรายละเอียด"}</p>
+      {/* Official Form Print Section */}
+      <div className="print-only" style={{ width: '100%', color: '#000', backgroundColor: '#fff', padding: '0' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', border: '2px solid #000' }}>
+          <thead>
+            <tr>
+              <td colSpan={4} style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '18px', padding: '12px', borderBottom: '2px solid #000' }}>
+                บันทึกใช้รถยนต์ประจำวัน<br/>
+                <span style={{ fontSize: '14px' }}>LOTUS GROUP / LOTUS EME</span>
+              </td>
+            </tr>
+            <tr style={{ backgroundColor: '#f0f0f0' }}>
+              <th style={{ border: '1px solid #000', padding: '8px', width: '15%', textAlign: 'center' }}>
+                วัน เดือน ปี<br/>ที่ใช้รถ
+              </th>
+              <th style={{ border: '1px solid #000', padding: '8px', width: '10%', textAlign: 'center' }}>
+                เวลา
+              </th>
+              <th style={{ border: '1px solid #000', padding: '8px', width: '50%', textAlign: 'left' }}>
+                รายละเอียดของงานที่ปฏิบัติ<br/>
+                <span style={{ fontWeight: 'normal', fontSize: '11px' }}>ลักษณะงาน (แยกเป็นข้อ ๆ) และ สถานที่</span>
+              </th>
+              <th style={{ border: '1px solid #000', padding: '8px', width: '25%', textAlign: 'left' }}>
+                ผู้ปฏิบัติงาน / ทะเบียนรถ<br/>ผู้ขอใช้รถ / วันที่บันทึก
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {/* วัน เดือน ปี */}
+              <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', textAlign: 'center' }}>
+                {formatThaiShortDate(trip.tripDate)}
+              </td>
+              
+              {/* เวลา */}
+              <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', textAlign: 'center' }}>
+                {trip.departureTime || "08:30"} น.
+              </td>
+              
+              {/* ลักษณะงาน + สถานที่ */}
+              <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top' }}>
+                {trip.stops?.map((stop, index) => (
+                  <div key={index} style={{ marginBottom: '12px' }}>
+                    <div style={{ fontWeight: 'bold' }}>{index + 1}. {stop.siteName}</div>
+                    {stop.cargoDetails && (
+                      <div style={{ marginLeft: '16px', fontSize: '12px', whiteSpace: 'pre-line', marginTop: '2px' }}>
+                        {stop.cargoDetails}
+                      </div>
+                    )}
+                    <div style={{ textAlign: 'right', color: '#444', fontSize: '11px', fontStyle: 'italic', marginTop: '2px' }}>
+                      สถานที่: {getStopLocation(stop.siteId)}
+                    </div>
                   </div>
+                ))}
+              </td>
+              
+              {/* ผู้ปฏิบัติงาน / ทะเบียนรถ / ผู้ขอใช้รถ */}
+              <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', fontSize: '12px' }}>
+                <div style={{ marginBottom: '6px' }}>
+                  <strong>ผู้ขับ:</strong> {trip.driverName}
                 </div>
-              </div>
-            ))}
+                <div style={{ marginBottom: '6px' }}>
+                  <strong>ทะเบียน:</strong> {trip.vehiclePlate}
+                </div>
+                <div style={{ marginTop: '10px' }}>
+                  <strong>ผู้ขอใช้รถ:</strong><br/>
+                  <span style={{ fontSize: '11px' }}>{getUniqueRequesters(trip)}</span>
+                </div>
+                <div style={{ marginTop: '12px', fontSize: '10px', color: '#555' }}>
+                  วันที่บันทึก: {formatThaiShortDate(trip.createdAt)}
+                </div>
+              </td>
+            </tr>
+            
+            {/* Signature row */}
+            <tr>
+              <td colSpan={2} style={{ border: '1px solid #000', padding: '30px 10px 10px 10px', textAlign: 'center', verticalAlign: 'bottom' }}>
+                <div style={{ marginBottom: '40px' }}>ลายเซ็นคนขับ</div>
+                _________________________<br/>
+                ({trip.driverName})
+              </td>
+              <td colSpan={2} style={{ border: '1px solid #000', padding: '30px 10px 10px 10px', textAlign: 'center', verticalAlign: 'bottom' }}>
+                <div style={{ marginBottom: '40px' }}>ลายเซ็นผู้อนุมัติ</div>
+                _________________________<br/>
+                วันที่ ______/______/______
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        
+        {/* Summary footer */}
+        <div style={{ marginTop: '15px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
+          <div>
+            <strong>ระยะทางรวม:</strong> {trip.totalDistanceKm?.toFixed(1) || 0} กม.
           </div>
-        </div>
-
-        <div className="mt-20 grid grid-cols-3 gap-8">
-          <div className="text-center space-y-12">
-            <div className="border-b border-black w-full" />
-            <p className="text-sm font-semibold">( ลงชื่อคนขับรถ )</p>
-            <p className="text-xs">วันที่: ____/____/____</p>
+          <div>
+            <strong>เวลาเดินทางโดยประมาณ:</strong> {formatDurationMinutes(trip.totalEstimatedTimeMinutes || 0)}
           </div>
-          <div className="text-center space-y-12">
-            <div className="border-b border-black w-full" />
-            <p className="text-sm font-semibold">( ลงชื่อผู้รับของ/ไซน์งาน )</p>
-            <p className="text-xs">วันที่: ____/____/____</p>
-          </div>
-          <div className="text-center space-y-12">
-            <div className="border-b border-black w-full" />
-            <p className="text-sm font-semibold">( ลงชื่อผู้อนุมัติ )</p>
-            <p className="text-xs">วันที่: ____/____/____</p>
+          <div style={{ fontStyle: 'italic' }}>
+            * พิมพ์จากระบบ LOTUS GROUP Transport Management
           </div>
         </div>
       </div>
