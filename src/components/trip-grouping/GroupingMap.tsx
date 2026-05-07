@@ -21,16 +21,13 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const markersRef = React.useRef<google.maps.Marker[]>([])
   
-  // FIX: Memoize the document reference to prevent useDoc infinite loop
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingRef)
 
-  // Marker update logic memoized to prevent recreation
   const updateMarkers = React.useCallback(() => {
     const map = mapRef.current
     if (!map || !window.google) return
 
-    // Clear old markers
     markersRef.current.forEach(m => m.setMap(null))
     markersRef.current = []
     
@@ -54,14 +51,14 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
             text: (idx + 1).toString(),
             color: "#ffffff",
             fontWeight: "bold",
-            fontSize: "14px"
+            fontSize: "11px"
           },
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
-            scale: isSelected ? 18 : 14,
+            scale: isSelected ? 15 : 12,
             fillColor: isSelected ? "#3b82f6" : (d.type === 'site' ? "#f59e0b" : "#9333ea"),
             fillOpacity: 1,
-            strokeWeight: isSelected ? 4 : 2,
+            strokeWeight: isSelected ? 3 : 2,
             strokeColor: "#ffffff"
           }
         })
@@ -79,7 +76,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     markersRef.current = newMarkers
   }, [destinations, selectedIds, onSelect])
 
-  // Initialization Effect - Run once or when API key changes
   React.useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return
 
@@ -112,7 +108,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     })
   }, [settings?.googleMapsApiKeyReference, updateMarkers])
 
-  // FIX: Stabilize dependencies for marker updates using primitive strings (Hashes)
   const destinationsHash = React.useMemo(() => 
     destinations.map(d => `${d.id}-${d.lat}-${d.lng}`).join('|'), 
     [destinations]
@@ -122,7 +117,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     [selectedIds]
   )
 
-  // Marker Update Effect - Only triggers when actual data or selection changes
   React.useEffect(() => {
     if (mapRef.current) {
       updateMarkers()

@@ -168,23 +168,23 @@ export default function TripGroupingPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-10rem)] animate-in fade-in duration-500 gap-6">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-3xl font-bold tracking-tight text-white">จัดกลุ่มเที่ยววิ่ง</h2>
-        <p className="text-lg text-muted-foreground font-medium">รวมจุดส่งจากใบขอใช้รถที่ค้างอยู่เป็นเที่ยววิ่งเดียว</p>
+    <div className="flex flex-col h-[calc(100vh-8rem)] animate-in fade-in duration-500 gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-2xl font-bold tracking-tight text-white">จัดกลุ่มเที่ยววิ่ง</h2>
+        <p className="text-sm text-muted-foreground">รวมจุดส่งจากใบขอใช้รถที่ค้างอยู่เป็นเที่ยววิ่งเดียว</p>
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-hidden min-h-0">
         {/* Left: Destination List */}
-        <div className="lg:col-span-5 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
-          <div className="bg-secondary/30 p-4 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur">
-            <h3 className="text-xl font-bold flex items-center gap-2">
-              <Inbox className="h-5 w-5 text-accent" /> งานที่ยังไม่ได้จัดรถ ({availableDestinations.length})
+        <div className="lg:col-span-5 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar">
+          <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur">
+            <h3 className="text-sm font-bold flex items-center gap-2">
+              <Inbox className="h-4 w-4 text-accent" /> งานที่ยังไม่ได้จัดรถ ({availableDestinations.length})
             </h3>
           </div>
 
           {availableDestinations.length > 0 ? (
-            <div className="space-y-4 pb-20">
+            <div className="space-y-3 pb-24">
               {availableDestinations.map(dest => (
                 <DestinationCard 
                   key={dest.id} 
@@ -195,15 +195,15 @@ export default function TripGroupingPage() {
               ))}
             </div>
           ) : (
-            <div className="text-center py-20 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-4">
-              <AlertTriangle className="h-12 w-12 text-muted-foreground" />
-              <p className="text-xl font-medium text-muted-foreground">ไม่มีงานค้างในระบบ</p>
+            <div className="text-center py-16 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-3">
+              <AlertTriangle className="h-10 w-10 text-muted-foreground opacity-50" />
+              <p className="text-sm font-medium text-muted-foreground">ไม่มีงานค้างในระบบ</p>
             </div>
           )}
         </div>
 
         {/* Right: Map View */}
-        <div className="lg:col-span-7 rounded-2xl overflow-hidden border border-border shadow-2xl bg-card h-full min-h-[400px]">
+        <div className="lg:col-span-7 rounded-xl overflow-hidden border border-border bg-card h-full min-h-[300px]">
           <GroupingMap 
             destinations={availableDestinations} 
             selectedIds={selectedIds}
@@ -227,23 +227,23 @@ export default function TripGroupingPage() {
 
       {/* Confirmation Dialog */}
       <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-        <AlertDialogContent className="max-w-xl rounded-2xl border-accent/20 bg-card">
+        <AlertDialogContent className="max-w-md rounded-xl border-accent/20 bg-card">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-2xl font-bold text-accent">ยืนยันสร้างเที่ยววิ่ง</AlertDialogTitle>
-            <AlertDialogDescription className="text-lg py-4 text-foreground/90 space-y-4">
-              <div className="p-4 bg-secondary/50 rounded-xl space-y-2 border border-border">
-                <p>• จำนวนจุดหมาย: <span className="font-bold text-white text-xl">{selectedDestinations.length} จุด</span></p>
-                <p>• ทะเบียนรถ: <span className="font-bold text-white text-xl">{vehicles?.find(v => v.id === vehicleId)?.licensePlate}</span></p>
-                <p>• คนขับ: <span className="font-bold text-white text-xl">{drivers?.find(d => d.id === driverId)?.name}</span></p>
+            <AlertDialogTitle className="text-lg font-bold text-accent">ยืนยันสร้างเที่ยววิ่ง</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm py-2 text-foreground/90 space-y-3">
+              <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
+                <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
+                <p>• ทะเบียนรถ: <span className="font-bold text-white">{vehicles?.find(v => v.id === vehicleId)?.licensePlate}</span></p>
+                <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
               </div>
-              <p className="font-medium">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
+              <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="gap-4">
-            <AlertDialogCancel className="h-14 text-lg font-bold flex-1">ยกเลิก</AlertDialogCancel>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="h-10 text-sm flex-1">ยกเลิก</AlertDialogCancel>
             <AlertDialogAction 
               onClick={confirmCreateTrip}
-              className="h-14 text-lg font-bold flex-1 bg-accent hover:bg-accent/90"
+              className="h-10 text-sm flex-1 bg-accent hover:bg-accent/90"
               disabled={isProcessing}
             >
               {isProcessing ? "กำลังประมวลผล..." : "ยืนยันสร้างงาน"}

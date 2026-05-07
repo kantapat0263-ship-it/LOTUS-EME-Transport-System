@@ -17,57 +17,55 @@ export function DestinationCard({ dest, isSelected, onToggle }: DestinationCardP
   return (
     <Card 
       className={cn(
-        "cursor-pointer transition-all border-l-[12px] group overflow-hidden",
+        "cursor-pointer transition-all border-l-4 group overflow-hidden",
         isSelected 
-          ? "border-accent bg-accent/10 shadow-lg shadow-accent/5 scale-[1.02]" 
+          ? "border-accent bg-accent/5 shadow-md" 
           : "border-secondary bg-secondary/20 hover:border-accent/40"
       )}
       onClick={onToggle}
     >
       <CardContent className="p-0 flex items-stretch">
-        {/* Large Checkbox Area */}
-        <div className="bg-secondary/10 flex items-center justify-center px-6 border-r border-border/30">
-          <div className="relative w-8 h-8 flex items-center justify-center">
-            <Checkbox 
-              checked={isSelected} 
-              onCheckedChange={onToggle}
-              className="w-8 h-8 rounded-md border-2 data-[state=checked]:bg-accent data-[state=checked]:border-accent"
-            />
-          </div>
+        {/* Checkbox Area */}
+        <div className="bg-secondary/10 flex items-center justify-center px-4 border-r border-border/30">
+          <Checkbox 
+            checked={isSelected} 
+            onCheckedChange={onToggle}
+            className="w-4 h-4 rounded-sm border-2 data-[state=checked]:bg-accent data-[state=checked]:border-accent"
+          />
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 p-5 space-y-4">
-          <div className="flex justify-between items-start gap-4">
-            <div className="space-y-1">
+        <div className="flex-1 p-3 space-y-3">
+          <div className="flex justify-between items-start gap-2">
+            <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <span className="text-xl font-black text-accent">{dest.vrId}</span>
-                <Badge variant="outline" className="text-sm font-bold bg-background/50">จุดที่ {dest.destIndex + 1}</Badge>
+                <span className="text-xs font-bold text-accent">{dest.vrId}</span>
+                <Badge variant="outline" className="text-[10px] h-4 px-1 bg-background/50">จุดที่ {dest.destIndex + 1}</Badge>
               </div>
-              <p className="text-2xl font-bold text-white flex items-center gap-2">
-                <MapPin className="h-6 w-6 text-accent shrink-0" /> {dest.siteName}
+              <p className="text-sm font-semibold text-white flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-accent shrink-0" /> {dest.siteName}
               </p>
             </div>
-            <div className="text-right shrink-0 bg-background/40 p-2 rounded-lg border border-border/50">
-              <p className="text-sm font-bold text-muted-foreground uppercase flex items-center justify-end gap-1">
-                <Calendar className="h-3 w-3" /> วันที่ต้องการ
+            <div className="text-right shrink-0 bg-background/40 px-2 py-1 rounded border border-border/50">
+              <p className="text-[10px] font-bold text-muted-foreground uppercase flex items-center justify-end gap-1">
+                วันที่
               </p>
-              <p className="text-lg font-black text-white">{dest.requestDate}</p>
+              <p className="text-xs font-bold text-white">{dest.requestDate}</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-secondary/40 p-3 rounded-xl border border-border/50">
-              <p className="text-sm font-bold text-muted-foreground flex items-center gap-1.5 mb-1">
-                <User className="h-4 w-4" /> ผู้ขอใช้งาน
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div className="bg-secondary/40 p-2 rounded-lg border border-border/50">
+              <p className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 mb-0.5">
+                <User className="h-3 w-3" /> ผู้ขอใช้งาน
               </p>
-              <p className="text-lg font-bold text-white truncate">{dest.requestedBy}</p>
+              <p className="text-xs font-medium text-white truncate">{dest.requestedBy}</p>
             </div>
-            <div className="bg-secondary/40 p-3 rounded-xl border border-border/50">
-              <p className="text-sm font-bold text-muted-foreground flex items-center gap-1.5 mb-1">
-                <FileText className="h-4 w-4 text-accent" /> ลักษณะงาน
+            <div className="bg-secondary/40 p-2 rounded-lg border border-border/50">
+              <p className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 mb-0.5">
+                <FileText className="h-3 w-3 text-accent" /> ลักษณะงาน
               </p>
-              <p className="text-base font-medium text-foreground/90 line-clamp-2 leading-relaxed">
+              <p className="text-xs text-foreground/80 line-clamp-1">
                 {dest.jobDescription || "ไม่ได้ระบุ"}
               </p>
             </div>
