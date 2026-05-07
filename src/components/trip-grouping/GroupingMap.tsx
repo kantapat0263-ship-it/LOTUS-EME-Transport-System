@@ -22,6 +22,7 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const markersRef = React.useRef<google.maps.Marker[]>([])
+  const infoWindowRef = React.useRef<google.maps.InfoWindow | null>(null)
   
   // Refs for hover visuals
   const hoverPolylinesRef = React.useRef<google.maps.Polyline[]>([])
@@ -38,6 +39,25 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     hoverLabelsRef.current = []
   }, [])
 
+  const getDistanceMatrix = React.useCallback((origin: google.maps.LatLng, targets: google.maps.LatLng[]): Promise<number[]> => {
+    return new Promise((resolve) => {
+      const service = new google.maps.DistanceMatrixService()
+      service.getDistanceMatrix({
+        origins: [origin],
+        destinations: targets,
+        travelMode: window.google.maps.TravelMode.DRIVING,
+        unitSystem: window.google.maps.UnitSystem.METRIC,
+      }, (response, status) => {
+        if (status === 'OK' && response) {
+          const distances = response.rows[0].elements.map(e => e.status === 'OK' ? e.distance.value / 1000 : 0)
+          resolve(distances)
+        } else {
+          resolve(targets.map(() => 0))
+        }
+      })
+    })
+  }, [])
+
   const drawHoverDistances = React.useCallback((sourceMarker: google.maps.Marker) => {
     const google = window.google
     const map = mapRef.current
@@ -49,7 +69,6 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     const otherMarkers = markersRef.current.filter(m => m !== sourceMarker)
     if (otherMarkers.length === 0) return
 
-    const service = new google.maps.DistanceMatrixService()
     const targetsToFetch: google.maps.LatLng[] = []
     const targetsWithCache: { pos: google.maps.LatLng, dist: number }[] = []
 
@@ -106,32 +125,22 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     // Draw from cache immediately
     targetsWithCache.forEach(t => drawLine(sourcePos, t.pos, t.dist))
 
-    // Fetch new ones if needed (max 25 per request)
+    // Fetch new ones if needed
     if (targetsToFetch.length > 0) {
-      service.getDistanceMatrix({
-        origins: [sourcePos],
-        destinations: targetsToFetch.slice(0, 25),
-        travelMode: google.maps.TravelMode.DRIVING,
-        unitSystem: google.maps.UnitSystem.METRIC,
-      }, (response, status) => {
-        if (status === 'OK' && response) {
-          response.rows[0].elements.forEach((element, idx) => {
-            if (element.status === 'OK') {
-              const distKm = element.distance.value / 1000
-              const targetPos = targetsToFetch[idx]
-              const key = `${sourcePos.lat().toFixed(5)},${sourcePos.lng().toFixed(5)}->${targetPos.lat().toFixed(5)},${targetPos.lng().toFixed(5)}`
-              const revKey = `${targetPos.lat().toFixed(5)},${targetPos.lng().toFixed(5)}->${sourcePos.lat().toFixed(5)},${sourcePos.lng().toFixed(5)}`
-              
-              distanceCache.current.set(key, distKm)
-              distanceCache.current.set(revKey, distKm)
-              
-              drawLine(sourcePos, targetPos, distKm)
-            }
-          })
-        }
+      getDistanceMatrix(sourcePos, targetsToFetch).then(distances => {
+        distances.forEach((distKm, idx) => {
+          if (distKm > 0) {
+            const targetPos = targetsToFetch[idx]
+            const key = `${sourcePos.lat().toFixed(5)},${sourcePos.lng().toFixed(5)}->${targetPos.lat().toFixed(5)},${targetPos.lng().toFixed(5)}`
+            const revKey = `${targetPos.lat().toFixed(5)},${targetPos.lng().toFixed(5)}->${sourcePos.lat().toFixed(5)},${sourcePos.lng().toFixed(5)}`
+            distanceCache.current.set(key, distKm)
+            distanceCache.current.set(revKey, distKm)
+            drawLine(sourcePos, targetPos, distKm)
+          }
+        })
       })
     }
-  }, [])
+  }, [getDistanceMatrix])
 
   const updateMarkers = React.useCallback(() => {
     const map = mapRef.current
@@ -145,11 +154,14 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     const bounds = new google.maps.LatLngBounds()
     let hasValidPoints = false
 
-    // 1. Add HEAD OFFICE Marker (Origin)
+    // Origin position
     const officePos = { 
       lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
       lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
     }
+    const officeLatLng = new google.maps.LatLng(officePos.lat, officePos.lng)
+
+    // 1. Add LOTUS EME Marker (Origin)
     const officeMarker = new google.maps.Marker({
       position: officePos,
       map,
@@ -157,30 +169,32 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
       icon: {
         path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
         scale: 8,
-        fillColor: "#10b981", // Green for Head Office
+        fillColor: "#10b981", 
         fillOpacity: 1,
         strokeWeight: 2,
         strokeColor: "#ffffff"
       },
       label: {
-        text: "HEAD OFFICE",
+        text: "LOTUS EME",
         color: "#10b981",
         fontWeight: "bold",
-        fontSize: "10px",
-        className: "bg-white/90 px-1.5 py-0.5 rounded border border-green-500 translate-y-[-40px]"
+        fontSize: "11px",
+        className: "bg-white/90 px-1.5 py-0.5 rounded border border-green-500 translate-y-[-40px] shadow-sm"
       }
     })
 
     officeMarker.addListener("click", () => {
+      if (infoWindowRef.current) infoWindowRef.current.close()
       const iw = new google.maps.InfoWindow({
         content: `
-          <div class="p-2 min-w-[150px]">
-            <p class="font-bold text-green-600 mb-1">คลังสินค้า LOTUS EME</p>
-            <p class="text-[10px] text-muted-foreground">จุดเริ่มต้น - นครนายก</p>
+          <div class="p-2 min-w-[180px] text-foreground">
+            <p class="font-bold text-green-600 mb-1 text-sm">คลังสินค้า LOTUS EME</p>
+            <p class="text-[10px] text-muted-foreground border-t border-border pt-1 mt-1">จุดเริ่มต้น - สำนักงานใหญ่นครนายก</p>
           </div>
         `
       })
       iw.open(map, officeMarker)
+      infoWindowRef.current = iw
     })
     
     officeMarker.addListener("mouseover", () => drawHoverDistances(officeMarker))
@@ -191,21 +205,26 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
     hasValidPoints = true
 
     // 2. Add Destination Markers
-    destinations.forEach((d, idx) => {
+    destinations.forEach((d) => {
       if (d.lat && d.lng) {
         const isSelected = selectedIds.has(d.id)
         const pos = { lat: d.lat, lng: d.lng }
+        const destLatLng = new google.maps.LatLng(d.lat, d.lng)
         bounds.extend(pos)
+
+        // Truncate name for label
+        const truncatedName = d.siteName.length > 15 ? d.siteName.substring(0, 12) + "..." : d.siteName
 
         const marker = new google.maps.Marker({
           position: pos,
           map,
           title: d.siteName,
           label: {
-            text: (idx + 1).toString(),
+            text: truncatedName,
             color: "#ffffff",
             fontWeight: "bold",
-            fontSize: "10px"
+            fontSize: "11px",
+            className: "bg-black/60 px-1.5 py-0.5 rounded border border-white/20 translate-y-[32px] whitespace-nowrap shadow-sm"
           },
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
@@ -217,7 +236,61 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
           }
         })
 
-        marker.addListener("click", () => onSelect(d.id))
+        marker.addListener("click", () => {
+          if (infoWindowRef.current) infoWindowRef.current.close()
+          
+          // Get distance from office for the InfoWindow
+          const cacheKey = `${officePos.lat.toFixed(5)},${officePos.lng.toFixed(5)}->${d.lat.toFixed(5)},${d.lng.toFixed(5)}`
+          const cachedDist = distanceCache.current.get(cacheKey)
+
+          const updateInfoWindowContent = (distText: string) => {
+            const iw = new google.maps.InfoWindow({
+              content: `
+                <div class="p-3 min-w-[220px] text-foreground space-y-2">
+                  <div class="border-b pb-1.5">
+                    <p class="font-bold text-accent text-sm">${d.siteName}</p>
+                    <p class="text-[10px] text-muted-foreground">${d.vrId} • โดย ${d.requestedBy}</p>
+                  </div>
+                  <div class="space-y-1">
+                    <p class="text-[10px] text-muted-foreground font-bold uppercase">ลักษณะงาน:</p>
+                    <p class="text-[11px] leading-tight">${d.jobDescription || "ไม่ได้ระบุ"}</p>
+                  </div>
+                  <div class="pt-1.5 border-t flex justify-between items-center">
+                    <span class="text-[10px] font-bold text-green-600">ระยะจากคลัง:</span>
+                    <span class="text-[11px] font-bold">${distText}</span>
+                  </div>
+                  <button id="iw-btn-select-${d.id}" class="w-full mt-2 bg-primary text-white text-[10px] font-bold py-2 rounded hover:bg-primary/80 transition-all">
+                    ${isSelected ? "ยกเลิกการเลือก" : "เลือกเข้า Trip"}
+                  </button>
+                </div>
+              `
+            })
+            iw.open(map, marker)
+            infoWindowRef.current = iw
+
+            setTimeout(() => {
+              const btn = document.getElementById(`iw-btn-select-${d.id}`)
+              if (btn) btn.onclick = () => {
+                onSelect(d.id)
+                iw.close()
+              }
+            }, 100)
+          }
+
+          if (cachedDist) {
+            updateInfoWindowContent(`${cachedDist.toFixed(1)} กม.`)
+          } else {
+            updateInfoWindowContent("กำลังคำนวณ...")
+            getDistanceMatrix(officeLatLng, [destLatLng]).then(dists => {
+              const dist = dists[0]
+              if (dist > 0) {
+                distanceCache.current.set(cacheKey, dist)
+                updateInfoWindowContent(`${dist.toFixed(1)} กม.`)
+              }
+            })
+          }
+        })
+
         marker.addListener("mouseover", () => drawHoverDistances(marker))
         marker.addListener("mouseout", () => clearHoverVisuals())
         
@@ -227,12 +300,11 @@ export function GroupingMap({ destinations, selectedIds, onSelect }: GroupingMap
 
     if (hasValidPoints) {
       map.fitBounds(bounds)
-      // If only Head Office is there, zoom in a bit more
       if (destinations.length === 0) map.setZoom(12)
     }
 
     markersRef.current = newMarkers
-  }, [destinations, selectedIds, onSelect, drawHoverDistances, clearHoverVisuals, settings])
+  }, [destinations, selectedIds, onSelect, drawHoverDistances, clearHoverVisuals, settings, getDistanceMatrix])
 
   React.useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return
