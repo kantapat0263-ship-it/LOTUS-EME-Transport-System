@@ -24,7 +24,6 @@ import {
   Loader2, 
   Send,
   Building2,
-  Globe,
   Store,
   Landmark,
   Briefcase,
@@ -81,7 +80,7 @@ export function RequestForm() {
       toast({ title: "เต็มแล้ว", description: "เพิ่มจุดหมายได้สูงสุด 10 จุด", variant: "destructive" })
       return
     }
-    setDestinations([...destinations, { 
+    setDestinations(prev => [...prev, { 
       id: Date.now().toString(), 
       category: "site",
       searchTerm: "",
@@ -97,16 +96,19 @@ export function RequestForm() {
 
   const removeDestination = (id: string) => {
     if (destinations.length > 1) {
-      setDestinations(destinations.filter(d => d.id !== id))
+      setDestinations(prev => prev.filter(d => d.id !== id))
     }
   }
 
-  const updateDest = (id: string, field: keyof DestinationRequest, value: any) => {
-    setDestinations(destinations.map(d => {
+  // Combined update function to avoid race conditions
+  const updateDest = (id: string, updates: Partial<DestinationRequest>) => {
+    setDestinations(prev => prev.map(d => {
       if (d.id === id) {
-        const updated = { ...d, [field]: value };
-        if (field === "siteId" && d.category !== "custom") {
-          const site = sites?.find(s => s.id === value);
+        let updated = { ...d, ...updates };
+        
+        // Auto-fill coordinates if siteId changes
+        if (updates.siteId !== undefined && updated.category !== "custom") {
+          const site = sites?.find(s => s.id === updates.siteId);
           if (site) {
             updated.siteName = site.name;
             updated.coordinates = site.latitude && site.longitude ? `${site.latitude}, ${site.longitude}` : "";
@@ -157,7 +159,6 @@ export function RequestForm() {
           jobDescription: d.jobDescription
         })
 
-        // Handle "Save as site" feature
         if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates) {
           const newSiteRef = doc(collection(db, "sites"))
           await setDoc(newSiteRef, {
@@ -194,8 +195,6 @@ export function RequestForm() {
       await setDoc(requestRef, requestData)
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
-      // Reset form
-      setRequestedBy(user?.displayName || "")
       setRequestDate(new Date().toISOString().split('T')[0])
       setRequestTime("08:30")
       setNote("")
@@ -268,7 +267,6 @@ export function RequestForm() {
                   <Card key={dest.id} className="bg-secondary/20 border-border/50 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-accent" />
                     <CardContent className="p-4 md:p-6 space-y-4">
-                      {/* Category Tabs */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex flex-wrap gap-1.5 p-1 bg-background/50 rounded-lg">
                           {CATEGORIES.map(cat => (
@@ -278,16 +276,18 @@ export function RequestForm() {
                               variant={dest.category === cat.id ? "default" : "ghost"}
                               size="sm"
                               className={cn(
-                                "h-8 text-[10px] px-2.5 flex items-center gap-1.5",
-                                dest.category === cat.id && "bg-accent hover:bg-accent/90"
+                                "h-8 text-[10px] px-2.5 flex items-center gap-1.5 transition-all",
+                                dest.category === cat.id ? "bg-accent text-white shadow-sm" : "text-muted-foreground hover:bg-secondary/60"
                               )}
                               onClick={() => {
-                                updateDest(dest.id, "category", cat.id);
-                                updateDest(dest.id, "siteId", "");
-                                updateDest(dest.id, "siteName", "");
-                                updateDest(dest.id, "customName", "");
-                                updateDest(dest.id, "coordinates", "");
-                                updateDest(dest.id, "searchTerm", "");
+                                updateDest(dest.id, {
+                                  category: cat.id,
+                                  siteId: "",
+                                  siteName: "",
+                                  customName: "",
+                                  coordinates: "",
+                                  searchTerm: ""
+                                });
                               }}
                             >
                               <cat.icon className="h-3.5 w-3.5" />
@@ -308,14 +308,14 @@ export function RequestForm() {
                               placeholder="พิมพ์เพื่อค้นหา..." 
                               className="h-10 pl-10 text-xs bg-background/30"
                               value={dest.searchTerm}
-                              onChange={(e) => updateDest(dest.id, "searchTerm", e.target.value)}
+                              onChange={(e) => updateDest(dest.id, { searchTerm: e.target.value })}
                             />
                           </div>
                           
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <Label>เลือก{CATEGORIES.find(c => c.id === dest.category)?.label}</Label>
-                              <Select value={dest.siteId} onValueChange={(val) => updateDest(dest.id, "siteId", val)}>
+                              <Select value={dest.siteId} onValueChange={(val) => updateDest(dest.id, { siteId: val })}>
                                 <SelectTrigger className="h-11">
                                   <SelectValue placeholder={`ค้นหา${CATEGORIES.find(c => c.id === dest.category)?.label}...`} />
                                 </SelectTrigger>
@@ -343,7 +343,7 @@ export function RequestForm() {
                               placeholder="เช่น บริษัท TMT อยุธยา" 
                               className="h-11"
                               value={dest.customName}
-                              onChange={(e) => updateDest(dest.id, "customName", e.target.value)}
+                              onChange={(e) => updateDest(dest.id, { customName: e.target.value })}
                             />
                           </div>
                           <div className="space-y-2">
@@ -362,7 +362,7 @@ export function RequestForm() {
                               placeholder="14.0815, 100.7129" 
                               className="h-11"
                               value={dest.coordinates}
-                              onChange={(e) => updateDest(dest.id, "coordinates", e.target.value)}
+                              onChange={(e) => updateDest(dest.id, { coordinates: e.target.value })}
                             />
                           </div>
                         </div>
@@ -374,7 +374,7 @@ export function RequestForm() {
                           placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ" 
                           className="h-11 bg-background/30"
                           value={dest.jobDescription}
-                          onChange={(e) => updateDest(dest.id, "jobDescription", e.target.value)}
+                          onChange={(e) => updateDest(dest.id, { jobDescription: e.target.value })}
                         />
                       </div>
 
@@ -384,7 +384,7 @@ export function RequestForm() {
                             <Checkbox 
                               id={`save-site-${dest.id}`} 
                               checked={dest.saveAsSite}
-                              onCheckedChange={(checked) => updateDest(dest.id, "saveAsSite", checked)}
+                              onCheckedChange={(checked) => updateDest(dest.id, { saveAsSite: !!checked })}
                             />
                             <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-accent cursor-pointer">
                               บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
@@ -396,7 +396,7 @@ export function RequestForm() {
                               <Label>ประเภทสถานที่</Label>
                               <Select 
                                 value={dest.locationType} 
-                                onValueChange={(val) => updateDest(dest.id, "locationType", val)}
+                                onValueChange={(val) => updateDest(dest.id, { locationType: val })}
                               >
                                 <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                                 <SelectContent>

@@ -26,7 +26,6 @@ import {
   Edit,
   Plus,
   Building2,
-  Globe,
   Eye,
   EyeOff,
   Store,
@@ -34,7 +33,7 @@ import {
   Briefcase
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc } from "firebase/firestore"
+import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
 import { UserProfile, Site } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -91,12 +90,10 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
-  const { user } = useUser()
   
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<any>(settingsRef)
 
-  // Staff should see actionable requests: pending, partial and potentially cancelled
   const [showCancelled, setShowCancelled] = React.useState(false)
   
   const requestsRef = useMemoFirebase(() => query(
@@ -126,7 +123,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   
   const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
-  const [modalMap, setModalMap] = React.useState<google.maps.Map | null>(null)
   const [modalMarkers, setModalMarkers] = React.useState<google.maps.Marker[]>([])
 
   React.useEffect(() => {
@@ -208,7 +204,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
             });
           }
 
-          setModalMap(newMap);
           setModalMarkers(markers);
         });
       }, 400); 
@@ -687,17 +682,6 @@ export default function RequestsPage() {
     return () => unsubscribe()
   }, [user, isUserLoading, db, profile, isProfileLoading])
 
-  const prevCount = React.useRef<number | null>(null)
-  React.useEffect(() => {
-    if (myRequests && prevCount.current !== null && myRequests.length > prevCount.current) {
-      setActiveTab("list")
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    }
-    if (myRequests) {
-      prevCount.current = myRequests.length
-    }
-  }, [myRequests])
-
   const handleCancelRequest = async () => {
     if (!reqToCancel) return
     try {
@@ -759,7 +743,6 @@ export default function RequestsPage() {
           jobDescription: d.jobDescription
         })
 
-        // Save as common location if checked
         if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates) {
           const newSiteRef = doc(collection(db, "sites"))
           await setDoc(newSiteRef, {
@@ -963,9 +946,24 @@ export default function RequestsPage() {
                       return matchesType && matchesSearch;
                     }) || [];
 
+                    // Explicit helper for edit mode updates
+                    const updateEditDest = (updates: any) => {
+                      const newDests = [...editFormData.destinations];
+                      newDests[idx] = { ...newDests[idx], ...updates };
+                      
+                      // Auto-fill coordinates if siteId changes
+                      if (updates.siteId !== undefined && newDests[idx].category !== "custom") {
+                        const site = sites?.find(s => s.id === updates.siteId);
+                        if (site) {
+                          newDests[idx].siteName = site.name;
+                          newDests[idx].coordinates = site.latitude && site.longitude ? `${site.latitude}, ${site.longitude}` : "";
+                        }
+                      }
+                      setEditFormData({...editFormData, destinations: newDests});
+                    };
+
                     return (
                       <Card key={dest.id} className="bg-secondary/20 border-border/50 p-4 space-y-4">
-                        {/* Category Selector */}
                         <div className="flex flex-wrap gap-1.5 p-1 bg-background/40 rounded-lg">
                           {CATEGORIES.map(cat => (
                             <Button 
@@ -978,13 +976,14 @@ export default function RequestsPage() {
                                 dest.category === cat.id ? "bg-accent text-white shadow-sm" : "text-muted-foreground hover:bg-secondary/60"
                               )}
                               onClick={() => {
-                                const newDests = [...editFormData.destinations];
-                                newDests[idx].category = cat.id;
-                                newDests[idx].siteId = "";
-                                newDests[idx].siteName = "";
-                                newDests[idx].coordinates = "";
-                                newDests[idx].searchTerm = "";
-                                setEditFormData({...editFormData, destinations: newDests});
+                                updateEditDest({
+                                  category: cat.id,
+                                  siteId: "",
+                                  siteName: "",
+                                  customName: "",
+                                  coordinates: "",
+                                  searchTerm: ""
+                                });
                               }}
                             >
                               <cat.icon className="h-3.5 w-3.5" /> {cat.label}
@@ -1013,11 +1012,7 @@ export default function RequestsPage() {
                                 placeholder="พิมพ์เพื่อค้นหาสถานที่..." 
                                 className="pl-10 h-10 text-xs bg-background/50"
                                 value={dest.searchTerm}
-                                onChange={(e) => {
-                                  const newDests = [...editFormData.destinations];
-                                  newDests[idx].searchTerm = e.target.value;
-                                  setEditFormData({...editFormData, destinations: newDests});
-                                }}
+                                onChange={(e) => updateEditDest({ searchTerm: e.target.value })}
                               />
                             </div>
                             
@@ -1026,14 +1021,7 @@ export default function RequestsPage() {
                                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">เลือกสถานที่</Label>
                                 <Select 
                                   value={dest.siteId} 
-                                  onValueChange={(val) => {
-                                    const site = sites?.find(s => s.id === val)
-                                    const newDests = [...editFormData.destinations]
-                                    newDests[idx].siteId = val
-                                    newDests[idx].siteName = site?.name || ""
-                                    newDests[idx].coordinates = site?.latitude && site?.longitude ? `${site.latitude}, ${site.longitude}` : ""
-                                    setEditFormData({...editFormData, destinations: newDests})
-                                  }}
+                                  onValueChange={(val) => updateEditDest({ siteId: val })}
                                 >
                                   <SelectTrigger className="h-11 bg-background/50">
                                     <SelectValue placeholder={`-- ค้นหา/เลือก${CATEGORIES.find(c => c.id === dest.category)?.label} --`} />
@@ -1061,11 +1049,7 @@ export default function RequestsPage() {
                                 className="h-11 bg-background/50" 
                                 value={dest.customName}
                                 placeholder="เช่น บริษัท TMT อยุธยา"
-                                onChange={(e) => {
-                                  const newDests = [...editFormData.destinations]
-                                  newDests[idx].customName = e.target.value
-                                  setEditFormData({...editFormData, destinations: newDests})
-                                }}
+                                onChange={(e) => updateEditDest({ customName: e.target.value })}
                               />
                             </div>
                             <div className="space-y-1.5">
@@ -1083,11 +1067,7 @@ export default function RequestsPage() {
                                 className="h-11 bg-background/50" 
                                 value={dest.coordinates}
                                 placeholder="เช่น 13.7563, 100.5018"
-                                onChange={(e) => {
-                                  const newDests = [...editFormData.destinations]
-                                  newDests[idx].coordinates = e.target.value
-                                  setEditFormData({...editFormData, destinations: newDests})
-                                }}
+                                onChange={(e) => updateEditDest({ coordinates: e.target.value })}
                               />
                             </div>
                           </div>
@@ -1099,11 +1079,7 @@ export default function RequestsPage() {
                             className="h-11 bg-background/30 text-sm" 
                             placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ"
                             value={dest.jobDescription}
-                            onChange={(e) => {
-                              const newDests = [...editFormData.destinations]
-                              newDests[idx].jobDescription = e.target.value
-                              setEditFormData({...editFormData, destinations: newDests})
-                            }}
+                            onChange={(e) => updateEditDest({ jobDescription: e.target.value })}
                           />
                         </div>
 
@@ -1113,11 +1089,7 @@ export default function RequestsPage() {
                               <Checkbox 
                                 id={`save-site-edit-${idx}`} 
                                 checked={dest.saveAsSite}
-                                onCheckedChange={(checked) => {
-                                  const newDests = [...editFormData.destinations]
-                                  newDests[idx].saveAsSite = !!checked
-                                  setEditFormData({...editFormData, destinations: newDests})
-                                }}
+                                onCheckedChange={(checked) => updateEditDest({ saveAsSite: !!checked })}
                               />
                               <Label htmlFor={`save-site-edit-${idx}`} className="text-xs font-bold text-accent cursor-pointer">
                                 บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
@@ -1129,11 +1101,7 @@ export default function RequestsPage() {
                                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">ประเภทสถานที่</Label>
                                 <Select 
                                   value={dest.locationType} 
-                                  onValueChange={(val) => {
-                                    const newDests = [...editFormData.destinations]
-                                    newDests[idx].locationType = val
-                                    setEditFormData({...editFormData, destinations: newDests})
-                                  }}
+                                  onValueChange={(val) => updateEditDest({ locationType: val })}
                                 >
                                   <SelectTrigger className="h-11 bg-background/50"><SelectValue /></SelectTrigger>
                                   <SelectContent>
