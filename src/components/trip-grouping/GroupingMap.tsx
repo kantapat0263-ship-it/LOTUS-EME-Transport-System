@@ -218,7 +218,7 @@ export function GroupingMap({
           const orderIdx = manualOrder.indexOf(d.id)
           isSelected = orderIdx !== -1
           labelText = isSelected ? (orderIdx + 1).toString() : ""
-          fillColor = isSelected ? "#3b82f6" : "#64748b"
+          fillColor = isSelected ? "#2563eb" : "#6b7280"
         } else {
           isSelected = selectedIds.has(d.id)
           fillColor = isSelected ? "#3b82f6" : (d.type === 'site' ? "#f59e0b" : "#9333ea")
@@ -239,7 +239,13 @@ export function GroupingMap({
             fillOpacity: 1,
             strokeWeight: isSelected ? 3 : 2,
             strokeColor: "#ffffff"
-          }
+          },
+          label: labelText ? {
+            text: labelText,
+            color: "#ffffff",
+            fontSize: "14px",
+            fontWeight: "bold"
+          } : undefined
         })
         marker.addListener("click", () => onSelect(d.id))
         newMarkers.push(marker)
