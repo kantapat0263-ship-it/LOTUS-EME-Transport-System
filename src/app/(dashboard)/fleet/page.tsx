@@ -5,7 +5,7 @@ import * as React from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2 } from "lucide-react"
+import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
@@ -50,6 +50,7 @@ const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
   type: z.enum(['Pickup', '4-wheel truck', '6-wheel truck']),
   maxLoadCapacityKg: z.coerce.number().min(1, "กรุณาระบุน้ำหนักบรรทุก"),
+  fuelRate: z.coerce.number().optional(),
 })
 
 const driverSchema = z.object({
@@ -74,7 +75,7 @@ export default function FleetPage() {
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
-    defaultValues: { licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500 }
+    defaultValues: { licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500, fuelRate: undefined }
   })
 
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
@@ -188,7 +189,7 @@ export default function FleetPage() {
                 className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
                 onClick={() => { 
                   setEditingVehicle(null); 
-                  vehicleForm.reset({ licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500 }); 
+                  vehicleForm.reset({ licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500, fuelRate: undefined }); 
                   setIsVehicleDialogOpen(true); 
                 }}
               >
@@ -213,7 +214,7 @@ export default function FleetPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => { 
                               setEditingVehicle(v); 
-                              vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg }); 
+                              vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg, fuelRate: v.fuelRate }); 
                               setIsVehicleDialogOpen(true); 
                             }}>
                               <Edit className="mr-2 h-4 w-4" /> แก้ไข
@@ -231,6 +232,10 @@ export default function FleetPage() {
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Weight className="h-4 w-4" />
                       <span>น้ำหนักบรรทุกสูงสุด: <strong>{v.maxLoadCapacityKg.toLocaleString()} kg</strong></span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Fuel className="h-4 w-4 text-accent" />
+                      <span>อัตราสิ้นเปลือง: <strong>{v.fuelRate ? `${v.fuelRate} กม./ลิตร` : "ใช้ค่ามาตรฐาน"}</strong></span>
                     </div>
                   </CardContent>
                 </Card>
@@ -328,6 +333,15 @@ export default function FleetPage() {
               )} />
               <FormField control={vehicleForm.control} name="maxLoadCapacityKg" render={({ field }) => (
                 <FormItem><FormLabel>น้ำหนักบรรทุกสูงสุด (kg)</FormLabel><FormControl><Input className="h-11" type="number" {...field} /></FormControl><FormMessage /></FormItem>
+              )} />
+              <FormField control={vehicleForm.control} name="fuelRate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>อัตราสิ้นเปลือง (กม./ลิตร)</FormLabel>
+                  <FormControl>
+                    <Input className="h-11" type="number" step="0.1" placeholder="ถ้าไม่กรอก ใช้ค่ามาตรฐานจาก Settings" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
               )} />
               <Button type="submit" className="w-full bg-accent h-12" disabled={isSavingVehicle}>
                 {isSavingVehicle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} บันทึก

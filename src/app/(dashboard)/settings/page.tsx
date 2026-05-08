@@ -6,25 +6,31 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Map, Save, Loader2, Building2, MapPin } from "lucide-react"
-import { useDoc, useFirestore, useMemoFirebase } from "@/firebase"
+import { Map, Save, Loader2, Building2, Fuel, Clock } from "lucide-react"
+import { useDoc, useFirestore, useMemoFirebase, useUser } from "@/firebase"
 import { doc, serverTimestamp } from "firebase/firestore"
 import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
+import { CompanySetting } from "@/types/models"
+import { format } from "date-fns"
+import { th } from "date-fns/locale"
 
 export default function SettingsPage() {
   const { toast } = useToast()
   const db = useFirestore()
+  const { user } = useUser()
   
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
-  const { data: settings, isLoading } = useDoc(settingRef)
+  const { data: settings, isLoading } = useDoc<CompanySetting>(settingRef)
   
   const [isSaving, setIsSaving] = React.useState(false)
   const [formData, setFormData] = React.useState({
     companyName: "LOTUS GROUP",
     warehouseName: "คลังสินค้าหลัก LOTUS GROUP",
     warehouseAddress: "14.094126450195006, 100.6893810570115",
-    googleMapsApiKeyReference: ""
+    googleMapsApiKeyReference: "",
+    dieselPrice: 32.50,
+    defaultFuelRate: 10
   })
 
   React.useEffect(() => {
@@ -33,7 +39,9 @@ export default function SettingsPage() {
         companyName: settings.companyName || "LOTUS GROUP",
         warehouseName: settings.warehouseName || "คลังสินค้าหลัก LOTUS GROUP",
         warehouseAddress: settings.warehouseAddress || "14.094126450195006, 100.6893810570115",
-        googleMapsApiKeyReference: settings.googleMapsApiKeyReference || ""
+        googleMapsApiKeyReference: settings.googleMapsApiKeyReference || "",
+        dieselPrice: settings.dieselPrice || 32.50,
+        defaultFuelRate: settings.defaultFuelRate || 10
       })
     }
   }, [settings])
@@ -41,16 +49,24 @@ export default function SettingsPage() {
   const handleSave = () => {
     setIsSaving(true)
     
-    // Always parse the address to ensure the lat/lng is saved as numbers
     const [lat, lng] = formData.warehouseAddress.split(',').map(s => parseFloat(s.trim()))
 
-    setDocumentNonBlocking(settingRef, {
+    const updateData: any = {
       ...formData,
       id: "default",
       warehouseLatitude: isNaN(lat) ? 14.094126450195006 : lat,
       warehouseLongitude: isNaN(lng) ? 100.6893810570115 : lng,
       updatedAt: serverTimestamp(),
-    }, { merge: true })
+    }
+
+    // Detect if fuel settings changed
+    const fuelChanged = settings?.dieselPrice !== formData.dieselPrice || settings?.defaultFuelRate !== formData.defaultFuelRate;
+    if (fuelChanged) {
+      updateData.fuelSettingsUpdatedAt = serverTimestamp();
+      updateData.fuelSettingsUpdatedBy = user?.email || "Unknown";
+    }
+
+    setDocumentNonBlocking(settingRef, updateData, { merge: true })
     
     setTimeout(() => {
       setIsSaving(false)
@@ -115,6 +131,50 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+        {/* Fuel Settings Section */}
+        <Card className="border-accent/20">
+          <CardHeader>
+            <div className="flex justify-between items-start">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Fuel className="h-5 w-5 text-accent" /> ตั้งค่าน้ำมัน
+                </CardTitle>
+                <CardDescription>ใช้สำหรับการคำนวณค่าน้ำมันในระบบจัดการเที่ยววิ่ง</CardDescription>
+              </div>
+              {settings?.fuelSettingsUpdatedAt && (
+                <div className="text-right text-[10px] text-muted-foreground space-y-1">
+                  <p className="flex items-center gap-1 justify-end"><Clock className="h-3 w-3" /> อัปเดตล่าสุด: {format(settings.fuelSettingsUpdatedAt.toDate(), "dd/MM/yyyy HH:mm", { locale: th })}</p>
+                  <p>โดย: {settings.fuelSettingsUpdatedBy}</p>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="dieselPrice">ราคาดีเซลปัจจุบัน (บาท/ลิตร)</Label>
+                <Input 
+                  id="dieselPrice" 
+                  type="number"
+                  step="0.01"
+                  value={formData.dieselPrice}
+                  onChange={(e) => setFormData({...formData, dieselPrice: parseFloat(e.target.value) || 0})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="defaultFuelRate">อัตราสิ้นเปลืองมาตรฐาน (กม./ลิตร)</Label>
+                <Input 
+                  id="defaultFuelRate" 
+                  type="number"
+                  step="0.1"
+                  value={formData.defaultFuelRate}
+                  onChange={(e) => setFormData({...formData, defaultFuelRate: parseFloat(e.target.value) || 0})}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="border-accent/20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -134,9 +194,6 @@ export default function SettingsPage() {
                 value={formData.googleMapsApiKeyReference}
                 onChange={(e) => setFormData({...formData, googleMapsApiKeyReference: e.target.value})}
               />
-              <p className="text-[10px] text-muted-foreground">
-                * หากไม่มีคีย์นี้ ระบบจะแสดงผลแผนที่แบบจำลอง (Placeholder) เท่านั้น
-              </p>
             </div>
           </CardContent>
         </Card>

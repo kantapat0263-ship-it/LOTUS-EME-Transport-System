@@ -20,6 +20,7 @@ export interface Vehicle {
   licensePlate: string;
   type: VehicleType;
   maxLoadCapacityKg: number;
+  fuelRate?: number; // km/liter
   createdAt?: any;
   updatedAt?: any;
 }
@@ -40,8 +41,10 @@ export interface CompanySetting {
   warehouseLatitude?: number;
   warehouseLongitude?: number;
   googleMapsApiKeyReference?: string;
-  defaultMapCenterLatitude?: number;
-  defaultMapCenterLongitude?: number;
+  dieselPrice?: number;
+  defaultFuelRate?: number;
+  fuelSettingsUpdatedAt?: any;
+  fuelSettingsUpdatedBy?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -69,7 +72,7 @@ export interface Trip {
   status: TripStatus;
   totalDistanceKm?: number;
   totalEstimatedTimeMinutes?: number;
-  routePolyline?: string;
+  fuelCost?: number;
   createdAt?: any;
   updatedAt?: any;
 }

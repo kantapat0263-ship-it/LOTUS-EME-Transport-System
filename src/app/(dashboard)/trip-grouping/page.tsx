@@ -1,9 +1,10 @@
+
 "use client"
 
 import * as React from "react"
-import { useUser, useFirestore, useCollection, useMemoFirebase } from "@/firebase"
+import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase"
 import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion } from "firebase/firestore"
-import { Vehicle, Driver, Site } from "@/types/models"
+import { Vehicle, Driver, Site, CompanySetting } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
 import { TripControlPanel } from "@/components/trip-grouping/TripControlPanel"
@@ -25,14 +26,16 @@ export default function TripGroupingPage() {
   const db = useFirestore()
   const { toast } = useToast()
 
-  // Data Fetching - Memoized refs to prevent infinite re-subscriptions
+  // Data Fetching
   const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const vrRef = useMemoFirebase(() => query(collection(db, "vehicleRequests"), where("status", "in", ["pending", "partial"])), [db])
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
 
   const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vRef)
   const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(dRef)
   const { data: requests, isLoading: loadingRequests } = useCollection<any>(vrRef)
+  const { data: settings } = useDoc<CompanySetting>(settingsRef)
 
   // States
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
@@ -41,7 +44,7 @@ export default function TripGroupingPage() {
   const [isConfirmOpen, setIsConfirmOpen] = React.useState(false)
   const [isProcessing, setIsProcessing] = React.useState(false)
 
-  // Flatten destinations from VRs - Stable memoization
+  // Flatten destinations from VRs
   const availableDestinations = React.useMemo(() => {
     if (!requests) return []
     const list: any[] = []
@@ -67,6 +70,11 @@ export default function TripGroupingPage() {
   const selectedDestinations = React.useMemo(() => 
     availableDestinations.filter(d => selectedIds.has(d.id)),
     [availableDestinations, selectedIds]
+  )
+
+  const selectedVehicle = React.useMemo(() => 
+    vehicles?.find(v => v.id === vehicleId), 
+    [vehicles, vehicleId]
   )
 
   // Stable callbacks for children
@@ -95,10 +103,11 @@ export default function TripGroupingPage() {
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
     try {
-      const selectedVehicle = vehicles?.find(v => v.id === vehicleId)
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const tripId = `T-${Math.floor(1000 + Math.random() * 9000)}`
       
+      const lastStats = (window as any).__lastTripStats || { distance: 0, fuelCost: 0 }
+
       // 1. Create Trip
       const tripRef = doc(db, "trips", tripId)
       const sourceVRIds = Array.from(new Set(selectedDestinations.map(d => d.vrId)))
@@ -113,6 +122,8 @@ export default function TripGroupingPage() {
         driverName: selectedDriver?.name || "",
         status: "Planned",
         sourceVRIds,
+        totalDistanceKm: lastStats.distance || 0,
+        fuelCost: lastStats.fuelCost || 0,
         createdAt: serverTimestamp(),
         stops: selectedDestinations.map((d, idx) => ({
           siteId: d.siteId || d.id,
@@ -208,6 +219,7 @@ export default function TripGroupingPage() {
             destinations={availableDestinations} 
             selectedIds={selectedIds}
             onSelect={handleToggleSelect}
+            selectedVehicleRate={selectedVehicle?.fuelRate}
           />
         </div>
       </div>
@@ -233,7 +245,7 @@ export default function TripGroupingPage() {
             <AlertDialogDescription className="text-sm py-2 text-foreground/90 space-y-3">
               <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
                 <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
-                <p>• ทะเบียนรถ: <span className="font-bold text-white">{vehicles?.find(v => v.id === vehicleId)?.licensePlate}</span></p>
+                <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
                 <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
               </div>
               <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
