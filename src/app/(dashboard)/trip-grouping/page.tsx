@@ -8,7 +8,7 @@ import { Vehicle, Driver, Site, CompanySetting } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
 import { TripControlPanel } from "@/components/trip-grouping/TripControlPanel"
-import { Loader2, Inbox, AlertTriangle, ListOrdered, Trash2, RotateCcw } from "lucide-react"
+import { Loader2, Inbox, AlertTriangle, ListOrdered, Trash2, RotateCcw, Zap } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,6 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -45,6 +46,7 @@ export default function TripGroupingPage() {
   const [mode, setMode] = React.useState<GroupingMode>('auto')
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [manualOrder, setManualOrder] = React.useState<string[]>([])
+  const [optimizedOrder, setOptimizedOrder] = React.useState<string[]>([])
   
   const [vehicleId, setVehicleId] = React.useState("")
   const [driverId, setDriverId] = React.useState("")
@@ -74,12 +76,24 @@ export default function TripGroupingPage() {
     return list
   }, [requests])
 
+  // Get effective order based on mode
+  const currentOrderedIds = React.useMemo(() => {
+    if (mode === 'manual') return manualOrder;
+    // For auto mode, we use the optimized order filtered by current selected IDs
+    return optimizedOrder.filter(id => selectedIds.has(id));
+  }, [mode, manualOrder, optimizedOrder, selectedIds]);
+
   const selectedDestinations = React.useMemo(() => {
-    if (mode === 'manual') {
-      return manualOrder.map(id => availableDestinations.find(d => d.id === id)).filter(Boolean)
+    const ids = mode === 'manual' ? manualOrder : currentOrderedIds;
+    const items = ids.map(id => availableDestinations.find(d => d.id === id)).filter(Boolean);
+    
+    // Add any selected items that aren't in the optimized list yet (for auto mode)
+    if (mode === 'auto') {
+      const remaining = availableDestinations.filter(d => selectedIds.has(d.id) && !ids.includes(d.id));
+      return [...items, ...remaining];
     }
-    return availableDestinations.filter(d => selectedIds.has(d.id))
-  }, [availableDestinations, selectedIds, manualOrder, mode])
+    return items;
+  }, [availableDestinations, selectedIds, manualOrder, currentOrderedIds, mode])
 
   const selectedVehicle = React.useMemo(() => 
     vehicles?.find(v => v.id === vehicleId), 
@@ -131,6 +145,11 @@ export default function TripGroupingPage() {
       const tripRef = doc(db, "trips", tripId)
       const sourceVRIds = Array.from(new Set(selectedDestinations.map(d => d.vrId)))
       
+      const warehousePos = { 
+        lat: settings?.warehouseLatitude || 14.0815, 
+        lng: settings?.warehouseLongitude || 100.7129 
+      }
+
       await setDoc(tripRef, {
         id: tripId,
         tripId,
@@ -144,9 +163,9 @@ export default function TripGroupingPage() {
         totalDistanceKm: lastStats.distance || 0,
         fuelCost: lastStats.fuelCost || 0,
         createdAt: serverTimestamp(),
-        departurePoint: "คลังสินค้า LOTUS EME",
-        originLat: 14.0815,
-        originLng: 100.7129,
+        departurePoint: settings?.warehouseName || "คลังสินค้า LOTUS EME",
+        originLat: warehousePos.lat,
+        originLng: warehousePos.lng,
         stops: selectedDestinations.map((d, index) => ({
           order: index + 1,
           siteId: d.siteId || null,
@@ -186,6 +205,7 @@ export default function TripGroupingPage() {
       // Reset
       setSelectedIds(new Set())
       setManualOrder([])
+      setOptimizedOrder([])
       setVehicleId("")
       setDriverId("")
       setIsConfirmOpen(false)
@@ -196,6 +216,14 @@ export default function TripGroupingPage() {
     } finally {
       setIsProcessing(false)
     }
+  }
+
+  const handleModeChange = (newMode: GroupingMode) => {
+    if (newMode === 'manual' && optimizedOrder.length > 0) {
+      // Transition from auto to manual: use optimized order as starting point
+      setManualOrder(optimizedOrder.filter(id => selectedIds.has(id)));
+    }
+    setMode(newMode);
   }
 
   if (loadingRequests) {
@@ -271,20 +299,42 @@ export default function TripGroupingPage() {
               )}
             </div>
           ) : (
-            <>
-              <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur">
+            <div className="space-y-3">
+              <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur flex justify-between items-center">
                 <h3 className="text-sm font-bold flex items-center gap-2">
-                  <Inbox className="h-4 w-4 text-accent" /> งานที่ยังไม่ได้จัดรถ ({availableDestinations.length})
+                  <Inbox className="h-4 w-4 text-accent" /> งานที่ค้างอยู่ในระบบ ({availableDestinations.length})
                 </h3>
+                {selectedIds.size > 1 && optimizedOrder.length > 0 && (
+                  <Badge className="bg-blue-600/20 text-blue-400 border-blue-600/30 text-[10px] flex items-center gap-1">
+                    <Zap className="h-3 w-3 fill-blue-400" /> เส้นทางที่ Google แนะนำ
+                  </Badge>
+                )}
               </div>
 
               {availableDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
-                  {availableDestinations.map(dest => (
+                  {/* Show Selected/Optimized items first */}
+                  {selectedDestinations.map((dest, idx) => (
                     <DestinationCard 
                       key={dest.id} 
                       dest={dest} 
-                      isSelected={selectedIds.has(dest.id)}
+                      isSelected={true}
+                      onToggle={() => handleToggleSelect(dest.id)}
+                      manualIndex={selectedIds.size > 1 ? idx + 1 : undefined}
+                    />
+                  ))}
+                  
+                  {/* Divider if we have unselected items */}
+                  {availableDestinations.length > selectedIds.size && selectedIds.size > 0 && (
+                    <div className="pt-4 border-t border-border/20" />
+                  )}
+
+                  {/* Show Unselected items */}
+                  {availableDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
+                    <DestinationCard 
+                      key={dest.id} 
+                      dest={dest} 
+                      isSelected={false}
                       onToggle={() => handleToggleSelect(dest.id)}
                     />
                   ))}
@@ -295,7 +345,7 @@ export default function TripGroupingPage() {
                   <p className="text-sm font-medium text-muted-foreground">ไม่มีงานค้างในระบบ</p>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
 
@@ -307,8 +357,9 @@ export default function TripGroupingPage() {
             onSelect={handleToggleSelect}
             selectedVehicleRate={selectedVehicle?.fuelRate}
             mode={mode}
-            setMode={setMode}
+            setMode={handleModeChange}
             manualOrder={manualOrder}
+            onOptimizedOrderChange={setOptimizedOrder}
           />
         </div>
       </div>

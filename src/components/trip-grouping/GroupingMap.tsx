@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Loader2, Route, Zap, RefreshCcw, Fuel, MousePointer2, Wand2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useToast } from "@/hooks/use-toast"
 
 interface GroupingMapProps {
   destinations: any[];
@@ -19,6 +20,7 @@ interface GroupingMapProps {
   mode: 'auto' | 'manual';
   setMode: (mode: 'auto' | 'manual') => void;
   manualOrder: string[];
+  onOptimizedOrderChange?: (ids: string[]) => void;
 }
 
 const DEFAULT_LAT = 13.7563
@@ -32,9 +34,11 @@ export function GroupingMap({
   selectedVehicleRate,
   mode,
   setMode,
-  manualOrder
+  manualOrder,
+  onOptimizedOrderChange
 }: GroupingMapProps) {
   const db = useFirestore()
+  const { toast } = useToast()
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const markersRef = React.useRef<google.maps.Marker[]>([])
@@ -51,12 +55,12 @@ export function GroupingMap({
   } | null>(null)
   
   const [isCalculating, setIsCalculating] = React.useState(false)
-  const [optimizeMode, setOptimizeMode] = React.useState(false)
+  const [optimizeMode, setOptimizeMode] = React.useState(true) // Default true for Auto mode
 
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingRef)
 
-  const calculateRoute = React.useCallback(async (optimize: boolean = false) => {
+  const calculateRoute = React.useCallback(async (optimize: boolean = true) => {
     if (!directionsServiceRef.current || !directionsRendererRef.current) return;
     
     const count = mode === 'manual' ? manualOrder.length : selectedIds.size
@@ -69,6 +73,7 @@ export function GroupingMap({
     setIsCalculating(true)
     const google = window.google
     
+    // Waypoints source
     const selectedDests = mode === 'manual'
       ? manualOrder.map(id => destinations.find(d => d.id === id)).filter(Boolean)
       : destinations.filter(d => selectedIds.has(d.id))
@@ -78,76 +83,81 @@ export function GroupingMap({
       return
     }
 
-    const originPos = { 
+    const warehousePos = { 
       lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
       lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
     }
-    const origin = new google.maps.LatLng(originPos.lat, originPos.lng)
+    const origin = new google.maps.LatLng(warehousePos.lat, warehousePos.lng)
 
-    const waypointList = [...selectedDests]
-    const destination = waypointList.pop()
-    const waypoints = waypointList.map(d => ({
+    // For TRUE road optimization, we must use origin=warehouse and destination=warehouse
+    // so Google knows it's a round trip and finds the best loop.
+    const waypoints = selectedDests.map(d => ({
       location: new google.maps.LatLng(d.lat, d.lng),
       stopover: true
     }))
 
     directionsServiceRef.current.route({
       origin: origin,
-      destination: new google.maps.LatLng(destination.lat, destination.lng),
+      destination: origin, // Return to office for round trip optimization
       waypoints: waypoints,
-      optimizeWaypoints: mode === 'manual' ? false : optimize,
+      optimizeWaypoints: mode === 'auto' ? optimize : false,
       travelMode: google.maps.TravelMode.DRIVING,
-    }, async (result, status) => {
+      region: 'TH'
+    }, (result, status) => {
+      setIsCalculating(false)
       if (status === 'OK' && result) {
         directionsRendererRef.current?.setDirections(result)
         
-        let outDist = 0
-        let totalTime = 0
         const route = result.routes[0]
+        
+        // Handle Optimized Order callback
+        if (mode === 'auto' && optimize && onOptimizedOrderChange) {
+          const optimizedIndices = route.waypoint_order; // [2, 0, 1] means go to waypoints[2] first
+          const optimizedIds = optimizedIndices.map(idx => selectedDests[idx].id);
+          onOptimizedOrderChange(optimizedIds);
+        }
+
+        let totalDist = 0
+        let totalTime = 0
         route.legs.forEach(leg => {
-          outDist += leg.distance?.value || 0
+          totalDist += leg.distance?.value || 0
           totalTime += leg.duration?.value || 0
         })
 
-        const lastStopPos = route.legs[route.legs.length - 1].end_location;
-        
-        directionsServiceRef.current?.route({
-          origin: lastStopPos,
-          destination: origin,
-          travelMode: google.maps.TravelMode.DRIVING
-        }, (returnResult, returnStatus) => {
-          setIsCalculating(false)
-          let returnDist = 0
-          if (returnStatus === 'OK' && returnResult) {
-            returnDist = returnResult.routes[0].legs[0].distance?.value || 0
-          }
+        // Split out-bound and return for display
+        // The last leg is always the return to office in our round-trip config
+        const returnLeg = route.legs[route.legs.length - 1];
+        const returnDistValue = returnLeg.distance?.value || 0;
+        const outboundDistValue = totalDist - returnDistValue;
 
-          const totalDistKm = (outDist + returnDist) / 1000
-          
-          const fuelRate = selectedVehicleRate || settings?.defaultFuelRate || 10
-          const dieselPrice = settings?.dieselPrice || 32.5
-          const fuelCost = (totalDistKm / fuelRate) * dieselPrice
+        const totalDistKm = totalDist / 1000
+        const fuelRate = selectedVehicleRate || settings?.defaultFuelRate || 10
+        const dieselPrice = settings?.dieselPrice || 32.5
+        const fuelCost = (totalDistKm / fuelRate) * dieselPrice
 
-          setRouteStats({ 
-            distance: (outDist / 1000).toFixed(1) + " กม.",
-            duration: Math.round(totalTime / 60) + " นาที",
-            returnDistance: (returnDist / 1000).toFixed(1) + " กม.",
-            totalDistance: totalDistKm.toFixed(1) + " กม.",
-            fuelCost: fuelCost.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " บาท"
-          })
-
-          if (typeof window !== 'undefined') {
-            (window as any).__lastTripStats = {
-              distance: totalDistKm,
-              fuelCost: fuelCost
-            }
-          }
+        setRouteStats({ 
+          distance: (outboundDistValue / 1000).toFixed(1) + " กม.",
+          duration: Math.round(totalTime / 60) + " นาที",
+          returnDistance: (returnDistValue / 1000).toFixed(1) + " กม.",
+          totalDistance: totalDistKm.toFixed(1) + " กม.",
+          fuelCost: fuelCost.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " บาท"
         })
+
+        if (typeof window !== 'undefined') {
+          (window as any).__lastTripStats = {
+            distance: totalDistKm,
+            fuelCost: fuelCost
+          }
+        }
       } else {
-        setIsCalculating(false)
+        toast({ 
+          title: "การคำนวณล้มเหลว", 
+          description: "ไม่สามารถคำนวณเส้นทางถนนจริงได้ กรุณาลองใหม่", 
+          variant: "destructive" 
+        })
       }
     })
-  }, [destinations, selectedIds, settings, selectedVehicleRate, mode, manualOrder])
+  }, [destinations, selectedIds, settings, selectedVehicleRate, mode, manualOrder, onOptimizedOrderChange, toast])
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -176,7 +186,7 @@ export function GroupingMap({
     const officeMarker = new google.maps.Marker({
       position: officePos,
       map,
-      title: "คลังสินค้า LOTUS EME",
+      title: settings?.warehouseName || "คลังสินค้า LOTUS EME",
       icon: {
         path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
         scale: 8,
@@ -186,7 +196,7 @@ export function GroupingMap({
         strokeColor: "#ffffff"
       },
       label: {
-        text: "LOTUS EME",
+        text: "OFFICE",
         color: "#10b981",
         fontWeight: "bold",
         fontSize: "11px",
@@ -217,17 +227,11 @@ export function GroupingMap({
         const pos = { lat: d.lat, lng: d.lng }
         bounds.extend(pos)
 
-        // 1. Main Marker (Icon + Step Number)
+        // 1. Main Marker (Icon + Step Number if optimized/selected)
         const marker = new google.maps.Marker({
           position: pos,
           map,
           title: d.siteName,
-          label: isSelected && mode === 'manual' ? {
-            text: labelText,
-            color: "#ffffff",
-            fontWeight: "bold",
-            fontSize: "14px"
-          } : undefined,
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: isSelected ? 15 : 11,
@@ -372,11 +376,11 @@ export function GroupingMap({
                   <span className="font-medium text-white">{routeStats?.distance || "-- กม."}</span>
                 </div>
                 <div className="flex justify-between items-center text-[11px]">
-                  <span className="text-muted-foreground">กลับออฟฟิศ:</span>
+                  <span className="text-muted-foreground">ขากลับออฟฟิศ:</span>
                   <span className="font-medium text-white">+{routeStats?.returnDistance || "-- กม."}</span>
                 </div>
                 <div className="flex justify-between items-center pt-1 border-t border-dashed border-border/50">
-                  <span className="text-[11px] font-bold text-accent">รวมทั้งหมด:</span>
+                  <span className="text-[11px] font-bold text-accent">รวมระยะทาง:</span>
                   <span className="text-sm font-bold text-white">{routeStats?.totalDistance || "-- กม."}</span>
                 </div>
               </div>
