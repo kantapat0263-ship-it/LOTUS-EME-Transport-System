@@ -35,6 +35,7 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { format } from "date-fns"
 import { th } from "date-fns/locale"
 
+// LOTUS GROUP Head Office Coordinates
 const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
 
 export default function TripDetailPage() {
@@ -66,6 +67,7 @@ export default function TripDetailPage() {
   const directionsRendererRef = React.useRef<google.maps.DirectionsRenderer | null>(null)
   const [apiLoaded, setApiLoaded] = React.useState(false)
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
+  const [noCoordsWarning, setNoCoordsWarning] = React.useState(false)
 
   const displayStops = React.useMemo(() => {
     if (stopsSub && stopsSub.length > 0) return stopsSub;
@@ -101,6 +103,7 @@ export default function TripDetailPage() {
     return site?.address || "";
   };
 
+  // Initialize Google Maps API
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     if (!apiKey) return;
@@ -113,6 +116,7 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
+  // Initialize Map and Directions Renderer
   React.useEffect(() => {
     if (!apiLoaded || !mapContainerRef.current || mapRef.current) return;
 
@@ -131,7 +135,7 @@ export default function TripDetailPage() {
 
       const renderer = new google.maps.DirectionsRenderer({
         map,
-        suppressMarkers: false,
+        suppressMarkers: true, // We will render custom numbered markers
         polylineOptions: { 
           strokeColor: "#F0890D", 
           strokeWeight: 6,
@@ -146,6 +150,7 @@ export default function TripDetailPage() {
     return () => clearTimeout(timer);
   }, [apiLoaded]);
 
+  // Calculate and Draw Route
   React.useEffect(() => {
     if (!mapRef.current || !directionsRendererRef.current || !displayStops.length || !apiLoaded || !allSites) return;
 
@@ -154,30 +159,49 @@ export default function TripDetailPage() {
 
     const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
 
-    const waypoints = displayStops.map((s: any) => {
+    // Resolve stop coordinates
+    const waypointsWithLocations = displayStops.map((s: any) => {
+      let position: google.maps.LatLng | null = null;
+      
+      // Try direct coords from stop
       if (s.lat && s.lng) {
-        return { location: new google.maps.LatLng(s.lat, s.lng), stopover: true };
+        position = new google.maps.LatLng(s.lat, s.lng);
+      } else {
+        // Fallback to site DB
+        const site = allSites?.find(site => site.id === s.siteId);
+        if (site?.latitude && site?.longitude) {
+          position = new google.maps.LatLng(site.latitude, site.longitude);
+        }
       }
-      const site = allSites?.find(site => site.id === s.siteId);
-      if (site?.latitude && site?.longitude) {
-        return { location: new google.maps.LatLng(site.latitude, site.longitude), stopover: true };
-      }
-      return null;
-    }).filter((wp: any) => wp !== null);
+      
+      return { position, siteName: s.siteName };
+    });
 
-    if (waypoints.length === 0) return;
+    const validWaypoints = waypointsWithLocations.filter(w => w.position !== null);
+    
+    if (validWaypoints.length < waypointsWithLocations.length) {
+      setNoCoordsWarning(true);
+    }
 
-    const destination = waypoints.pop().location;
+    if (validWaypoints.length === 0) return;
+
+    // Split into waypoints and destination for the API
+    const destination = validWaypoints[validWaypoints.length - 1].position!;
+    const intermediateWaypoints = validWaypoints.slice(0, -1).map(w => ({
+      location: w.position!,
+      stopover: true
+    }));
 
     directionsService.route({
       origin,
       destination,
-      waypoints,
+      waypoints: intermediateWaypoints,
       travelMode: google.maps.TravelMode.DRIVING
     }, (result, status) => {
       if (status === "OK" && result) {
         directionsRendererRef.current?.setDirections(result);
         
+        // Calculate total stats from legs
         let dist = 0;
         let dur = 0;
         result.routes[0].legs.forEach(leg => {
@@ -189,6 +213,53 @@ export default function TripDetailPage() {
           distance: dist / 1000,
           duration: Math.ceil(dur / 60)
         });
+
+        // Add custom markers
+        const map = mapRef.current!;
+        
+        // 1. Origin Marker
+        new google.maps.Marker({
+          position: origin,
+          map,
+          title: "คลังสินค้า LOTUS GROUP",
+          icon: {
+            path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+            scale: 8,
+            fillColor: "#10b981",
+            fillOpacity: 1,
+            strokeWeight: 2,
+            strokeColor: "#ffffff"
+          }
+        });
+
+        // 2. Stop Markers
+        validWaypoints.forEach((wp, idx) => {
+          new google.maps.Marker({
+            position: wp.position!,
+            map,
+            title: wp.siteName,
+            label: {
+              text: (idx + 1).toString(),
+              color: "#ffffff",
+              fontWeight: "bold",
+              fontSize: "12px"
+            },
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 12,
+              fillColor: "#F0890D",
+              fillOpacity: 1,
+              strokeWeight: 2,
+              strokeColor: "#ffffff"
+            }
+          });
+        });
+
+        // Fit bounds to show everything
+        const bounds = new google.maps.LatLngBounds();
+        bounds.extend(origin);
+        validWaypoints.forEach(wp => bounds.extend(wp.position!));
+        map.fitBounds(bounds);
       }
     });
   }, [displayStops, apiLoaded, allSites]);
@@ -254,6 +325,13 @@ export default function TripDetailPage() {
             </DropdownMenu>
           </div>
         </div>
+
+        {noCoordsWarning && (
+          <Alert className="bg-yellow-500/10 border-yellow-500/30 text-yellow-500">
+            <AlertCircle className="h-4 w-4" />
+            <span>บางจุดหมายไม่มีข้อมูลพิกัดในระบบ ทำให้ไม่สามารถแสดงเส้นทางที่สมบูรณ์ได้</span>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
