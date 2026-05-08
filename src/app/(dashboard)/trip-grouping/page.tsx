@@ -129,7 +129,9 @@ export default function TripGroupingPage() {
           siteId: d.siteId || d.id,
           siteName: d.siteName,
           cargoDetails: d.jobDescription,
-          order: idx
+          order: idx,
+          lat: d.lat || null,
+          lng: d.lng || null
         }))
       })
 
@@ -242,13 +244,15 @@ export default function TripGroupingPage() {
         <AlertDialogContent className="max-w-md rounded-xl border-accent/20 bg-card">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-lg font-bold text-accent">ยืนยันสร้างเที่ยววิ่ง</AlertDialogTitle>
-            <AlertDialogDescription className="text-sm py-2 text-foreground/90 space-y-3">
-              <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
-                <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
-                <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
-                <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
+            <AlertDialogDescription asChild>
+              <div className="text-sm py-2 text-foreground/90 space-y-3">
+                <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
+                  <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
+                  <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
+                  <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
+                </div>
+                <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
               </div>
-              <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2">

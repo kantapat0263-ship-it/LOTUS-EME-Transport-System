@@ -48,9 +48,6 @@ export default function TripDetailPage() {
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
 
-  const stopsSubRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "stops"), orderBy("order", "asc")), [db, tripId])
-  const { data: stopsSub } = useCollection<any>(stopsSubRef)
-  
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: allSites, isLoading: isSitesLoading } = useCollection<Site>(sitesRef)
   
@@ -70,16 +67,11 @@ export default function TripDetailPage() {
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
   const [noCoordsWarning, setNoCoordsWarning] = React.useState(false)
 
-  // Memoize markers to clear them properly
+  // Use a ref to keep track of markers so they can be cleared
   const markersRef = React.useRef<google.maps.Marker[]>([])
 
-  const displayStops = React.useMemo(() => {
-    if (stopsSub && stopsSub.length > 0) return stopsSub;
-    return trip?.stops || [];
-  }, [stopsSub, trip?.stops]);
-
   const formatDurationFormatted = (minutes: number) => {
-    if (!minutes || minutes <= 0) return "-";
+    if (minutes <= 0) return "-";
     const h = Math.floor(minutes / 60);
     const m = Math.round(minutes % 60);
     if (h > 0) {
@@ -120,156 +112,145 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
-  // 2. Initialize Map instance
+  // 2. Initialize Map instance and Routing
   React.useEffect(() => {
-    if (!apiLoaded || !mapContainerRef.current || mapRef.current) return;
+    if (!apiLoaded || !mapContainerRef.current || !trip || !allSites) return;
 
-    const google = window.google;
-    const map = new google.maps.Map(mapContainerRef.current!, {
-      center: HEAD_OFFICE,
-      zoom: 12,
-      styles: [
-        { featureType: "landscape", elementType: "all", color: "#2d3139" },
-        { featureType: "road", elementType: "all", color: "#1a1c23" },
-        { featureType: "water", elementType: "all", color: "#172899" }
-      ],
-      disableDefaultUI: true
-    });
-
-    const renderer = new google.maps.DirectionsRenderer({
-      map,
-      suppressMarkers: true,
-      polylineOptions: { 
-        strokeColor: "#F0890D", 
-        strokeWeight: 6,
-        strokeOpacity: 0.8
-      }
-    });
-
-    mapRef.current = map;
-    directionsRendererRef.current = renderer;
-  }, [apiLoaded]);
-
-  // 3. Resolve Coords and Calculate Route
-  React.useEffect(() => {
-    if (!mapRef.current || !directionsRendererRef.current || !displayStops.length || !apiLoaded || !allSites) return;
-
-    const google = window.google;
-    const directionsService = new google.maps.DirectionsService();
-
-    // Clear old markers
-    markersRef.current.forEach(m => m.setMap(null));
-    markersRef.current = [];
-
-    // Origin
-    const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
-
-    // Resolve stop coordinates with fallback to Sites DB
-    const resolvedWaypoints = displayStops.map((s: any) => {
-      let position: google.maps.LatLng | null = null;
+    // Small delay to ensure container is fully rendered (300ms)
+    const timeout = setTimeout(() => {
+      const google = window.google;
       
-      // Option 1: Direct lat/lng in stop object
-      if (s.lat && s.lng) {
-        position = new google.maps.LatLng(s.lat, s.lng);
-      } else {
-        // Option 2: Look up in Sites collection
-        const site = allSites?.find(site => site.id === s.siteId);
-        if (site?.latitude && site?.longitude) {
-          position = new google.maps.LatLng(site.latitude, site.longitude);
-        }
-      }
-      
-      return { position, siteName: s.siteName };
-    });
-
-    const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
-    
-    if (validWaypoints.length < resolvedWaypoints.length) {
-      setNoCoordsWarning(true);
-    }
-
-    if (validWaypoints.length === 0) return;
-
-    const destination = validWaypoints[validWaypoints.length - 1].position!;
-    const intermediateWaypoints = validWaypoints.slice(0, -1).map(w => ({
-      location: w.position!,
-      stopover: true
-    }));
-
-    directionsService.route({
-      origin,
-      destination,
-      waypoints: intermediateWaypoints,
-      travelMode: google.maps.TravelMode.DRIVING
-    }, (result, status) => {
-      if (status === "OK" && result) {
-        directionsRendererRef.current?.setDirections(result);
-        
-        // Sum distance and duration from legs
-        let dist = 0;
-        let dur = 0;
-        result.routes[0].legs.forEach(leg => {
-          dist += leg.distance?.value || 0;
-          dur += leg.duration?.value || 0;
+      if (!mapRef.current) {
+        const map = new google.maps.Map(mapContainerRef.current!, {
+          center: HEAD_OFFICE,
+          zoom: 12,
+          styles: [
+            { featureType: "landscape", elementType: "all", color: "#2d3139" },
+            { featureType: "road", elementType: "all", color: "#1a1c23" },
+            { featureType: "water", elementType: "all", color: "#172899" }
+          ],
+          disableDefaultUI: true
         });
 
-        setCalculatedStats({
-          distance: dist / 1000,
-          duration: Math.ceil(dur / 60)
-        });
-
-        const map = mapRef.current!;
-        
-        // 1. Add Origin Marker
-        const startMarker = new google.maps.Marker({
-          position: origin,
+        const renderer = new google.maps.DirectionsRenderer({
           map,
-          title: "คลังสินค้า LOTUS GROUP",
-          icon: {
-            path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-            scale: 8,
-            fillColor: "#10b981",
-            fillOpacity: 1,
-            strokeWeight: 2,
-            strokeColor: "#ffffff"
+          suppressMarkers: true,
+          polylineOptions: { 
+            strokeColor: "#F0890D", 
+            strokeWeight: 6,
+            strokeOpacity: 0.9
           }
         });
-        markersRef.current.push(startMarker);
 
-        // 2. Add Numbered Stop Markers
-        validWaypoints.forEach((wp, idx) => {
-          const marker = new google.maps.Marker({
-            position: wp.position!,
-            map,
-            title: wp.siteName,
-            label: {
-              text: (idx + 1).toString(),
-              color: "#ffffff",
-              fontWeight: "bold",
-              fontSize: "12px"
-            },
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              scale: 12,
-              fillColor: "#F0890D",
-              fillOpacity: 1,
-              strokeWeight: 2,
-              strokeColor: "#ffffff"
-            }
-          });
-          markersRef.current.push(marker);
-        });
-
-        // Fit map bounds
-        const bounds = new google.maps.LatLngBounds();
-        bounds.extend(origin);
-        validWaypoints.forEach(wp => bounds.extend(wp.position!));
-        map.fitBounds(bounds);
-      } else {
-        console.error("Directions Request Failed:", status);
+        mapRef.current = map;
+        directionsRendererRef.current = renderer;
       }
-    });
-  }, [displayStops, apiLoaded, allSites]);
+
+      const map = mapRef.current!;
+      const directionsRenderer = directionsRendererRef.current!;
+      const directionsService = new google.maps.DirectionsService();
+
+      // Clear existing markers
+      markersRef.current.forEach(m => m.setMap(null));
+      markersRef.current = [];
+
+      // Resolve coordinates for each stop
+      const resolvedWaypoints = (trip.stops || []).map((s: any) => {
+        let position: google.maps.LatLng | null = null;
+        if (s.lat && s.lng) {
+          position = new google.maps.LatLng(s.lat, s.lng);
+        } else {
+          const site = allSites?.find(site => site.id === s.siteId);
+          if (site?.latitude && site?.longitude) {
+            position = new google.maps.LatLng(site.latitude, site.longitude);
+          }
+        }
+        return { position, siteName: s.siteName };
+      });
+
+      const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
+      if (validWaypoints.length < resolvedWaypoints.length) {
+        setNoCoordsWarning(true);
+      }
+
+      if (validWaypoints.length > 0) {
+        const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
+        const destination = validWaypoints[validWaypoints.length - 1].position!;
+        const intermediates = validWaypoints.slice(0, -1).map(w => ({
+          location: w.position!,
+          stopover: true
+        }));
+
+        directionsService.route({
+          origin,
+          destination,
+          waypoints: intermediates,
+          travelMode: google.maps.TravelMode.DRIVING
+        }, (result, status) => {
+          if (status === "OK" && result) {
+            directionsRenderer.setDirections(result);
+            
+            // Calculate real duration
+            let totalDur = 0;
+            result.routes[0].legs.forEach(leg => {
+              totalDur += leg.duration?.value || 0;
+            });
+            setCalculatedStats({
+              distance: trip.totalDistanceKm || 0,
+              duration: Math.ceil(totalDur / 60)
+            });
+
+            // Draw Markers
+            const startMarker = new google.maps.Marker({
+              position: origin,
+              map,
+              title: "จุดเริ่มต้น (สำนักงาน)",
+              icon: {
+                path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+                scale: 7,
+                fillColor: "#10b981",
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#ffffff"
+              }
+            });
+            markersRef.current.push(startMarker);
+
+            validWaypoints.forEach((wp, idx) => {
+              const marker = new google.maps.Marker({
+                position: wp.position!,
+                map,
+                label: {
+                  text: (idx + 1).toString(),
+                  color: "#ffffff",
+                  fontWeight: "bold",
+                  fontSize: "12px"
+                },
+                icon: {
+                  path: google.maps.SymbolPath.CIRCLE,
+                  scale: 12,
+                  fillColor: "#F0890D",
+                  fillOpacity: 1,
+                  strokeWeight: 2,
+                  strokeColor: "#ffffff"
+                },
+                title: wp.siteName
+              });
+              markersRef.current.push(marker);
+            });
+
+            // Adjust bounds
+            const bounds = new google.maps.LatLngBounds();
+            bounds.extend(origin);
+            validWaypoints.forEach(wp => bounds.extend(wp.position!));
+            map.fitBounds(bounds);
+          }
+        });
+      }
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [apiLoaded, trip, allSites]);
 
   const handleStatusChange = async (newStatus: TripStatus) => {
     if (!trip) return
@@ -293,18 +274,13 @@ export default function TripDetailPage() {
   if (isTripLoading || isSitesLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   if (!trip) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><AlertCircle className="h-12 w-12 text-destructive" /><p>ไม่พบข้อมูลเที่ยววิ่ง</p><Button onClick={() => router.push('/trips/history')}>กลับไปหน้าประวัติ</Button></div>
 
-  // Final values for display
   const finalDuration = (trip.totalEstimatedTimeMinutes && trip.totalEstimatedTimeMinutes > 0) 
     ? trip.totalEstimatedTimeMinutes 
     : (calculatedStats?.duration || 0);
 
-  const finalDistance = (trip.totalDistanceKm && trip.totalDistanceKm > 0)
-    ? trip.totalDistanceKm
-    : (calculatedStats?.distance || 0);
-
   const uniqueRequesters = [...new Set([
     (trip as any).requestedBy,
-    ...(displayStops || []).map((s: any) => s.requestedBy).filter(Boolean)
+    ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
   ])].filter(Boolean).join(", ") || "-";
 
   return (
@@ -375,7 +351,7 @@ export default function TripDetailPage() {
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><RouteIcon className="h-3 w-3" /> ระยะทาง</p>
-                    <p className="font-bold text-sm md:text-base">{finalDistance.toFixed(1)} กม.</p>
+                    <p className="font-bold text-sm md:text-base">{trip.totalDistanceKm?.toFixed(1) || "0.0"} กม.</p>
                   </div>
                 </div>
               </CardContent>
@@ -386,7 +362,7 @@ export default function TripDetailPage() {
                 <CardTitle className="flex items-center gap-2 text-lg"><MapPin className="h-5 w-5 text-accent" /> ลำดับจุดส่งของ</CardTitle>
               </CardHeader>
               <CardContent className="p-4 md:p-6 space-y-4 pt-0">
-                {displayStops.map((stop: any, index: number) => (
+                {(trip.stops || []).map((stop: any, index: number) => (
                   <div key={index} className="flex gap-3 md:gap-4 p-3 md:p-4 rounded-lg bg-secondary/30 relative border border-border/50">
                     <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-bold shrink-0 text-sm">
                       {index + 1}
@@ -402,32 +378,6 @@ export default function TripDetailPage() {
                 ))}
               </CardContent>
             </Card>
-
-            {editLogs && editLogs.length > 0 && (
-              <Card className="border-accent/20">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <History className="h-5 w-5 text-accent" /> ประวัติการแก้ไข
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {editLogs.map((log) => (
-                    <div key={log.id} className="p-4 rounded-lg bg-secondary/10 border border-border/50 text-sm space-y-2">
-                      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-1">
-                        <p className="font-bold text-accent">
-                          แก้ไขเมื่อ {log.editedAt?.toDate() ? format(log.editedAt.toDate(), "dd/MM/yyyy HH:mm", { locale: th }) : "-"}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">โดย {log.editedBy}</p>
-                      </div>
-                      <div className="mt-2 flex items-start gap-2 text-xs italic text-muted-foreground bg-secondary/5 p-2 rounded">
-                        <Info className="h-3 w-3 shrink-0 mt-0.5" />
-                        <span>หมายเหตุ: {log.note}</span>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           <div className="space-y-6">
@@ -455,7 +405,7 @@ export default function TripDetailPage() {
                   <Clock className="h-5 w-5 md:h-6 md:w-6 text-accent" />
                   {formatDurationFormatted(finalDuration)}
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณจากระยะทาง {finalDistance.toFixed(1)} กม. ตามเส้นทางจริง</p>
+                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณจากระยะทาง {trip.totalDistanceKm?.toFixed(1) || 0} กม. ตามสภาพจราจรจริง</p>
               </CardContent>
             </Card>
           </div>
@@ -497,7 +447,7 @@ export default function TripDetailPage() {
                 {trip.departureTime || "08:30"} น.
               </td>
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top' }}>
-                {displayStops.map((stop: any, index: number) => (
+                {(trip.stops || []).map((stop: any, index: number) => (
                   <div key={index} style={{ marginBottom: '12px' }}>
                     <div style={{ fontWeight: 'bold' }}>{index + 1}. {stop.siteName}</div>
                     {stop.cargoDetails && (
@@ -531,7 +481,7 @@ export default function TripDetailPage() {
           </tbody>
         </table>
         <div style={{ marginTop: '15px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-          <div><strong>ระยะทางรวม:</strong> {finalDistance.toFixed(1)} กม.</div>
+          <div><strong>ระยะทางรวม:</strong> {trip.totalDistanceKm?.toFixed(1) || 0} กม.</div>
           <div><strong>เวลาเดินทางโดยประมาณ:</strong> {formatDurationFormatted(finalDuration)}</div>
           <div style={{ fontStyle: 'italic' }}>* พิมพ์จากระบบ LOTUS GROUP Transport Management</div>
         </div>
