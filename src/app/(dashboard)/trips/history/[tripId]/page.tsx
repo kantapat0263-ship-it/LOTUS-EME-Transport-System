@@ -34,8 +34,9 @@ import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 import { format } from "date-fns"
 import { th } from "date-fns/locale"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 
-// LOTUS GROUP Head Office Coordinates
+// LOTUS GROUP Head Office Coordinates (Default)
 const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
 
 export default function TripDetailPage() {
@@ -68,6 +69,9 @@ export default function TripDetailPage() {
   const [apiLoaded, setApiLoaded] = React.useState(false)
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
   const [noCoordsWarning, setNoCoordsWarning] = React.useState(false)
+
+  // Memoize markers to clear them properly
+  const markersRef = React.useRef<google.maps.Marker[]>([])
 
   const displayStops = React.useMemo(() => {
     if (stopsSub && stopsSub.length > 0) return stopsSub;
@@ -103,7 +107,7 @@ export default function TripDetailPage() {
     return site?.address || "";
   };
 
-  // Initialize Google Maps API
+  // 1. Initialize Google Maps API
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     if (!apiKey) return;
@@ -116,58 +120,59 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
-  // Initialize Map and Directions Renderer
+  // 2. Initialize Map instance
   React.useEffect(() => {
     if (!apiLoaded || !mapContainerRef.current || mapRef.current) return;
 
-    const timer = setTimeout(() => {
-      const google = window.google;
-      const map = new google.maps.Map(mapContainerRef.current!, {
-        center: HEAD_OFFICE,
-        zoom: 12,
-        styles: [
-          { featureType: "landscape", elementType: "all", color: "#2d3139" },
-          { featureType: "road", elementType: "all", color: "#1a1c23" },
-          { featureType: "water", elementType: "all", color: "#172899" }
-        ],
-        disableDefaultUI: true
-      });
+    const google = window.google;
+    const map = new google.maps.Map(mapContainerRef.current!, {
+      center: HEAD_OFFICE,
+      zoom: 12,
+      styles: [
+        { featureType: "landscape", elementType: "all", color: "#2d3139" },
+        { featureType: "road", elementType: "all", color: "#1a1c23" },
+        { featureType: "water", elementType: "all", color: "#172899" }
+      ],
+      disableDefaultUI: true
+    });
 
-      const renderer = new google.maps.DirectionsRenderer({
-        map,
-        suppressMarkers: true, // We will render custom numbered markers
-        polylineOptions: { 
-          strokeColor: "#F0890D", 
-          strokeWeight: 6,
-          strokeOpacity: 0.8
-        }
-      });
+    const renderer = new google.maps.DirectionsRenderer({
+      map,
+      suppressMarkers: true,
+      polylineOptions: { 
+        strokeColor: "#F0890D", 
+        strokeWeight: 6,
+        strokeOpacity: 0.8
+      }
+    });
 
-      mapRef.current = map;
-      directionsRendererRef.current = renderer;
-    }, 300);
-
-    return () => clearTimeout(timer);
+    mapRef.current = map;
+    directionsRendererRef.current = renderer;
   }, [apiLoaded]);
 
-  // Calculate and Draw Route
+  // 3. Resolve Coords and Calculate Route
   React.useEffect(() => {
     if (!mapRef.current || !directionsRendererRef.current || !displayStops.length || !apiLoaded || !allSites) return;
 
     const google = window.google;
     const directionsService = new google.maps.DirectionsService();
 
+    // Clear old markers
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
+
+    // Origin
     const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
 
-    // Resolve stop coordinates
-    const waypointsWithLocations = displayStops.map((s: any) => {
+    // Resolve stop coordinates with fallback to Sites DB
+    const resolvedWaypoints = displayStops.map((s: any) => {
       let position: google.maps.LatLng | null = null;
       
-      // Try direct coords from stop
+      // Option 1: Direct lat/lng in stop object
       if (s.lat && s.lng) {
         position = new google.maps.LatLng(s.lat, s.lng);
       } else {
-        // Fallback to site DB
+        // Option 2: Look up in Sites collection
         const site = allSites?.find(site => site.id === s.siteId);
         if (site?.latitude && site?.longitude) {
           position = new google.maps.LatLng(site.latitude, site.longitude);
@@ -177,15 +182,14 @@ export default function TripDetailPage() {
       return { position, siteName: s.siteName };
     });
 
-    const validWaypoints = waypointsWithLocations.filter(w => w.position !== null);
+    const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
     
-    if (validWaypoints.length < waypointsWithLocations.length) {
+    if (validWaypoints.length < resolvedWaypoints.length) {
       setNoCoordsWarning(true);
     }
 
     if (validWaypoints.length === 0) return;
 
-    // Split into waypoints and destination for the API
     const destination = validWaypoints[validWaypoints.length - 1].position!;
     const intermediateWaypoints = validWaypoints.slice(0, -1).map(w => ({
       location: w.position!,
@@ -201,7 +205,7 @@ export default function TripDetailPage() {
       if (status === "OK" && result) {
         directionsRendererRef.current?.setDirections(result);
         
-        // Calculate total stats from legs
+        // Sum distance and duration from legs
         let dist = 0;
         let dur = 0;
         result.routes[0].legs.forEach(leg => {
@@ -214,11 +218,10 @@ export default function TripDetailPage() {
           duration: Math.ceil(dur / 60)
         });
 
-        // Add custom markers
         const map = mapRef.current!;
         
-        // 1. Origin Marker
-        new google.maps.Marker({
+        // 1. Add Origin Marker
+        const startMarker = new google.maps.Marker({
           position: origin,
           map,
           title: "คลังสินค้า LOTUS GROUP",
@@ -231,10 +234,11 @@ export default function TripDetailPage() {
             strokeColor: "#ffffff"
           }
         });
+        markersRef.current.push(startMarker);
 
-        // 2. Stop Markers
+        // 2. Add Numbered Stop Markers
         validWaypoints.forEach((wp, idx) => {
-          new google.maps.Marker({
+          const marker = new google.maps.Marker({
             position: wp.position!,
             map,
             title: wp.siteName,
@@ -253,13 +257,16 @@ export default function TripDetailPage() {
               strokeColor: "#ffffff"
             }
           });
+          markersRef.current.push(marker);
         });
 
-        // Fit bounds to show everything
+        // Fit map bounds
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(origin);
         validWaypoints.forEach(wp => bounds.extend(wp.position!));
         map.fitBounds(bounds);
+      } else {
+        console.error("Directions Request Failed:", status);
       }
     });
   }, [displayStops, apiLoaded, allSites]);
@@ -286,6 +293,7 @@ export default function TripDetailPage() {
   if (isTripLoading || isSitesLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   if (!trip) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><AlertCircle className="h-12 w-12 text-destructive" /><p>ไม่พบข้อมูลเที่ยววิ่ง</p><Button onClick={() => router.push('/trips/history')}>กลับไปหน้าประวัติ</Button></div>
 
+  // Final values for display
   const finalDuration = (trip.totalEstimatedTimeMinutes && trip.totalEstimatedTimeMinutes > 0) 
     ? trip.totalEstimatedTimeMinutes 
     : (calculatedStats?.duration || 0);
@@ -308,7 +316,7 @@ export default function TripDetailPage() {
           </Button>
           <div className="flex gap-2 w-full sm:w-auto">
             <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none h-11 sm:h-9">
-              <Printer className="mr-2 h-4 w-4" /> พิมพ์
+              <Printer className="mr-2 h-4 w-4" /> พิมพ์ใบงาน
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -327,9 +335,12 @@ export default function TripDetailPage() {
         </div>
 
         {noCoordsWarning && (
-          <Alert className="bg-yellow-500/10 border-yellow-500/30 text-yellow-500">
+          <Alert variant="destructive" className="bg-destructive/10 border-destructive/20">
             <AlertCircle className="h-4 w-4" />
-            <span>บางจุดหมายไม่มีข้อมูลพิกัดในระบบ ทำให้ไม่สามารถแสดงเส้นทางที่สมบูรณ์ได้</span>
+            <AlertTitle>แจ้งเตือนพิกัดไม่ครบถ้วน</AlertTitle>
+            <AlertDescription>
+              บางจุดส่งของไม่มีข้อมูลพิกัดในระบบ แผนที่จึงแสดงเส้นทางได้เพียงบางส่วนเท่านั้น
+            </AlertDescription>
           </Alert>
         )}
 
@@ -422,8 +433,14 @@ export default function TripDetailPage() {
           <div className="space-y-6">
             <Card className="h-[300px] sm:h-[450px] overflow-hidden sticky top-20 md:top-24">
               <CardHeader className="bg-background/80 backdrop-blur z-10 border-b p-3">
-                <CardTitle className="text-xs md:text-sm flex items-center gap-2">
-                  <RouteIcon className="h-4 w-4 text-accent" /> เส้นทางการเดินทาง
+                <CardTitle className="text-xs md:text-sm flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <RouteIcon className="h-4 w-4 text-accent" /> เส้นทางการเดินทาง
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <div className="w-2 h-2 rounded-full bg-[#10b981]" /> เริ่มต้น
+                    <div className="w-2 h-2 rounded-full bg-[#F0890D] ml-2" /> จุดส่ง
+                  </div>
                 </CardTitle>
               </CardHeader>
               <div ref={mapContainerRef} className="w-full h-full bg-muted/20" />
@@ -438,7 +455,7 @@ export default function TripDetailPage() {
                   <Clock className="h-5 w-5 md:h-6 md:w-6 text-accent" />
                   {formatDurationFormatted(finalDuration)}
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2">* เป็นเวลาเดินทางโดยประมาณการ</p>
+                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณจากระยะทาง {finalDistance.toFixed(1)} กม. ตามเส้นทางจริง</p>
               </CardContent>
             </Card>
           </div>
