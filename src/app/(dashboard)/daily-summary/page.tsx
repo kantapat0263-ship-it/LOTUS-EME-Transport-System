@@ -195,23 +195,28 @@ export default function DailySummaryPage() {
                               {(trip as any).departureTime || "08:30"} น.
                             </td>
                             <td className="border border-black p-2 align-top space-y-4">
-                              {(trip.stops || []).map((stop, sIdx) => (
-                                <div key={sIdx} className="space-y-1">
-                                  <div className="flex gap-1.5 font-bold">
-                                    <span>{sIdx + 1}.</span>
-                                    <span>{stop.siteName}</span>
-                                  </div>
-                                  <div className="pl-5 space-y-0.5">
-                                    <div className="flex gap-2">
-                                      <span className="shrink-0">-</span>
-                                      <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
+                              {(trip.stops || []).map((stop, sIdx) => {
+                                const locationText = (stop as any).address || (stop as any).zone || ""
+                                return (
+                                  <div key={sIdx} className="space-y-1">
+                                    <div className="flex gap-1.5 font-bold">
+                                      <span>{sIdx + 1}.</span>
+                                      <span>{stop.siteName}</span>
                                     </div>
-                                    <div className="pl-3 text-[10px] text-gray-600">
-                                      📍 {(stop as any).address || "ไม่ได้ระบุโซนพื้นที่"}
+                                    <div className="pl-5 space-y-0.5">
+                                      <div className="flex gap-2">
+                                        <span className="shrink-0">-</span>
+                                        <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
+                                      </div>
+                                      {locationText && (
+                                        <div className="pl-3 text-[10px] text-gray-600">
+                                          {locationText}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
-                                </div>
-                              ))}
+                                )
+                              })}
                               {trip.stops?.length === 0 && <div className="text-gray-400 italic">ไม่มีข้อมูลจุดส่งของ</div>}
                             </td>
                             <td className="border border-black p-2 align-top space-y-2">
