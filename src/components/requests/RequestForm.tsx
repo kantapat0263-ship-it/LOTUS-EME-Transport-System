@@ -24,7 +24,11 @@ import {
   Loader2, 
   Send,
   Building2,
-  Globe
+  Globe,
+  Store,
+  Landmark,
+  Briefcase,
+  Search
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Site, UserProfile } from "@/types/models"
@@ -33,7 +37,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 
 interface DestinationRequest {
   id: string;
-  type: "site" | "other";
+  category: "site" | "store" | "bank" | "company" | "custom";
+  searchTerm: string;
   siteId: string;
   siteName: string;
   customName: string;
@@ -42,6 +47,14 @@ interface DestinationRequest {
   saveAsSite: boolean;
   locationType: string;
 }
+
+const CATEGORIES = [
+  { id: 'site', label: 'ไซน์งาน', icon: Building2, types: ['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
+  { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
+  { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
+  { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
+  { id: 'custom', label: 'กำหนดเอง', icon: MapPin, types: [] },
+] as const;
 
 export function RequestForm() {
   const { toast } = useToast()
@@ -60,7 +73,7 @@ export function RequestForm() {
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
-    { id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }
+    { id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }
   ])
 
   const addDestination = () => {
@@ -70,7 +83,8 @@ export function RequestForm() {
     }
     setDestinations([...destinations, { 
       id: Date.now().toString(), 
-      type: "site", 
+      category: "site",
+      searchTerm: "",
       siteId: "", 
       siteName: "", 
       customName: "", 
@@ -91,7 +105,7 @@ export function RequestForm() {
     setDestinations(destinations.map(d => {
       if (d.id === id) {
         const updated = { ...d, [field]: value };
-        if (field === "siteId" && d.type === "site") {
+        if (field === "siteId" && d.category !== "custom") {
           const site = sites?.find(s => s.id === value);
           if (site) {
             updated.siteName = site.name;
@@ -104,20 +118,6 @@ export function RequestForm() {
     }))
   }
 
-  const toggleType = (id: string) => {
-    setDestinations(destinations.map(d => 
-      d.id === id ? { 
-        ...d, 
-        type: d.type === "site" ? "other" : "site",
-        siteId: "",
-        siteName: "",
-        customName: "",
-        coordinates: "",
-        saveAsSite: false
-      } : d
-    ))
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!requestedBy || !requestDate || !requestTime || !user) {
@@ -126,7 +126,7 @@ export function RequestForm() {
     }
 
     const validDestinations = destinations.filter(d => 
-      (d.type === "site" && d.siteId) || (d.type === "other" && d.customName && d.coordinates)
+      (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName && d.coordinates)
     )
 
     if (validDestinations.length === 0) {
@@ -145,20 +145,20 @@ export function RequestForm() {
         const [lat, lng] = d.coordinates.split(',').map(s => parseFloat(s.trim()))
         const latVal = isNaN(lat) ? 0 : lat
         const lngVal = isNaN(lng) ? 0 : lng
-        const finalName = d.type === "site" ? d.siteName : d.customName
+        const finalName = d.category === "custom" ? d.customName : d.siteName
 
         parsedDestinations.push({
-          type: d.type,
+          type: d.category === "custom" ? "other" : "site",
           siteId: d.siteId || null,
           siteName: finalName,
-          customName: d.type === "other" ? d.customName : null,
+          customName: d.category === "custom" ? d.customName : null,
           lat: latVal,
           lng: lngVal,
           jobDescription: d.jobDescription
         })
 
         // Handle "Save as site" feature
-        if (d.type === "other" && d.saveAsSite && d.customName && d.coordinates) {
+        if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates) {
           const newSiteRef = doc(collection(db, "sites"))
           await setDoc(newSiteRef, {
             id: newSiteRef.id,
@@ -199,7 +199,7 @@ export function RequestForm() {
       setRequestDate(new Date().toISOString().split('T')[0])
       setRequestTime("08:30")
       setNote("")
-      setDestinations([{ id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }])
+      setDestinations([{ id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }])
     } catch (error) {
       console.error("Error saving request:", error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
@@ -268,46 +268,75 @@ export function RequestForm() {
                   <Card key={dest.id} className="bg-secondary/20 border-border/50 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-accent" />
                     <CardContent className="p-4 md:p-6 space-y-4">
+                      {/* Category Tabs */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="flex bg-background/50 p-1 rounded-md w-full sm:w-auto">
-                          <Button 
-                            type="button" 
-                            variant={dest.type === "site" ? "default" : "ghost"} 
-                            size="sm" 
-                            className={cn("flex-1 sm:flex-none h-8 text-xs", dest.type === "site" && "bg-accent")}
-                            onClick={() => dest.type !== "site" && toggleType(dest.id)}
-                          >
-                            <Building2 className="mr-2 h-3 w-3" /> ไซน์งาน / สถานที่ประจำ
-                          </Button>
-                          <Button 
-                            type="button" 
-                            variant={dest.type === "other" ? "default" : "ghost"} 
-                            size="sm" 
-                            className={cn("flex-1 sm:flex-none h-8 text-xs", dest.type === "other" && "bg-accent")}
-                            onClick={() => dest.type !== "other" && toggleType(dest.id)}
-                          >
-                            <Globe className="mr-2 h-3 w-3" /> สถานที่ใหม่ (กำหนดเอง)
-                          </Button>
+                        <div className="flex flex-wrap gap-1.5 p-1 bg-background/50 rounded-lg">
+                          {CATEGORIES.map(cat => (
+                            <Button 
+                              key={cat.id}
+                              type="button"
+                              variant={dest.category === cat.id ? "default" : "ghost"}
+                              size="sm"
+                              className={cn(
+                                "h-8 text-[10px] px-2.5 flex items-center gap-1.5",
+                                dest.category === cat.id && "bg-accent hover:bg-accent/90"
+                              )}
+                              onClick={() => {
+                                updateDest(dest.id, "category", cat.id);
+                                updateDest(dest.id, "siteId", "");
+                                updateDest(dest.id, "siteName", "");
+                                updateDest(dest.id, "customName", "");
+                                updateDest(dest.id, "coordinates", "");
+                                updateDest(dest.id, "searchTerm", "");
+                              }}
+                            >
+                              <cat.icon className="h-3.5 w-3.5" />
+                              {cat.label}
+                            </Button>
+                          ))}
                         </div>
                         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive h-8 w-8 self-end sm:self-auto" onClick={() => removeDestination(dest.id)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {dest.type === "site" ? (
-                          <div className="space-y-2">
-                            <Label>เลือกสถานที่</Label>
-                            <Select value={dest.siteId} onValueChange={(val) => updateDest(dest.id, "siteId", val)}>
-                              <SelectTrigger className="h-11">
-                                <SelectValue placeholder="ค้นหาไซน์งาน, ร้านค้า, ธนาคาร..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name} ({s.projectTypeTag})</SelectItem>)}
-                              </SelectContent>
-                            </Select>
+                      {dest.category !== "custom" ? (
+                        <div className="space-y-4">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input 
+                              placeholder="พิมพ์เพื่อค้นหา..." 
+                              className="h-10 pl-10 text-xs bg-background/30"
+                              value={dest.searchTerm}
+                              onChange={(e) => updateDest(dest.id, "searchTerm", e.target.value)}
+                            />
                           </div>
-                        ) : (
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label>เลือก{CATEGORIES.find(c => c.id === dest.category)?.label}</Label>
+                              <Select value={dest.siteId} onValueChange={(val) => updateDest(dest.id, "siteId", val)}>
+                                <SelectTrigger className="h-11">
+                                  <SelectValue placeholder={`ค้นหา${CATEGORIES.find(c => c.id === dest.category)?.label}...`} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {sites?.filter(s => {
+                                    const cat = CATEGORIES.find(c => c.id === dest.category);
+                                    const matchesType = cat?.types.includes(s.projectTypeTag);
+                                    const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase());
+                                    return matchesType && matchesSearch;
+                                  }).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>พิกัด (ดึงข้อมูลอัตโนมัติ)</Label>
+                              <Input className="h-11 bg-muted/30" value={dest.coordinates} readOnly />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <Label>ชื่อสถานที่</Label>
                             <Input 
@@ -317,12 +346,9 @@ export function RequestForm() {
                               onChange={(e) => updateDest(dest.id, "customName", e.target.value)}
                             />
                           </div>
-                        )}
-
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <Label>พิกัด (lat, lng)</Label>
-                            {dest.type === "other" && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label>พิกัด (lat, lng)</Label>
                               <Button 
                                 type="button" 
                                 variant="link" 
@@ -331,29 +357,28 @@ export function RequestForm() {
                               >
                                 <ExternalLink className="mr-1 h-3 w-3" /> เปิด Google Maps
                               </Button>
-                            )}
+                            </div>
+                            <Input 
+                              placeholder="14.0815, 100.7129" 
+                              className="h-11"
+                              value={dest.coordinates}
+                              onChange={(e) => updateDest(dest.id, "coordinates", e.target.value)}
+                            />
                           </div>
-                          <Input 
-                            placeholder="14.0815, 100.7129" 
-                            className="h-11"
-                            value={dest.coordinates}
-                            onChange={(e) => updateDest(dest.id, "coordinates", e.target.value)}
-                            readOnly={dest.type === "site"}
-                          />
                         </div>
-                      </div>
+                      )}
 
                       <div className="space-y-2">
                         <Label>ลักษณะงานที่ต้องทำ</Label>
-                        <Textarea 
+                        <Input 
                           placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ" 
-                          className="min-h-[80px] bg-background/30"
+                          className="h-11 bg-background/30"
                           value={dest.jobDescription}
                           onChange={(e) => updateDest(dest.id, "jobDescription", e.target.value)}
                         />
                       </div>
 
-                      {dest.type === "other" && (
+                      {dest.category === "custom" && (
                         <div className="space-y-4 pt-4 border-t border-border/30">
                           <div className="flex items-center space-x-2">
                             <Checkbox 

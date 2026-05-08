@@ -28,7 +28,10 @@ import {
   Building2,
   Globe,
   Eye,
-  EyeOff
+  EyeOff,
+  Store,
+  Landmark,
+  Briefcase
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc } from "firebase/firestore"
@@ -65,6 +68,23 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Loader } from "@googlemaps/js-api-loader"
+
+// Category mapping for filtering
+const CATEGORIES = [
+  { id: 'site', label: 'ไซน์งาน', icon: Building2, types: ['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
+  { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
+  { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
+  { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
+  { id: 'custom', label: 'กำหนดเอง', icon: MapPin, types: [] },
+];
+
+function getCategoryFromType(type: string): string {
+  if (['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
+  if (type === 'ร้านค้า / ซัพพลายเออร์') return 'store';
+  if (type === 'ธนาคาร') return 'bank';
+  if (type === 'บริษัท / หน่วยงานราชการ') return 'company';
+  return 'custom';
+}
 
 // Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
 function InlineRequestManager({ userRole }: { userRole?: string }) {
@@ -703,6 +723,8 @@ export default function RequestsPage() {
       destinations: req.destinations.map((d: any, idx: number) => ({
         id: `edit-${idx}-${Date.now()}`,
         type: d.type || "site",
+        category: getCategoryFromType(d.type || "site"),
+        searchTerm: "",
         siteId: d.siteId || "",
         siteName: d.siteName || "",
         customName: d.customName || "",
@@ -725,20 +747,20 @@ export default function RequestsPage() {
         const [lat, lng] = d.coordinates.split(',').map((s: string) => parseFloat(s.trim()))
         const latVal = isNaN(lat) ? 0 : lat
         const lngVal = isNaN(lng) ? 0 : lng
-        const finalName = d.type === "site" ? d.siteName : d.customName
+        const finalName = d.category === "custom" ? d.customName : d.siteName
 
         parsedDestinations.push({
-          type: d.type,
+          type: d.category === "custom" ? "other" : "site",
           siteId: d.siteId || null,
           siteName: finalName,
-          customName: d.type === "other" ? d.customName : null,
+          customName: d.category === "custom" ? d.customName : null,
           lat: latVal,
           lng: lngVal,
           jobDescription: d.jobDescription
         })
 
         // Save as common location if checked
-        if (d.type === "other" && d.saveAsSite && d.customName && d.coordinates) {
+        if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates) {
           const newSiteRef = doc(collection(db, "sites"))
           await setDoc(newSiteRef, {
             id: newSiteRef.id,
@@ -924,7 +946,7 @@ export default function RequestsPage() {
                     className="border-accent text-accent"
                     onClick={() => setEditFormData({
                       ...editFormData,
-                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }]
+                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }]
                     })}
                   >
                     <Plus className="h-4 w-4 mr-2" /> เพิ่มจุดหมาย
@@ -934,33 +956,32 @@ export default function RequestsPage() {
                 <div className="space-y-4">
                   {editFormData.destinations.map((dest: any, idx: number) => (
                     <Card key={dest.id} className="bg-secondary/20 border-border/50 p-4 space-y-4">
-                      <div className="flex justify-between items-center">
-                        <div className="flex bg-background/50 p-1 rounded-md">
+                      {/* Category Selector */}
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {CATEGORIES.map(cat => (
                           <Button 
-                            variant={dest.type === "site" ? "default" : "ghost"} 
-                            size="sm" 
-                            className={cn("h-7 text-[10px]", dest.type === "site" && "bg-accent")}
+                            key={cat.id}
+                            type="button"
+                            variant={dest.category === cat.id ? "default" : "outline"}
+                            size="sm"
+                            className={cn(
+                              "h-8 text-[10px] px-2 py-1 flex items-center gap-1.5",
+                              dest.category === cat.id && "bg-accent hover:bg-accent/90"
+                            )}
                             onClick={() => {
-                              const newDests = [...editFormData.destinations]
-                              newDests[idx].type = "site"
-                              setEditFormData({...editFormData, destinations: newDests})
+                              const newDests = [...editFormData.destinations];
+                              newDests[idx].category = cat.id;
+                              newDests[idx].siteId = "";
+                              newDests[idx].siteName = "";
+                              newDests[idx].coordinates = "";
+                              newDests[idx].searchTerm = "";
+                              setEditFormData({...editFormData, destinations: newDests});
                             }}
                           >
-                            <Building2 className="mr-1 h-3 w-3" /> ไซน์งาน
+                            <cat.icon className="h-3 w-3" /> {cat.label}
                           </Button>
-                          <Button 
-                            variant={dest.type === "other" ? "default" : "ghost"} 
-                            size="sm" 
-                            className={cn("h-7 text-[10px]", dest.type === "other" && "bg-accent")}
-                            onClick={() => {
-                              const newDests = [...editFormData.destinations]
-                              newDests[idx].type = "other"
-                              setEditFormData({...editFormData, destinations: newDests})
-                            }}
-                          >
-                            <Globe className="mr-1 h-3 w-3" /> สถานที่อื่น
-                          </Button>
-                        </div>
+                        ))}
+                        <div className="flex-1" />
                         <Button 
                           variant="ghost" 
                           size="icon" 
@@ -975,10 +996,24 @@ export default function RequestsPage() {
                         </Button>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {dest.type === 'site' ? (
+                      {dest.category !== 'custom' ? (
+                        <div className="space-y-3">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                            <Input 
+                              placeholder="ค้นหาชื่อสถานที่..." 
+                              className="pl-8 h-9 text-xs"
+                              value={dest.searchTerm}
+                              onChange={(e) => {
+                                const newDests = [...editFormData.destinations];
+                                newDests[idx].searchTerm = e.target.value;
+                                setEditFormData({...editFormData, destinations: newDests});
+                              }}
+                            />
+                          </div>
+                          
                           <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase text-muted-foreground">เลือกไซน์งาน</Label>
+                            <Label className="text-[10px] uppercase text-muted-foreground">เลือกสถานที่</Label>
                             <Select 
                               value={dest.siteId} 
                               onValueChange={(val) => {
@@ -990,18 +1025,26 @@ export default function RequestsPage() {
                                 setEditFormData({...editFormData, destinations: newDests})
                               }}
                             >
-                              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-9"><SelectValue placeholder={`เลือก${CATEGORIES.find(c => c.id === dest.category)?.label}`} /></SelectTrigger>
                               <SelectContent>
-                                {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                                {sites?.filter(s => {
+                                  const category = CATEGORIES.find(c => c.id === dest.category);
+                                  const matchesType = category?.types.includes(s.projectTypeTag);
+                                  const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase());
+                                  return matchesType && matchesSearch;
+                                }).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           </div>
-                        ) : (
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           <div className="space-y-1.5">
                             <Label className="text-[10px] uppercase text-muted-foreground">ชื่อสถานที่</Label>
                             <Input 
                               className="h-9" 
                               value={dest.customName}
+                              placeholder="ระบุชื่อสถานที่ใหม่..."
                               onChange={(e) => {
                                 const newDests = [...editFormData.destinations]
                                 newDests[idx].customName = e.target.value
@@ -1009,36 +1052,45 @@ export default function RequestsPage() {
                               }}
                             />
                           </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] uppercase text-muted-foreground">พิกัด (lat, lng)</Label>
+                            <Input 
+                              className="h-9" 
+                              value={dest.coordinates}
+                              placeholder="เช่น 13.7563, 100.5018"
+                              onChange={(e) => {
+                                const newDests = [...editFormData.destinations]
+                                newDests[idx].coordinates = e.target.value
+                                setEditFormData({...editFormData, destinations: newDests})
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {dest.category !== 'custom' && (
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] uppercase text-muted-foreground">พิกัด</Label>
+                            <Input className="h-9 bg-muted/30" value={dest.coordinates} readOnly />
+                          </div>
                         )}
-                        <div className="space-y-1.5">
-                          <Label className="text-[10px] uppercase text-muted-foreground">พิกัด (lat, lng)</Label>
+                        <div className={cn("space-y-1.5", dest.category === 'custom' ? "md:col-span-2" : "")}>
+                          <Label className="text-[10px] uppercase text-muted-foreground">ลักษณะงาน</Label>
                           <Input 
-                            className="h-9" 
-                            value={dest.coordinates}
-                            readOnly={dest.type === 'site'}
+                            className="h-9 text-xs" 
+                            placeholder="รายละเอียดงาน..."
+                            value={dest.jobDescription}
                             onChange={(e) => {
                               const newDests = [...editFormData.destinations]
-                              newDests[idx].coordinates = e.target.value
+                              newDests[idx].jobDescription = e.target.value
                               setEditFormData({...editFormData, destinations: newDests})
                             }}
                           />
                         </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <Label className="text-[10px] uppercase text-muted-foreground">ลักษณะงาน</Label>
-                        <Textarea 
-                          className="min-h-[60px] text-xs" 
-                          value={dest.jobDescription}
-                          onChange={(e) => {
-                            const newDests = [...editFormData.destinations]
-                            newDests[idx].jobDescription = e.target.value
-                            setEditFormData({...editFormData, destinations: newDests})
-                          }}
-                        />
-                      </div>
-
-                      {dest.type === "other" && (
+                      {dest.category === "custom" && (
                         <div className="space-y-3 pt-2 border-t border-border/30">
                           <div className="flex items-center space-x-2">
                             <Checkbox 
@@ -1175,7 +1227,7 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {req.status === "pending" && req.userId === user?.uid && (
+                            {(req.status === "pending" || req.status === "partial") && req.userId === user?.uid && (
                               <>
                                 <Button 
                                   variant="outline" 
