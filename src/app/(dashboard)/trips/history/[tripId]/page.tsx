@@ -57,9 +57,6 @@ export default function TripDetailPage() {
   const driverRef = useMemoFirebase(() => trip?.driverId ? doc(db, "drivers", trip.driverId) : null, [db, trip?.driverId])
   const { data: driverData } = useDoc<Driver>(driverRef)
 
-  const editLogsRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "editLogs"), orderBy("editedAt", "desc")), [db, tripId])
-  const { data: editLogs } = useCollection<TripEditLog>(editLogsRef)
-
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const directionsRendererRef = React.useRef<google.maps.DirectionsRenderer | null>(null)
@@ -67,7 +64,7 @@ export default function TripDetailPage() {
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
   const [noCoordsWarning, setNoCoordsWarning] = React.useState(false)
 
-  // Use a ref to keep track of markers so they can be cleared
+  // Keep track of markers
   const markersRef = React.useRef<google.maps.Marker[]>([])
 
   const formatDurationFormatted = (minutes: number) => {
@@ -114,9 +111,9 @@ export default function TripDetailPage() {
 
   // 2. Initialize Map instance and Routing
   React.useEffect(() => {
-    if (!apiLoaded || !mapContainerRef.current || !trip || !allSites) return;
+    // CRITICAL: Must wait for allSites to be loaded to resolve coordinates accurately
+    if (!apiLoaded || !mapContainerRef.current || !trip || isSitesLoading || !allSites) return;
 
-    // Small delay to ensure container is fully rendered (300ms)
     const timeout = setTimeout(() => {
       const google = window.google;
       
@@ -157,21 +154,26 @@ export default function TripDetailPage() {
       // Resolve coordinates for each stop
       const resolvedWaypoints = (trip.stops || []).map((s: any) => {
         let position: google.maps.LatLng | null = null;
+        
+        // 1. Priority: Use coordinates explicitly saved in the trip stop
         if (s.lat && s.lng) {
           position = new google.maps.LatLng(s.lat, s.lng);
-        } else {
-          const site = allSites?.find(site => site.id === s.siteId);
+        } 
+        // 2. Secondary: Look up from sites master data if only siteId is present
+        else if (s.siteId) {
+          const site = allSites.find(site => site.id === s.siteId);
           if (site?.latitude && site?.longitude) {
             position = new google.maps.LatLng(site.latitude, site.longitude);
           }
         }
+        
         return { position, siteName: s.siteName };
       });
 
       const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
-      if (validWaypoints.length < resolvedWaypoints.length) {
-        setNoCoordsWarning(true);
-      }
+      
+      // Update warning state based on actual resolution outcome
+      setNoCoordsWarning(validWaypoints.length < resolvedWaypoints.length);
 
       if (validWaypoints.length > 0) {
         const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
@@ -190,17 +192,19 @@ export default function TripDetailPage() {
           if (status === "OK" && result) {
             directionsRenderer.setDirections(result);
             
-            // Calculate real duration
-            let totalDur = 0;
+            // Calculate total travel duration from API response
+            let totalDurValue = 0;
             result.routes[0].legs.forEach(leg => {
-              totalDur += leg.duration?.value || 0;
-            });
-            setCalculatedStats({
-              distance: trip.totalDistanceKm || 0,
-              duration: Math.ceil(totalDur / 60)
+              totalDurValue += leg.duration?.value || 0;
             });
 
-            // Draw Markers
+            setCalculatedStats({
+              distance: trip.totalDistanceKm || (result.routes[0].legs.reduce((acc, l) => acc + (l.distance?.value || 0), 0) / 1000),
+              duration: Math.ceil(totalDurValue / 60)
+            });
+
+            // Draw Markers with numbers
+            // 1. Office Marker
             const startMarker = new google.maps.Marker({
               position: origin,
               map,
@@ -216,6 +220,7 @@ export default function TripDetailPage() {
             });
             markersRef.current.push(startMarker);
 
+            // 2. Stops Markers
             validWaypoints.forEach((wp, idx) => {
               const marker = new google.maps.Marker({
                 position: wp.position!,
@@ -239,7 +244,7 @@ export default function TripDetailPage() {
               markersRef.current.push(marker);
             });
 
-            // Adjust bounds
+            // Auto-adjust zoom to fit all markers
             const bounds = new google.maps.LatLngBounds();
             bounds.extend(origin);
             validWaypoints.forEach(wp => bounds.extend(wp.position!));
@@ -250,7 +255,7 @@ export default function TripDetailPage() {
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [apiLoaded, trip, allSites]);
+  }, [apiLoaded, trip, allSites, isSitesLoading]);
 
   const handleStatusChange = async (newStatus: TripStatus) => {
     if (!trip) return
@@ -277,6 +282,10 @@ export default function TripDetailPage() {
   const finalDuration = (trip.totalEstimatedTimeMinutes && trip.totalEstimatedTimeMinutes > 0) 
     ? trip.totalEstimatedTimeMinutes 
     : (calculatedStats?.duration || 0);
+
+  const finalDistance = (trip.totalDistanceKm && trip.totalDistanceKm > 0)
+    ? trip.totalDistanceKm
+    : (calculatedStats?.distance || 0);
 
   const uniqueRequesters = [...new Set([
     (trip as any).requestedBy,
@@ -313,9 +322,9 @@ export default function TripDetailPage() {
         {noCoordsWarning && (
           <Alert variant="destructive" className="bg-destructive/10 border-destructive/20">
             <AlertCircle className="h-4 w-4" />
-            <AlertTitle>แจ้งเตือนพิกัดไม่ครบถ้วน</AlertTitle>
+            <AlertTitle>แจ้งเตือนข้อมูลเส้นทาง</AlertTitle>
             <AlertDescription>
-              บางจุดส่งของไม่มีข้อมูลพิกัดในระบบ แผนที่จึงแสดงเส้นทางได้เพียงบางส่วนเท่านั้น
+              ระบบไม่สามารถระบุพิกัดในบางจุดส่งของได้จากข้อมูลที่มีอยู่ แผนที่อาจแสดงเส้นทางได้ไม่ครบถ้วน
             </AlertDescription>
           </Alert>
         )}
@@ -351,7 +360,7 @@ export default function TripDetailPage() {
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><RouteIcon className="h-3 w-3" /> ระยะทาง</p>
-                    <p className="font-bold text-sm md:text-base">{trip.totalDistanceKm?.toFixed(1) || "0.0"} กม.</p>
+                    <p className="font-bold text-sm md:text-base">{finalDistance.toFixed(1)} กม.</p>
                   </div>
                 </div>
               </CardContent>
@@ -405,7 +414,7 @@ export default function TripDetailPage() {
                   <Clock className="h-5 w-5 md:h-6 md:w-6 text-accent" />
                   {formatDurationFormatted(finalDuration)}
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณจากระยะทาง {trip.totalDistanceKm?.toFixed(1) || 0} กม. ตามสภาพจราจรจริง</p>
+                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณจากระยะทาง {finalDistance.toFixed(1)} กม. ตามข้อมูลจราจรจริง</p>
               </CardContent>
             </Card>
           </div>
@@ -481,7 +490,7 @@ export default function TripDetailPage() {
           </tbody>
         </table>
         <div style={{ marginTop: '15px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-          <div><strong>ระยะทางรวม:</strong> {trip.totalDistanceKm?.toFixed(1) || 0} กม.</div>
+          <div><strong>ระยะทางรวม:</strong> {finalDistance.toFixed(1)} กม.</div>
           <div><strong>เวลาเดินทางโดยประมาณ:</strong> {formatDurationFormatted(finalDuration)}</div>
           <div style={{ fontStyle: 'italic' }}>* พิมพ์จากระบบ LOTUS GROUP Transport Management</div>
         </div>
