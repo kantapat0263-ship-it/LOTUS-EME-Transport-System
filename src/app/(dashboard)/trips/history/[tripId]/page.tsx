@@ -43,7 +43,7 @@ export default function TripDetailPage() {
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
 
-  // Fetch sites to resolve coordinates as fallback
+  // Fetch sites for Master Data fallback if needed
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: allSites, isLoading: isSitesLoading } = useCollection<Site>(sitesRef)
   
@@ -103,7 +103,7 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
-  // 2. Draw Route using saved coordinates
+  // 2. Draw Route using saved coordinates or master data
   React.useEffect(() => {
     if (!apiLoaded || !mapContainerRef.current || !trip || isSitesLoading || !allSites) return;
 
@@ -112,7 +112,7 @@ export default function TripDetailPage() {
       
       if (!mapRef.current) {
         const map = new google.maps.Map(mapContainerRef.current!, {
-          center: HEAD_OFFICE,
+          center: { lat: trip.originLat || HEAD_OFFICE.lat, lng: trip.originLng || HEAD_OFFICE.lng },
           zoom: 12,
           styles: [
             { featureType: "landscape", elementType: "all", color: "#2d3139" },
@@ -143,7 +143,7 @@ export default function TripDetailPage() {
       markersRef.current.forEach(m => m.setMap(null));
       markersRef.current = [];
 
-      // Priority 1: Direct saved coords. Fallback: Lookup site collection.
+      // Resolve Waypoints: Priority 1 - Trip Stops Saved Lat/Lng, Priority 2 - Master Sites Data
       const resolvedWaypoints = (trip.stops || []).map((s: any) => {
         let position: google.maps.LatLng | null = null;
         if (s.lat && s.lng) {
@@ -160,7 +160,7 @@ export default function TripDetailPage() {
       const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
       
       if (validWaypoints.length > 0) {
-        const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
+        const origin = new google.maps.LatLng(trip.originLat || HEAD_OFFICE.lat, trip.originLng || HEAD_OFFICE.lng);
         const destination = validWaypoints[validWaypoints.length - 1].position!;
         const intermediates = validWaypoints.slice(0, -1).map(w => ({
           location: w.position!,
@@ -192,7 +192,7 @@ export default function TripDetailPage() {
             const startMarker = new google.maps.Marker({
               position: origin,
               map,
-              title: "จุดเริ่มต้น (สำนักงาน)",
+              title: trip.departurePoint || "จุดเริ่มต้น (สำนักงาน)",
               icon: {
                 path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
                 scale: 7,
