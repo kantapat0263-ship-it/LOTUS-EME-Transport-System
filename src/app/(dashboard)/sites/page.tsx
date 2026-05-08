@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -74,7 +75,7 @@ export default function SitesPage() {
   const db = useFirestore()
   const { user } = useUser()
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
-  const { data: profile } = useDoc<UserProfile>(userProfileRef)
+  const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
   
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<CompanySetting>(settingsRef)
@@ -206,11 +207,14 @@ export default function SitesPage() {
   }
 
   function handleEdit(site: Site) {
+    if (!profile) return;
+    
     const canEdit = isStaff || (isViewer && (site as any).addedBy === user?.email);
     if (!canEdit) {
       toast({ title: "ไม่มีสิทธิ์", description: "คุณสามารถแก้ไขได้เฉพาะสถานที่ที่คุณเพิ่มเองเท่านั้น", variant: "destructive" });
       return;
     }
+
     setEditingSite(site)
     form.reset({
       name: site.name,
@@ -218,7 +222,11 @@ export default function SitesPage() {
       coordinates: site.latitude && site.longitude ? `${site.latitude}, ${site.longitude}` : "",
       projectTypeTag: site.projectTypeTag,
     })
-    setIsDialogOpen(true)
+    
+    // Add small delay to ensure DropdownMenu closes before Dialog opens
+    setTimeout(() => {
+      setIsDialogOpen(true)
+    }, 100)
   }
 
   function handleDelete(siteId: string) {
@@ -255,13 +263,13 @@ export default function SitesPage() {
 
   const locationTypes = ["ทั้งหมด", "ไซน์งาน", "ร้านค้า / ซัพพลายเออร์", "ธนาคาร", "บริษัท / หน่วยงานราชการ", "อื่น ๆ", "LOTUS EME", "P-ADVANCED"]
 
-  if (!user) return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
+  if (!user || isProfileLoading) return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">จัดการสถานที่</h2>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">จัดการสถานที่</h2>
           <p className="text-sm md:text-base text-muted-foreground">เพิ่มและจัดการไซน์งาน ร้านค้า และจุดส่งของประจำ</p>
         </div>
         <Button 
@@ -282,7 +290,7 @@ export default function SitesPage() {
             key={type}
             variant={filterType === type ? "default" : "outline"}
             size="sm"
-            className={cn("h-8 text-xs", filterType === type && "bg-accent")}
+            className={cn("h-8 text-xs transition-all", filterType === type && "bg-accent")}
             onClick={() => setFilterType(type)}
           >
             {type}
@@ -350,8 +358,8 @@ export default function SitesPage() {
                           <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(site)}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
-                          {isStaff && <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(site.id)}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>}
+                          <DropdownMenuItem onSelect={() => handleEdit(site)}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
+                          {isStaff && <DropdownMenuItem className="text-destructive" onSelect={() => handleDelete(site.id)}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -375,8 +383,8 @@ export default function SitesPage() {
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleEdit(site)}>แก้ไข</DropdownMenuItem>
-                      {isStaff && <DropdownMenuItem onClick={() => handleDelete(site.id)} className="text-destructive">ลบ</DropdownMenuItem>}
+                      <DropdownMenuItem onSelect={() => handleEdit(site)}>แก้ไข</DropdownMenuItem>
+                      {isStaff && <DropdownMenuItem onSelect={() => handleDelete(site.id)} className="text-destructive">ลบ</DropdownMenuItem>}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -391,7 +399,13 @@ export default function SitesPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog open={isDialogOpen} onOpenChange={(open) => {
+        setIsDialogOpen(open);
+        if (!open) {
+          setEditingSite(null);
+          form.reset();
+        }
+      }}>
         <DialogContent className="sm:max-w-[500px] w-[95%] rounded-lg">
           <DialogHeader>
             <DialogTitle>{editingSite ? "แก้ไขข้อมูลสถานที่" : "เพิ่มสถานที่ใหม่"}</DialogTitle>
@@ -406,7 +420,7 @@ export default function SitesPage() {
               <FormField control={form.control} name="projectTypeTag" render={({ field }) => (
                 <FormItem>
                   <FormLabel>ประเภทสถานที่</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl><SelectTrigger className="h-11"><SelectValue placeholder="เลือกประเภท" /></SelectTrigger></FormControl>
                     <SelectContent>
                       {locationTypes.slice(1).map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
