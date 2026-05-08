@@ -1,10 +1,10 @@
-
 "use client"
 
 import * as React from "react"
 import { Plus, Search, MapPin, Filter, MoreHorizontal, Edit, Trash2, Loader2, ExternalLink, Map as MapIcon, Check, AlertCircle, Building2, Globe, Store, Landmark, Briefcase } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { 
   Table, 
   TableBody, 
