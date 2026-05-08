@@ -45,6 +45,9 @@ import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 import { useToast } from "@/hooks/use-toast"
 
+// Production URL for public access
+const PRODUCTION_URL = "https://lotus-eme-transport-system.vercel.app"
+
 // LOTUS GROUP Head Office Coordinates (Default)
 const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
 
@@ -267,9 +270,10 @@ export default function TripDetailPage() {
     })
   }
 
+  const driverUrl = `${PRODUCTION_URL}/driver/${trip?.tripId}`;
+
   const handleCopyLink = () => {
-    const url = `${window.location.origin}/driver/${trip?.tripId}`;
-    navigator.clipboard.writeText(url);
+    navigator.clipboard.writeText(driverUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({ title: "คัดลอกลิงก์แล้ว", description: "คุณสามารถส่งลิงก์นี้ให้คนขับได้ทันที" });
@@ -300,8 +304,6 @@ export default function TripDetailPage() {
     (trip as any).requestedBy,
     ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
   ])].filter(Boolean).join(", ") || "-";
-
-  const driverUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/driver/${trip.tripId}`;
 
   return (
     <>
