@@ -14,7 +14,12 @@ import {
   Route as RouteIcon,
   Loader2,
   AlertCircle,
-  Phone
+  Phone,
+  Send,
+  Copy,
+  Check,
+  QrCode,
+  X
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -25,11 +30,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from "@/components/ui/dialog"
 import { useDoc, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, updateDoc, serverTimestamp, collection } from "firebase/firestore"
 import { Trip, TripStatus, CompanySetting, Site, Driver } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
+import { useToast } from "@/hooks/use-toast"
 
 // LOTUS GROUP Head Office Coordinates (Default)
 const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
@@ -37,6 +51,7 @@ const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
 export default function TripDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const { toast } = useToast()
   const db = useFirestore()
   const tripId = params.tripId as string
   
@@ -60,6 +75,10 @@ export default function TripDetailPage() {
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
 
   const markersRef = React.useRef<google.maps.Marker[]>([])
+
+  // Share Dialog States
+  const [isShareOpen, setIsShareOpen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
 
   const formatDurationFormatted = (minutes: number) => {
     if (minutes <= 0) return "-";
@@ -248,6 +267,14 @@ export default function TripDetailPage() {
     })
   }
 
+  const handleCopyLink = () => {
+    const url = `${window.location.origin}/driver/${trip?.tripId}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    toast({ title: "คัดลอกลิงก์แล้ว", description: "คุณสามารถส่งลิงก์นี้ให้คนขับได้ทันที" });
+  };
+
   const getStatusColor = (status: TripStatus) => {
     switch (status) {
       case 'Completed': return 'bg-green-500 text-white';
@@ -274,6 +301,8 @@ export default function TripDetailPage() {
     ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
   ])].filter(Boolean).join(", ") || "-";
 
+  const driverUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/driver/${trip.tripId}`;
+
   return (
     <>
       <div className="space-y-6 animate-in fade-in duration-500 no-print">
@@ -281,7 +310,14 @@ export default function TripDetailPage() {
           <Button variant="ghost" onClick={() => router.push('/trips/history')} className="w-full sm:w-auto justify-start">
             <ChevronLeft className="mr-2 h-4 w-4" /> กลับหน้าประวัติ
           </Button>
-          <div className="flex gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+            <Button 
+              variant="outline" 
+              className="flex-1 sm:flex-none h-11 sm:h-9 border-blue-500 text-blue-500 hover:bg-blue-500/10"
+              onClick={() => setIsShareOpen(true)}
+            >
+              <Send className="mr-2 h-4 w-4" /> ส่งให้คนขับ
+            </Button>
             <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none h-11 sm:h-9">
               <Printer className="mr-2 h-4 w-4" /> พิมพ์ใบงาน
             </Button>
@@ -393,6 +429,46 @@ export default function TripDetailPage() {
         </div>
       </div>
 
+      {/* Share Dialog */}
+      <Dialog open={isShareOpen} onOpenChange={setIsShareOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Send className="h-5 w-5 text-blue-500" /> ส่งใบงานให้คนขับ
+            </DialogTitle>
+            <DialogDescription>
+              คนขับสามารถดูใบงานและนำทางได้ทันทีโดยไม่ต้องเข้าสู่ระบบ
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Link สำหรับคนขับ</p>
+              <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/50 group">
+                <p className="text-sm font-medium truncate flex-1 text-blue-400">{driverUrl}</p>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 hover:bg-blue-500/10" onClick={handleCopyLink}>
+                  {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4 text-blue-500" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-4 py-2">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">QR Code สำหรับสแกน</p>
+              <div className="bg-white p-4 rounded-2xl shadow-inner border border-gray-100">
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(driverUrl)}`}
+                  alt="Trip QR Code"
+                  className="w-48 h-48"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground italic">(สแกนเพื่อเปิดใบงานในโทรศัพท์มือถือ)</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="w-full h-11" onClick={() => setIsShareOpen(false)}>ปิดหน้าต่าง</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Official Form Print Section */}
       <div className="print-only" style={{ width: '100%', color: '#000', backgroundColor: '#fff', padding: '0' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', border: '2px solid #000' }}>
@@ -425,7 +501,7 @@ export default function TripDetailPage() {
                 {formatThaiShortDate(trip.tripDate)}
               </td>
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', textAlign: 'center' }}>
-                {trip.departureTime || "08:30"} น.
+                {(trip as any).departureTime || "08:30"} น.
               </td>
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top' }}>
                 {(trip.stops || []).map((stop: any, index: number) => (

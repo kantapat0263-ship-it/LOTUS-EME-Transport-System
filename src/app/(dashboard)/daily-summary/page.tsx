@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -16,8 +17,20 @@ import {
   AlertCircle,
   Truck,
   User as UserIcon,
-  MapPin
+  MapPin,
+  Send,
+  Copy,
+  Check,
+  QrCode
 } from "lucide-react"
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Trip } from "@/types/models"
 import { cn } from "@/lib/utils"
@@ -28,6 +41,10 @@ export default function DailySummaryPage() {
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0])
   const [trips, setTrips] = React.useState<Trip[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
+
+  // Share Modal State
+  const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
+  const [copied, setCopied] = React.useState(false)
 
   const fetchTrips = async () => {
     setIsLoading(true)
@@ -78,9 +95,26 @@ export default function DailySummaryPage() {
     window.print()
   }
 
+  const handleShareClick = (trip: Trip) => {
+    setSelectedTripForShare(trip)
+  }
+
+  const handleCopyLink = () => {
+    if (!selectedTripForShare) return
+    const url = `${window.location.origin}/driver/${selectedTripForShare.tripId}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    toast({ title: "คัดลอกลิงก์แล้ว", description: "ส่งลิงก์ให้คนขับได้เลย" });
+  };
+
   // Calculate statistics
   const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
   const uniqueDrivers = new Set(trips.map(t => t.driverName)).size
+
+  const shareUrl = selectedTripForShare 
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/driver/${selectedTripForShare.tripId}`
+    : '';
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -175,7 +209,7 @@ export default function DailySummaryPage() {
                         <th className="border border-black p-2 w-[12%] text-center">วัน เดือน ปี<br/>ที่ใช้รถ</th>
                         <th className="border border-black p-2 w-[8%] text-center">เวลา</th>
                         <th className="border border-black p-2 w-[55%] text-left">รายละเอียดของงานที่ปฏิบัติ<br/><span className="font-normal text-[10px]">ลักษณะงาน (แยกเป็นข้อ ๆ) และ สถานที่</span></th>
-                        <th className="border border-black p-2 w-[25%] text-left">ผู้ปฏิบัติงาน / ทะเบียนรถ<br/><span className="font-normal text-[10px]">ผู้ขอใช้รถ</span></th>
+                        <th className="border border-black p-2 w-[25%] text-left">ผู้ปฏิบัติงาน / ทะเบียนรถ<br/><span className="font-normal text-[10px]">ผู้ขอใช้รถ / ส่งงาน</span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -219,14 +253,27 @@ export default function DailySummaryPage() {
                               })}
                               {trip.stops?.length === 0 && <div className="text-gray-400 italic">ไม่มีข้อมูลจุดส่งของ</div>}
                             </td>
-                            <td className="border border-black p-2 align-top space-y-2">
-                              <div>
-                                <p className="font-bold">คนขับ: {trip.driverName}</p>
-                                <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
-                              </div>
-                              <div className="pt-2 border-t border-gray-200">
-                                <p className="text-[10px] font-bold text-gray-500 uppercase">ผู้ขอใช้รถ:</p>
-                                <p className="leading-tight">{requesters || "-"}</p>
+                            <td className="border border-black p-2 align-top">
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-2">
+                                  <div>
+                                    <p className="font-bold">คนขับ: {trip.driverName}</p>
+                                    <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
+                                  </div>
+                                  <div className="pt-2 border-t border-gray-200">
+                                    <p className="text-[10px] font-bold text-gray-500 uppercase">ผู้ขอใช้รถ:</p>
+                                    <p className="leading-tight">{requesters || "-"}</p>
+                                  </div>
+                                </div>
+                                <Button 
+                                  variant="outline" 
+                                  size="icon" 
+                                  className="no-print h-8 w-8 shrink-0 border-blue-500 text-blue-600 hover:bg-blue-50"
+                                  onClick={() => handleShareClick(trip)}
+                                  title="ส่งใบงานให้คนขับ"
+                                >
+                                  <Send className="h-4 w-4" />
+                                </Button>
                               </div>
                             </td>
                           </tr>
@@ -264,6 +311,45 @@ export default function DailySummaryPage() {
           </Card>
         </div>
       </div>
+
+      {/* Share Dialog */}
+      <Dialog open={!!selectedTripForShare} onOpenChange={(open) => !open && setSelectedTripForShare(null)}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Send className="h-5 w-5 text-blue-500" /> ส่งใบงานให้คนขับ
+            </DialogTitle>
+            <DialogDescription>
+              Trip ID: <span className="font-bold text-gray-900">{selectedTripForShare?.tripId}</span>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Link สำหรับคนขับ</p>
+              <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/50">
+                <p className="text-sm font-medium truncate flex-1 text-blue-400">{shareUrl}</p>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 hover:bg-blue-500/10" onClick={handleCopyLink}>
+                  {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4 text-blue-500" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-4 py-2">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">QR Code</p>
+              <div className="bg-white p-4 rounded-2xl shadow-inner border border-gray-100">
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareUrl)}`}
+                  alt="Trip QR Code"
+                  className="w-40 h-40"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="w-full h-11" onClick={() => setSelectedTripForShare(null)}>ปิด</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <style jsx global>{`
         @media print {
