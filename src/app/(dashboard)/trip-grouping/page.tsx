@@ -125,13 +125,18 @@ export default function TripGroupingPage() {
         totalDistanceKm: lastStats.distance || 0,
         fuelCost: lastStats.fuelCost || 0,
         createdAt: serverTimestamp(),
+        departurePoint: "คลังสินค้า LOTUS EME",
+        originLat: 14.0815,
+        originLng: 100.7129,
         stops: selectedDestinations.map((d, idx) => ({
-          siteId: d.siteId || d.id,
-          siteName: d.siteName,
-          cargoDetails: d.jobDescription,
-          order: idx,
-          lat: d.lat || null,
-          lng: d.lng || null
+          order: idx + 1,
+          siteId: d.siteId || null,
+          siteName: d.siteName || d.customName,
+          lat: d.lat,
+          lng: d.lng,
+          cargoDetails: d.jobDescription || '',
+          requestedBy: d.requestedBy || '',
+          address: d.address || ''
         }))
       })
 
@@ -164,6 +169,7 @@ export default function TripGroupingPage() {
       setVehicleId("")
       setDriverId("")
       setIsConfirmOpen(false)
+      sessionStorage.removeItem("pendingVR")
     } catch (e) {
       console.error(e)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถสร้างเที่ยววิ่งได้", variant: "destructive" })
@@ -241,30 +247,32 @@ export default function TripGroupingPage() {
 
       {/* Confirmation Dialog */}
       <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-        <AlertDialogContent className="max-w-md rounded-xl border-accent/20 bg-card">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-lg font-bold text-accent">ยืนยันสร้างเที่ยววิ่ง</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="text-sm py-2 text-foreground/90 space-y-3">
-                <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
-                  <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
-                  <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
-                  <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
+        <AlertDialogContent className="max-w-md rounded-xl border-accent/20 bg-card" asChild>
+          <div className="p-6">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-lg font-bold text-accent">ยืนยันสร้างเที่ยววิ่ง</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="text-sm py-2 text-foreground/90 space-y-3">
+                  <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
+                    <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
+                    <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
+                    <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
                 </div>
-                <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="gap-2">
-            <AlertDialogCancel className="h-10 text-sm flex-1">ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmCreateTrip}
-              className="h-10 text-sm flex-1 bg-accent hover:bg-accent/90"
-              disabled={isProcessing}
-            >
-              {isProcessing ? "กำลังประมวลผล..." : "ยืนยันสร้างงาน"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="gap-2 mt-4">
+              <AlertDialogCancel className="h-10 text-sm flex-1">ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={confirmCreateTrip}
+                className="h-10 text-sm flex-1 bg-accent hover:bg-accent/90"
+                disabled={isProcessing}
+              >
+                {isProcessing ? "กำลังประมวลผล..." : "ยืนยันสร้างงาน"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
         </AlertDialogContent>
       </AlertDialog>
     </div>

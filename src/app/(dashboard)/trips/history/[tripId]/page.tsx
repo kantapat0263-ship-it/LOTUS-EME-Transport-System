@@ -14,9 +14,7 @@ import {
   Route as RouteIcon,
   Loader2,
   AlertCircle,
-  Phone,
-  History,
-  Info
+  Phone
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -28,13 +26,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useDoc, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, updateDoc, serverTimestamp, collection, query, orderBy } from "firebase/firestore"
-import { Trip, TripStatus, CompanySetting, Site, Driver, TripEditLog } from "@/types/models"
+import { doc, updateDoc, serverTimestamp, collection } from "firebase/firestore"
+import { Trip, TripStatus, CompanySetting, Site, Driver } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
-import { format } from "date-fns"
-import { th } from "date-fns/locale"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 
 // LOTUS GROUP Head Office Coordinates (Default)
 const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
@@ -48,7 +43,7 @@ export default function TripDetailPage() {
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
 
-  // Fetch sites to resolve coordinates if not stored in trip document
+  // Fetch sites to resolve coordinates as fallback
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: allSites, isLoading: isSitesLoading } = useCollection<Site>(sitesRef)
   
@@ -63,9 +58,7 @@ export default function TripDetailPage() {
   const directionsRendererRef = React.useRef<google.maps.DirectionsRenderer | null>(null)
   const [apiLoaded, setApiLoaded] = React.useState(false)
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
-  const [noCoordsWarning, setNoCoordsWarning] = React.useState(false)
 
-  // Keep track of markers
   const markersRef = React.useRef<google.maps.Marker[]>([])
 
   const formatDurationFormatted = (minutes: number) => {
@@ -110,15 +103,13 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
-  // 2. Resolve Coordinates and Draw Route
+  // 2. Draw Route using saved coordinates
   React.useEffect(() => {
-    // CRITICAL: Ensure all data sources are ready
     if (!apiLoaded || !mapContainerRef.current || !trip || isSitesLoading || !allSites) return;
 
     const timeout = setTimeout(() => {
       const google = window.google;
       
-      // Initialize Map if not already done
       if (!mapRef.current) {
         const map = new google.maps.Map(mapContainerRef.current!, {
           center: HEAD_OFFICE,
@@ -149,16 +140,12 @@ export default function TripDetailPage() {
       const directionsRenderer = directionsRendererRef.current!;
       const directionsService = new google.maps.DirectionsService();
 
-      // Clear existing markers
       markersRef.current.forEach(m => m.setMap(null));
       markersRef.current = [];
 
-      // RESOLVE COORDINATES: 
-      // Priority 1: Use lat/lng explicitly saved in the trip stop document (for custom or captured coords)
-      // Priority 2: Use lat/lng from master Sites collection based on siteId
+      // Priority 1: Direct saved coords. Fallback: Lookup site collection.
       const resolvedWaypoints = (trip.stops || []).map((s: any) => {
         let position: google.maps.LatLng | null = null;
-        
         if (s.lat && s.lng) {
           position = new google.maps.LatLng(s.lat, s.lng);
         } else if (s.siteId) {
@@ -167,15 +154,11 @@ export default function TripDetailPage() {
             position = new google.maps.LatLng(site.latitude, site.longitude);
           }
         }
-        
         return { position, siteName: s.siteName };
       });
 
       const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
       
-      // Update warning: only if we actually couldn't find a stop's coordinates
-      setNoCoordsWarning(validWaypoints.length < (trip.stops?.length || 0));
-
       if (validWaypoints.length > 0) {
         const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
         const destination = validWaypoints[validWaypoints.length - 1].position!;
@@ -193,7 +176,6 @@ export default function TripDetailPage() {
           if (status === "OK" && result) {
             directionsRenderer.setDirections(result);
             
-            // Calculate total travel duration from API response (Sum of all legs)
             let totalDurValue = 0;
             let totalDistValue = 0;
             result.routes[0].legs.forEach(leg => {
@@ -201,14 +183,12 @@ export default function TripDetailPage() {
               totalDistValue += leg.distance?.value || 0;
             });
 
-            // Update local state with fresh stats from Google Maps
             setCalculatedStats({
               distance: totalDistValue / 1000,
               duration: Math.ceil(totalDurValue / 60)
             });
 
-            // DRAW MARKERS
-            // 1. Office Marker
+            // Markers
             const startMarker = new google.maps.Marker({
               position: origin,
               map,
@@ -224,7 +204,6 @@ export default function TripDetailPage() {
             });
             markersRef.current.push(startMarker);
 
-            // 2. Stops Markers with Numbers
             validWaypoints.forEach((wp, idx) => {
               const marker = new google.maps.Marker({
                 position: wp.position!,
@@ -248,7 +227,6 @@ export default function TripDetailPage() {
               markersRef.current.push(marker);
             });
 
-            // Fit map to show everything
             const bounds = new google.maps.LatLngBounds();
             bounds.extend(origin);
             validWaypoints.forEach(wp => bounds.extend(wp.position!));
@@ -256,7 +234,7 @@ export default function TripDetailPage() {
           }
         });
       }
-    }, 400); // 400ms delay to ensure DOM and Sites are ready
+    }, 300);
 
     return () => clearTimeout(timeout);
   }, [apiLoaded, trip, allSites, isSitesLoading]);
@@ -283,7 +261,6 @@ export default function TripDetailPage() {
   if (isTripLoading || isSitesLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   if (!trip) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><AlertCircle className="h-12 w-12 text-destructive" /><p>ไม่พบข้อมูลเที่ยววิ่ง</p><Button onClick={() => router.push('/trips/history')}>กลับไปหน้าประวัติ</Button></div>
 
-  // FINAL STATS: Prefer calculated stats if DB has 0 or null
   const finalDuration = (trip.totalEstimatedTimeMinutes && trip.totalEstimatedTimeMinutes > 0) 
     ? trip.totalEstimatedTimeMinutes 
     : (calculatedStats?.duration || 0);
@@ -323,16 +300,6 @@ export default function TripDetailPage() {
             </DropdownMenu>
           </div>
         </div>
-
-        {noCoordsWarning && !isSitesLoading && (
-          <Alert variant="destructive" className="bg-destructive/10 border-destructive/20">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>แจ้งเตือนข้อมูลเส้นทาง</AlertTitle>
-            <AlertDescription>
-              ระบบไม่สามารถระบุพิกัดในบางจุดส่งของได้จากข้อมูลที่มีอยู่ แผนที่อาจแสดงเส้นทางได้ไม่ครบถ้วน กรุณาตรวจสอบพิกัดในหน้า "จัดการไซน์งาน"
-            </AlertDescription>
-          </Alert>
-        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
@@ -419,7 +386,7 @@ export default function TripDetailPage() {
                   <Clock className="h-5 w-5 md:h-6 md:w-6 text-accent" />
                   {formatDurationFormatted(finalDuration)}
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณจากระยะทาง {finalDistance.toFixed(1)} กม. ตามเวลาจราจรปัจจุบัน</p>
+                <p className="text-[10px] text-muted-foreground mt-2">* คำนวณตามเวลาจราจรปัจจุบัน</p>
               </CardContent>
             </Card>
           </div>
