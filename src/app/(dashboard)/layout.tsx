@@ -58,11 +58,11 @@ export default function DashboardLayout({
         return
       }
 
-      const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings"]
+      const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings", "/trip-grouping"]
       if (profile.role === "viewer") {
         const isRestricted = viewerRestrictedPaths.some(p => pathname.startsWith(p))
         if (isRestricted) {
-          router.push("/trips/history")
+          router.push("/requests")
         }
       }
 

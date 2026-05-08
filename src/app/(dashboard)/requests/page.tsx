@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -78,13 +79,24 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   // Staff should see actionable requests: pending, partial and potentially cancelled
   const [showCancelled, setShowCancelled] = React.useState(false)
   
+  // To avoid missing index errors (red herring for permission errors), 
+  // we remove complex orderBy and sort in memory if needed.
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", showCancelled ? ["pending", "partial", "cancelled"] : ["pending", "partial"]),
-    orderBy("createdAt", "desc")
+    where("status", "in", showCancelled ? ["pending", "partial", "cancelled"] : ["pending", "partial"])
   ), [db, showCancelled])
 
-  const { data: requests, isLoading } = useCollection<any>(requestsRef)
+  const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
+
+  // Sort in memory to avoid needing a composite index for status + createdAt
+  const requests = React.useMemo(() => {
+    if (!rawRequests) return [];
+    return [...rawRequests].sort((a, b) => {
+      const dateA = a.createdAt?.toDate() || new Date(0);
+      const dateB = b.createdAt?.toDate() || new Date(0);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [rawRequests]);
 
   const [selectedReq, setSelectedReq] = React.useState<any | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
@@ -642,14 +654,22 @@ export default function RequestsPage() {
     
     let q;
     if (isStaff) {
-      q = query(collection(db, "vehicleRequests"), orderBy("createdAt", "desc"))
+      // Simplest list query to avoid needing composite indexes if potential rules issues exist
+      q = query(collection(db, "vehicleRequests"))
     } else {
-      q = query(collection(db, "vehicleRequests"), where("userId", "==", user.uid), orderBy("createdAt", "desc"))
+      // Filter by current user
+      q = query(collection(db, "vehicleRequests"), where("userId", "==", user.uid))
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      // Sort in memory to avoid needing composite indexes for userId + createdAt
       const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
-      setMyRequests(results)
+      const sortedResults = results.sort((a, b) => {
+        const dateA = a.createdAt?.toDate() || new Date(0);
+        const dateB = b.createdAt?.toDate() || new Date(0);
+        return dateB.getTime() - dateA.getTime();
+      });
+      setMyRequests(sortedResults)
       setIsDataLoading(false)
     }, (error) => {
       console.error("Firestore error in RequestsPage:", error)
