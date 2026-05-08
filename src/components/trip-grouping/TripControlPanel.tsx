@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -10,7 +11,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
-import { Truck, User, Navigation, Loader2 } from "lucide-react"
+import { Truck, User, Navigation, Loader2, AlertCircle } from "lucide-react"
 
 interface TripControlPanelProps {
   selectedCount: number;
@@ -22,6 +23,7 @@ interface TripControlPanelProps {
   setDriverId: (id: string) => void;
   onCreate: () => void;
   isProcessing: boolean;
+  mode: 'auto' | 'manual';
 }
 
 export function TripControlPanel({
@@ -33,7 +35,8 @@ export function TripControlPanel({
   setVehicleId,
   setDriverId,
   onCreate,
-  isProcessing
+  isProcessing,
+  mode
 }: TripControlPanelProps) {
   return (
     <Card className="fixed bottom-4 left-4 right-4 lg:left-[17rem] lg:right-8 z-30 shadow-xl border-accent/20 bg-card/95 backdrop-blur-md">
@@ -92,7 +95,7 @@ export function TripControlPanel({
           {/* Action */}
           <div className="xl:pl-2">
             <Button 
-              className="w-full xl:w-auto h-11 px-8 bg-accent hover:bg-accent/90 text-sm font-bold shadow shadow-accent/20 transition-all active:scale-95"
+              className="w-full xl:w-auto h-11 px-8 bg-accent hover:bg-accent/90 text-sm font-bold shadow shadow-accent/20 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
               onClick={onCreate}
               disabled={isProcessing || selectedCount === 0 || !vehicleId || !driverId}
             >
@@ -101,7 +104,7 @@ export function TripControlPanel({
               ) : (
                 <Navigation className="mr-2 h-4 w-4" />
               )}
-              สร้างเที่ยววิ่ง
+              {selectedCount === 0 && mode === 'manual' ? "กรุณาเลือกจุดบน Map" : "สร้างเที่ยววิ่ง"}
             </Button>
           </div>
         </div>

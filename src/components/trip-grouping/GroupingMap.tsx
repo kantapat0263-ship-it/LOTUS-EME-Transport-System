@@ -8,7 +8,7 @@ import { doc } from "firebase/firestore"
 import { CompanySetting } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Loader2, Route, Zap, RefreshCcw, Fuel } from "lucide-react"
+import { Loader2, Route, Zap, RefreshCcw, Fuel, MousePointer2, Wand2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface GroupingMapProps {
@@ -16,26 +16,32 @@ interface GroupingMapProps {
   selectedIds: Set<string>;
   onSelect: (id: string) => void;
   selectedVehicleRate?: number;
+  mode: 'auto' | 'manual';
+  setMode: (mode: 'auto' | 'manual') => void;
+  manualOrder: string[];
 }
 
 const DEFAULT_LAT = 13.7563
 const DEFAULT_LNG = 100.5018
 const HEAD_OFFICE_DEFAULT = { lat: 14.0815, lng: 100.7129 }
 
-export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehicleRate }: GroupingMapProps) {
+export function GroupingMap({ 
+  destinations, 
+  selectedIds, 
+  onSelect, 
+  selectedVehicleRate,
+  mode,
+  setMode,
+  manualOrder
+}: GroupingMapProps) {
   const db = useFirestore()
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const markersRef = React.useRef<google.maps.Marker[]>([])
-  const infoWindowRef = React.useRef<google.maps.InfoWindow | null>(null)
   
   const directionsServiceRef = React.useRef<google.maps.DirectionsService | null>(null)
   const directionsRendererRef = React.useRef<google.maps.DirectionsRenderer | null>(null)
   
-  const hoverPolylinesRef = React.useRef<google.maps.Polyline[]>([])
-  const hoverLabelsRef = React.useRef<google.maps.Marker[]>([])
-  const distanceCache = React.useRef<Map<string, number>>(new Map())
-
   const [routeStats, setRouteStats] = React.useState<{ 
     distance: string, 
     duration: string,
@@ -50,15 +56,11 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingRef)
 
-  const clearHoverVisuals = React.useCallback(() => {
-    hoverPolylinesRef.current.forEach(p => p.setMap(null))
-    hoverLabelsRef.current.forEach(l => l.setMap(null))
-    hoverPolylinesRef.current = []
-    hoverLabelsRef.current = []
-  }, [])
-
   const calculateRoute = React.useCallback(async (optimize: boolean = false) => {
-    if (!directionsServiceRef.current || !directionsRendererRef.current || selectedIds.size === 0) {
+    if (!directionsServiceRef.current || !directionsRendererRef.current) return;
+    
+    const count = mode === 'manual' ? manualOrder.length : selectedIds.size
+    if (count === 0) {
       setRouteStats(null)
       directionsRendererRef.current?.setDirections({ routes: [] } as any)
       return
@@ -66,8 +68,16 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
 
     setIsCalculating(true)
     const google = window.google
-    const selectedDests = destinations.filter(d => selectedIds.has(d.id))
     
+    const selectedDests = mode === 'manual'
+      ? manualOrder.map(id => destinations.find(d => d.id === id)).filter(Boolean)
+      : destinations.filter(d => selectedIds.has(d.id))
+    
+    if (selectedDests.length === 0) {
+      setIsCalculating(false)
+      return
+    }
+
     const originPos = { 
       lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
       lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
@@ -87,7 +97,7 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
       origin: origin,
       destination: new google.maps.LatLng(destination.lat, destination.lng),
       waypoints: waypoints,
-      optimizeWaypoints: optimize,
+      optimizeWaypoints: mode === 'manual' ? false : optimize,
       travelMode: google.maps.TravelMode.DRIVING,
     }, async (result, status) => {
       if (status === 'OK' && result) {
@@ -141,14 +151,14 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
         setIsCalculating(false)
       }
     })
-  }, [destinations, selectedIds, settings, selectedVehicleRate])
+  }, [destinations, selectedIds, settings, selectedVehicleRate, mode, manualOrder])
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
       calculateRoute(optimizeMode)
     }, 800)
     return () => clearTimeout(timer)
-  }, [selectedIds, optimizeMode, calculateRoute])
+  }, [selectedIds, manualOrder, optimizeMode, calculateRoute])
 
   const updateMarkers = React.useCallback(() => {
     const map = mapRef.current
@@ -194,44 +204,74 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
 
     destinations.forEach((d) => {
       if (d.lat && d.lng) {
-        const isSelected = selectedIds.has(d.id)
+        let isSelected = false
+        let labelText = ""
+        let fillColor = ""
+
+        if (mode === 'manual') {
+          const orderIdx = manualOrder.indexOf(d.id)
+          isSelected = orderIdx !== -1
+          labelText = isSelected ? (orderIdx + 1).toString() : ""
+          fillColor = isSelected ? "#3b82f6" : "#64748b" // Blue if selected, grey if not
+        } else {
+          isSelected = selectedIds.has(d.id)
+          fillColor = isSelected ? "#3b82f6" : (d.type === 'site' ? "#f59e0b" : "#9333ea")
+        }
+        
         const pos = { lat: d.lat, lng: d.lng }
         bounds.extend(pos)
-
-        const truncatedName = d.siteName.length > 15 ? d.siteName.substring(0, 12) + "..." : d.siteName
 
         const marker = new google.maps.Marker({
           position: pos,
           map,
           title: d.siteName,
-          label: {
-            text: truncatedName,
+          label: isSelected && mode === 'manual' ? {
+            text: labelText,
             color: "#ffffff",
             fontWeight: "bold",
-            fontSize: "11px",
-            className: "bg-black/60 px-1.5 py-0.5 rounded border border-white/20 translate-y-[32px] whitespace-nowrap shadow-sm"
-          },
+            fontSize: "14px"
+          } : undefined,
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
-            scale: isSelected ? 14 : 11,
-            fillColor: isSelected ? "#3b82f6" : (d.type === 'site' ? "#f59e0b" : "#9333ea"),
+            scale: isSelected ? 15 : 11,
+            fillColor: fillColor,
             fillOpacity: 1,
             strokeWeight: isSelected ? 3 : 2,
             strokeColor: "#ffffff"
           }
         })
 
+        // Tooltip for site name on unselected markers
+        if (!isSelected || mode === 'auto') {
+          const truncatedName = d.siteName.length > 15 ? d.siteName.substring(0, 12) + "..." : d.siteName
+          marker.setValues({
+            _labelText: truncatedName
+          });
+          
+          marker.addListener('mouseover', () => {
+            marker.setLabel({
+              text: d.siteName,
+              color: "#ffffff",
+              fontSize: "10px",
+              className: "bg-black/80 px-1 rounded translate-y-8 whitespace-nowrap"
+            })
+          })
+          marker.addListener('mouseout', () => {
+            marker.setLabel(null)
+          })
+        }
+
         marker.addListener("click", () => onSelect(d.id))
         newMarkers.push(marker)
       }
     })
 
-    if (hasValidPoints && selectedIds.size === 0) {
+    if (hasValidPoints && (mode === 'manual' ? manualOrder.length === 0 : selectedIds.size === 0)) {
       map.fitBounds(bounds)
     }
 
     markersRef.current = newMarkers
-  }, [destinations, selectedIds, onSelect, settings])
+  }, [destinations, selectedIds, manualOrder, onSelect, settings, mode])
 
   React.useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return
@@ -278,13 +318,43 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
 
   React.useEffect(() => {
     if (mapRef.current) updateMarkers()
-  }, [destinations, selectedIds, updateMarkers])
+  }, [destinations, selectedIds, manualOrder, mode, updateMarkers])
 
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainerRef} className="w-full h-full" />
       
-      {selectedIds.size > 0 && (
+      {/* Mode Switcher */}
+      <div className="absolute top-4 right-4 z-20 flex bg-background/90 backdrop-blur p-1 rounded-lg border border-border shadow-xl">
+        <Button 
+          variant={mode === 'auto' ? "default" : "ghost"} 
+          size="sm"
+          className={cn("h-8 text-[10px] font-bold px-3", mode === 'auto' && "bg-accent")}
+          onClick={() => {
+            setMode('auto')
+            setOptimizeMode(true)
+          }}
+        >
+          <Wand2 className="h-3.5 w-3.5 mr-1.5" /> ⚡ อัตโนมัติ
+        </Button>
+        <Button 
+          variant={mode === 'manual' ? "default" : "ghost"} 
+          size="sm"
+          className={cn("h-8 text-[10px] font-bold px-3", mode === 'manual' && "bg-accent")}
+          onClick={() => setMode('manual')}
+        >
+          <MousePointer2 className="h-3.5 w-3.5 mr-1.5" /> ✋ จัดลำดับเอง
+        </Button>
+      </div>
+
+      {/* Instruction Banner */}
+      {mode === 'manual' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-10 w-auto px-4 py-2 bg-blue-600/90 text-white rounded-full border border-blue-400 shadow-xl text-[11px] font-bold animate-bounce">
+          👆 กดเลือกจุดที่จะไปตามลำดับ — แตะซ้ำเพื่อยกเลิก
+        </div>
+      )}
+      
+      {(mode === 'manual' ? manualOrder.length > 0 : selectedIds.size > 0) && (
         <Card className="absolute top-4 left-4 z-10 w-72 bg-background/90 backdrop-blur border-accent/30 shadow-2xl animate-in fade-in slide-in-from-left-4 duration-300">
           <CardContent className="p-4 space-y-4">
             <div className="flex items-center justify-between">
@@ -297,7 +367,7 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
             <div className="space-y-2 border-y border-border/50 py-3">
               <div className="flex justify-between text-xs mb-2">
                 <span className="text-muted-foreground">จุดหมายที่เลือก:</span>
-                <span className="font-bold text-white">{selectedIds.size} จุด</span>
+                <span className="font-bold text-white">{(mode === 'manual' ? manualOrder.length : selectedIds.size)} จุด</span>
               </div>
               
               <div className="space-y-1">
@@ -330,27 +400,30 @@ export function GroupingMap({ destinations, selectedIds, onSelect, selectedVehic
             </div>
 
             <div className="flex gap-2">
-              <Button 
-                size="sm" 
-                variant={optimizeMode ? "default" : "outline"}
-                className={cn(
-                  "flex-1 h-9 text-[10px] font-bold transition-all",
-                  optimizeMode ? "bg-accent hover:bg-accent/80" : "border-accent/40 text-accent hover:bg-accent/5"
-                )}
-                onClick={() => setOptimizeMode(!optimizeMode)}
-                disabled={isCalculating}
-              >
-                <Zap className={cn("h-3 w-3 mr-1.5", optimizeMode && "fill-white")} />
-                {optimizeMode ? "โหมดสั้นที่สุด" : "จัดลำดับใหม่"}
-              </Button>
+              {mode === 'auto' && (
+                <Button 
+                  size="sm" 
+                  variant={optimizeMode ? "default" : "outline"}
+                  className={cn(
+                    "flex-1 h-9 text-[10px] font-bold transition-all",
+                    optimizeMode ? "bg-accent hover:bg-accent/80" : "border-accent/40 text-accent hover:bg-accent/5"
+                  )}
+                  onClick={() => setOptimizeMode(!optimizeMode)}
+                  disabled={isCalculating}
+                >
+                  <Zap className={cn("h-3 w-3 mr-1.5", optimizeMode && "fill-white")} />
+                  {optimizeMode ? "โหมดสั้นที่สุด" : "จัดลำดับใหม่"}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
-                className="h-9 w-9 p-0 border-border hover:bg-secondary"
-                onClick={() => calculateRoute(optimizeMode)}
+                className="h-9 w-9 p-0 border-border hover:bg-secondary flex-1"
+                onClick={() => calculateRoute(mode === 'auto' ? optimizeMode : false)}
                 disabled={isCalculating}
               >
-                <RefreshCcw className={cn("h-3.5 w-3.5", isCalculating && "animate-spin")} />
+                <RefreshCcw className={cn("h-3.5 w-3.5 mr-1", isCalculating && "animate-spin")} />
+                <span className="text-[10px]">รีเฟรช</span>
               </Button>
             </div>
           </CardContent>

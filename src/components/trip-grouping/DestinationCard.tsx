@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -11,27 +12,34 @@ interface DestinationCardProps {
   dest: any;
   isSelected: boolean;
   onToggle: () => void;
+  manualIndex?: number;
 }
 
-export function DestinationCard({ dest, isSelected, onToggle }: DestinationCardProps) {
+export function DestinationCard({ dest, isSelected, onToggle, manualIndex }: DestinationCardProps) {
   return (
     <Card 
       className={cn(
         "cursor-pointer transition-all border-l-4 group overflow-hidden",
         isSelected 
-          ? "border-accent bg-accent/5 shadow-md" 
+          ? "border-accent bg-accent/5 shadow-md scale-[1.01]" 
           : "border-secondary bg-secondary/20 hover:border-accent/40"
       )}
       onClick={onToggle}
     >
       <CardContent className="p-0 flex items-stretch">
-        {/* Checkbox Area */}
+        {/* Checkbox or Order Area */}
         <div className="bg-secondary/10 flex items-center justify-center px-4 border-r border-border/30">
-          <Checkbox 
-            checked={isSelected} 
-            onCheckedChange={onToggle}
-            className="w-4 h-4 rounded-sm border-2 data-[state=checked]:bg-accent data-[state=checked]:border-accent"
-          />
+          {manualIndex ? (
+            <div className="w-6 h-6 rounded-full bg-accent text-white flex items-center justify-center font-bold text-xs shadow-sm">
+              {manualIndex}
+            </div>
+          ) : (
+            <Checkbox 
+              checked={isSelected} 
+              onCheckedChange={onToggle}
+              className="w-4 h-4 rounded-sm border-2 data-[state=checked]:bg-accent data-[state=checked]:border-accent"
+            />
+          )}
         </div>
 
         {/* Content Area */}

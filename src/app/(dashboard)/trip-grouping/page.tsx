@@ -8,8 +8,9 @@ import { Vehicle, Driver, Site, CompanySetting } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
 import { TripControlPanel } from "@/components/trip-grouping/TripControlPanel"
-import { Loader2, Inbox, AlertTriangle } from "lucide-react"
+import { Loader2, Inbox, AlertTriangle, ListOrdered, Trash2, RotateCcw } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +21,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { cn } from "@/lib/utils"
+
+type GroupingMode = 'auto' | 'manual';
 
 export default function TripGroupingPage() {
   const { user } = useUser()
@@ -38,7 +42,10 @@ export default function TripGroupingPage() {
   const { data: settings } = useDoc<CompanySetting>(settingsRef)
 
   // States
+  const [mode, setMode] = React.useState<GroupingMode>('auto')
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
+  const [manualOrder, setManualOrder] = React.useState<string[]>([])
+  
   const [vehicleId, setVehicleId] = React.useState("")
   const [driverId, setDriverId] = React.useState("")
   const [isConfirmOpen, setIsConfirmOpen] = React.useState(false)
@@ -67,10 +74,12 @@ export default function TripGroupingPage() {
     return list
   }, [requests])
 
-  const selectedDestinations = React.useMemo(() => 
-    availableDestinations.filter(d => selectedIds.has(d.id)),
-    [availableDestinations, selectedIds]
-  )
+  const selectedDestinations = React.useMemo(() => {
+    if (mode === 'manual') {
+      return manualOrder.map(id => availableDestinations.find(d => d.id === id)).filter(Boolean)
+    }
+    return availableDestinations.filter(d => selectedIds.has(d.id))
+  }, [availableDestinations, selectedIds, manualOrder, mode])
 
   const selectedVehicle = React.useMemo(() => 
     vehicles?.find(v => v.id === vehicleId), 
@@ -79,17 +88,27 @@ export default function TripGroupingPage() {
 
   // Stable callbacks for children
   const handleToggleSelect = React.useCallback((id: string) => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(id)) newSet.delete(id)
-      else newSet.add(id)
-      return newSet
-    })
-  }, [])
+    if (mode === 'manual') {
+      setManualOrder(prev => {
+        if (prev.includes(id)) {
+          return prev.filter(i => i !== id)
+        }
+        return [...prev, id]
+      })
+    } else {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        if (newSet.has(id)) newSet.delete(id)
+        else newSet.add(id)
+        return newSet
+      })
+    }
+  }, [mode])
 
   const handleCreateTrip = React.useCallback(() => {
-    if (selectedIds.size === 0) {
-      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกอย่างน้อย 1 จุดหมาย", variant: "destructive" })
+    const count = mode === 'manual' ? manualOrder.length : selectedIds.size
+    if (count === 0) {
+      toast({ title: "ข้อมูลไม่ครบ", description: mode === 'manual' ? "กรุณาเลือกจุดหมายบน Map" : "กรุณาเลือกอย่างน้อย 1 จุดหมาย", variant: "destructive" })
       return
     }
     if (!vehicleId || !driverId) {
@@ -98,7 +117,7 @@ export default function TripGroupingPage() {
     }
 
     setIsConfirmOpen(true)
-  }, [selectedIds.size, vehicleId, driverId, toast])
+  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast])
 
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
@@ -166,6 +185,7 @@ export default function TripGroupingPage() {
       
       // Reset
       setSelectedIds(new Set())
+      setManualOrder([])
       setVehicleId("")
       setDriverId("")
       setIsConfirmOpen(false)
@@ -196,28 +216,86 @@ export default function TripGroupingPage() {
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-hidden min-h-0">
         {/* Left: Destination List */}
         <div className="lg:col-span-5 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar">
-          <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur">
-            <h3 className="text-sm font-bold flex items-center gap-2">
-              <Inbox className="h-4 w-4 text-accent" /> งานที่ยังไม่ได้จัดรถ ({availableDestinations.length})
-            </h3>
-          </div>
+          {mode === 'manual' ? (
+            <div className="space-y-3">
+              <div className="bg-accent/10 p-4 rounded-xl border border-accent/30 sticky top-0 z-10 backdrop-blur flex justify-between items-center">
+                <div>
+                  <h3 className="text-sm font-bold flex items-center gap-2 text-accent uppercase tracking-wider">
+                    <ListOrdered className="h-4 w-4" /> ลำดับการส่ง (จัดเอง)
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground mt-1">เลือกจุดบนแผนที่เพื่อเรียงลำดับ</p>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setManualOrder([])}
+                  className="h-8 text-[10px] border-accent/40 text-accent hover:bg-accent/10"
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" /> ล้างลำดับ
+                </Button>
+              </div>
 
-          {availableDestinations.length > 0 ? (
-            <div className="space-y-3 pb-24">
-              {availableDestinations.map(dest => (
-                <DestinationCard 
-                  key={dest.id} 
-                  dest={dest} 
-                  isSelected={selectedIds.has(dest.id)}
-                  onToggle={() => handleToggleSelect(dest.id)}
-                />
-              ))}
+              {manualOrder.length > 0 ? (
+                <div className="space-y-3 animate-in fade-in duration-300">
+                  {selectedDestinations.map((dest, idx) => (
+                    <DestinationCard 
+                      key={dest.id} 
+                      dest={dest} 
+                      isSelected={true}
+                      onToggle={() => handleToggleSelect(dest.id)}
+                      manualIndex={idx + 1}
+                    />
+                  ))}
+                  
+                  {availableDestinations.length > manualOrder.length && (
+                    <div className="pt-4 pb-2 border-t border-border/30">
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
+                      <div className="space-y-3 opacity-60 grayscale-[0.5]">
+                        {availableDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
+                          <DestinationCard 
+                            key={dest.id} 
+                            dest={dest} 
+                            isSelected={false}
+                            onToggle={() => handleToggleSelect(dest.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-20 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-3">
+                  <ListOrdered className="h-10 w-10 text-muted-foreground opacity-30" />
+                  <p className="text-sm font-medium text-muted-foreground">แตะที่หมุดบนแผนที่เพื่อเริ่มจัดลำดับ</p>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="text-center py-16 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-3">
-              <AlertTriangle className="h-10 w-10 text-muted-foreground opacity-50" />
-              <p className="text-sm font-medium text-muted-foreground">ไม่มีงานค้างในระบบ</p>
-            </div>
+            <>
+              <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur">
+                <h3 className="text-sm font-bold flex items-center gap-2">
+                  <Inbox className="h-4 w-4 text-accent" /> งานที่ยังไม่ได้จัดรถ ({availableDestinations.length})
+                </h3>
+              </div>
+
+              {availableDestinations.length > 0 ? (
+                <div className="space-y-3 pb-24">
+                  {availableDestinations.map(dest => (
+                    <DestinationCard 
+                      key={dest.id} 
+                      dest={dest} 
+                      isSelected={selectedIds.has(dest.id)}
+                      onToggle={() => handleToggleSelect(dest.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-16 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-3">
+                  <AlertTriangle className="h-10 w-10 text-muted-foreground opacity-50" />
+                  <p className="text-sm font-medium text-muted-foreground">ไม่มีงานค้างในระบบ</p>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -228,13 +306,16 @@ export default function TripGroupingPage() {
             selectedIds={selectedIds}
             onSelect={handleToggleSelect}
             selectedVehicleRate={selectedVehicle?.fuelRate}
+            mode={mode}
+            setMode={setMode}
+            manualOrder={manualOrder}
           />
         </div>
       </div>
 
       {/* Sticky Bottom Control Panel */}
       <TripControlPanel 
-        selectedCount={selectedIds.size}
+        selectedCount={mode === 'manual' ? manualOrder.length : selectedIds.size}
         vehicles={vehicles || []}
         drivers={drivers || []}
         vehicleId={vehicleId}
@@ -243,6 +324,7 @@ export default function TripGroupingPage() {
         setDriverId={setDriverId}
         onCreate={handleCreateTrip}
         isProcessing={isProcessing}
+        mode={mode}
       />
 
       {/* Confirmation Dialog */}
@@ -253,6 +335,7 @@ export default function TripGroupingPage() {
             <AlertDialogDescription asChild>
               <div className="text-sm py-2 text-foreground/90 space-y-3">
                 <div className="p-3 bg-secondary/50 rounded-lg space-y-1 border border-border">
+                  <p>• โหมด: <span className="font-bold text-white">{mode === 'manual' ? "จัดลำดับเอง" : "อัตโนมัติ"}</span></p>
                   <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
                   <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
                   <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
