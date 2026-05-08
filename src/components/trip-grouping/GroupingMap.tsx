@@ -84,7 +84,6 @@ export function GroupingMap({
     }
     const origin = new google.maps.LatLng(originPos.lat, originPos.lng)
 
-    // Sort waypoints based on current selection
     const waypointList = [...selectedDests]
     const destination = waypointList.pop()
     const waypoints = waypointList.map(d => ({
@@ -92,7 +91,6 @@ export function GroupingMap({
       stopover: true
     }))
 
-    // First leg: Office -> Waypoints -> Last Destination
     directionsServiceRef.current.route({
       origin: origin,
       destination: new google.maps.LatLng(destination.lat, destination.lng),
@@ -111,7 +109,6 @@ export function GroupingMap({
           totalTime += leg.duration?.value || 0
         })
 
-        // Second leg: Last Destination -> Office (Return leg)
         const lastStopPos = route.legs[route.legs.length - 1].end_location;
         
         directionsServiceRef.current?.route({
@@ -127,7 +124,6 @@ export function GroupingMap({
 
           const totalDistKm = (outDist + returnDist) / 1000
           
-          // Fuel calculation
           const fuelRate = selectedVehicleRate || settings?.defaultFuelRate || 10
           const dieselPrice = settings?.dieselPrice || 32.5
           const fuelCost = (totalDistKm / fuelRate) * dieselPrice
@@ -212,7 +208,7 @@ export function GroupingMap({
           const orderIdx = manualOrder.indexOf(d.id)
           isSelected = orderIdx !== -1
           labelText = isSelected ? (orderIdx + 1).toString() : ""
-          fillColor = isSelected ? "#3b82f6" : "#64748b" // Blue if selected, grey if not
+          fillColor = isSelected ? "#3b82f6" : "#64748b"
         } else {
           isSelected = selectedIds.has(d.id)
           fillColor = isSelected ? "#3b82f6" : (d.type === 'site' ? "#f59e0b" : "#9333ea")
@@ -221,6 +217,7 @@ export function GroupingMap({
         const pos = { lat: d.lat, lng: d.lng }
         bounds.extend(pos)
 
+        // 1. Main Marker (Icon + Step Number)
         const marker = new google.maps.Marker({
           position: pos,
           map,
@@ -240,29 +237,28 @@ export function GroupingMap({
             strokeColor: "#ffffff"
           }
         })
-
-        // Tooltip for site name on unselected markers
-        if (!isSelected || mode === 'auto') {
-          const truncatedName = d.siteName.length > 15 ? d.siteName.substring(0, 12) + "..." : d.siteName
-          marker.setValues({
-            _labelText: truncatedName
-          });
-          
-          marker.addListener('mouseover', () => {
-            marker.setLabel({
-              text: d.siteName,
-              color: "#ffffff",
-              fontSize: "10px",
-              className: "bg-black/80 px-1 rounded translate-y-8 whitespace-nowrap"
-            })
-          })
-          marker.addListener('mouseout', () => {
-            marker.setLabel(null)
-          })
-        }
-
         marker.addListener("click", () => onSelect(d.id))
         newMarkers.push(marker)
+
+        // 2. Name Label Marker (Always Visible below icon)
+        const truncatedName = d.siteName.length > 10 ? d.siteName.substring(0, 10) + "..." : d.siteName
+        const nameLabelMarker = new google.maps.Marker({
+          position: pos,
+          map,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 0 // Invisible icon
+          },
+          clickable: false,
+          label: {
+            text: truncatedName,
+            color: "#ffffff",
+            fontSize: "10px",
+            fontWeight: "bold",
+            className: "bg-black/60 px-1.5 py-0.5 rounded border border-white/10 translate-y-[24px] whitespace-nowrap shadow-sm pointer-events-none"
+          }
+        })
+        newMarkers.push(nameLabelMarker)
       }
     })
 
