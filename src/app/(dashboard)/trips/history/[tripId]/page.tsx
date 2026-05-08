@@ -46,9 +46,8 @@ export default function TripDetailPage() {
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
 
-  // Bug 1: Fetch stops from subcollection
-  const stopsRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "stops"), orderBy("order", "asc")), [db, tripId])
-  const { data: stopsSub } = useCollection<any>(stopsRef)
+  const stopsSubRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "stops"), orderBy("order", "asc")), [db, tripId])
+  const { data: stopsSub } = useCollection<any>(stopsSubRef)
   
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: allSites, isLoading: isSitesLoading } = useCollection<Site>(sitesRef)
@@ -68,21 +67,21 @@ export default function TripDetailPage() {
   const [apiLoaded, setApiLoaded] = React.useState(false)
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
 
-  // Merge stops sources (Subcollection takes priority)
   const displayStops = React.useMemo(() => {
     if (stopsSub && stopsSub.length > 0) return stopsSub;
     return trip?.stops || [];
   }, [stopsSub, trip?.stops]);
 
-  // Bug 2: Format Duration Helper
   const formatDurationFormatted = (minutes: number) => {
     if (!minutes || minutes <= 0) return "-";
     const h = Math.floor(minutes / 60);
     const m = Math.round(minutes % 60);
-    return h > 0 ? `${h} ชม. ${m} นาที` : `${m} นาที`;
+    if (h > 0) {
+      return m > 0 ? `${h} ชม. ${m} นาที` : `${h} ชม.`;
+    }
+    return `${m} นาที`;
   };
 
-  // Helpers for Print
   const formatThaiShortDate = (dateStr: any) => {
     if (!dateStr) return "-";
     try {
@@ -102,7 +101,6 @@ export default function TripDetailPage() {
     return site?.address || "";
   };
 
-  // Google Maps API Loader
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     if (!apiKey) return;
@@ -115,7 +113,6 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
-  // Bug 1: Initialize Map with 300ms delay pattern
   React.useEffect(() => {
     if (!apiLoaded || !mapContainerRef.current || mapRef.current) return;
 
@@ -149,9 +146,8 @@ export default function TripDetailPage() {
     return () => clearTimeout(timer);
   }, [apiLoaded]);
 
-  // Bug 1 & 2: Draw Route and Recalculate Duration
   React.useEffect(() => {
-    if (!mapRef.current || !directionsRendererRef.current || !displayStops.length || !apiLoaded) return;
+    if (!mapRef.current || !directionsRendererRef.current || !displayStops.length || !apiLoaded || !allSites) return;
 
     const google = window.google;
     const directionsService = new google.maps.DirectionsService();
@@ -182,7 +178,6 @@ export default function TripDetailPage() {
       if (status === "OK" && result) {
         directionsRendererRef.current?.setDirections(result);
         
-        // Bug 2: Recalculate duration if missing
         let dist = 0;
         let dur = 0;
         result.routes[0].legs.forEach(leg => {
@@ -192,7 +187,7 @@ export default function TripDetailPage() {
 
         setCalculatedStats({
           distance: dist / 1000,
-          duration: Math.round(dur / 60)
+          duration: Math.ceil(dur / 60)
         });
       }
     });
@@ -220,7 +215,6 @@ export default function TripDetailPage() {
   if (isTripLoading || isSitesLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   if (!trip) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><AlertCircle className="h-12 w-12 text-destructive" /><p>ไม่พบข้อมูลเที่ยววิ่ง</p><Button onClick={() => router.push('/trips/history')}>กลับไปหน้าประวัติ</Button></div>
 
-  // Final stats display logic
   const finalDuration = (trip.totalEstimatedTimeMinutes && trip.totalEstimatedTimeMinutes > 0) 
     ? trip.totalEstimatedTimeMinutes 
     : (calculatedStats?.duration || 0);
