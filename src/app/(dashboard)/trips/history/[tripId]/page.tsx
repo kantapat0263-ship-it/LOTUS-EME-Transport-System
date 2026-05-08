@@ -46,7 +46,7 @@ export default function TripDetailPage() {
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
 
-  // Fetch stops from subcollection as requested
+  // Bug 1: Fetch stops from subcollection
   const stopsRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "stops"), orderBy("order", "asc")), [db, tripId])
   const { data: stopsSub } = useCollection<any>(stopsRef)
   
@@ -59,7 +59,6 @@ export default function TripDetailPage() {
   const driverRef = useMemoFirebase(() => trip?.driverId ? doc(db, "drivers", trip.driverId) : null, [db, trip?.driverId])
   const { data: driverData } = useDoc<Driver>(driverRef)
 
-  // Fetch Edit Logs
   const editLogsRef = useMemoFirebase(() => query(collection(db, "trips", tripId, "editLogs"), orderBy("editedAt", "desc")), [db, tripId])
   const { data: editLogs } = useCollection<TripEditLog>(editLogsRef)
 
@@ -69,21 +68,21 @@ export default function TripDetailPage() {
   const [apiLoaded, setApiLoaded] = React.useState(false)
   const [calculatedStats, setCalculatedStats] = React.useState<{ distance: number, duration: number } | null>(null)
 
-  // Merge stops sources (Subcollection takes priority over Array)
+  // Merge stops sources (Subcollection takes priority)
   const displayStops = React.useMemo(() => {
     if (stopsSub && stopsSub.length > 0) return stopsSub;
     return trip?.stops || [];
   }, [stopsSub, trip?.stops]);
 
-  // Format Duration Helper
+  // Bug 2: Format Duration Helper
   const formatDurationFormatted = (minutes: number) => {
-    if (!minutes || minutes === 0) return "-";
+    if (!minutes || minutes <= 0) return "-";
     const h = Math.floor(minutes / 60);
     const m = Math.round(minutes % 60);
     return h > 0 ? `${h} ชม. ${m} นาที` : `${m} นาที`;
   };
 
-  // Helper Functions for Print
+  // Helpers for Print
   const formatThaiShortDate = (dateStr: any) => {
     if (!dateStr) return "-";
     try {
@@ -97,8 +96,9 @@ export default function TripDetailPage() {
     }
   };
 
-  const getStopLocation = (siteId: string) => {
-    const site = allSites?.find(s => s.id === siteId);
+  const getStopLocation = (stop: any) => {
+    if (stop.address) return stop.address;
+    const site = allSites?.find(s => s.id === stop.siteId);
     return site?.address || "";
   };
 
@@ -115,7 +115,7 @@ export default function TripDetailPage() {
     loader.load().then(() => setApiLoaded(true));
   }, [companySettings]);
 
-  // Initialize Map with 300ms delay pattern
+  // Bug 1: Initialize Map with 300ms delay pattern
   React.useEffect(() => {
     if (!apiLoaded || !mapContainerRef.current || mapRef.current) return;
 
@@ -149,20 +149,16 @@ export default function TripDetailPage() {
     return () => clearTimeout(timer);
   }, [apiLoaded]);
 
-  // Draw Route when data is ready
+  // Bug 1 & 2: Draw Route and Recalculate Duration
   React.useEffect(() => {
     if (!mapRef.current || !directionsRendererRef.current || !displayStops.length || !apiLoaded) return;
 
     const google = window.google;
     const directionsService = new google.maps.DirectionsService();
 
-    const origin = new google.maps.LatLng(
-      companySettings?.warehouseLatitude || HEAD_OFFICE.lat, 
-      companySettings?.warehouseLongitude || HEAD_OFFICE.lng
-    );
+    const origin = new google.maps.LatLng(HEAD_OFFICE.lat, HEAD_OFFICE.lng);
 
     const waypoints = displayStops.map((s: any) => {
-      // Priority: 1. stop.lat/lng, 2. site lookup
       if (s.lat && s.lng) {
         return { location: new google.maps.LatLng(s.lat, s.lng), stopover: true };
       }
@@ -186,7 +182,7 @@ export default function TripDetailPage() {
       if (status === "OK" && result) {
         directionsRendererRef.current?.setDirections(result);
         
-        // Calculate total distance and duration from API result
+        // Bug 2: Recalculate duration if missing
         let dist = 0;
         let dur = 0;
         result.routes[0].legs.forEach(leg => {
@@ -198,11 +194,9 @@ export default function TripDetailPage() {
           distance: dist / 1000,
           duration: Math.round(dur / 60)
         });
-      } else {
-        console.warn("Directions request failed due to " + status);
       }
     });
-  }, [displayStops, apiLoaded, companySettings, allSites]);
+  }, [displayStops, apiLoaded, allSites]);
 
   const handleStatusChange = async (newStatus: TripStatus) => {
     if (!trip) return
@@ -423,7 +417,7 @@ export default function TripDetailPage() {
                       </div>
                     )}
                     <div style={{ textAlign: 'right', color: '#444', fontSize: '11px', fontStyle: 'italic', marginTop: '2px' }}>
-                      สถานที่: {getStopLocation(stop.siteId)}
+                      สถานที่: {getStopLocation(stop)}
                     </div>
                   </div>
                 ))}
@@ -456,4 +450,3 @@ export default function TripDetailPage() {
     </>
   )
 }
-
