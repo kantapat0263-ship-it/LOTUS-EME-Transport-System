@@ -17,7 +17,8 @@ import {
   LogOut,
   X,
   Car,
-  Layers
+  Layers,
+  FileText
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -77,6 +78,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     { name: "วางแผนการส่ง", href: "/trips/plan", icon: Route, roles: ['admin', 'dispatcher'] },
     { name: "จัดกลุ่มเที่ยววิ่ง", href: "/trip-grouping", icon: Layers, roles: ['admin', 'dispatcher'], badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingDestCount > 0 ? pendingDestCount : null },
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
+    { name: "สรุปคิวรถประจำวัน", href: "/daily-summary", icon: FileText, roles: ['admin', 'dispatcher'] },
     { name: "จัดการผู้ใช้งาน", href: "/settings/users", icon: Users, roles: ['admin'] },
     { name: "ตั้งค่าระบบ", href: "/settings", icon: Settings, roles: ['admin', 'dispatcher'] },
   ]
