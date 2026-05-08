@@ -21,7 +21,8 @@ import {
   Send,
   Copy,
   Check,
-  QrCode
+  QrCode,
+  Image as ImageIcon
 } from "lucide-react"
 import { 
   Dialog, 
@@ -41,6 +42,7 @@ export default function DailySummaryPage() {
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0])
   const [trips, setTrips] = React.useState<Trip[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
+  const [isSavingImage, setIsSavingImage] = React.useState(false)
 
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
@@ -95,6 +97,36 @@ export default function DailySummaryPage() {
     window.print()
   }
 
+  const handleSaveImage = async () => {
+    if (trips.length === 0) return
+    setIsSavingImage(true)
+    try {
+      const html2canvas = (await import('html2canvas')).default
+      const element = document.getElementById('summary-report')
+      if (!element) return
+
+      const canvas = await html2canvas(element, {
+        scale: 2, // High resolution
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      })
+
+      const image = canvas.toDataURL('image/jpeg', 0.95)
+      const link = document.createElement('a')
+      link.download = `คิวรถประจำวัน_${selectedDate}.jpg`
+      link.href = image
+      link.click()
+      
+      toast({ title: "สำเร็จ", description: "บันทึกเป็นรูปภาพเรียบร้อยแล้ว" })
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกรูปภาพได้", variant: "destructive" })
+    } finally {
+      setIsSavingImage(false)
+    }
+  }
+
   const handleShareClick = (trip: Trip) => {
     setSelectedTripForShare(trip)
   }
@@ -144,7 +176,7 @@ export default function DailySummaryPage() {
                 onChange={(e) => setSelectedDate(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            <div className="grid grid-cols-1 gap-3 pt-2">
               <Button 
                 className="bg-[#F0890D] hover:bg-[#F0890D]/90 h-11" 
                 onClick={fetchTrips}
@@ -153,14 +185,30 @@ export default function DailySummaryPage() {
                 {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
                 โหลดข้อมูล
               </Button>
-              <Button 
-                variant="outline"
-                className="border-accent text-accent hover:bg-accent/10 h-11"
-                onClick={handlePrint}
-                disabled={trips.length === 0}
-              >
-                <Printer className="mr-2 h-4 w-4" /> พิมพ์ / PDF
-              </Button>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <Button 
+                  variant="outline"
+                  className="border-accent text-accent hover:bg-accent/10 h-11"
+                  onClick={handlePrint}
+                  disabled={trips.length === 0}
+                >
+                  <Printer className="mr-2 h-4 w-4" /> พิมพ์/PDF
+                </Button>
+                <Button 
+                  variant="outline"
+                  className="border-green-600 text-green-500 hover:bg-green-600/10 h-11"
+                  onClick={handleSaveImage}
+                  disabled={trips.length === 0 || isSavingImage}
+                >
+                  {isSavingImage ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <ImageIcon className="mr-2 h-4 w-4" />
+                  )}
+                  {isSavingImage ? "กำลังบันทึก..." : "บันทึกรูปภาพ"}
+                </Button>
+              </div>
             </div>
 
             {trips.length > 0 && (
