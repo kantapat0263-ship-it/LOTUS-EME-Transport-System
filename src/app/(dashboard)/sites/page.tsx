@@ -209,7 +209,7 @@ export default function SitesPage() {
   function handleEdit(site: Site) {
     if (!profile) return;
     
-    const canEdit = isStaff || (isViewer && (site as any).addedBy === user?.email);
+    const canEdit = isStaff || (site as any).addedBy === user?.email;
     if (!canEdit) {
       toast({ title: "ไม่มีสิทธิ์", description: "คุณสามารถแก้ไขได้เฉพาะสถานที่ที่คุณเพิ่มเองเท่านั้น", variant: "destructive" });
       return;
@@ -223,19 +223,23 @@ export default function SitesPage() {
       projectTypeTag: site.projectTypeTag,
     })
     
-    // Add small delay to ensure DropdownMenu closes before Dialog opens
     setTimeout(() => {
       setIsDialogOpen(true)
     }, 100)
   }
 
-  function handleDelete(siteId: string) {
-    if (isViewer) {
-      toast({ title: "ไม่มีสิทธิ์", description: "เฉพาะ Admin หรือ Dispatcher เท่านั้นที่ลบได้", variant: "destructive" });
+  function handleDelete(site: any) {
+    if (!profile || !user) return;
+    
+    const canDelete = isStaff || (site.addedBy === user.email);
+    
+    if (!canDelete) {
+      toast({ title: "ไม่มีสิทธิ์", description: "เฉพาะแอดมินหรือผู้ที่เพิ่มสถานที่นี้เท่านั้นที่ลบได้", variant: "destructive" });
       return;
     }
-    if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้?")) {
-      const siteRef = doc(db, "sites", siteId)
+
+    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ "${site.name}"?`)) {
+      const siteRef = doc(db, "sites", site.id)
       deleteDocumentNonBlocking(siteRef)
       toast({ title: "สำเร็จ", description: "ลบข้อมูลเรียบร้อยแล้ว" })
     }
@@ -327,74 +331,90 @@ export default function SitesPage() {
                   <TableRow><TableCell colSpan={4} className="h-24 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-accent" /></TableCell></TableRow>
                 ) : filteredSites.length === 0 ? (
                   <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">ไม่พบข้อมูล</TableCell></TableRow>
-                ) : filteredSites.map((site) => (
-                  <TableRow key={site.id}>
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        <div className="font-bold flex items-center gap-2">
-                          {site.name}
-                          {site.isUserAdded && <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-400 border-blue-500/20">เพิ่มโดยผู้ใช้</Badge>}
+                ) : filteredSites.map((site) => {
+                  const canManage = isStaff || (site.addedBy === user?.email);
+                  return (
+                    <TableRow key={site.id}>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <div className="font-bold flex items-center gap-2">
+                            {site.name}
+                            {site.isUserAdded && <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-400 border-blue-500/20">เพิ่มโดยผู้ใช้</Badge>}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            {getTypeIcon(site.projectTypeTag)} {site.projectTypeTag}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          {getTypeIcon(site.projectTypeTag)} {site.projectTypeTag}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-medium">{site.addedByName || "ระบบส่วนกลาง"}</span>
+                          <span className="text-[10px] text-muted-foreground">{site.addedBy || "-"}</span>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-medium">{site.addedByName || "ระบบส่วนกลาง"}</span>
-                        <span className="text-[10px] text-muted-foreground">{site.addedBy || "-"}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs truncate max-w-[200px]">{site.latitude ? `${site.latitude.toFixed(4)}, ${site.longitude.toFixed(4)}` : site.address}</span>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-accent" onClick={() => handleOpenMap(site)}><ExternalLink className="h-3.5 w-3.5" /></Button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => handleEdit(site)}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
-                          {isStaff && <DropdownMenuItem className="text-destructive" onSelect={() => handleDelete(site.id)}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs truncate max-w-[200px]">{site.latitude ? `${site.latitude.toFixed(4)}, ${site.longitude.toFixed(4)}` : site.address}</span>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-accent" onClick={() => handleOpenMap(site)}><ExternalLink className="h-3.5 w-3.5" /></Button>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {canManage && (
+                              <>
+                                <DropdownMenuItem onSelect={() => handleEdit(site)}><Edit className="mr-2 h-4 w-4" /> แก้ไข</DropdownMenuItem>
+                                <DropdownMenuItem className="text-destructive" onSelect={() => handleDelete(site)}><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>
+                              </>
+                            )}
+                            {!canManage && <div className="p-2 text-[10px] text-muted-foreground italic">ไม่มีสิทธิ์จัดการ</div>}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
           
           {/* Mobile view */}
           <div className="md:hidden divide-y">
-            {filteredSites.map(site => (
-              <div key={site.id} className="p-4 space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-bold">{site.name}</div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-1">
-                      {getTypeIcon(site.projectTypeTag)} {site.projectTypeTag}
+            {filteredSites.map(site => {
+              const canManage = isStaff || (site.addedBy === user?.email);
+              return (
+                <div key={site.id} className="p-4 space-y-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-bold">{site.name}</div>
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-1">
+                        {getTypeIcon(site.projectTypeTag)} {site.projectTypeTag}
+                      </div>
                     </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {canManage && (
+                          <>
+                            <DropdownMenuItem onSelect={() => handleEdit(site)}>แก้ไข</DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => handleDelete(site)} className="text-destructive">ลบ</DropdownMenuItem>
+                          </>
+                        )}
+                        {!canManage && <div className="p-2 text-[10px] text-muted-foreground">อ่านอย่างเดียว</div>}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => handleEdit(site)}>แก้ไข</DropdownMenuItem>
-                      {isStaff && <DropdownMenuItem onSelect={() => handleDelete(site.id)} className="text-destructive">ลบ</DropdownMenuItem>}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <div className="flex justify-between items-center text-[10px] bg-secondary/20 p-2 rounded">
+                    <span className="truncate flex-1">{site.address || "มีข้อมูลพิกัด (GPS)"}</span>
+                    <Button variant="ghost" size="sm" className="h-6 text-accent" onClick={() => handleOpenMap(site)}>เปิดแผนที่</Button>
+                  </div>
+                  {site.isUserAdded && <div className="text-[10px] text-muted-foreground">เพิ่มโดย: {site.addedByName}</div>}
                 </div>
-                <div className="flex justify-between items-center text-[10px] bg-secondary/20 p-2 rounded">
-                  <span className="truncate flex-1">{site.address || "มีข้อมูลพิกัด (GPS)"}</span>
-                  <Button variant="ghost" size="sm" className="h-6 text-accent" onClick={() => handleOpenMap(site)}>เปิดแผนที่</Button>
-                </div>
-                {site.isUserAdded && <div className="text-[10px] text-muted-foreground">เพิ่มโดย: {site.addedByName}</div>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </CardContent>
       </Card>
@@ -442,7 +462,11 @@ export default function SitesPage() {
               <Button type="button" variant="outline" className="w-full border-accent text-accent h-11" onClick={() => setIsMapPickerOpen(true)}><MapIcon className="mr-2 h-4 w-4" /> ปักหมุดบนแผนที่แทน</Button>
 
               <FormField control={form.control} name="address" render={({ field }) => (
-                <FormItem><FormLabel>ที่อยู่ / หมายเหตุ (เลือกได้)</FormLabel><FormControl><Textarea placeholder="เช่น ซอย 24, ชั้น 3..." className="bg-background" {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem>
+                  <FormLabel>ที่อยู่ / หมายเหตุ (เลือกได้)</FormLabel>
+                  <FormControl><Textarea placeholder="เช่น ซอย 24, ชั้น 3..." className="bg-background" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
               )} />
 
               <DialogFooter className="pt-4">
