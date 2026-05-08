@@ -31,7 +31,7 @@ import {
   EyeOff
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch, where } from "firebase/firestore"
+import { doc, collection, query, orderBy, onSnapshot, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc } from "firebase/firestore"
 import { UserProfile, Site } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -79,8 +79,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   // Staff should see actionable requests: pending, partial and potentially cancelled
   const [showCancelled, setShowCancelled] = React.useState(false)
   
-  // To avoid missing index errors (red herring for permission errors), 
-  // we remove complex orderBy and sort in memory if needed.
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
     where("status", "in", showCancelled ? ["pending", "partial", "cancelled"] : ["pending", "partial"])
@@ -88,7 +86,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
 
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
 
-  // Sort in memory to avoid needing a composite index for status + createdAt
   const requests = React.useMemo(() => {
     if (!rawRequests) return [];
     return [...rawRequests].sort((a, b) => {
@@ -104,17 +101,14 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
   const [isProcessing, setIsStaffProcessing] = React.useState(false)
   const [searchTerm, setSearchTerm] = React.useState("")
   
-  // Clear Data State
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
   
-  // Split Trip States
   const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const [modalMap, setModalMap] = React.useState<google.maps.Map | null>(null)
   const [modalMarkers, setModalMarkers] = React.useState<google.maps.Marker[]>([])
 
-  // Reset selection and map markers when request changes or modal opens
   React.useEffect(() => {
     if (selectedReq) {
       const assigned = selectedReq.assignedDestinations || []
@@ -126,13 +120,11 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
     }
   }, [selectedReq])
 
-  // Map initialization and marker rendering with delay fix
   React.useEffect(() => {
     let mapTimeout: NodeJS.Timeout;
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
     if (isDetailOpen && selectedReq && apiKey) {
-      // Small delay to ensure the modal and its content area are rendered
       mapTimeout = setTimeout(() => {
         if (!mapContainerRef.current) return;
 
@@ -418,7 +410,6 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
         </div>
       )}
 
-      {/* Clear Confirmation Dialog */}
       <AlertDialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -654,15 +645,12 @@ export default function RequestsPage() {
     
     let q;
     if (isStaff) {
-      // Simplest list query to avoid needing composite indexes if potential rules issues exist
       q = query(collection(db, "vehicleRequests"))
     } else {
-      // Filter by current user
       q = query(collection(db, "vehicleRequests"), where("userId", "==", user.uid))
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Sort in memory to avoid needing composite indexes for userId + createdAt
       const results = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
       const sortedResults = results.sort((a, b) => {
         const dateA = a.createdAt?.toDate() || new Date(0);
@@ -679,7 +667,6 @@ export default function RequestsPage() {
     return () => unsubscribe()
   }, [user, isUserLoading, db, profile, isProfileLoading])
 
-  // Automatically switch tabs when a new request is detected (for the requester)
   const prevCount = React.useRef<number | null>(null)
   React.useEffect(() => {
     if (myRequests && prevCount.current !== null && myRequests.length > prevCount.current) {
@@ -720,28 +707,55 @@ export default function RequestsPage() {
         siteName: d.siteName || "",
         customName: d.customName || "",
         coordinates: d.lat && d.lng ? `${d.lat}, ${d.lng}` : "",
-        jobDescription: d.jobDescription || ""
+        jobDescription: d.jobDescription || "",
+        saveAsSite: false,
+        locationType: "ไซน์งาน"
       }))
     })
     setIsEditOpen(true)
   }
 
   const handleUpdateEdit = async () => {
-    if (!editingReq) return
+    if (!editingReq || !user) return
     setIsSavingEdit(true)
     try {
-      const parsedDestinations = editFormData.destinations.map((d: any) => {
+      const parsedDestinations = []
+      
+      for (const d of editFormData.destinations) {
         const [lat, lng] = d.coordinates.split(',').map((s: string) => parseFloat(s.trim()))
-        return {
+        const latVal = isNaN(lat) ? 0 : lat
+        const lngVal = isNaN(lng) ? 0 : lng
+        const finalName = d.type === "site" ? d.siteName : d.customName
+
+        parsedDestinations.push({
           type: d.type,
           siteId: d.siteId || null,
-          siteName: d.type === "site" ? d.siteName : d.customName,
+          siteName: finalName,
           customName: d.type === "other" ? d.customName : null,
-          lat: isNaN(lat) ? 0 : lat,
-          lng: isNaN(lng) ? 0 : lng,
+          lat: latVal,
+          lng: lngVal,
           jobDescription: d.jobDescription
+        })
+
+        // Save as common location if checked
+        if (d.type === "other" && d.saveAsSite && d.customName && d.coordinates) {
+          const newSiteRef = doc(collection(db, "sites"))
+          await setDoc(newSiteRef, {
+            id: newSiteRef.id,
+            name: d.customName,
+            address: "",
+            latitude: latVal,
+            longitude: lngVal,
+            projectTypeTag: d.locationType,
+            status: "Active",
+            isUserAdded: true,
+            addedBy: user.email,
+            addedByName: profile?.name || user.email,
+            createdAt: serverTimestamp()
+          })
+          toast({ title: "บันทึกสถานที่แล้ว", description: `บันทึก ${d.customName} เข้าสู่รายการโปรดแล้ว` })
         }
-      })
+      }
 
       await updateDoc(doc(db, "vehicleRequests", editingReq.id), {
         requestDate: editFormData.requestDate,
@@ -910,7 +924,7 @@ export default function RequestsPage() {
                     className="border-accent text-accent"
                     onClick={() => setEditFormData({
                       ...editFormData,
-                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "" }]
+                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }]
                     })}
                   >
                     <Plus className="h-4 w-4 mr-2" /> เพิ่มจุดหมาย
@@ -1023,6 +1037,48 @@ export default function RequestsPage() {
                           }}
                         />
                       </div>
+
+                      {dest.type === "other" && (
+                        <div className="space-y-3 pt-2 border-t border-border/30">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox 
+                              id={`save-site-edit-${idx}`} 
+                              checked={dest.saveAsSite}
+                              onCheckedChange={(checked) => {
+                                const newDests = [...editFormData.destinations]
+                                newDests[idx].saveAsSite = !!checked
+                                setEditFormData({...editFormData, destinations: newDests})
+                              }}
+                            />
+                            <Label htmlFor={`save-site-edit-${idx}`} className="text-xs font-bold text-accent cursor-pointer">
+                              บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
+                            </Label>
+                          </div>
+
+                          {dest.saveAsSite && (
+                            <div className="space-y-1.5 animate-in slide-in-from-top-1 duration-200">
+                              <Label className="text-[10px] uppercase text-muted-foreground">ประเภทสถานที่</Label>
+                              <Select 
+                                value={dest.locationType} 
+                                onValueChange={(val) => {
+                                  const newDests = [...editFormData.destinations]
+                                  newDests[idx].locationType = val
+                                  setEditFormData({...editFormData, destinations: newDests})
+                                }}
+                              >
+                                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="ไซน์งาน">ไซน์งาน</SelectItem>
+                                  <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
+                                  <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
+                                  <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>
+                                  <SelectItem value="อื่น ๆ">อื่น ๆ</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </Card>
                   ))}
                 </div>

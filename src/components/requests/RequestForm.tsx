@@ -1,7 +1,8 @@
+
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useUser, useMemoFirebase } from "@/firebase"
+import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
 import { collection, doc, setDoc, serverTimestamp } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -26,8 +27,9 @@ import {
   Globe
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { Site } from "@/types/models"
+import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
+import { Checkbox } from "@/components/ui/checkbox"
 
 interface DestinationRequest {
   id: string;
@@ -37,6 +39,8 @@ interface DestinationRequest {
   customName: string;
   coordinates: string;
   jobDescription: string;
+  saveAsSite: boolean;
+  locationType: string;
 }
 
 export function RequestForm() {
@@ -44,6 +48,9 @@ export function RequestForm() {
   const db = useFirestore()
   const { user } = useUser()
   
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile } = useDoc<UserProfile>(userProfileRef)
+
   const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
@@ -53,7 +60,7 @@ export function RequestForm() {
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
-    { id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "" }
+    { id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }
   ])
 
   const addDestination = () => {
@@ -68,7 +75,9 @@ export function RequestForm() {
       siteName: "", 
       customName: "", 
       coordinates: "", 
-      jobDescription: "" 
+      jobDescription: "",
+      saveAsSite: false,
+      locationType: "ไซน์งาน"
     }])
   }
 
@@ -78,7 +87,7 @@ export function RequestForm() {
     }
   }
 
-  const updateDest = (id: string, field: keyof DestinationRequest, value: string) => {
+  const updateDest = (id: string, field: keyof DestinationRequest, value: any) => {
     setDestinations(destinations.map(d => {
       if (d.id === id) {
         const updated = { ...d, [field]: value };
@@ -103,7 +112,8 @@ export function RequestForm() {
         siteId: "",
         siteName: "",
         customName: "",
-        coordinates: ""
+        coordinates: "",
+        saveAsSite: false
       } : d
     ))
   }
@@ -129,18 +139,43 @@ export function RequestForm() {
       const requestId = `VR-${Math.floor(1000 + Math.random() * 9000)}`
       const requestRef = doc(db, "vehicleRequests", requestId)
       
-      const parsedDestinations = validDestinations.map(d => {
+      const parsedDestinations = []
+
+      for (const d of validDestinations) {
         const [lat, lng] = d.coordinates.split(',').map(s => parseFloat(s.trim()))
-        return {
+        const latVal = isNaN(lat) ? 0 : lat
+        const lngVal = isNaN(lng) ? 0 : lng
+        const finalName = d.type === "site" ? d.siteName : d.customName
+
+        parsedDestinations.push({
           type: d.type,
           siteId: d.siteId || null,
-          siteName: d.type === "site" ? d.siteName : d.customName,
+          siteName: finalName,
           customName: d.type === "other" ? d.customName : null,
-          lat: isNaN(lat) ? 0 : lat,
-          lng: isNaN(lng) ? 0 : lng,
+          lat: latVal,
+          lng: lngVal,
           jobDescription: d.jobDescription
+        })
+
+        // Handle "Save as site" feature
+        if (d.type === "other" && d.saveAsSite && d.customName && d.coordinates) {
+          const newSiteRef = doc(collection(db, "sites"))
+          await setDoc(newSiteRef, {
+            id: newSiteRef.id,
+            name: d.customName,
+            address: "",
+            latitude: latVal,
+            longitude: lngVal,
+            projectTypeTag: d.locationType,
+            status: "Active",
+            isUserAdded: true,
+            addedBy: user.email,
+            addedByName: profile?.name || user.email,
+            createdAt: serverTimestamp()
+          })
+          toast({ title: "บันทึกสถานที่แล้ว", description: `บันทึก ${d.customName} เข้าสู่รายการโปรดแล้ว` })
         }
-      })
+      }
 
       const requestData = {
         requestId,
@@ -156,9 +191,7 @@ export function RequestForm() {
         createdAt: serverTimestamp(),
       }
 
-      console.log('Saving request:', requestData)
       await setDoc(requestRef, requestData)
-
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
       // Reset form
@@ -166,7 +199,7 @@ export function RequestForm() {
       setRequestDate(new Date().toISOString().split('T')[0])
       setRequestTime("08:30")
       setNote("")
-      setDestinations([{ id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "" }])
+      setDestinations([{ id: "1", type: "site", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }])
     } catch (error) {
       console.error("Error saving request:", error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
@@ -244,7 +277,7 @@ export function RequestForm() {
                             className={cn("flex-1 sm:flex-none h-8 text-xs", dest.type === "site" && "bg-accent")}
                             onClick={() => dest.type !== "site" && toggleType(dest.id)}
                           >
-                            <Building2 className="mr-2 h-3 w-3" /> ไซน์งาน
+                            <Building2 className="mr-2 h-3 w-3" /> ไซน์งาน / สถานที่ประจำ
                           </Button>
                           <Button 
                             type="button" 
@@ -253,7 +286,7 @@ export function RequestForm() {
                             className={cn("flex-1 sm:flex-none h-8 text-xs", dest.type === "other" && "bg-accent")}
                             onClick={() => dest.type !== "other" && toggleType(dest.id)}
                           >
-                            <Globe className="mr-2 h-3 w-3" /> สถานที่อื่น
+                            <Globe className="mr-2 h-3 w-3" /> สถานที่ใหม่ (กำหนดเอง)
                           </Button>
                         </div>
                         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive h-8 w-8 self-end sm:self-auto" onClick={() => removeDestination(dest.id)}>
@@ -264,13 +297,13 @@ export function RequestForm() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {dest.type === "site" ? (
                           <div className="space-y-2">
-                            <Label>เลือกไซน์งาน</Label>
+                            <Label>เลือกสถานที่</Label>
                             <Select value={dest.siteId} onValueChange={(val) => updateDest(dest.id, "siteId", val)}>
                               <SelectTrigger className="h-11">
-                                <SelectValue placeholder="ค้นหาไซน์งาน..." />
+                                <SelectValue placeholder="ค้นหาไซน์งาน, ร้านค้า, ธนาคาร..." />
                               </SelectTrigger>
                               <SelectContent>
-                                {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                                {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name} ({s.projectTypeTag})</SelectItem>)}
                               </SelectContent>
                             </Select>
                           </div>
@@ -319,6 +352,40 @@ export function RequestForm() {
                           onChange={(e) => updateDest(dest.id, "jobDescription", e.target.value)}
                         />
                       </div>
+
+                      {dest.type === "other" && (
+                        <div className="space-y-4 pt-4 border-t border-border/30">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox 
+                              id={`save-site-${dest.id}`} 
+                              checked={dest.saveAsSite}
+                              onCheckedChange={(checked) => updateDest(dest.id, "saveAsSite", checked)}
+                            />
+                            <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-accent cursor-pointer">
+                              บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
+                            </Label>
+                          </div>
+
+                          {dest.saveAsSite && (
+                            <div className="space-y-2 animate-in slide-in-from-top-1">
+                              <Label>ประเภทสถานที่</Label>
+                              <Select 
+                                value={dest.locationType} 
+                                onValueChange={(val) => updateDest(dest.id, "locationType", val)}
+                              >
+                                <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="ไซน์งาน">ไซน์งาน</SelectItem>
+                                  <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
+                                  <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
+                                  <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>
+                                  <SelectItem value="อื่น ๆ">อื่น ๆ</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
