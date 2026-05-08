@@ -76,7 +76,7 @@ const CATEGORIES = [
   { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
   { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
   { id: 'custom', label: 'กำหนดเอง', icon: MapPin, types: [] },
-];
+] as const;
 
 function getCategoryFromType(type: string): string {
   if (['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
@@ -639,7 +639,7 @@ export default function RequestsPage() {
   const userProfileRef = useMemoFirebase(() => (db && user) ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
-  const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
+  const sitesRef = useMemoFirebase(() => db ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
   // Edit State
@@ -723,11 +723,11 @@ export default function RequestsPage() {
       destinations: req.destinations.map((d: any, idx: number) => ({
         id: `edit-${idx}-${Date.now()}`,
         type: d.type || "site",
-        category: getCategoryFromType(d.type || "site"),
+        category: getCategoryFromType(d.siteName || d.type || "site"),
         searchTerm: "",
         siteId: d.siteId || "",
         siteName: d.siteName || "",
-        customName: d.customName || "",
+        customName: d.customName || d.siteName || "",
         coordinates: d.lat && d.lng ? `${d.lat}, ${d.lng}` : "",
         jobDescription: d.jobDescription || "",
         saveAsSite: false,
@@ -954,132 +954,150 @@ export default function RequestsPage() {
                 </div>
 
                 <div className="space-y-4">
-                  {editFormData.destinations.map((dest: any, idx: number) => (
-                    <Card key={dest.id} className="bg-secondary/20 border-border/50 p-4 space-y-4">
-                      {/* Category Selector */}
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {CATEGORIES.map(cat => (
-                          <Button 
-                            key={cat.id}
-                            type="button"
-                            variant={dest.category === cat.id ? "default" : "outline"}
-                            size="sm"
-                            className={cn(
-                              "h-8 text-[10px] px-2 py-1 flex items-center gap-1.5",
-                              dest.category === cat.id && "bg-accent hover:bg-accent/90"
-                            )}
-                            onClick={() => {
-                              const newDests = [...editFormData.destinations];
-                              newDests[idx].category = cat.id;
-                              newDests[idx].siteId = "";
-                              newDests[idx].siteName = "";
-                              newDests[idx].coordinates = "";
-                              newDests[idx].searchTerm = "";
-                              setEditFormData({...editFormData, destinations: newDests});
-                            }}
-                          >
-                            <cat.icon className="h-3 w-3" /> {cat.label}
-                          </Button>
-                        ))}
-                        <div className="flex-1" />
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          disabled={editFormData.destinations.length <= 1}
-                          onClick={() => {
-                            const newDests = editFormData.destinations.filter((_: any, i: number) => i !== idx)
-                            setEditFormData({...editFormData, destinations: newDests})
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                  {editFormData.destinations.map((dest: any, idx: number) => {
+                    const category = CATEGORIES.find(c => c.id === dest.category);
+                    const filteredSites = sites?.filter(s => {
+                      if (dest.category === 'custom') return false;
+                      const matchesType = category?.types.includes(s.projectTypeTag);
+                      const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase());
+                      return matchesType && matchesSearch;
+                    }) || [];
 
-                      {dest.category !== 'custom' ? (
-                        <div className="space-y-3">
-                          <div className="relative">
-                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                            <Input 
-                              placeholder="ค้นหาชื่อสถานที่..." 
-                              className="pl-8 h-9 text-xs"
-                              value={dest.searchTerm}
-                              onChange={(e) => {
+                    return (
+                      <Card key={dest.id} className="bg-secondary/20 border-border/50 p-4 space-y-4">
+                        {/* Category Selector */}
+                        <div className="flex flex-wrap gap-1.5 p-1 bg-background/40 rounded-lg">
+                          {CATEGORIES.map(cat => (
+                            <Button 
+                              key={cat.id}
+                              type="button"
+                              variant={dest.category === cat.id ? "default" : "ghost"}
+                              size="sm"
+                              className={cn(
+                                "h-8 text-[10px] px-2.5 flex items-center gap-1.5 transition-all",
+                                dest.category === cat.id ? "bg-accent text-white shadow-sm" : "text-muted-foreground hover:bg-secondary/60"
+                              )}
+                              onClick={() => {
                                 const newDests = [...editFormData.destinations];
-                                newDests[idx].searchTerm = e.target.value;
+                                newDests[idx].category = cat.id;
+                                newDests[idx].siteId = "";
+                                newDests[idx].siteName = "";
+                                newDests[idx].coordinates = "";
+                                newDests[idx].searchTerm = "";
                                 setEditFormData({...editFormData, destinations: newDests});
                               }}
-                            />
-                          </div>
-                          
-                          <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase text-muted-foreground">เลือกสถานที่</Label>
-                            <Select 
-                              value={dest.siteId} 
-                              onValueChange={(val) => {
-                                const site = sites?.find(s => s.id === val)
-                                const newDests = [...editFormData.destinations]
-                                newDests[idx].siteId = val
-                                newDests[idx].siteName = site?.name || ""
-                                newDests[idx].coordinates = site?.latitude && site?.longitude ? `${site.latitude}, ${site.longitude}` : ""
-                                setEditFormData({...editFormData, destinations: newDests})
-                              }}
                             >
-                              <SelectTrigger className="h-9"><SelectValue placeholder={`เลือก${CATEGORIES.find(c => c.id === dest.category)?.label}`} /></SelectTrigger>
-                              <SelectContent>
-                                {sites?.filter(s => {
-                                  const category = CATEGORIES.find(c => c.id === dest.category);
-                                  const matchesType = category?.types.includes(s.projectTypeTag);
-                                  const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase());
-                                  return matchesType && matchesSearch;
-                                }).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                              <cat.icon className="h-3.5 w-3.5" /> {cat.label}
+                            </Button>
+                          ))}
+                          <div className="flex-1" />
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            disabled={editFormData.destinations.length <= 1}
+                            onClick={() => {
+                              const newDests = editFormData.destinations.filter((_: any, i: number) => i !== idx)
+                              setEditFormData({...editFormData, destinations: newDests})
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
-                      ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase text-muted-foreground">ชื่อสถานที่</Label>
-                            <Input 
-                              className="h-9" 
-                              value={dest.customName}
-                              placeholder="ระบุชื่อสถานที่ใหม่..."
-                              onChange={(e) => {
-                                const newDests = [...editFormData.destinations]
-                                newDests[idx].customName = e.target.value
-                                setEditFormData({...editFormData, destinations: newDests})
-                              }}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase text-muted-foreground">พิกัด (lat, lng)</Label>
-                            <Input 
-                              className="h-9" 
-                              value={dest.coordinates}
-                              placeholder="เช่น 13.7563, 100.5018"
-                              onChange={(e) => {
-                                const newDests = [...editFormData.destinations]
-                                newDests[idx].coordinates = e.target.value
-                                setEditFormData({...editFormData, destinations: newDests})
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )}
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {dest.category !== 'custom' && (
-                          <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase text-muted-foreground">พิกัด</Label>
-                            <Input className="h-9 bg-muted/30" value={dest.coordinates} readOnly />
+                        {dest.category !== 'custom' ? (
+                          <div className="space-y-4 animate-in fade-in duration-200">
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                              <Input 
+                                placeholder="พิมพ์เพื่อค้นหาสถานที่..." 
+                                className="pl-10 h-10 text-xs bg-background/50"
+                                value={dest.searchTerm}
+                                onChange={(e) => {
+                                  const newDests = [...editFormData.destinations];
+                                  newDests[idx].searchTerm = e.target.value;
+                                  setEditFormData({...editFormData, destinations: newDests});
+                                }}
+                              />
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label className="text-[10px] uppercase text-muted-foreground font-bold">เลือกสถานที่</Label>
+                                <Select 
+                                  value={dest.siteId} 
+                                  onValueChange={(val) => {
+                                    const site = sites?.find(s => s.id === val)
+                                    const newDests = [...editFormData.destinations]
+                                    newDests[idx].siteId = val
+                                    newDests[idx].siteName = site?.name || ""
+                                    newDests[idx].coordinates = site?.latitude && site?.longitude ? `${site.latitude}, ${site.longitude}` : ""
+                                    setEditFormData({...editFormData, destinations: newDests})
+                                  }}
+                                >
+                                  <SelectTrigger className="h-11 bg-background/50">
+                                    <SelectValue placeholder={`-- ค้นหา/เลือก${CATEGORIES.find(c => c.id === dest.category)?.label} --`} />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-64">
+                                    {filteredSites.length > 0 ? filteredSites.map(s => (
+                                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                    )) : (
+                                      <div className="p-4 text-center text-xs text-muted-foreground">ไม่พบข้อมูลในหมวดหมู่นี้</div>
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-[10px] uppercase text-muted-foreground font-bold">พิกัด</Label>
+                                <Input className="h-11 bg-muted/20 border-dashed" value={dest.coordinates} placeholder="ดึงข้อมูลอัตโนมัติ" readOnly />
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-1 duration-200">
+                            <div className="space-y-1.5">
+                              <Label className="text-[10px] uppercase text-muted-foreground font-bold">ชื่อสถานที่</Label>
+                              <Input 
+                                className="h-11 bg-background/50" 
+                                value={dest.customName}
+                                placeholder="เช่น บริษัท TMT อยุธยา"
+                                onChange={(e) => {
+                                  const newDests = [...editFormData.destinations]
+                                  newDests[idx].customName = e.target.value
+                                  setEditFormData({...editFormData, destinations: newDests})
+                                }}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[10px] uppercase text-muted-foreground font-bold">พิกัด (lat, lng)</Label>
+                                <Button 
+                                  variant="link" 
+                                  className="h-auto p-0 text-[10px] text-accent"
+                                  onClick={() => window.open('https://maps.google.com', '_blank')}
+                                >
+                                  <ExternalLink className="mr-1 h-3 w-3" /> แผนที่
+                                </Button>
+                              </div>
+                              <Input 
+                                className="h-11 bg-background/50" 
+                                value={dest.coordinates}
+                                placeholder="เช่น 13.7563, 100.5018"
+                                onChange={(e) => {
+                                  const newDests = [...editFormData.destinations]
+                                  newDests[idx].coordinates = e.target.value
+                                  setEditFormData({...editFormData, destinations: newDests})
+                                }}
+                              />
+                            </div>
                           </div>
                         )}
-                        <div className={cn("space-y-1.5", dest.category === 'custom' ? "md:col-span-2" : "")}>
-                          <Label className="text-[10px] uppercase text-muted-foreground">ลักษณะงาน</Label>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] uppercase text-muted-foreground font-bold">ลักษณะงานที่ต้องทำ</Label>
                           <Input 
-                            className="h-9 text-xs" 
-                            placeholder="รายละเอียดงาน..."
+                            className="h-11 bg-background/30 text-sm" 
+                            placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ"
                             value={dest.jobDescription}
                             onChange={(e) => {
                               const newDests = [...editFormData.destinations]
@@ -1088,58 +1106,60 @@ export default function RequestsPage() {
                             }}
                           />
                         </div>
-                      </div>
 
-                      {dest.category === "custom" && (
-                        <div className="space-y-3 pt-2 border-t border-border/30">
-                          <div className="flex items-center space-x-2">
-                            <Checkbox 
-                              id={`save-site-edit-${idx}`} 
-                              checked={dest.saveAsSite}
-                              onCheckedChange={(checked) => {
-                                const newDests = [...editFormData.destinations]
-                                newDests[idx].saveAsSite = !!checked
-                                setEditFormData({...editFormData, destinations: newDests})
-                              }}
-                            />
-                            <Label htmlFor={`save-site-edit-${idx}`} className="text-xs font-bold text-accent cursor-pointer">
-                              บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
-                            </Label>
-                          </div>
-
-                          {dest.saveAsSite && (
-                            <div className="space-y-1.5 animate-in slide-in-from-top-1 duration-200">
-                              <Label className="text-[10px] uppercase text-muted-foreground">ประเภทสถานที่</Label>
-                              <Select 
-                                value={dest.locationType} 
-                                onValueChange={(val) => {
+                        {dest.category === "custom" && (
+                          <div className="space-y-4 pt-4 border-t border-border/30">
+                            <div className="flex items-center space-x-2">
+                              <Checkbox 
+                                id={`save-site-edit-${idx}`} 
+                                checked={dest.saveAsSite}
+                                onCheckedChange={(checked) => {
                                   const newDests = [...editFormData.destinations]
-                                  newDests[idx].locationType = val
+                                  newDests[idx].saveAsSite = !!checked
                                   setEditFormData({...editFormData, destinations: newDests})
                                 }}
-                              >
-                                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="ไซน์งาน">ไซน์งาน</SelectItem>
-                                  <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
-                                  <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
-                                  <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>
-                                  <SelectItem value="อื่น ๆ">อื่น ๆ</SelectItem>
-                                </SelectContent>
-                              </Select>
+                              />
+                              <Label htmlFor={`save-site-edit-${idx}`} className="text-xs font-bold text-accent cursor-pointer">
+                                บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
+                              </Label>
                             </div>
-                          )}
-                        </div>
-                      )}
-                    </Card>
-                  ))}
+
+                            {dest.saveAsSite && (
+                              <div className="space-y-1.5 animate-in slide-in-from-top-1 duration-200">
+                                <Label className="text-[10px] uppercase text-muted-foreground font-bold">ประเภทสถานที่</Label>
+                                <Select 
+                                  value={dest.locationType} 
+                                  onValueChange={(val) => {
+                                    const newDests = [...editFormData.destinations]
+                                    newDests[idx].locationType = val
+                                    setEditFormData({...editFormData, destinations: newDests})
+                                  }}
+                                >
+                                  <SelectTrigger className="h-11 bg-background/50"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="ไซน์งาน">ไซน์งาน</SelectItem>
+                                    <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
+                                    <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
+                                    <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>
+                                    <SelectItem value="อื่น ๆ">อื่น ๆ</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label>หมายเหตุ</Label>
+                <Label className="font-bold">หมายเหตุ (ระบุถึงคนจัดรถ)</Label>
                 <Textarea 
                   value={editFormData.note}
+                  placeholder="ข้อมูลเพิ่มเติม..."
+                  className="bg-background/40 min-h-[100px]"
                   onChange={(e) => setEditFormData({...editFormData, note: e.target.value})}
                 />
               </div>
@@ -1149,7 +1169,7 @@ export default function RequestsPage() {
           <DialogFooter className="flex flex-row gap-2 mt-4">
             <Button variant="outline" className="flex-1 h-11" onClick={() => setIsEditOpen(false)}>ยกเลิก</Button>
             <Button 
-              className="flex-1 h-11 bg-accent" 
+              className="flex-1 h-11 bg-accent hover:bg-accent/90 shadow-md" 
               onClick={handleUpdateEdit}
               disabled={isSavingEdit}
             >
