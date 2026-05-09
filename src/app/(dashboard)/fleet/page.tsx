@@ -212,14 +212,19 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => { 
+                            <DropdownMenuItem onSelect={() => { 
                               setEditingVehicle(v); 
-                              vehicleForm.reset({ licensePlate: v.licensePlate, type: v.type, maxLoadCapacityKg: v.maxLoadCapacityKg, fuelRate: v.fuelRate }); 
+                              vehicleForm.reset({ 
+                                licensePlate: v.licensePlate, 
+                                type: v.type, 
+                                maxLoadCapacityKg: v.maxLoadCapacityKg, 
+                                fuelRate: v.fuelRate 
+                              }); 
                               setIsVehicleDialogOpen(true); 
                             }}>
                               <Edit className="mr-2 h-4 w-4" /> แก้ไข
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteVehicle(v.id)}>
+                            <DropdownMenuItem className="text-destructive" onSelect={() => handleDeleteVehicle(v.id)}>
                               <Trash2 className="mr-2 h-4 w-4" /> ลบ
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -277,14 +282,14 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => { 
+                            <DropdownMenuItem onSelect={() => { 
                               setEditingDriver(d); 
                               driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); 
                               setIsDriverDialogOpen(true); 
                             }}>
                               <Edit className="mr-2 h-4 w-4" /> แก้ไข
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteDriver(d.id)}>
+                            <DropdownMenuItem className="text-destructive" onSelect={() => handleDeleteDriver(d.id)}>
                               <Trash2 className="mr-2 h-4 w-4" /> ลบ
                             </DropdownMenuItem>
                           </DropdownMenuContent>
