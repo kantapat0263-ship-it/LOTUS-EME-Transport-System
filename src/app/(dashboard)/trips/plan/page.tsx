@@ -33,7 +33,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
-import { Alert, AlertTitle, AlertDescription } from "@/alert"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
