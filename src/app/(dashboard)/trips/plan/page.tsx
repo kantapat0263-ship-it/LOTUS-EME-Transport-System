@@ -43,6 +43,9 @@ import { Site, Vehicle, Driver, CompanySetting } from "@/types/models"
 import { setDocumentNonBlocking, updateDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
 import { Loader } from "@googlemaps/js-api-loader"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { format } from "date-fns"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
@@ -703,7 +706,28 @@ export default function TripPlanPage() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-medium">วันที่ส่งของ</label>
-                  <Input type="date" className="h-11" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={cn(
+                          "w-full h-11 justify-start text-left font-normal bg-background",
+                          !tripDate && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                        {tripDate ? format(new Date(tripDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={tripDate ? new Date(tripDate) : undefined}
+                        onSelect={(date) => setTripDate(date ? format(date, "yyyy-MM-dd") : "")}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-medium">จุดเริ่มต้น</label>

@@ -35,6 +35,9 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { Trip } from "@/types/models"
 import { cn } from "@/lib/utils"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { format } from "date-fns"
 
 export default function DailySummaryPage() {
   const { toast } = useToast()
@@ -172,14 +175,29 @@ export default function DailySummaryPage() {
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="report-date">เลือกวันที่</Label>
-              <Input 
-                id="report-date" 
-                type="date" 
-                className="h-11"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-              />
+              <Label>เลือกวันที่</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant={"outline"}
+                    className={cn(
+                      "w-full h-11 justify-start text-left font-normal bg-background",
+                      !selectedDate && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                    {selectedDate ? format(new Date(selectedDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate ? new Date(selectedDate) : undefined}
+                    onSelect={(date) => setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="grid grid-cols-1 gap-3 pt-2">
               <Button 

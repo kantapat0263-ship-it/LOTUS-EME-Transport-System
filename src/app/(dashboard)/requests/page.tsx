@@ -8,7 +8,7 @@ import {
   History, 
   Settings2, 
   Loader2, 
-  Calendar, 
+  Calendar as CalendarIcon, 
   Clock, 
   MapPin, 
   AlertCircle, 
@@ -66,6 +66,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Loader } from "@googlemaps/js-api-loader"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { format } from "date-fns"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -1005,17 +1008,34 @@ export default function RequestsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>วันที่ต้องการรถ</Label>
-                  <Input 
-                    type="date" 
-                    value={editFormData.requestDate}
-                    onChange={(e) => setEditFormData({...editFormData, requestDate: e.target.value})}
-                  />
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={cn(
+                          "w-full h-11 justify-start text-left font-normal bg-background",
+                          !editFormData.requestDate && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                        {editFormData.requestDate ? format(new Date(editFormData.requestDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={editFormData.requestDate ? new Date(editFormData.requestDate) : undefined}
+                        onSelect={(date) => setEditFormData({...editFormData, requestDate: date ? format(date, "yyyy-MM-dd") : ""})}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="space-y-2">
                   <Label>เวลาที่ต้องการ</Label>
                   <div className="relative">
                     <Input 
-                      placeholder="เช่น 08:30" 
+                      placeholder="08:30" 
                       className="h-11 pr-8"
                       value={editFormData.requestTime}
                       onChange={(e) => setEditFormData({...editFormData, requestTime: e.target.value})}
@@ -1173,7 +1193,7 @@ export default function RequestsPage() {
                               <Input 
                                 className="h-11 bg-background/50" 
                                 value={dest.coordinates}
-                                placeholder="เช่น 13.7563, 100.5018"
+                                placeholder="14.0815, 100.7129"
                                 onChange={(e) => updateEditDest({ coordinates: e.target.value })}
                               />
                             </div>
@@ -1307,7 +1327,7 @@ export default function RequestsPage() {
                             </div>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                               <div className="flex items-center gap-1.5">
-                                <Calendar className="h-3.5 w-3.5" /> {formatDateDisplay(req.requestDate)}
+                                <CalendarIcon className="h-3.5 w-3.5" /> {formatDateDisplay(req.requestDate)}
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <Clock className="h-3.5 w-3.5" /> {req.requestTime} น.

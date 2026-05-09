@@ -19,7 +19,7 @@ import {
 import { 
   BarChart2, 
   Download, 
-  Calendar, 
+  Calendar as CalendarIcon, 
   Truck, 
   User, 
   MapPin, 
@@ -33,6 +33,8 @@ import { Trip, CompanySetting } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
 import { th } from "date-fns/locale"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -224,11 +226,41 @@ export default function ReportPage() {
           <div className="grid grid-cols-2 gap-4 flex-1">
             <div className="space-y-2">
               <Label>ตั้งแต่วันที่</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-11" />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full h-11 justify-start text-left font-normal bg-background">
+                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                    {startDate ? formatDateDisplay(startDate) : <span>เริ่มวันที่</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={startDate ? new Date(startDate) : undefined}
+                    onSelect={(date) => setStartDate(date ? format(date, "yyyy-MM-dd") : "")}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="space-y-2">
               <Label>ถึงวันที่</Label>
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-11" />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full h-11 justify-start text-left font-normal bg-background">
+                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                    {endDate ? formatDateDisplay(endDate) : <span>ถึงวันที่</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={endDate ? new Date(endDate) : undefined}
+                    onSelect={(date) => setEndDate(date ? format(date, "yyyy-MM-dd") : "")}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
           <Button className="bg-accent h-11 w-full md:w-auto" onClick={fetchData} disabled={isLoading}>

@@ -26,12 +26,16 @@ import {
   Store,
   Landmark,
   Briefcase,
-  Search
+  Search,
+  Calendar as CalendarIcon
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { format } from "date-fns"
 
 interface DestinationRequest {
   id: string;
@@ -239,22 +243,36 @@ export function RequestForm() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="requestDate">วันที่ต้องการรถ</Label>
-                <Input 
-                  id="requestDate" 
-                  type="date" 
-                  className="h-11"
-                  value={requestDate}
-                  onChange={(e) => setRequestDate(e.target.value)}
-                  required
-                />
+                <Label>วันที่ต้องการรถ</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant={"outline"}
+                      className={cn(
+                        "w-full h-11 justify-start text-left font-normal bg-background",
+                        !requestDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                      {requestDate ? format(new Date(requestDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={requestDate ? new Date(requestDate) : undefined}
+                      onSelect={(date) => setRequestDate(date ? format(date, "yyyy-MM-dd") : "")}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="requestTime">เวลาที่ต้องการ</Label>
                 <div className="relative">
                   <Input 
                     id="requestTime"
-                    placeholder="เช่น 08:30" 
+                    placeholder="08:30" 
                     className="h-11 pr-8"
                     value={requestTime}
                     onChange={(e) => setRequestTime(e.target.value)}
