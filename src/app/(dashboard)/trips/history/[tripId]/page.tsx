@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -93,15 +92,19 @@ export default function TripDetailPage() {
     return `${m} นาที`;
   };
 
-  const formatThaiShortDate = (dateStr: any) => {
+  const formatDisplayDate = (dateStr: any) => {
     if (!dateStr) return "-";
     try {
       const d = dateStr.toDate ? dateStr.toDate() : new Date(dateStr);
-      const day = d.getDate();
-      const month = d.getMonth() + 1;
-      const year = (d.getFullYear() + 543).toString().slice(-2);
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
       return `${day}/${month}/${year}`;
     } catch (e) {
+      if (typeof dateStr === 'string' && dateStr.includes('-')) {
+        const [y, m, d] = dateStr.split('-');
+        return `${d}/${m}/${y}`;
+      }
       return "-";
     }
   };
@@ -355,7 +358,7 @@ export default function TripDetailPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6">
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3 text-white" /> วันที่ส่ง</p>
-                    <p className="font-bold text-sm md:text-base">{trip.tripDate}</p>
+                    <p className="font-bold text-sm md:text-base">{formatDisplayDate(trip.tripDate)}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><User className="h-3 w-3" /> คนขับ</p>
@@ -500,7 +503,7 @@ export default function TripDetailPage() {
           <tbody>
             <tr>
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', textAlign: 'center' }}>
-                {formatThaiShortDate(trip.tripDate)}
+                {formatDisplayDate(trip.tripDate)}
               </td>
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', textAlign: 'center' }}>
                 {(trip as any).departureTime || "08:30"} น.
@@ -524,7 +527,7 @@ export default function TripDetailPage() {
                 <div style={{ marginBottom: '6px' }}><strong>ผู้ขับ:</strong> {trip.driverName}</div>
                 <div style={{ marginBottom: '6px' }}><strong>ทะเบียน:</strong> {trip.vehiclePlate}</div>
                 <div style={{ marginTop: '10px' }}><strong>ผู้ขอใช้รถ:</strong><br/>{uniqueRequesters}</div>
-                <div style={{ marginTop: '12px', fontSize: '10px', color: '#555' }}>วันที่บันทึก: {formatThaiShortDate(trip.createdAt)}</div>
+                <div style={{ marginTop: '12px', fontSize: '10px', color: '#555' }}>วันที่บันทึก: {formatDisplayDate(trip.createdAt)}</div>
               </td>
             </tr>
             <tr>

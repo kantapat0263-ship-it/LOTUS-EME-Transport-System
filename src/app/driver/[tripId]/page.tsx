@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -20,12 +19,15 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-// Note: Firestore rules must allow public read for /trips
-// Admin should update rules to:
-// match /trips/{tripId} {
-//   allow read: if true;  // public read
-//   allow write: if request.auth != null;
-// }
+// Helper to format date YYYY-MM-DD to DD/MM/YYYY
+function formatDateDisplay(dateStr: string) {
+  if (!dateStr) return "-";
+  if (dateStr.includes('-')) {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  return dateStr;
+}
 
 export default function DriverTripPage() {
   const params = useParams()
@@ -105,7 +107,7 @@ export default function DriverTripPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <p className="text-blue-100 text-[10px] font-bold uppercase">วันที่</p>
-                <p className="text-sm font-bold flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> {trip.tripDate}</p>
+                <p className="text-sm font-bold flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> {formatDateDisplay(trip.tripDate)}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-blue-100 text-[10px] font-bold uppercase">เวลาออกรถ</p>

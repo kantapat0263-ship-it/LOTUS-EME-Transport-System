@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -37,6 +36,16 @@ import { Trip, TripStatus, UserProfile, Driver, Vehicle, Site, TripStop } from "
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
+
+// Helper to format date YYYY-MM-DD to DD/MM/YYYY
+function formatDateDisplay(dateStr: string) {
+  if (!dateStr) return "-";
+  if (dateStr.includes('-')) {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  return dateStr;
+}
 
 export default function TripHistoryPage() {
   const router = useRouter()
@@ -418,7 +427,7 @@ export default function TripHistoryPage() {
                       </div>
                     )}
                   </div>
-                  <p className="text-[10px] md:text-xs text-muted-foreground truncate">{trip.tripDate} • {trip.stops?.[trip.stops.length - 1]?.siteName || "No stops"}</p>
+                  <p className="text-[10px] md:text-xs text-muted-foreground truncate">{formatDateDisplay(trip.tripDate)} • {trip.stops?.[trip.stops.length - 1]?.siteName || "No stops"}</p>
                 </div>
               </div>
 
@@ -656,7 +665,7 @@ export default function TripHistoryPage() {
               </div>
               <div className="text-left sm:text-right">
                 <p className="font-bold text-sm md:text-base">Trip ID: {selectedTrip?.tripId}</p>
-                <p className="text-[10px] md:text-sm">วันที่: {selectedTrip?.tripDate}</p>
+                <p className="text-[10px] md:text-sm">วันที่: {formatDateDisplay(selectedTrip?.tripDate || "")}</p>
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8 mb-8">

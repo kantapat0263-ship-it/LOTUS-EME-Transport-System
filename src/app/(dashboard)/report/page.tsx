@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -34,6 +33,16 @@ import { Trip, CompanySetting } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
 import { th } from "date-fns/locale"
+
+// Helper to format date YYYY-MM-DD to DD/MM/YYYY
+function formatDateDisplay(dateStr: string) {
+  if (!dateStr) return "";
+  if (dateStr.includes('-')) {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  return dateStr;
+}
 
 export default function ReportPage() {
   const { toast } = useToast()
@@ -232,7 +241,7 @@ export default function ReportPage() {
       <div id="report-content" className="space-y-8 p-4 bg-[#1A1C23] rounded-2xl">
         <div className="text-center space-y-1">
           <h1 className="text-2xl font-bold text-accent">🏢 LOTUS GROUP — รายงานสรุปการขนส่ง</h1>
-          <p className="text-sm text-muted-foreground">ช่วงเวลา: {startDate} ถึง {endDate}</p>
+          <p className="text-sm text-muted-foreground">ช่วงเวลา: {formatDateDisplay(startDate)} ถึง {formatDateDisplay(endDate)}</p>
         </div>
 
         {/* KPI CARDS */}

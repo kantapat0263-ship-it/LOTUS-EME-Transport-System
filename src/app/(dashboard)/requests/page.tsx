@@ -67,6 +67,16 @@ import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Loader } from "@googlemaps/js-api-loader"
 
+// Helper to format date YYYY-MM-DD to DD/MM/YYYY
+function formatDateDisplay(dateStr: string) {
+  if (!dateStr) return "";
+  if (dateStr.includes('-')) {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  return dateStr;
+}
+
 // Category mapping for filtering
 const CATEGORIES = [
   { id: 'site', label: 'ไซน์งาน', icon: Building2, types: ['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
@@ -463,7 +473,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     </div>
                   </div>
                   <div className="text-right text-[10px] text-muted-foreground flex flex-col">
-                    <span className="font-bold text-foreground">{req.requestDate}</span>
+                    <span className="font-bold text-foreground">{formatDateDisplay(req.requestDate)}</span>
                     <span>{req.requestTime} น.</span>
                   </div>
                 </div>
@@ -573,7 +583,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
                 <div className="space-y-1 sm:text-right">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วัน/เวลาที่ต้องการ</p>
-                  <p className="text-sm font-bold text-accent">{selectedReq.requestDate} @ {selectedReq.requestTime} น.</p>
+                  <p className="text-sm font-bold text-accent">{formatDateDisplay(selectedReq.requestDate)} @ {selectedReq.requestTime} น.</p>
                   <p className="text-[10px] text-muted-foreground">ส่งเมื่อ: {selectedReq.createdAt?.toDate()?.toLocaleString('th-TH')}</p>
                 </div>
               </div>
@@ -1297,7 +1307,7 @@ export default function RequestsPage() {
                             </div>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                               <div className="flex items-center gap-1.5">
-                                <Calendar className="h-3.5 w-3.5" /> {req.requestDate}
+                                <Calendar className="h-3.5 w-3.5" /> {formatDateDisplay(req.requestDate)}
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <Clock className="h-3.5 w-3.5" /> {req.requestTime} น.

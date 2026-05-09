@@ -82,10 +82,15 @@ export default function DailySummaryPage() {
 
   const formatThaiDate = (dateStr: string) => {
     if (!dateStr) return ""
+    // Handle YYYY-MM-DD
+    if (dateStr.includes('-')) {
+      const [y, m, d] = dateStr.split('-')
+      return `${d}/${m}/${y}`
+    }
     const d = new Date(dateStr)
-    const day = d.getDate()
-    const month = d.getMonth() + 1
-    const year = (d.getFullYear() + 543).toString().slice(-2)
+    const day = String(d.getDate()).padStart(2, '0')
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const year = d.getFullYear()
     return `${day}/${month}/${year}`
   }
 
@@ -248,7 +253,7 @@ export default function DailySummaryPage() {
                   <div className="text-center mb-6 space-y-1">
                     <h1 className="text-xl font-bold uppercase underline decoration-2 underline-offset-4">บันทึกใช้รถยนต์ประจำวัน</h1>
                     <h2 className="text-lg font-bold">LOTUS GROUP / LOTUS EME</h2>
-                    <p className="text-sm font-semibold">วันที่ {formatThaiDate(selectedDate)} (พ.ศ.)</p>
+                    <p className="text-sm font-semibold">วันที่ {formatThaiDate(selectedDate)} (ค.ศ.)</p>
                   </div>
 
                   <table className="w-full border-collapse border-2 border-black text-[12px]">
