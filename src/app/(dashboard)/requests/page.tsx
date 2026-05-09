@@ -84,8 +84,75 @@ function getCategoryFromType(type: string): string {
   return 'custom';
 }
 
+// Inline helper component for Dispatcher Notes
+function DispatcherNoteEditor({ req, userRole, profileName }: { req: any, userRole?: string, profileName?: string }) {
+  const db = useFirestore()
+  const [isEditing, setIsEditing] = React.useState(false)
+  const [dispatcherNote, setDispatcherNote] = React.useState(req.dispatcherNote || "")
+  const [isSaving, setIsSaving] = React.useState(false)
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setIsSaving(true)
+    try {
+      await updateDoc(doc(db, 'vehicleRequests', req.id), {
+        dispatcherNote: dispatcherNote,
+        dispatcherName: profileName || "Dispatcher",
+        dispatcherUpdatedAt: new Date().toISOString()
+      })
+      setIsEditing(false)
+    } catch (error) {
+      console.error("Error saving dispatcher note:", error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  if (!(userRole === 'admin' || userRole === 'dispatcher')) return null
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border/20 space-y-2" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold text-blue-400 uppercase flex items-center gap-1">
+          ✏️ บันทึกโดย {req.dispatcherName || profileName || "Dispatcher"}:
+        </span>
+        {req.dispatcherUpdatedAt && !isEditing && (
+          <span className="text-[9px] text-muted-foreground italic">
+            {new Date(req.dispatcherUpdatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
+      </div>
+      
+      {isEditing ? (
+        <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+          <Textarea 
+            value={dispatcherNote}
+            onChange={(e) => setDispatcherNote(e.target.value)}
+            placeholder="เพิ่มบันทึกสำหรับคนขับ/พนักงาน..."
+            className="text-xs bg-background/50 min-h-[60px] border-blue-500/30 focus-visible:ring-blue-500/30"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <Button size="sm" className="h-7 text-[10px] bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : "บันทึก"}
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-[10px] text-muted-foreground" onClick={() => { setIsEditing(false); setDispatcherNote(req.dispatcherNote || ""); }}>ยกเลิก</Button>
+          </div>
+        </div>
+      ) : (
+        <div 
+          className="p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-blue-100/90 cursor-text hover:bg-blue-500/10 transition-all border-dashed"
+          onClick={() => setIsEditing(true)}
+        >
+          {dispatcherNote || <span className="text-muted-foreground/60 italic">คลิกเพื่อเพิ่มบันทึกการจัดรถ...</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
-function InlineRequestManager({ userRole }: { userRole?: string }) {
+function InlineRequestManager({ userRole, profileName }: { userRole?: string, profileName?: string }) {
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
@@ -397,7 +464,7 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                   </div>
                   <div className="text-right text-[10px] text-muted-foreground flex flex-col">
                     <span className="font-bold text-foreground">{req.requestDate}</span>
-                    <span>{req.requestTime}</span>
+                    <span>{req.requestTime} น.</span>
                   </div>
                 </div>
 
@@ -419,13 +486,20 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                     borderRadius: '0 4px 4px 0'
                   }}>
                     <span style={{ fontSize: '12px', color: '#f97316', fontWeight: 500 }}>
-                      📌 หมายเหตุ:
+                      📌 หมายเหตุผู้ขอ:
                     </span>
                     <span style={{ fontSize: '13px', color: '#e2e8f0', marginLeft: '6px' }}>
                       {req.note}
                     </span>
                   </div>
                 )}
+
+                {/* Dispatcher editable note */}
+                <DispatcherNoteEditor 
+                  req={req} 
+                  userRole={userRole} 
+                  profileName={profileName} 
+                />
 
                 <div className="flex justify-end pt-2 border-t border-border/20">
                   <span className="text-[10px] text-accent flex items-center group-hover:translate-x-1 transition-transform font-bold">
@@ -499,7 +573,7 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                 </div>
                 <div className="space-y-1 sm:text-right">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วัน/เวลาที่ต้องการ</p>
-                  <p className="text-sm font-bold text-accent">{selectedReq.requestDate} @ {selectedReq.requestTime}</p>
+                  <p className="text-sm font-bold text-accent">{selectedReq.requestDate} @ {selectedReq.requestTime} น.</p>
                   <p className="text-[10px] text-muted-foreground">ส่งเมื่อ: {selectedReq.createdAt?.toDate()?.toLocaleString('th-TH')}</p>
                 </div>
               </div>
@@ -567,7 +641,7 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
               {selectedReq.note && (
                 <div className="space-y-2">
                   <p className="text-sm font-bold flex items-center gap-2 text-white">
-                    <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุเพิ่มเติม
+                    <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุจากผู้ขอ
                   </p>
                   <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
                     "{selectedReq.note}"
@@ -1226,7 +1300,7 @@ export default function RequestsPage() {
                                 <Calendar className="h-3.5 w-3.5" /> {req.requestDate}
                               </div>
                               <div className="flex items-center gap-1.5">
-                                <Clock className="h-3.5 w-3.5" /> {req.requestTime}
+                                <Clock className="h-3.5 w-3.5" /> {req.requestTime} น.
                               </div>
                               <div className="flex items-center gap-1.5 text-foreground font-medium">
                                 <MapPin className="h-3.5 w-3.5 text-accent" /> {req.destinations?.length || 0} จุดหมาย
@@ -1300,7 +1374,7 @@ export default function RequestsPage() {
                             borderRadius: '0 4px 4px 0'
                           }}>
                             <span style={{ fontSize: '12px', color: '#f97316', fontWeight: 500 }}>
-                              📌 หมายเหตุ:
+                              📌 หมายเหตุผู้ขอ:
                             </span>
                             <span style={{ fontSize: '13px', color: '#e2e8f0', marginLeft: '6px' }}>
                               {req.note}
@@ -1350,7 +1424,7 @@ export default function RequestsPage() {
 
         {isStaff && (
           <TabsContent value="manage" className="animate-in slide-in-from-bottom-2 duration-300">
-            <InlineRequestManager userRole={profile?.role} />
+            <InlineRequestManager userRole={profile?.role} profileName={profile?.name} />
           </TabsContent>
         )}
       </Tabs>
