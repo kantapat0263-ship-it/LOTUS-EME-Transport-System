@@ -49,6 +49,7 @@ export default function TripHistoryPage() {
   
   const isViewer = profile?.role === 'viewer'
   const isAdmin = profile?.role === 'admin'
+  const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
 
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedStatus, setSelectedStatus] = React.useState("all")
@@ -90,6 +91,13 @@ export default function TripHistoryPage() {
   const { data: sites } = useCollection<Site>(sitesRef)
 
   const filteredTrips = (trips || []).filter(trip => {
+    // 1. Role-based Visibility Filter
+    if (!isStaff) {
+      const isOwner = (trip as any).userEmail === user?.email || (trip as any).requestedBy === user?.email || (trip as any).userId === user?.uid;
+      if (!isOwner) return false;
+    }
+
+    // 2. Search, Status, and Date Filters
     const matchSearch = !searchTerm || 
       (trip.tripId || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
       (trip.driverName || "").toLowerCase().includes(searchTerm.toLowerCase())
