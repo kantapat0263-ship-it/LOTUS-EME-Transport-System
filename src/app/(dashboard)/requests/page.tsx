@@ -409,6 +409,24 @@ function InlineRequestManager({ userRole }: { userRole?: string }) {
                   )}
                 </div>
 
+                {/* Notes Section in List */}
+                {req.note && req.note.trim() !== '' && (
+                  <div style={{ 
+                    marginTop: '8px', 
+                    padding: '6px 10px', 
+                    borderLeft: '3px solid #f97316',
+                    backgroundColor: 'rgba(249, 115, 22, 0.08)',
+                    borderRadius: '0 4px 4px 0'
+                  }}>
+                    <span style={{ fontSize: '12px', color: '#f97316', fontWeight: 500 }}>
+                      📌 หมายเหตุ:
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#e2e8f0', marginLeft: '6px' }}>
+                      {req.note}
+                    </span>
+                  </div>
+                )}
+
                 <div className="flex justify-end pt-2 border-t border-border/20">
                   <span className="text-[10px] text-accent flex items-center group-hover:translate-x-1 transition-transform font-bold">
                     ดูรายละเอียดและจัดการ <ChevronRight className="h-3 w-3 ml-1" />
@@ -1271,6 +1289,24 @@ export default function RequestsPage() {
                             );
                           })}
                         </div>
+
+                        {/* Notes Section for My Requests List */}
+                        {req.note && req.note.trim() !== '' && (
+                          <div style={{ 
+                            marginTop: '8px', 
+                            padding: '6px 10px', 
+                            borderLeft: '3px solid #f97316',
+                            backgroundColor: 'rgba(249, 115, 22, 0.08)',
+                            borderRadius: '0 4px 4px 0'
+                          }}>
+                            <span style={{ fontSize: '12px', color: '#f97316', fontWeight: 500 }}>
+                              📌 หมายเหตุ:
+                            </span>
+                            <span style={{ fontSize: '13px', color: '#e2e8f0', marginLeft: '6px' }}>
+                              {req.note}
+                            </span>
+                          </div>
+                        )}
 
                         {req.status === "approved" && req.tripId && (
                           <div className="bg-green-500/5 border border-green-500/20 p-3 rounded-lg flex items-center justify-between animate-in zoom-in-95">
