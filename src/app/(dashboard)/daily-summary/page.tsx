@@ -282,6 +282,11 @@ export default function DailySummaryPage() {
                                 const locationText = (stop as any).address || (stop as any).zone || ""
                                 const stopRequester = stop.requestedBy || (trip as any).requestedBy || ""
                                 
+                                // Fetch notes from either stop or trip object
+                                const requesterNote = (stop as any).note || (stop as any).notes || ""
+                                const dNote = (stop as any).dispatcherNote || (trip as any).dispatcherNote || ""
+                                const dName = (stop as any).dispatcherName || (trip as any).dispatcherName || ""
+                                
                                 return (
                                   <div key={sIdx} className="space-y-1">
                                     <div className="flex gap-1.5 font-bold">
@@ -302,6 +307,20 @@ export default function DailySummaryPage() {
                                         <div className="pl-3 text-[10px] text-gray-500 italic flex items-center gap-1 mt-0.5">
                                           <ClipboardList className="h-2.5 w-2.5" />
                                           <span>ผู้ขอ: {stopRequester}</span>
+                                        </div>
+                                      )}
+
+                                      {/* Note from requester */}
+                                      {requesterNote && requesterNote.trim() !== '' && (
+                                        <div style={{ fontSize: '11px', color: '#555', marginTop: '2px' }} className="pl-3">
+                                          📌 หมายเหตุผู้ขอ: {requesterNote}
+                                        </div>
+                                      )}
+
+                                      {/* Note from Dispatcher */}
+                                      {dNote && dNote.trim() !== '' && (
+                                        <div style={{ fontSize: '11px', color: '#1a56db', marginTop: '2px' }} className="pl-3">
+                                          ✏️ บันทึก {dName || "จัดรถ"}: {dNote}
                                         </div>
                                       )}
                                     </div>
