@@ -33,12 +33,12 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertTitle, AlertDescription } from "@/alert"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useDoc, useUser } from "@/firebase"
-import { collection, serverTimestamp, doc, updateDoc } from "firebase/firestore"
+import { collection, serverTimestamp, doc, updateDoc, getDocs, query, where } from "firebase/firestore"
 import { Site, Vehicle, Driver, CompanySetting } from "@/types/models"
 import { setDocumentNonBlocking, updateDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
@@ -571,8 +571,15 @@ export default function TripPlanPage() {
       const selectedVehicle = vehicles?.find(v => v.id === vehicleId)
       const selectedDriver = drivers?.find(d => d.id === driverId)
       
-      const tripRandomId = Math.floor(1000 + Math.random() * 9000).toString();
-      const tripId = `T-${tripRandomId}`
+      // Sequential Trip ID generation: T-DDMM-XXX
+      const [year, month, day] = tripDate.split('-');
+      const datePrefix = `T-${day}${month}`;
+      const q = query(collection(db, "trips"), where("tripDate", "==", tripDate));
+      const snapshot = await getDocs(q);
+      const sequence = String(snapshot.size + 1).padStart(3, '0');
+      const safety = Math.floor(Math.random() * 10);
+      const tripId = `${datePrefix}-${sequence}${safety}`;
+
       const tripRef = doc(db, "trips", tripId)
 
       const tripStops = stops

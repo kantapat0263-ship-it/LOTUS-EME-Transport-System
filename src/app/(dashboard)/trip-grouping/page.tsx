@@ -1,9 +1,8 @@
-
 "use client"
 
 import * as React from "react"
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion } from "firebase/firestore"
+import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion, getDocs } from "firebase/firestore"
 import { Vehicle, Driver, Site, CompanySetting } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
@@ -137,7 +136,18 @@ export default function TripGroupingPage() {
     setIsProcessing(true)
     try {
       const selectedDriver = drivers?.find(d => d.id === driverId)
-      const tripId = `T-${Math.floor(1000 + Math.random() * 9000)}`
+      
+      // Sequential Trip ID generation: T-DDMM-XXX
+      const now = new Date();
+      const tripDateStr = now.toISOString().split('T')[0];
+      const d = String(now.getDate()).padStart(2, '0');
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const datePrefix = `T-${d}${m}`;
+      const qTrips = query(collection(db, "trips"), where("tripDate", "==", tripDateStr));
+      const snapTrips = await getDocs(qTrips);
+      const sequence = String(snapTrips.size + 1).padStart(3, '0');
+      const safety = Math.floor(Math.random() * 10);
+      const tripId = `${datePrefix}-${sequence}${safety}`;
       
       const lastStats = (window as any).__lastTripStats || { distance: 0, fuelCost: 0 }
 
@@ -153,7 +163,7 @@ export default function TripGroupingPage() {
       await setDoc(tripRef, {
         id: tripId,
         tripId,
-        tripDate: new Date().toISOString().split('T')[0],
+        tripDate: tripDateStr,
         vehicleId,
         vehiclePlate: selectedVehicle?.licensePlate || "",
         driverId,

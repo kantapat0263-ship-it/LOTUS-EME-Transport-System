@@ -1,9 +1,8 @@
-
 "use client"
 
 import * as React from "react"
 import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, doc, setDoc, serverTimestamp } from "firebase/firestore"
+import { collection, doc, setDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -138,7 +137,15 @@ export function RequestForm() {
 
     setIsSubmitting(true)
     try {
-      const requestId = `VR-${Math.floor(1000 + Math.random() * 9000)}`
+      // Sequential VR ID generation: VR-DDMM-XXX
+      const [year, month, day] = requestDate.split('-');
+      const datePrefix = `VR-${day}${month}`;
+      const qRequests = query(collection(db, "vehicleRequests"), where("requestDate", "==", requestDate));
+      const snapRequests = await getDocs(qRequests);
+      const sequence = String(snapRequests.size + 1).padStart(3, '0');
+      const safety = Math.floor(Math.random() * 10);
+      const requestId = `${datePrefix}-${sequence}${safety}`;
+
       const requestRef = doc(db, "vehicleRequests", requestId)
       
       const parsedDestinations = []
@@ -179,6 +186,7 @@ export function RequestForm() {
       }
 
       const requestData = {
+        id: requestId,
         requestId,
         requestDate,
         requestTime,
