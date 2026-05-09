@@ -911,11 +911,17 @@ export default function RequestsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>เวลาที่ต้องการ</Label>
-                  <Input 
-                    type="time" 
-                    value={editFormData.requestTime}
-                    onChange={(e) => setEditFormData({...editFormData, requestTime: e.target.value})}
-                  />
+                  <div className="relative">
+                    <Input 
+                      placeholder="เช่น 08:30" 
+                      className="h-11 pr-8"
+                      value={editFormData.requestTime}
+                      onChange={(e) => setEditFormData({...editFormData, requestTime: e.target.value})}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none font-bold">
+                      น.
+                    </span>
+                  </div>
                 </div>
               </div>
 
