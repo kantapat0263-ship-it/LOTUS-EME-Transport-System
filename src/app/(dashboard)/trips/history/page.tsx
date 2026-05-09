@@ -19,7 +19,7 @@ import {
   DialogContent, 
   DialogHeader, 
   DialogTitle, 
-  DialogFooter,
+  DialogFooter, 
   DialogDescription
 } from "@/components/ui/dialog"
 import {
@@ -52,6 +52,7 @@ export default function TripHistoryPage() {
 
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedStatus, setSelectedStatus] = React.useState("all")
+  const [selectedDate, setSelectedDate] = React.useState("")
   const [selectedTrip, setSelectedTrip] = React.useState<Trip | null>(null)
   const [isWorksheetOpen, setIsWorksheetOpen] = React.useState(false)
 
@@ -88,17 +89,18 @@ export default function TripHistoryPage() {
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
-  const filteredTrips = trips?.filter(trip => {
-    const searchStr = (trip.tripId || trip.id || "").toLowerCase();
-    const driverStr = (trip.driverName || "").toLowerCase();
-    const plateStr = (trip.vehiclePlate || "").toLowerCase();
+  const filteredTrips = (trips || []).filter(trip => {
+    const matchSearch = !searchTerm || 
+      (trip.tripId || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (trip.driverName || "").toLowerCase().includes(searchTerm.toLowerCase())
     
-    const matchesSearch = searchStr.includes(searchTerm.toLowerCase()) || 
-                          driverStr.includes(searchTerm.toLowerCase()) ||
-                          plateStr.includes(searchTerm.toLowerCase())
-    const matchesStatus = selectedStatus === "all" || trip.status === selectedStatus
-    return matchesSearch && matchesStatus
-  }) || []
+    const matchStatus = !selectedStatus || selectedStatus === 'all' || 
+      trip.status === selectedStatus
+      
+    const matchDate = !selectedDate || trip.tripDate === selectedDate
+    
+    return matchSearch && matchStatus && matchDate
+  })
 
   const handleStatusChange = async (tripId: string, newStatus: TripStatus) => {
     if (isViewer) return
@@ -297,9 +299,9 @@ export default function TripHistoryPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input 
+              <input 
                 placeholder="ค้นหา Trip ID, คนขับ..." 
-                className="pl-10 h-11 md:h-10" 
+                className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:h-10" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -318,7 +320,12 @@ export default function TripHistoryPage() {
             </Select>
             <div className="relative">
               <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white" />
-              <Input type="date" className="pl-10 h-11 md:h-10" />
+              <input 
+                type="date" 
+                className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:h-10" 
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+              />
             </div>
             <Button variant="outline" className="w-full h-11 md:h-10">
               <Filter className="mr-2 h-4 w-4" /> กรองเพิ่มเติม
