@@ -1202,9 +1202,10 @@ export default function RequestsPage() {
 
                         <div className="space-y-1.5">
                           <Label className="text-[10px] uppercase text-muted-foreground font-bold">ลักษณะงานที่ต้องทำ</Label>
-                          <Input 
-                            className="h-11 bg-background/30 text-sm" 
+                          <Textarea 
+                            className="min-h-[80px] bg-background/30 text-sm" 
                             placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ"
+                            style={{ resize: 'vertical' }}
                             value={dest.jobDescription}
                             onChange={(e) => updateEditDest({ jobDescription: e.target.value })}
                           />

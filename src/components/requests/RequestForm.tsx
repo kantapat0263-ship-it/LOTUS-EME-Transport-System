@@ -400,9 +400,10 @@ export function RequestForm() {
 
                       <div className="space-y-2">
                         <Label>ลักษณะงานที่ต้องทำ</Label>
-                        <Input 
+                        <Textarea 
                           placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ" 
-                          className="h-11 bg-background/30"
+                          className="min-h-[80px] bg-background/30"
+                          style={{ resize: 'vertical' }}
                           value={dest.jobDescription}
                           onChange={(e) => updateDest(dest.id, { jobDescription: e.target.value })}
                         />
