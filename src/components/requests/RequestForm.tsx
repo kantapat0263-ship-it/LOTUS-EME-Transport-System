@@ -251,13 +251,13 @@ export function RequestForm() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="requestTime">เวลาที่ต้องการ</Label>
-                <Input 
-                  id="requestTime" 
-                  type="time" 
-                  className="h-11"
+                <input
+                  type="time"
+                  lang="en-GB"
+                  step="60"
                   value={requestTime}
                   onChange={(e) => setRequestTime(e.target.value)}
-                  required
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm h-11"
                 />
               </div>
             </div>
