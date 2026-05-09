@@ -3,7 +3,7 @@
 
 import * as React from "react"
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
-import { collection, doc, query, orderBy, serverTimestamp } from "firebase/firestore"
+import { collection, doc, query, orderBy, serverTimestamp, deleteDoc } from "firebase/firestore"
 import { 
   Table, 
   TableBody, 
@@ -31,7 +31,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { UserProfile, UserRole } from "@/types/models"
 import { updateDocumentNonBlocking } from "@/firebase/non-blocking-updates"
-import { MoreHorizontal, Shield, Loader2, UserPlus } from "lucide-react"
+import { MoreHorizontal, Shield, Loader2, UserPlus, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 export default function UserManagementPage() {
@@ -57,6 +57,25 @@ export default function UserManagementPage() {
       title: active ? "เปิดใช้งานบัญชี" : "ระงับบัญชี", 
       description: active ? "ผู้ใช้สามารถเข้าสู่ระบบได้แล้ว" : "ผู้ใช้จะไม่สามารถเข้าสู่ระบบได้" 
     })
+  }
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบผู้ใช้งาน "${userName}"? การกระทำนี้ไม่สามารถย้อนกลับได้`)) {
+      try {
+        await deleteDoc(doc(db, "users", userId))
+        toast({ 
+          title: "ลบผู้ใช้งานสำเร็จ", 
+          description: `ลบบัญชีของ ${userName} ออกจากระบบแล้ว` 
+        })
+      } catch (error) {
+        console.error(error)
+        toast({ 
+          title: "เกิดข้อผิดพลาด", 
+          description: "ไม่สามารถลบข้อมูลได้ในขณะนี้", 
+          variant: "destructive" 
+        })
+      }
+    }
   }
 
   const getRoleBadge = (role: UserRole) => {
@@ -140,14 +159,24 @@ export default function UserManagementPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem className="text-destructive">
-                          ลบผู้ใช้งาน
+                        <DropdownMenuItem 
+                          className="text-destructive"
+                          onSelect={() => handleDeleteUser(user.id, user.name)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" /> ลบผู้ใช้งาน
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
+              {users?.length === 0 && !isLoading && (
+                <TableRow>
+                  <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                    ไม่พบข้อมูลผู้ใช้งาน
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>
