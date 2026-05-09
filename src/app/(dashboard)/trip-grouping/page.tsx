@@ -67,7 +67,11 @@ export default function TripGroupingPage() {
             vrDocId: req.id,
             destIndex: idx,
             requestedBy: req.requestedBy,
-            requestDate: req.requestDate
+            requestDate: req.requestDate,
+            // Carry over notes
+            note: req.note || req.notes || "",
+            dispatcherNote: req.dispatcherNote || "",
+            dispatcherName: req.dispatcherName || ""
           })
         }
       })
@@ -184,7 +188,11 @@ export default function TripGroupingPage() {
           lng: d.lng,
           cargoDetails: d.jobDescription || '',
           requestedBy: d.requestedBy || '',
-          address: d.address || ''
+          address: d.address || '',
+          // Include notes in stop object for Daily Summary
+          note: d.note || "",
+          dispatcherNote: d.dispatcherNote || "",
+          dispatcherName: d.dispatcherName || ""
         }))
       })
 

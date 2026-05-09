@@ -56,6 +56,9 @@ interface StopItem {
     lat: number;
     lng: number;
   } | null;
+  note?: string;
+  dispatcherNote?: string;
+  dispatcherName?: string;
 }
 
 export default function TripPlanPage() {
@@ -204,7 +207,10 @@ export default function TripPlanPage() {
           id: `vr-${idx}`,
           siteId: d.type === 'site' ? d.siteId : `custom-${idx}`,
           cargo: d.jobDescription,
-          customData: d.type === 'other' ? { name: d.siteName, lat: d.lat, lng: d.lng } : null
+          customData: d.type === 'other' ? { name: d.siteName, lat: d.lat, lng: d.lng } : null,
+          note: vr.note || vr.notes || "",
+          dispatcherNote: vr.dispatcherNote || "",
+          dispatcherName: vr.dispatcherName || ""
         }))
         setStops(newStops)
         toast({ title: "กู้คืนคำขอรถ", description: `กำลังจัดรถสำหรับคำขอ ${vr.vrId}` })
@@ -593,7 +599,10 @@ export default function TripPlanPage() {
               cargoDetails: s.cargo,
               isCustom: true,
               lat: s.customData.lat,
-              lng: s.customData.lng
+              lng: s.customData.lng,
+              note: s.note || "",
+              dispatcherNote: s.dispatcherNote || "",
+              dispatcherName: s.dispatcherName || ""
             }
           }
           const site = sites?.find(site => site.id === s.siteId)
@@ -601,7 +610,10 @@ export default function TripPlanPage() {
             siteId: s.siteId,
             siteName: site?.name || "Unknown Site",
             order: index,
-            cargoDetails: s.cargo
+            cargoDetails: s.cargo,
+            note: s.note || "",
+            dispatcherNote: s.dispatcherNote || "",
+            dispatcherName: s.dispatcherName || ""
           }
         })
       
