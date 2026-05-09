@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -259,8 +258,6 @@ export function RequestForm() {
                   value={requestTime}
                   onChange={(e) => setRequestTime(e.target.value)}
                   required
-                  step="60"
-                  lang="en-GB"
                 />
               </div>
             </div>
