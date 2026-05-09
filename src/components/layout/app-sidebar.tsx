@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -18,7 +19,8 @@ import {
   X,
   Car,
   Layers,
-  FileText
+  FileText,
+  BarChart2
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -79,6 +81,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     { name: "จัดกลุ่มเที่ยววิ่ง", href: "/trip-grouping", icon: Layers, roles: ['admin', 'dispatcher'], badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingDestCount > 0 ? pendingDestCount : null },
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "สรุปคิวรถประจำวัน", href: "/daily-summary", icon: FileText, roles: ['admin', 'dispatcher'] },
+    { name: "รายงานสรุป", href: "/report", icon: BarChart2, roles: ['admin', 'dispatcher'] },
     { name: "จัดการผู้ใช้งาน", href: "/settings/users", icon: Users, roles: ['admin'] },
     { name: "ตั้งค่าระบบ", href: "/settings", icon: Settings, roles: ['admin', 'dispatcher'] },
   ]
