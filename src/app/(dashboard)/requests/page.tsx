@@ -916,6 +916,8 @@ export default function RequestsPage() {
                     type="time" 
                     value={editFormData.requestTime}
                     onChange={(e) => setEditFormData({...editFormData, requestTime: e.target.value})}
+                    step="60"
+                    lang="en-GB"
                   />
                 </div>
               </div>
