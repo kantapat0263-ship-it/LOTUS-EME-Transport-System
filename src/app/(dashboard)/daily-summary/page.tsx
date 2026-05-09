@@ -22,7 +22,8 @@ import {
   Copy,
   Check,
   QrCode,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ClipboardList
 } from "lucide-react"
 import { 
   Dialog, 
@@ -133,7 +134,7 @@ export default function DailySummaryPage() {
 
   const handleCopyLink = () => {
     if (!selectedTripForShare) return
-    const url = `${window.location.origin}/driver/${selectedTripForShare.tripId}`;
+    const url = `https://lotus-eme-transport-system.vercel.app/driver/${selectedTripForShare.tripId}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -145,7 +146,7 @@ export default function DailySummaryPage() {
   const uniqueDrivers = new Set(trips.map(t => t.driverName)).size
 
   const shareUrl = selectedTripForShare 
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/driver/${selectedTripForShare.tripId}`
+    ? `https://lotus-eme-transport-system.vercel.app/driver/${selectedTripForShare.tripId}`
     : '';
 
   return (
@@ -262,8 +263,8 @@ export default function DailySummaryPage() {
                     </thead>
                     <tbody>
                       {trips.map((trip, idx) => {
-                        // Extract all requesters for this trip
-                        const requesters = Array.from(new Set([
+                        // Extract all unique requesters for summary column
+                        const summaryRequesters = Array.from(new Set([
                           (trip as any).requestedBy,
                           ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
                         ])).filter(Boolean).join(", ")
@@ -279,6 +280,8 @@ export default function DailySummaryPage() {
                             <td className="border border-black p-2 align-top space-y-4">
                               {(trip.stops || []).map((stop, sIdx) => {
                                 const locationText = (stop as any).address || (stop as any).zone || ""
+                                const stopRequester = stop.requestedBy || (trip as any).requestedBy || ""
+                                
                                 return (
                                   <div key={sIdx} className="space-y-1">
                                     <div className="flex gap-1.5 font-bold">
@@ -293,6 +296,12 @@ export default function DailySummaryPage() {
                                       {locationText && (
                                         <div className="pl-3 text-[10px] text-gray-600">
                                           {locationText}
+                                        </div>
+                                      )}
+                                      {stopRequester && (
+                                        <div className="pl-3 text-[10px] text-gray-500 italic flex items-center gap-1 mt-0.5">
+                                          <ClipboardList className="h-2.5 w-2.5" />
+                                          <span>ผู้ขอ: {stopRequester}</span>
                                         </div>
                                       )}
                                     </div>
@@ -310,7 +319,7 @@ export default function DailySummaryPage() {
                                   </div>
                                   <div className="pt-2 border-t border-gray-200">
                                     <p className="text-[10px] font-bold text-gray-500 uppercase">ผู้ขอใช้รถ:</p>
-                                    <p className="leading-tight">{requesters || "-"}</p>
+                                    <p className="leading-tight">{summaryRequesters || "-"}</p>
                                   </div>
                                 </div>
                                 <Button 
