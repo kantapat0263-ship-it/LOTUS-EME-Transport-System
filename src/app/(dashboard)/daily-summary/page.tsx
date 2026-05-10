@@ -161,7 +161,11 @@ export default function DailySummaryPage() {
       const res = await fetch('/api/line/send-summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, trips: tripData })
+        body: JSON.stringify({ 
+          imageBase64, 
+          trips: tripData,
+          dateStr: formatThaiDate(selectedDate)
+        })
       })
 
       if (res.ok) {
@@ -171,7 +175,7 @@ export default function DailySummaryPage() {
       }
     } catch (error) {
       console.error(error)
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งเข้า LINE ได้", variant: "destructive" })
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งข้อมูลเข้า LINE ได้", variant: "destructive" })
     } finally {
       setIsSendingLine(false)
     }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
   try {
-    const { trips } = await req.json()
+    const { trips, dateStr } = await req.json()
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
     const groupId = process.env.LINE_GROUP_ID
 
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       `🚛 ${trip.driverName} (${trip.vehiclePlate})\n🔗 ${trip.driverUrl}`
     ).join('\n\n')
 
-    const message = `📋 ใบคิวรถประจำวัน LOTUS GROUP\n\n📌 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}\n\n* กรุณาเปิดลิงก์เพื่อดูรายละเอียดจุดส่งและนำทาง`
+    const message = `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${dateStr}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}`
 
     const response = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
