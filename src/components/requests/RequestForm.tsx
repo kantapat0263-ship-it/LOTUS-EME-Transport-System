@@ -452,7 +452,7 @@ export function RequestForm() {
               <Label htmlFor="note">หมายเหตุเพิ่มเติม</Label>
               <Textarea 
                 id="note"
-                placeholder="ข้อมูลเพิ่มเติมสำหรับคนจัดรถ เช่น ต้องใช้รถ 4 ล้อเท่านั้น, ต้องมีคนช่วยยกของ" 
+                placeholder="ระบุรถที่เหมาะสม ช่วงเวลา ข้อมูลสำคัญที่อยากแจ้งเพิ่มเติมให้ผู้จัดคิวและคนขับรถ" 
                 className="min-h-[100px] bg-background/30"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}

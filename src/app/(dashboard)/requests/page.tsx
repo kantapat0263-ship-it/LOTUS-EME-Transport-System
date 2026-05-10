@@ -142,7 +142,7 @@ function DispatcherNoteEditor({ req, userRole, profileName }: { req: any, userRo
           <Textarea 
             value={dispatcherNote}
             onChange={(e) => setDispatcherNote(e.target.value)}
-            placeholder="เพิ่มบันทึกสำหรับคนขับ/พนักงาน..."
+            placeholder="ระบุหมายเหตุเพิ่มเติมจากผู้จัดคิว"
             className="text-xs bg-background/50 min-h-[60px] border-blue-500/30 focus-visible:ring-blue-500/30"
             autoFocus
           />
@@ -158,7 +158,7 @@ function DispatcherNoteEditor({ req, userRole, profileName }: { req: any, userRo
           className="p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-blue-100/90 cursor-text hover:bg-blue-500/10 transition-all border-dashed"
           onClick={() => setIsEditing(true)}
         >
-          {dispatcherNote || <span className="text-muted-foreground/60 italic">คลิกเพื่อเพิ่มบันทึกการจัดรถ...</span>}
+          {dispatcherNote || <span className="text-muted-foreground/60 italic">ระบุหมายเหตุเพิ่มเติมจากผู้จัดคิว...</span>}
         </div>
       )}
     </div>
@@ -709,11 +709,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   paddingLeft: '8px'
                                 }}>
                                   <small style={{ color: '#3b82f6', fontWeight: 'bold' }}>
-                                    ✏️ บันทึก Dispatcher (จุดที่ {idx + 1}):
+                                    ✏️ บันทึกโดย {profileName || "ผู้จัดคิว"} (จุดที่ {idx + 1}):
                                   </small>
                                   <div className="mt-1 flex flex-col gap-2">
                                     <Textarea
-                                      placeholder="เพิ่มรายละเอียดเฉพาะจุดนี้ เช่น รายการสินค้า, เงื่อนไขเวลา..."
+                                      placeholder="ระบุหมายเหตุเพิ่มเติมจากผู้จัดคิว"
                                       value={stopNotes[`stop_${idx}`] || ''}
                                       onChange={(e) => setStopNotes(prev => ({
                                         ...prev,
