@@ -43,25 +43,32 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   const db = useFirestore()
   const { user } = useUser()
   const [collapsed, setCollapsed] = React.useState(false)
-  const [pendingCount, setPendingCount] = React.useState(0)
-  const [pendingDestCount, setPendingDestCount] = React.useState(0)
+  
+  // States for different types of alerts
+  const [pendingReqCount, setPendingReqCount] = React.useState(0)
+  const [acknowledgedReqCount, setAcknowledgedReqCount] = React.useState(0)
 
-  // Listen for pending requests if Admin/Dispatcher
+  // Listen for requests if Admin/Dispatcher
   React.useEffect(() => {
     if (!db || (userRole !== 'admin' && userRole !== 'dispatcher')) return
 
-    const q = query(collection(db, "vehicleRequests"), where("status", "in", ["pending", "partial"]))
+    // Listen to all active statuses to calculate separate counts
+    const q = query(
+      collection(db, "vehicleRequests"), 
+      where("status", "in", ["pending", "acknowledged", "partial"])
+    )
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setPendingCount(snapshot.size)
+      const docs = snapshot.docs.map(d => d.data())
       
-      // Calculate total pending destinations
-      let destCount = 0
-      snapshot.docs.forEach(doc => {
-        const data = doc.data()
-        const assigned = data.assignedDestinations || []
-        destCount += (data.destinations?.length || 0) - assigned.length
-      })
-      setPendingDestCount(destCount)
+      // 1. Pending: Not yet acknowledged
+      const pCount = docs.filter(r => r.status === 'pending').length
+      
+      // 2. Acknowledged: Received by dispatcher but not fully planned
+      const aCount = docs.filter(r => r.status === 'acknowledged').length
+      
+      setPendingReqCount(pCount)
+      setAcknowledgedReqCount(aCount)
     })
 
     return () => unsubscribe()
@@ -74,11 +81,23 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
 
   const navItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ['admin', 'dispatcher', 'viewer'] },
-    { name: "ขอรถ", href: "/requests", icon: Car, roles: ['admin', 'dispatcher', 'viewer'], badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingCount > 0 ? pendingCount : null },
+    { 
+      name: "ขอรถ", 
+      href: "/requests", 
+      icon: Car, 
+      roles: ['admin', 'dispatcher', 'viewer'], 
+      badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingReqCount > 0 ? pendingReqCount : null 
+    },
     { name: "จัดการไซน์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
     { name: "วางแผนการส่ง", href: "/trips/plan", icon: Route, roles: ['admin', 'dispatcher'] },
-    { name: "จัดกลุ่มเที่ยววิ่ง", href: "/trip-grouping", icon: Layers, roles: ['admin', 'dispatcher'], badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingDestCount > 0 ? pendingDestCount : null },
+    { 
+      name: "จัดกลุ่มเที่ยววิ่ง", 
+      href: "/trip-grouping", 
+      icon: Layers, 
+      roles: ['admin', 'dispatcher'], 
+      badge: (userRole === 'admin' || userRole === 'dispatcher') && acknowledgedReqCount > 0 ? acknowledgedReqCount : null 
+    },
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "สรุปคิวรถประจำวัน", href: "/daily-summary", icon: FileText, roles: ['admin', 'dispatcher'] },
     { name: "รายงานสรุป", href: "/report", icon: BarChart2, roles: ['admin', 'dispatcher'] },
