@@ -98,73 +98,6 @@ function getCategoryFromType(type: string): string {
   return 'custom';
 }
 
-// Inline helper component for Dispatcher Notes
-function DispatcherNoteEditor({ req, userRole, profileName }: { req: any, userRole?: string, profileName?: string }) {
-  const db = useFirestore()
-  const [isEditing, setIsEditing] = React.useState(false)
-  const [dispatcherNote, setDispatcherNote] = React.useState(req.dispatcherNote || "")
-  const [isSaving, setIsSaving] = React.useState(false)
-
-  const handleSave = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setIsSaving(true)
-    try {
-      await updateDoc(doc(db, 'vehicleRequests', req.id), {
-        dispatcherNote: dispatcherNote,
-        dispatcherName: profileName || "Dispatcher",
-        dispatcherUpdatedAt: new Date().toISOString()
-      })
-      setIsEditing(false)
-    } catch (error) {
-      console.error("Error saving dispatcher note:", error)
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  if (!(userRole === 'admin' || userRole === 'dispatcher')) return null
-
-  return (
-    <div className="mt-3 pt-3 border-t border-border/20 space-y-2" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold text-blue-400 uppercase flex items-center gap-1">
-          ✏️ บันทึกโดย {req.dispatcherName || profileName || "Dispatcher"}:
-        </span>
-        {req.dispatcherUpdatedAt && !isEditing && (
-          <span className="text-[9px] text-muted-foreground italic">
-            {new Date(req.dispatcherUpdatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        )}
-      </div>
-      
-      {isEditing ? (
-        <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
-          <Textarea 
-            value={dispatcherNote}
-            onChange={(e) => setDispatcherNote(e.target.value)}
-            placeholder="ระบุหมายเหตุเพิ่มเติมจากผู้จัดคิว"
-            className="text-xs bg-background/50 min-h-[60px] border-blue-500/30 focus-visible:ring-blue-500/30"
-            autoFocus
-          />
-          <div className="flex gap-2">
-            <Button size="sm" className="h-7 text-[10px] bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={isSaving}>
-              {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : "บันทึก"}
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 text-[10px] text-muted-foreground" onClick={() => { setIsEditing(false); setDispatcherNote(req.dispatcherNote || ""); }}>ยกเลิก</Button>
-          </div>
-        </div>
-      ) : (
-        <div 
-          className="p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-blue-100/90 cursor-text hover:bg-blue-500/10 transition-all border-dashed"
-          onClick={() => setIsEditing(true)}
-        >
-          {dispatcherNote || <span className="text-muted-foreground/60 italic">ระบุหมายเหตุเพิ่มเติมจากผู้จัดคิว...</span>}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
 function InlineRequestManager({ userRole, profileName }: { userRole?: string, profileName?: string }) {
   const { toast } = useToast()
@@ -738,18 +671,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     );
                   })}
                 </div>
-              </div>
-
-              {/* Global Dispatcher Note */}
-              <div className="space-y-2">
-                <p className="text-sm font-bold flex items-center gap-2 text-blue-400">
-                  <ClipboardList className="h-4 w-4" /> บันทึกรวม (Dispatcher)
-                </p>
-                <DispatcherNoteEditor 
-                  req={selectedReq} 
-                  userRole={userRole} 
-                  profileName={profileName} 
-                />
               </div>
 
               {selectedReq.note !== undefined && (
@@ -1556,7 +1477,7 @@ export default function RequestsPage() {
                         )}
 
                         {req.status === "rejected" && req.rejectReason && (
-                          <div className="bg-red-500/5 border border-red-500/20 p-3 rounded-lg animate-in slide-in-from-top-1">
+                          <div className="bg-red-500/5 border border-green-500/20 p-3 rounded-lg animate-in slide-in-from-top-1">
                             <p className="text-xs text-red-500 font-bold mb-1">เหตุผลที่ไม่นุมัติ:</p>
                             <p className="text-xs text-muted-foreground italic">"{req.rejectReason}"</p>
                           </div>
