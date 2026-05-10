@@ -170,6 +170,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const { toast } = useToast()
   const db = useFirestore()
   const router = useRouter()
+  const isStaff = userRole === 'admin' || userRole === 'dispatcher'
   
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: companySettings } = useDoc<any>(settingsRef)
@@ -679,11 +680,29 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                               </div>
                               <div className="mt-2 bg-secondary/20 p-2 rounded text-xs text-muted-foreground border border-dashed">
                                 <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
-                                {dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}
+                                {isStaff ? (
+                                  <Textarea
+                                    defaultValue={dest.jobDescription}
+                                    onBlur={async (e) => {
+                                      const newValue = e.target.value;
+                                      if (newValue === dest.jobDescription) return;
+                                      const newDestinations = [...selectedReq.destinations];
+                                      newDestinations[idx] = { ...newDestinations[idx], jobDescription: newValue };
+                                      await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
+                                        destinations: newDestinations,
+                                        updatedAt: serverTimestamp()
+                                      });
+                                      toast({ title: "บันทึกรายละเอียดงานแล้ว" });
+                                    }}
+                                    className="text-xs bg-background/50 min-h-[60px] border-accent/20 focus-visible:ring-accent/30"
+                                  />
+                                ) : (
+                                  dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"
+                                )}
                               </div>
                               
                               {/* NEW - Dispatcher note per stop */}
-                              {(userRole === 'admin' || userRole === 'dispatcher') && (
+                              {isStaff && (
                                 <div style={{
                                   marginTop: '12px',
                                   borderLeft: '3px solid #3b82f6',
@@ -723,14 +742,31 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
               </div>
 
-              {selectedReq.note && (
+              {selectedReq.note !== undefined && (
                 <div className="space-y-2">
                   <p className="text-sm font-bold flex items-center gap-2 text-white">
                     <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุจากผู้ขอ
                   </p>
-                  <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
-                    "{selectedReq.note}"
-                  </div>
+                  {isStaff ? (
+                    <Textarea 
+                      defaultValue={selectedReq.note}
+                      onBlur={async (e) => {
+                        const newValue = e.target.value;
+                        if (newValue === selectedReq.note) return;
+                        await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
+                          note: newValue,
+                          updatedAt: serverTimestamp()
+                        });
+                        toast({ title: "บันทึกหมายเหตุแล้ว" });
+                      }}
+                      placeholder="ข้อมูลเพิ่มเติม..."
+                      className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed min-h-[100px] focus-visible:ring-accent/30"
+                    />
+                  ) : (
+                    <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
+                      "{selectedReq.note}"
+                    </div>
+                  )}
                 </div>
               )}
 
