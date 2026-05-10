@@ -12,7 +12,7 @@ import {
   Printer, 
   Search, 
   Loader2, 
-  Calendar as CalendarIcon,
+  Calendar as CalendarIcon, 
   AlertCircle,
   Truck,
   User as UserIcon,
@@ -358,8 +358,9 @@ export default function DailySummaryPage() {
                                 
                                 // Fetch notes from either stop or trip object
                                 const requesterNote = (stop as any).note || (stop as any).notes || ""
-                                const dNote = (stop as any).dispatcherNote || (trip as any).dispatcherNote || ""
-                                const dName = (stop as any).dispatcherName || (trip as any).dispatcherName || ""
+                                
+                                // NEW - per-stop Dispatcher note
+                                const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`];
                                 
                                 return (
                                   <div key={sIdx} className="space-y-1">
@@ -372,6 +373,21 @@ export default function DailySummaryPage() {
                                         <span className="shrink-0">-</span>
                                         <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
                                       </div>
+                                      
+                                      {/* NEW - per-stop Dispatcher note display */}
+                                      {stopDispatcherNote && (
+                                        <div style={{
+                                          marginTop: '4px',
+                                          paddingLeft: '8px',
+                                          borderLeft: '2px solid #3b82f6',
+                                          fontSize: '12px',
+                                          color: '#1e40af',
+                                          whiteSpace: 'pre-line'
+                                        }}>
+                                          ✏️ {stopDispatcherNote}
+                                        </div>
+                                      )}
+
                                       {locationText && (
                                         <div className="pl-3 text-[10px] text-gray-600">
                                           {locationText}
@@ -388,13 +404,6 @@ export default function DailySummaryPage() {
                                       {requesterNote && requesterNote.trim() !== '' && (
                                         <div style={{ fontSize: '11px', color: '#555', marginTop: '2px' }} className="pl-3">
                                           📌 หมายเหตุผู้ขอ: {requesterNote}
-                                        </div>
-                                      )}
-
-                                      {/* Note from Dispatcher */}
-                                      {dNote && dNote.trim() !== '' && (
-                                        <div style={{ fontSize: '11px', color: '#1a56db', marginTop: '2px' }} className="pl-3">
-                                          ✏️ บันทึก {dName || "จัดรถ"}: {dNote}
                                         </div>
                                       )}
                                     </div>

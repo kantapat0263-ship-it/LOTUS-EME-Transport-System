@@ -29,7 +29,8 @@ import {
   EyeOff,
   Store,
   Landmark,
-  Briefcase
+  Briefcase,
+  Save
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
@@ -204,6 +205,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const [modalMarkers, setModalMarkers] = React.useState<google.maps.Marker[]>([])
 
+  // State for per-stop dispatcher notes
+  const [stopNotes, setStopNotes] = React.useState<Record<string, string>>({})
+  const [isSavingNote, setIsSavingNote] = React.useState<number | null>(null)
+
   React.useEffect(() => {
     if (selectedReq) {
       const assigned = selectedReq.assignedDestinations || []
@@ -212,6 +217,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         .filter((i: number) => !assigned.includes(i))
       
       setSelectedDestIndexes(new Set(available))
+      setStopNotes(selectedReq.stopNotes || {})
     }
   }, [selectedReq])
 
@@ -309,6 +315,37 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     setSelectedDestIndexes(newSet);
   }
 
+  const handleSaveStopNote = async (stopIndex: number) => {
+    if (!selectedReq) return
+    setIsSavingNote(stopIndex)
+    try {
+      const noteKey = `stop_${stopIndex}`
+      const noteValue = stopNotes[noteKey] || ""
+      
+      const vrRef = doc(db, 'vehicleRequests', selectedReq.id)
+      const updateData = {
+        [`stopNotes.${noteKey}`]: noteValue,
+        [`stopNotesUpdatedBy`]: profileName || "Dispatcher",
+        [`stopNotesUpdatedAt`]: new Date().toISOString()
+      }
+      await updateDoc(vrRef, updateData)
+
+      // Also update linked trip if exists
+      if (selectedReq.tripId) {
+        const tripRef = doc(db, "trips", selectedReq.tripId)
+        await updateDoc(tripRef, {
+          [`stopNotes.${noteKey}`]: noteValue
+        })
+      }
+
+      toast({ title: "บันทึกแล้ว", description: `บันทึกหมายเหตุจุดที่ ${stopIndex + 1} เรียบร้อย` })
+    } catch (e) {
+      toast({ title: "ผิดพลาด", variant: "destructive" })
+    } finally {
+      setIsSavingNote(null)
+    }
+  }
+
   const handleManageVehicle = () => {
     if (!selectedReq) return
     
@@ -337,7 +374,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       destinations: selectedDestinations,
       totalDestinations: selectedReq.destinations.length,
       selectedCount: selectedDestIndexes.size,
-      assignedIndexes: Array.from(selectedDestIndexes)
+      assignedIndexes: Array.from(selectedDestIndexes),
+      // Pass the dispatcher notes
+      stopNotes: selectedReq.stopNotes || {}
     }
     
     sessionStorage.setItem("pendingVR", JSON.stringify(pendingVR))
@@ -642,6 +681,39 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
                                 {dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}
                               </div>
+                              
+                              {/* NEW - Dispatcher note per stop */}
+                              {(userRole === 'admin' || userRole === 'dispatcher') && (
+                                <div style={{
+                                  marginTop: '12px',
+                                  borderLeft: '3px solid #3b82f6',
+                                  paddingLeft: '8px'
+                                }}>
+                                  <small style={{ color: '#3b82f6', fontWeight: 'bold' }}>
+                                    ✏️ บันทึก Dispatcher (จุดที่ {idx + 1}):
+                                  </small>
+                                  <div className="mt-1 flex flex-col gap-2">
+                                    <Textarea
+                                      placeholder="เพิ่มรายละเอียดเฉพาะจุดนี้ เช่น รายการสินค้า, เงื่อนไขเวลา..."
+                                      value={stopNotes[`stop_${idx}`] || ''}
+                                      onChange={(e) => setStopNotes(prev => ({
+                                        ...prev,
+                                        [`stop_${idx}`]: e.target.value
+                                      }))}
+                                      className="text-xs bg-background min-h-[60px]"
+                                    />
+                                    <Button 
+                                      size="sm" 
+                                      className="h-7 text-[10px] w-fit bg-blue-600 hover:bg-blue-700"
+                                      onClick={() => handleSaveStopNote(idx)}
+                                      disabled={isSavingNote === idx}
+                                    >
+                                      {isSavingNote === idx ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3 mr-1" />}
+                                      บันทึกเฉพาะจุดนี้
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1216,7 +1288,7 @@ export default function RequestsPage() {
                             <div className="flex items-center space-x-2">
                               <Checkbox 
                                 id={`save-site-edit-${idx}`} 
-                                checked={dest.saveAsSite}
+                              checked={dest.saveAsSite}
                                 onCheckedChange={(checked) => updateEditDest({ saveAsSite: !!checked })}
                               />
                               <Label htmlFor={`save-site-edit-${idx}`} className="text-xs font-bold text-accent cursor-pointer">
@@ -1381,15 +1453,24 @@ export default function RequestsPage() {
                         <div className="grid grid-cols-1 gap-3">
                           {req.destinations?.map((dest: any, idx: number) => {
                             const isAssigned = (req.assignedDestinations || []).includes(idx);
+                            const stopDispatcherNote = req.stopNotes?.[`stop_${idx}`];
+                            
                             return (
-                              <div key={idx} className={cn("flex gap-3 text-sm", isAssigned && "opacity-50")}>
-                                <div className={cn("font-bold min-w-[20px]", isAssigned ? "text-green-500" : "text-accent")}>
-                                  {isAssigned ? <Check className="h-4 w-4" /> : `${idx + 1}.`}
+                              <div key={idx} className={cn("flex flex-col gap-1 text-sm", isAssigned && "opacity-50")}>
+                                <div className="flex gap-3">
+                                  <div className={cn("font-bold min-w-[20px]", isAssigned ? "text-green-500" : "text-accent")}>
+                                    {isAssigned ? <Check className="h-4 w-4" /> : `${idx + 1}.`}
+                                  </div>
+                                  <div className="space-y-0.5">
+                                    <p className="font-semibold text-foreground">{dest.siteName}</p>
+                                    <p className="text-xs text-muted-foreground">{dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}</p>
+                                  </div>
                                 </div>
-                                <div className="space-y-0.5">
-                                  <p className="font-semibold text-foreground">{dest.siteName}</p>
-                                  <p className="text-xs text-muted-foreground">{dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}</p>
-                                </div>
+                                {stopDispatcherNote && (
+                                  <div className="ml-8 mt-1 p-2 rounded bg-blue-500/5 border border-blue-500/10 text-[11px] text-blue-300 italic">
+                                    ✏️ บันทึกจัดรถ: {stopDispatcherNote}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
