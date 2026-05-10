@@ -46,6 +46,7 @@ export default function DailySummaryPage() {
   const [trips, setTrips] = React.useState<Trip[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
   const [isSavingImage, setIsSavingImage] = React.useState(false)
+  const [isSendingLine, setIsSendingLine] = React.useState(false)
 
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
@@ -135,13 +136,54 @@ export default function DailySummaryPage() {
     }
   }
 
+  const handleSendLine = async () => {
+    if (trips.length === 0) return
+    setIsSendingLine(true)
+    try {
+      const html2canvas = (await import('html2canvas')).default
+      const element = document.getElementById('summary-report')
+      if (!element) return
+
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      })
+      const imageBase64 = canvas.toDataURL('image/jpeg', 0.95)
+
+      const tripData = trips.map((trip: any) => ({
+        driverName: trip.driverName,
+        vehiclePlate: trip.vehiclePlate,
+        driverUrl: `${window.location.origin}/driver/${trip.tripId}`
+      }))
+
+      const res = await fetch('/api/line/send-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64, trips: tripData })
+      })
+
+      if (res.ok) {
+        toast({ title: "สำเร็จ", description: "ส่งเข้า LINE กลุ่มเรียบร้อยแล้ว!" })
+      } else {
+        toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งข้อมูลเข้า LINE ได้", variant: "destructive" })
+      }
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งเข้า LINE ได้", variant: "destructive" })
+    } finally {
+      setIsSendingLine(false)
+    }
+  }
+
   const handleShareClick = (trip: Trip) => {
     setSelectedTripForShare(trip)
   }
 
   const handleCopyLink = () => {
     if (!selectedTripForShare) return
-    const url = `https://lotus-eme-transport-system.vercel.app/driver/${selectedTripForShare.tripId}`;
+    const url = `${window.location.origin}/driver/${selectedTripForShare.tripId}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -153,7 +195,7 @@ export default function DailySummaryPage() {
   const uniqueDrivers = new Set(trips.map(t => t.driverName)).size
 
   const shareUrl = selectedTripForShare 
-    ? `https://lotus-eme-transport-system.vercel.app/driver/${selectedTripForShare.tripId}`
+    ? `${window.location.origin}/driver/${selectedTripForShare.tripId}`
     : '';
 
   return (
@@ -232,6 +274,16 @@ export default function DailySummaryPage() {
                   {isSavingImage ? "กำลังบันทึก..." : "บันทึกรูปภาพ"}
                 </Button>
               </div>
+
+              <Button 
+                variant="outline"
+                className="bg-green-600 hover:bg-green-700 text-white h-11 w-full border-transparent"
+                onClick={handleSendLine}
+                disabled={trips.length === 0 || isSendingLine}
+              >
+                {isSendingLine ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                {isSendingLine ? "กำลังส่ง..." : "ส่งเข้า LINE กลุ่ม"}
+              </Button>
             </div>
 
             {trips.length > 0 && (
