@@ -102,33 +102,41 @@ export default function TripHistoryPage() {
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
-  const filteredTrips = (trips || []).filter(trip => {
-    // 1. Role-based Visibility Filter
-    if (!isStaff) {
-      const userEmail = user?.email;
-      const isOwner = 
-        (trip as any).userEmail === userEmail || 
-        (trip as any).requestedBy === userEmail || 
-        (trip as any).requestedByEmail === userEmail ||
-        (trip as any).requesterEmail === userEmail ||
-        (trip as any).userId === user?.uid ||
-        trip.stops?.some((s: any) => s.requestedBy === userEmail);
+  const filteredTrips = React.useMemo(() => {
+    return (trips || []).filter(trip => {
+      // 1. Role-based Visibility Filter
+      if (!isStaff) {
+        const userEmail = user?.email;
+        const userName = profile?.name;
         
-      if (!isOwner) return false;
-    }
+        const isOwner = 
+          (trip as any).userEmail === userEmail || 
+          (trip as any).requestedBy === userEmail || 
+          (trip as any).requestedByEmail === userEmail ||
+          (trip as any).requesterEmail === userEmail ||
+          (trip as any).requestedBy === userName ||
+          (trip as any).userId === user?.uid ||
+          trip.stops?.some((s: any) => 
+            s.requestedBy === userEmail || 
+            s.requestedBy === userName
+          );
+          
+        if (!isOwner) return false;
+      }
 
-    // 2. Search, Status, and Date Filters
-    const matchSearch = !searchTerm || 
-      (trip.tripId || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (trip.driverName || "").toLowerCase().includes(searchTerm.toLowerCase())
-    
-    const matchStatus = !selectedStatus || selectedStatus === 'all' || 
-      trip.status === selectedStatus
+      // 2. Search, Status, and Date Filters
+      const matchSearch = !searchTerm || 
+        (trip.tripId || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (trip.driverName || "").toLowerCase().includes(searchTerm.toLowerCase())
       
-    const matchDate = !selectedDate || trip.tripDate === selectedDate
-    
-    return matchSearch && matchStatus && matchDate
-  })
+      const matchStatus = !selectedStatus || selectedStatus === 'all' || 
+        trip.status === selectedStatus
+        
+      const matchDate = !selectedDate || trip.tripDate === selectedDate
+      
+      return matchSearch && matchStatus && matchDate
+    })
+  }, [trips, isStaff, user, profile, searchTerm, selectedStatus, selectedDate]);
 
   const handleStatusChange = async (tripId: string, newStatus: TripStatus) => {
     if (isViewer) return
@@ -329,7 +337,7 @@ export default function TripHistoryPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input 
                 placeholder="ค้นหา Trip ID, คนขับ..." 
-                className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:h-10" 
+                className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:h-10" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
