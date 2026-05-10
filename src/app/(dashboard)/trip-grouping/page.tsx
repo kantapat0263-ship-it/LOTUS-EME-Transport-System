@@ -33,7 +33,11 @@ export default function TripGroupingPage() {
   // Data Fetching
   const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
-  const vrRef = useMemoFirebase(() => query(collection(db, "vehicleRequests"), where("status", "in", ["pending", "partial"])), [db])
+  // Updated query to include 'acknowledged'
+  const vrRef = useMemoFirebase(() => query(
+    collection(db, "vehicleRequests"), 
+    where("status", "in", ["pending", "partial", "acknowledged"])
+  ), [db])
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
 
   const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vRef)
@@ -70,8 +74,8 @@ export default function TripGroupingPage() {
             requestDate: req.requestDate,
             // Carry over notes
             note: req.note || req.notes || "",
-            dispatcherNote: req.dispatcherNote || "",
-            dispatcherName: req.dispatcherName || ""
+            dispatcherNote: req.stopNotes?.[`stop_${idx}`] || "",
+            dispatcherName: req.stopNotesUpdatedBy || ""
           })
         }
       })
