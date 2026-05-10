@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
   try {
-    const { trips, dateStr } = await req.json()
+    const { trips } = await req.json()
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
     const groupId = process.env.LINE_GROUP_ID
 
@@ -10,6 +10,17 @@ export async function POST(req: NextRequest) {
       console.error('Missing LINE_CHANNEL_ACCESS_TOKEN or LINE_GROUP_ID')
       return NextResponse.json({ error: 'Missing LINE config' }, { status: 500 })
     }
+
+    // สร้างวันที่ฝั่ง Server เพื่อความแม่นยำ
+    const today = new Date()
+    // แปลงเป็นเวลาไทย (UTC+7)
+    const bangkokDate = new Date(today.getTime() + (7 * 60 * 60 * 1000))
+    const dateStr = bangkokDate.toLocaleDateString('th-TH', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long'
+    })
 
     const driverLinks = trips.map((trip: any) =>
       `🚛 ${trip.driverName} (${trip.vehiclePlate})\n🔗 ${trip.driverUrl}`
