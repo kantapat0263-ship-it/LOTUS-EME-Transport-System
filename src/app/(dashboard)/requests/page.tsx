@@ -112,7 +112,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", showCancelled ? ["pending", "partial", "cancelled"] : ["pending", "partial"])
+    where("status", "in", showCancelled ? ["pending", "partial", "acknowledged", "cancelled"] : ["pending", "partial", "acknowledged"])
   ), [db, showCancelled])
 
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
@@ -158,7 +158,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       setSelectedDestIndexes(new Set(available))
       setStopNotes(selectedReq.stopNotes || {})
     }
-  }, [selectedReqId]) // Only re-run when ID changes to avoid reset during typing
+  }, [selectedReqId])
 
   React.useEffect(() => {
     let mapTimeout: NodeJS.Timeout;
@@ -269,7 +269,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       }
       await updateDoc(vrRef, updateData)
 
-      // Also update linked trip if exists
       if (selectedReq.tripId) {
         const tripRef = doc(db, "trips", selectedReq.tripId)
         await updateDoc(tripRef, {
@@ -285,41 +284,25 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }
 
-  const handleManageVehicle = () => {
+  const handleAcknowledge = async () => {
     if (!selectedReq) return
-    
-    if (selectedDestIndexes.size === 0) {
-      toast({ title: "กรุณาเลือกจุดหมาย", description: "ต้องเลือกอย่างน้อย 1 จุดเพื่อจัดรถ", variant: "destructive" })
-      return
+    setIsStaffProcessing(true)
+    try {
+      const ref = doc(db, "vehicleRequests", selectedReq.id)
+      await updateDoc(ref, {
+        status: "acknowledged",
+        acknowledgedBy: profileName || "Dispatcher",
+        acknowledgedAt: new Date().toISOString(),
+        updatedAt: serverTimestamp()
+      })
+      toast({ title: "รับทราบคำขอแล้ว", description: `คำขอ ${selectedReq.requestId} เปลี่ยนสถานะเป็นรับทราบแล้ว` })
+      setIsDetailOpen(false)
+      setSelectedReqId(null)
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    } finally {
+      setIsStaffProcessing(false)
     }
-
-    const assigned = selectedReq.assignedDestinations || []
-    const availableCount = selectedReq.destinations.length - assigned.length
-    
-    if (selectedDestIndexes.size < availableCount) {
-      if (!confirm(`คุณเลือก ${selectedDestIndexes.size} จาก ${availableCount} จุดที่เหลือ\nจุดที่ไม่ได้เลือกยังต้องรอการจัดรถใน Trip อื่น ต้องการดำเนินการต่อหรือไม่?`)) {
-        return
-      }
-    }
-    
-    const selectedDestinations = selectedReq.destinations.filter((_: any, i: number) => selectedDestIndexes.has(i))
-    
-    const pendingVR = {
-      vrId: selectedReq.requestId,
-      docId: selectedReq.id,
-      requestDate: selectedReq.requestDate,
-      requestTime: selectedReq.requestTime,
-      requestedBy: selectedReq.requestedBy,
-      destinations: selectedDestinations,
-      totalDestinations: selectedReq.destinations.length,
-      selectedCount: selectedDestIndexes.size,
-      assignedIndexes: Array.from(selectedDestIndexes),
-      // Pass the dispatcher notes
-      stopNotes: selectedReq.stopNotes || {}
-    }
-    
-    sessionStorage.setItem("pendingVR", JSON.stringify(pendingVR))
-    router.push("/trips/plan")
   }
 
   const handleReject = async () => {
@@ -372,6 +355,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending": return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
+      case "acknowledged": return <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20">รับทราบแล้ว</Badge>
       case "partial": return <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
       case "approved": return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
       case "rejected": return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
@@ -427,7 +411,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
               key={req.id} 
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
-                (req.status === "pending" || req.status === "partial") && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5",
+                (req.status === "pending" || req.status === "acknowledged" || req.status === "partial") && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5",
                 req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
               )}
               onClick={() => {
@@ -435,11 +419,12 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 setIsDetailOpen(true)
               }}
             >
-              {(req.status === "pending" || req.status === "partial" || req.status === "cancelled") && (
+              {(req.status === "pending" || req.status === "acknowledged" || req.status === "partial" || req.status === "cancelled") && (
                 <div className={cn(
                   "absolute top-0 left-0 w-1 h-full", 
                   req.status === "partial" ? "bg-blue-500" : 
-                  req.status === "cancelled" ? "bg-gray-500" : "bg-yellow-500"
+                  req.status === "cancelled" ? "bg-gray-500" : 
+                  req.status === "acknowledged" ? "bg-orange-500" : "bg-yellow-500"
                 )} />
               )}
               <CardContent className="p-4 space-y-3">
@@ -467,7 +452,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                   )}
                 </div>
 
-                {/* Notes Section in List */}
                 {req.note && req.note.trim() !== '' && (
                   <div style={{ 
                     marginTop: '8px', 
@@ -535,7 +519,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
           {selectedReq && (
             <div className="space-y-6 py-4">
-              {/* Modal Map */}
               {selectedReq.status !== 'cancelled' && (
                 <div className="rounded-xl overflow-hidden border border-border/50 h-[250px] bg-muted/20 relative">
                   {hasCoordinates ? (
@@ -632,7 +615,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 )}
                               </div>
                               
-                              {/* NEW - Dispatcher note per stop */}
                               {isStaff && (
                                 <div style={{
                                   marginTop: '12px',
@@ -701,7 +683,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
               )}
 
-              {(selectedReq.status === "pending" || selectedReq.status === "partial") ? (
+              {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "acknowledged") ? (
                 <div className="pt-6 border-t border-border/50 space-y-5">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
@@ -725,11 +707,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     </Button>
                     <Button 
                       className="flex-[2] h-12 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20" 
-                      onClick={handleManageVehicle}
+                      onClick={handleAcknowledge}
                       disabled={isProcessing}
                     >
-                      {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Truck className="mr-2 h-4 w-4" />}
-                      {selectedReq.status === 'partial' ? "จัดรถจุดที่เหลือ" : `จัดรถสำหรับที่เลือก (${selectedDestIndexes.size} จุด)`}
+                      {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      ✅ รับทราบคำขอ
                     </Button>
                   </div>
                 </div>
@@ -958,6 +940,8 @@ export default function RequestsPage() {
     switch (status) {
       case "pending":
         return <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
+      case "acknowledged":
+        return <Badge variant="outline" className="bg-orange-500/10 text-orange-500 border-orange-500/20">รับทราบแล้ว</Badge>
       case "partial":
         return <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
       case "approved":
@@ -1112,12 +1096,10 @@ export default function RequestsPage() {
                       return matchesType && matchesSearch;
                     }) || [];
 
-                    // Explicit helper for edit mode updates
                     const updateEditDest = (updates: any) => {
                       const newDests = [...editFormData.destinations];
                       newDests[idx] = { ...newDests[idx], ...updates };
                       
-                      // Auto-fill coordinates if siteId changes
                       if (updates.siteId !== undefined && newDests[idx].category !== "custom") {
                         const site = sites?.find(s => s.id === updates.siteId);
                         if (site) {
@@ -1353,6 +1335,7 @@ export default function RequestsPage() {
                       <div className={cn(
                         "w-full sm:w-1.5 h-1.5 sm:h-auto shrink-0",
                         req.status === "pending" ? "bg-yellow-500" :
+                        req.status === "acknowledged" ? "bg-orange-500" :
                         req.status === "partial" ? "bg-blue-500" :
                         req.status === "approved" ? "bg-green-500" :
                         req.status === "cancelled" ? "bg-gray-500" : "bg-red-500"
@@ -1382,7 +1365,7 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {(req.status === "pending" || req.status === "partial") && req.userId === user?.uid && (
+                            {(req.status === "pending" || req.status === "partial" || req.status === "acknowledged") && req.userId === user?.uid && (
                               <>
                                 <Button 
                                   variant="outline" 
@@ -1407,6 +1390,7 @@ export default function RequestsPage() {
                             )}
                             <div className="shrink-0">
                               {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-yellow-500" /> :
+                               req.status === "acknowledged" ? <Clock className="h-5 w-5 text-orange-500" /> :
                                req.status === "partial" ? <Clock className="h-5 w-5 text-blue-400" /> :
                                req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
                                req.status === "cancelled" ? <XCircle className="h-5 w-5 text-gray-400" /> :
@@ -1443,7 +1427,6 @@ export default function RequestsPage() {
                           })}
                         </div>
 
-                        {/* Notes Section for My Requests List */}
                         {req.note && req.note.trim() !== '' && (
                           <div style={{ 
                             marginTop: '8px', 
