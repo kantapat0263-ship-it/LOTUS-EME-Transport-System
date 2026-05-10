@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -105,13 +106,12 @@ export default function TripHistoryPage() {
   const filteredTrips = React.useMemo(() => {
     return (trips || []).filter(trip => {
       // 1. Role-based Visibility Filter
-      if (!isStaff) {
+      if (isViewer) {
         const userEmail = user?.email;
         const userName = profile?.name;
         
         const isOwner = 
-          (trip as any).userEmail === userEmail || 
-          (trip as any).requestedBy === userEmail || 
+          trip.requestedBy === userEmail || 
           (trip as any).requestedByEmail === userEmail ||
           (trip as any).requesterEmail === userEmail ||
           (trip as any).requestedBy === userName ||
@@ -136,7 +136,7 @@ export default function TripHistoryPage() {
       
       return matchSearch && matchStatus && matchDate
     })
-  }, [trips, isStaff, user, profile, searchTerm, selectedStatus, selectedDate]);
+  }, [trips, isViewer, user, profile, searchTerm, selectedStatus, selectedDate]);
 
   const handleStatusChange = async (tripId: string, newStatus: TripStatus) => {
     if (isViewer) return
@@ -316,7 +316,9 @@ export default function TripHistoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">ประวัติการส่งของ</h2>
-          <p className="text-sm md:text-base text-muted-foreground">รายการเที่ยววิ่งทั้งหมดและการติดตามสถานะ</p>
+          <p className="text-sm md:text-base text-muted-foreground">
+            {isViewer ? 'รายการเที่ยววิ่งที่คุณมีส่วนเกี่ยวข้อง' : 'รายการเที่ยววิ่งทั้งหมดและการติดตามสถานะ'}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {!isViewer && (

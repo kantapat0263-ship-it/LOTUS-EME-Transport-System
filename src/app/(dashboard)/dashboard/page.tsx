@@ -31,9 +31,9 @@ import {
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, useMemoFirebase, useUser } from "@/firebase"
-import { collection, query, where, orderBy } from "firebase/firestore"
-import { Trip, Site } from "@/types/models"
+import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
+import { collection, query, where, orderBy, doc } from "firebase/firestore"
+import { Trip, Site, UserProfile } from "@/types/models"
 import { startOfWeek, endOfWeek, format, isWithinInterval, startOfMonth, endOfMonth, subDays } from "date-fns"
 import { th } from "date-fns/locale"
 
@@ -43,22 +43,49 @@ export default function DashboardPage() {
   const todayStr = new Date().toISOString().split('T')[0]
   const yesterdayStr = subDays(new Date(), 1).toISOString().split('T')[0]
   
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
+
   const tripsRef = useMemoFirebase(() => (db && user) ? collection(db, "trips") : null, [db, user])
   const { data: allTrips, isLoading: isLoadingTrips } = useCollection<Trip>(tripsRef)
   
   const sitesRef = useMemoFirebase(() => (db && user) ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db, user])
   const { data: activeSites, isLoading: isLoadingSites } = useCollection<Site>(sitesRef)
 
+  // Filter trips based on role
+  const visibleTrips = React.useMemo(() => {
+    if (!allTrips || !profile) return []
+    const isStaff = profile.role === 'admin' || profile.role === 'dispatcher'
+    if (isStaff) return allTrips
+
+    const userEmail = user?.email
+    const userName = profile.name
+
+    return allTrips.filter(trip => {
+      const isOwner = 
+        trip.requestedBy === userEmail || 
+        (trip as any).requestedByEmail === userEmail ||
+        (trip as any).requesterEmail === userEmail ||
+        (trip as any).requestedBy === userName ||
+        (trip as any).userId === user?.uid ||
+        trip.stops?.some((s: any) => 
+          s.requestedBy === userEmail || 
+          s.requestedBy === userName
+        );
+      return isOwner
+    })
+  }, [allTrips, profile, user])
+
   const stats = React.useMemo(() => {
-    if (!allTrips) return { today: 0, yesterday: 0, monthDist: 0, onTimeRate: 0, siteCount: activeSites?.length || 0 }
+    if (!visibleTrips) return { today: 0, yesterday: 0, monthDist: 0, onTimeRate: 0, siteCount: activeSites?.length || 0 }
     
-    const todayTrips = allTrips.filter(t => t.tripDate === todayStr)
-    const yesterdayTrips = allTrips.filter(t => t.tripDate === yesterdayStr)
+    const todayTrips = visibleTrips.filter(t => t.tripDate === todayStr)
+    const yesterdayTrips = visibleTrips.filter(t => t.tripDate === yesterdayStr)
     
     const monthStart = startOfMonth(new Date())
     const monthEnd = endOfMonth(new Date())
     
-    const monthTrips = allTrips.filter(t => {
+    const monthTrips = visibleTrips.filter(t => {
       const tripDate = new Date(t.tripDate)
       return tripDate >= monthStart && tripDate <= monthEnd
     })
@@ -74,18 +101,18 @@ export default function DashboardPage() {
       onTimeRate,
       siteCount: activeSites?.length || 0
     }
-  }, [allTrips, activeSites, todayStr, yesterdayStr])
+  }, [visibleTrips, activeSites, todayStr, yesterdayStr])
 
   const weeklyData = React.useMemo(() => {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     const result = days.map(day => ({ name: day, trips: 0 }))
     
-    if (!allTrips) return result
+    if (!visibleTrips) return result
     
     const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
     const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 })
     
-    allTrips.forEach(t => {
+    visibleTrips.forEach(t => {
       const d = new Date(t.tripDate)
       if (isWithinInterval(d, { start: weekStart, end: weekEnd })) {
         const dayIdx = (d.getDay() + 6) % 7 
@@ -94,13 +121,13 @@ export default function DashboardPage() {
     })
     
     return result
-  }, [allTrips])
+  }, [visibleTrips])
 
   const topSitesData = React.useMemo(() => {
-    if (!allTrips) return []
+    if (!visibleTrips) return []
     
     const counts: Record<string, number> = {}
-    allTrips.forEach(t => {
+    visibleTrips.forEach(t => {
       t.stops?.forEach(s => {
         counts[s.siteName] = (counts[s.siteName] || 0) + 1
       })
@@ -110,55 +137,57 @@ export default function DashboardPage() {
       .map(([name, visits]) => ({ name, visits, color: name.includes('LOTUS') ? '#F0890D' : '#172899' }))
       .sort((a, b) => b.visits - a.visits)
       .slice(0, 5)
-  }, [allTrips])
+  }, [visibleTrips])
 
-  const todayTrips = React.useMemo(() => {
-    return allTrips?.filter(t => t.tripDate === todayStr) || []
-  }, [allTrips, todayStr])
+  const todayTripsList = React.useMemo(() => {
+    return visibleTrips?.filter(t => t.tripDate === todayStr) || []
+  }, [visibleTrips, todayStr])
 
   const insights = React.useMemo(() => {
-    if (!allTrips || allTrips.length === 0) return []
+    if (!visibleTrips || visibleTrips.length === 0) return []
     
     const driverCounts: Record<string, number> = {}
-    allTrips.forEach(t => {
+    visibleTrips.forEach(t => {
       if (t.driverName) driverCounts[t.driverName] = (driverCounts[t.driverName] || 0) + 1
     })
     const topDriver = Object.entries(driverCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "-"
     
-    const totalDist = allTrips.reduce((acc, t) => acc + (t.totalDistanceKm || 0), 0)
-    const avgDist = allTrips.length > 0 ? totalDist / allTrips.length : 0
+    const totalDist = visibleTrips.reduce((acc, t) => acc + (t.totalDistanceKm || 0), 0)
+    const avgDist = visibleTrips.length > 0 ? totalDist / visibleTrips.length : 0
     
     return [
       {
-        title: "ประสิทธิภาพคนขับ",
-        desc: `คุณ ${topDriver} เป็นคนขับที่วิ่งงานมากที่สุดในระบบขณะนี้`,
+        title: "ประสิทธิภาพการจัดรถ",
+        desc: profile?.role === 'viewer' 
+          ? `คุณมีการจัดส่งสินค้าไปแล้ว ${visibleTrips.length} เที่ยววิ่งในระบบ`
+          : `คุณ ${topDriver} เป็นคนขับที่วิ่งงานมากที่สุดในระบบขณะนี้`,
         color: "text-accent",
         bg: "bg-accent/5",
         border: "border-accent/20"
       },
       {
         title: "สรุปการดำเนินงาน",
-        desc: `ระยะทางเฉลี่ยต่อเที่ยวคือ ${avgDist.toFixed(1)} กม. จากทั้งหมด ${allTrips.length} เที่ยววิ่ง`,
+        desc: `ระยะทางเฉลี่ยต่อเที่ยวของคุณคือ ${avgDist.toFixed(1)} กม.`,
         color: "text-primary-foreground",
         bg: "bg-primary/5",
         border: "border-primary/20"
       },
       {
         title: "ภาพรวมเดือนนี้",
-        desc: `ในเดือนนี้มีการส่งสินค้าสำเร็จไปแล้ว ${allTrips.filter(t => t.status === 'Completed').length} จุด`,
+        desc: `ในเดือนนี้มีการส่งสินค้าสำเร็จไปแล้ว ${visibleTrips.filter(t => t.status === 'Completed').length} จุด`,
         color: "text-green-500",
         bg: "bg-green-500/5",
         border: "border-green-500/20"
       }
     ]
-  }, [allTrips])
+  }, [visibleTrips, profile])
 
-  if (isLoadingTrips || isLoadingSites || !user) {
+  if (isLoadingTrips || isLoadingSites || isProfileLoading || !user) {
     return (
       <div className="flex h-[80vh] items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-10 w-10 animate-spin text-accent" />
-          <p className="text-sm md:text-base text-muted-foreground animate-pulse text-center px-4">กำลังประมวลผลข้อมูลสดจากคลาวด์...</p>
+          <p className="text-sm md:text-base text-muted-foreground animate-pulse text-center px-4">กำลังประมวลผลข้อมูลส่วนตัวของคุณ...</p>
         </div>
       </div>
     )
@@ -168,13 +197,15 @@ export default function DashboardPage() {
     <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
         <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
-        <p className="text-sm md:text-base text-muted-foreground">ภาพรวมการขนส่งและผลงานประจำวันของคุณ</p>
+        <p className="text-sm md:text-base text-muted-foreground">
+          {profile?.role === 'viewer' ? 'ภาพรวมงานขนส่งที่คุณเป็นผู้ขอ' : 'ภาพรวมการขนส่งและผลงานประจำวันของระบบ'}
+        </p>
       </div>
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">เที่ยววิ่งวันนี้</CardTitle>
+            <CardTitle className="text-sm font-medium">เที่ยววิ่งของคุณวันนี้</CardTitle>
             <Truck className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
@@ -191,7 +222,7 @@ export default function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">ระยะทางรวม (กม.)</CardTitle>
+            <CardTitle className="text-sm font-medium">ระยะทางรวมของคุณ (กม.)</CardTitle>
             <MapPin className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
@@ -201,17 +232,17 @@ export default function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">อัตราความตรงต่อเวลา</CardTitle>
+            <CardTitle className="text-sm font-medium">อัตราการจัดส่งสำเร็จ</CardTitle>
             <TrendingUp className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.onTimeRate.toFixed(1)}%</div>
-            <p className="text-xs text-muted-foreground">เที่ยววิ่งสำเร็จเทียบกับทั้งหมด</p>
+            <p className="text-xs text-muted-foreground">ความสำเร็จเทียบกับคำขอทั้งหมด</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">ไซน์งานที่ดูแล</CardTitle>
+            <CardTitle className="text-sm font-medium">ไซน์งานที่เปิดรับของ</CardTitle>
             <Calendar className="h-4 w-4 text-white" />
           </CardHeader>
           <CardContent>
@@ -225,7 +256,7 @@ export default function DashboardPage() {
         <Card className="col-span-1 lg:col-span-4">
           <CardHeader>
             <CardTitle className="text-lg">สถิติการส่งของสัปดาห์นี้</CardTitle>
-            <CardDescription>จำนวนเที่ยววิ่งแยกตามวัน</CardDescription>
+            <CardDescription>จำนวนเที่ยววิ่งของคุณแยกตามวัน</CardDescription>
           </CardHeader>
           <CardContent className="pl-0 md:pl-2">
             <div className="h-[250px] md:h-[300px]">
@@ -254,8 +285,8 @@ export default function DashboardPage() {
 
         <Card className="col-span-1 lg:col-span-3">
           <CardHeader>
-            <CardTitle className="text-lg">ไซน์งานที่เข้าบ่อย</CardTitle>
-            <CardDescription>Top 5 โครงการที่มีการเข้าบ่อยที่สุด</CardDescription>
+            <CardTitle className="text-lg">ไซน์งานที่คุณเข้าส่งบ่อย</CardTitle>
+            <CardDescription>Top 5 โครงการที่คุณขอใช้รถมากที่สุด</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[250px] md:h-[300px]">
@@ -295,7 +326,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <div className="space-y-1">
-              <CardTitle className="text-lg">สถานะการส่งวันนี้</CardTitle>
+              <CardTitle className="text-lg">สถานะการส่งของคุณวันนี้</CardTitle>
               <CardDescription className="text-xs md:text-sm">{format(new Date(), 'dd/MM/yyyy')}</CardDescription>
             </div>
             <Button variant="outline" size="sm" asChild className="h-8 text-xs">
@@ -306,7 +337,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {todayTrips.length > 0 ? todayTrips.slice(0, 5).map((trip) => (
+              {todayTripsList.length > 0 ? todayTripsList.slice(0, 5).map((trip) => (
                 <div key={trip.id} className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-transparent hover:border-accent/30 transition-all">
                   <div className="flex items-center gap-3">
                     <div className={cn(
@@ -329,7 +360,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
               )) : (
-                <div className="text-center py-8 text-muted-foreground text-sm">ไม่มีเที่ยววิ่งในวันนี้</div>
+                <div className="text-center py-8 text-muted-foreground text-sm">คุณไม่มีเที่ยววิ่งในวันนี้</div>
               )}
             </div>
           </CardContent>
@@ -337,8 +368,8 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Insights (Data Analysis)</CardTitle>
-            <CardDescription className="text-xs md:text-sm">ข้อมูลวิเคราะห์จากการขนส่งในระบบปัจจุบัน</CardDescription>
+            <CardTitle className="text-lg">Insights ของคุณ</CardTitle>
+            <CardDescription className="text-xs md:text-sm">ข้อมูลวิเคราะห์จากการใช้งานระบบของคุณ</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
