@@ -193,7 +193,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     });
   }, [rawRequests]);
 
-  const [selectedReq, setSelectedReq] = React.useState<any | null>(null)
+  const [selectedReqId, setSelectedReqId] = React.useState<string | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
   const [rejectReason, setRejectReason] = React.useState("")
   const [isProcessing, setIsStaffProcessing] = React.useState(false)
@@ -210,6 +210,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [stopNotes, setStopNotes] = React.useState<Record<string, string>>({})
   const [isSavingNote, setIsSavingNote] = React.useState<number | null>(null)
 
+  const selectedReq = React.useMemo(() => {
+    if (!selectedReqId) return null
+    return requests.find(r => r.id === selectedReqId) || null
+  }, [selectedReqId, requests])
+
   React.useEffect(() => {
     if (selectedReq) {
       const assigned = selectedReq.assignedDestinations || []
@@ -220,7 +225,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       setSelectedDestIndexes(new Set(available))
       setStopNotes(selectedReq.stopNotes || {})
     }
-  }, [selectedReq])
+  }, [selectedReqId]) // Only re-run when ID changes to avoid reset during typing
 
   React.useEffect(() => {
     let mapTimeout: NodeJS.Timeout;
@@ -299,7 +304,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       clearTimeout(mapTimeout);
       modalMarkers.forEach(m => m.setMap(null));
     }
-  }, [isDetailOpen, selectedReq, companySettings]);
+  }, [isDetailOpen, selectedReqId, companySettings]);
 
   const filteredRequests = requests?.filter(req => 
     req.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -402,7 +407,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       })
       toast({ title: "ดำเนินการสำเร็จ", description: `คำขอ ${selectedReq.requestId} ถูกปฏิเสธแล้ว` })
       setIsDetailOpen(false)
-      setSelectedReq(null)
+      setSelectedReqId(null)
       setRejectReason("")
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
@@ -493,7 +498,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
               )}
               onClick={() => {
-                setSelectedReq(req)
+                setSelectedReqId(req.id)
                 setIsDetailOpen(true)
               }}
             >
@@ -546,13 +551,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     </span>
                   </div>
                 )}
-
-                {/* Dispatcher editable note */}
-                <DispatcherNoteEditor 
-                  req={req} 
-                  userRole={userRole} 
-                  profileName={profileName} 
-                />
 
                 <div className="flex justify-end pt-2 border-t border-border/20">
                   <span className="text-[10px] text-accent flex items-center group-hover:translate-x-1 transition-transform font-bold">
@@ -740,6 +738,18 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Global Dispatcher Note */}
+              <div className="space-y-2">
+                <p className="text-sm font-bold flex items-center gap-2 text-blue-400">
+                  <ClipboardList className="h-4 w-4" /> บันทึกรวม (Dispatcher)
+                </p>
+                <DispatcherNoteEditor 
+                  req={selectedReq} 
+                  userRole={userRole} 
+                  profileName={profileName} 
+                />
               </div>
 
               {selectedReq.note !== undefined && (
