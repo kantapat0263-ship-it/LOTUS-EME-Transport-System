@@ -105,7 +105,15 @@ export default function TripHistoryPage() {
   const filteredTrips = (trips || []).filter(trip => {
     // 1. Role-based Visibility Filter
     if (!isStaff) {
-      const isOwner = (trip as any).userEmail === user?.email || (trip as any).requestedBy === user?.email || (trip as any).userId === user?.uid;
+      const userEmail = user?.email;
+      const isOwner = 
+        (trip as any).userEmail === userEmail || 
+        (trip as any).requestedBy === userEmail || 
+        (trip as any).requestedByEmail === userEmail ||
+        (trip as any).requesterEmail === userEmail ||
+        (trip as any).userId === user?.uid ||
+        trip.stops?.some((s: any) => s.requestedBy === userEmail);
+        
       if (!isOwner) return false;
     }
 
@@ -176,10 +184,10 @@ export default function TripHistoryPage() {
       }
 
       const oldStops = editingTrip.stops.map(s => s.siteName)
-      const newStops = editFormData.stops.map(s => s.siteName)
+      const nStops = editFormData.stops.map(s => s.siteName)
       
-      const added = newStops.filter(s => !oldStops.includes(s))
-      const removed = oldStops.filter(s => !newStops.includes(s))
+      const added = nStops.filter(s => !oldStops.includes(s))
+      const removed = oldStops.filter(s => !nStops.includes(s))
       
       if (added.length > 0) changes.stopsAdded = added
       if (removed.length > 0) changes.stopsRemoved = removed
@@ -369,7 +377,7 @@ export default function TripHistoryPage() {
         </CardContent>
       </Card>
 
-      {!isViewer && filteredTrips.length > 0 && (
+      {!isStaff ? null : filteredTrips.length > 0 && (
         <div className="flex items-center justify-between bg-secondary/20 p-3 px-4 rounded-xl border border-dashed border-accent/20">
           <div className="flex items-center gap-3">
             <Checkbox 
@@ -409,7 +417,7 @@ export default function TripHistoryPage() {
             <div className="flex flex-col lg:flex-row items-stretch lg:items-center p-4 gap-4">
               
               <div className="flex items-center gap-4 w-full lg:w-auto">
-                {!isViewer && (
+                {isStaff && (
                   <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
                     <Checkbox 
                       checked={selectedIds.has(trip.id)}
@@ -423,7 +431,7 @@ export default function TripHistoryPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="font-bold text-base md:text-lg truncate">{trip.tripId || "ID Error"}</span>
-                    {isViewer ? (
+                    {!isStaff ? (
                       <Badge className={cn("text-[10px] h-5", getStatusColor(trip.status))}>
                         {trip.status}
                       </Badge>
@@ -478,7 +486,7 @@ export default function TripHistoryPage() {
                   <FileText className="mr-2 h-4 w-4" /> ใบงาน
                 </Button>
                 
-                {!isViewer && (
+                {isStaff && (
                   <>
                     <Button 
                       variant="ghost" 
@@ -679,11 +687,11 @@ export default function TripHistoryPage() {
             <div className="flex flex-col sm:flex-row justify-between items-start border-b-2 border-black pb-4 mb-6 gap-2">
               <div>
                 <h1 className="text-xl md:text-2xl font-bold uppercase">LOTUS GROUP Delivery</h1>
-                <p className="text-[10px] md:text-sm">ใบกำกับการขนส่งวัสดุและสินค้า</p>
+                <p className="text-[10px] md:sm">ใบกำกับการขนส่งวัสดุและสินค้า</p>
               </div>
               <div className="text-left sm:text-right">
                 <p className="font-bold text-sm md:text-base">Trip ID: {selectedTrip?.tripId}</p>
-                <p className="text-[10px] md:text-sm">วันที่: {formatDateDisplay(selectedTrip?.tripDate || "")}</p>
+                <p className="text-[10px] md:sm">วันที่: {formatDateDisplay(selectedTrip?.tripDate || "")}</p>
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8 mb-8">
