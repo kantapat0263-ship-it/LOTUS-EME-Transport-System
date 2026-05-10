@@ -241,9 +241,18 @@ export default function TripGroupingPage() {
   }
 
   const handleModeChange = (newMode: GroupingMode) => {
-    if (newMode === 'manual' && optimizedOrder.length > 0) {
-      // Transition from auto to manual: use optimized order as starting point
-      setManualOrder(optimizedOrder.filter(id => selectedIds.has(id)));
+    if (newMode === 'manual') {
+      // Clear all route-related states and selection when switching to manual mode
+      setManualOrder([]);
+      setSelectedIds(new Set());
+      setOptimizedOrder([]);
+      
+      // Reset shared trip stats
+      if (typeof window !== 'undefined') {
+        (window as any).__lastTripStats = { distance: 0, fuelCost: 0 };
+      }
+      
+      toast({ title: "โหมดจัดลำดับเอง", description: "กรุณาเลือกจุดหมายบนแผนที่ตามลำดับที่ต้องการ" });
     }
     setMode(newMode);
   }
