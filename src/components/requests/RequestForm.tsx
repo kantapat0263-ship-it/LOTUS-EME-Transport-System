@@ -52,7 +52,7 @@ interface DestinationRequest {
 }
 
 const CATEGORIES = [
-  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
+  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
   { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
   { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
   { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },

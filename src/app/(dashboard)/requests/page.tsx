@@ -82,9 +82,9 @@ function formatDateDisplay(dateStr: string) {
   return dateStr;
 }
 
-// Category mapping for filtering
+// Category mapping for filtering - Support both spellings for legacy data
 const CATEGORIES = [
-  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
+  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
   { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
   { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
   { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
@@ -92,7 +92,7 @@ const CATEGORIES = [
 ] as const;
 
 function getCategoryFromType(type: string): string {
-  if (['ไซต์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
+  if (['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
   if (type === 'ร้านค้า / ซัพพลายเออร์') return 'store';
   if (type === 'ธนาคาร') return 'bank';
   if (type === 'บริษัท / หน่วยงานราชการ') return 'company';
