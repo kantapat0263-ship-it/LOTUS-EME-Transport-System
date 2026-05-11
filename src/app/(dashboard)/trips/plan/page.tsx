@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -143,7 +144,7 @@ export default function TripPlanPage() {
           return { location: new google.maps.LatLng(s.customData.lat, s.customData.lng), stopover: true }
         }
         const site = sites?.find(site => site.id === s.siteId)
-        if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซน์งาน: ${site?.name || s.siteId}`)
+        if (!site || !site.latitude || !site.longitude) throw new Error(`ไม่พบพิกัดของไซต์งาน: ${site?.name || s.siteId}`)
         return { location: new google.maps.LatLng(site.latitude, site.longitude), stopover: true }
       })
 
@@ -774,7 +775,7 @@ export default function TripPlanPage() {
                             </div>
                           ) : (
                             <Select value={stop.siteId} onValueChange={(val) => updateStop(stop.id, 'siteId', val)}>
-                              <SelectTrigger className="h-11"><SelectValue placeholder="เลือกไซน์งาน" /></SelectTrigger>
+                              <SelectTrigger className="h-11"><SelectValue placeholder="เลือกไซต์งาน" /></SelectTrigger>
                               <SelectContent>
                                 {sites?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                               </SelectContent>

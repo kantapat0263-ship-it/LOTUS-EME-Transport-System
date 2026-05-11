@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -51,7 +52,7 @@ interface DestinationRequest {
 }
 
 const CATEGORIES = [
-  { id: 'site', label: 'ไซน์งาน', icon: Building2, types: ['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
+  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
   { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
   { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
   { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
@@ -75,7 +76,7 @@ export function RequestForm() {
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
-    { id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }
+    { id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
   ])
 
   const addDestination = () => {
@@ -93,7 +94,7 @@ export function RequestForm() {
       coordinates: "", 
       jobDescription: "",
       saveAsSite: false,
-      locationType: "ไซน์งาน"
+      locationType: "ไซต์งาน"
     }])
   }
 
@@ -210,7 +211,7 @@ export function RequestForm() {
       setRequestDate(new Date().toISOString().split('T')[0])
       setRequestTime("08:30")
       setNote("")
-      setDestinations([{ id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }])
+      setDestinations([{ id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
     } catch (error) {
       console.error("Error saving request:", error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
@@ -431,7 +432,7 @@ export function RequestForm() {
                               >
                                 <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="ไซน์งาน">ไซน์งาน</SelectItem>
+                                  <SelectItem value="ไซต์งาน">ไซต์งาน</SelectItem>
                                   <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
                                   <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
                                   <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>

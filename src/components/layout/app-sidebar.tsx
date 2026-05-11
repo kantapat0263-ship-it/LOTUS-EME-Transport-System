@@ -88,7 +88,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       roles: ['admin', 'dispatcher', 'viewer'], 
       badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingReqCount > 0 ? pendingReqCount : null 
     },
-    { name: "จัดการไซน์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
+    { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
     { name: "วางแผนการส่ง", href: "/trips/plan", icon: Route, roles: ['admin', 'dispatcher'] },
     { 

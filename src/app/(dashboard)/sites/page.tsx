@@ -99,7 +99,7 @@ export default function SitesPage() {
       name: "",
       address: "",
       coordinates: "",
-      projectTypeTag: "ไซน์งาน",
+      projectTypeTag: "ไซต์งาน",
     },
   })
 
@@ -257,7 +257,7 @@ export default function SitesPage() {
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'ไซน์งาน': return <Building2 className="h-4 w-4" />
+      case 'ไซต์งาน': return <Building2 className="h-4 w-4" />
       case 'ร้านค้า / ซัพพลายเออร์': return <Store className="h-4 w-4" />
       case 'ธนาคาร': return <Landmark className="h-4 w-4" />
       case 'บริษัท / หน่วยงานราชการ': return <Briefcase className="h-4 w-4" />
@@ -265,7 +265,7 @@ export default function SitesPage() {
     }
   }
 
-  const locationTypes = ["ทั้งหมด", "ไซน์งาน", "ร้านค้า / ซัพพลายเออร์", "ธนาคาร", "บริษัท / หน่วยงานราชการ", "อื่น ๆ", "LOTUS EME", "P-ADVANCED"]
+  const locationTypes = ["ทั้งหมด", "ไซต์งาน", "ร้านค้า / ซัพพลายเออร์", "ธนาคาร", "บริษัท / หน่วยงานราชการ", "อื่น ๆ", "LOTUS EME", "P-ADVANCED"]
 
   if (!user || isProfileLoading) return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
 
@@ -273,18 +273,18 @@ export default function SitesPage() {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">จัดการสถานที่</h2>
-          <p className="text-sm md:text-base text-muted-foreground">เพิ่มและจัดการไซน์งาน ร้านค้า และจุดส่งของประจำ</p>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">จัดการไซต์งาน</h2>
+          <p className="text-sm md:text-base text-muted-foreground">เพิ่มและจัดการไซต์งาน ร้านค้า และจุดส่งของประจำ</p>
         </div>
         <Button 
           className="bg-accent hover:bg-accent/90 h-11 md:h-10 w-full sm:w-auto" 
           onClick={() => {
             setEditingSite(null)
-            form.reset({ name: "", address: "", coordinates: "", projectTypeTag: "ไซน์งาน" })
+            form.reset({ name: "", address: "", coordinates: "", projectTypeTag: "ไซต์งาน" })
             setIsDialogOpen(true)
           }}
         >
-          <Plus className="mr-2 h-4 w-4" /> {isStaff ? "เพิ่มไซน์งานใหม่" : "เพิ่มสถานที่ใหม่"}
+          <Plus className="mr-2 h-4 w-4" /> {isStaff ? "เพิ่มไซต์งานใหม่" : "เพิ่มสถานที่ใหม่"}
         </Button>
       </div>
 

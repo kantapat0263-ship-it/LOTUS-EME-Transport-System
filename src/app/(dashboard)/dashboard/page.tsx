@@ -242,7 +242,7 @@ export default function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">ไซน์งานที่เปิดรับของ</CardTitle>
+            <CardTitle className="text-sm font-medium">ไซต์งานที่เปิดรับของ</CardTitle>
             <Calendar className="h-4 w-4 text-white" />
           </CardHeader>
           <CardContent>
@@ -285,7 +285,7 @@ export default function DashboardPage() {
 
         <Card className="col-span-1 lg:col-span-3">
           <CardHeader>
-            <CardTitle className="text-lg">ไซน์งานที่คุณเข้าส่งบ่อย</CardTitle>
+            <CardTitle className="text-lg">ไซต์งานที่คุณเข้าส่งบ่อย</CardTitle>
             <CardDescription>Top 5 โครงการที่คุณขอใช้รถมากที่สุด</CardDescription>
           </CardHeader>
           <CardContent>
@@ -315,7 +315,7 @@ export default function DashboardPage() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex h-full items-center justify-center text-muted-foreground text-sm">ไม่มีข้อมูลไซน์งาน</div>
+                <div className="flex h-full items-center justify-center text-muted-foreground text-sm">ไม่มีข้อมูลไซต์งาน</div>
               )}
             </div>
           </CardContent>
@@ -350,7 +350,7 @@ export default function DashboardPage() {
                        trip.status === 'In Progress' ? <Clock className="h-4 w-4 md:h-5 md:w-5" /> : <AlertCircle className="h-4 w-4 md:h-5 md:w-5" />}
                     </div>
                     <div className="overflow-hidden">
-                      <p className="text-sm font-medium truncate">{trip.stops?.[trip.stops.length - 1]?.siteName || "ไม่ระบุไซน์งาน"}</p>
+                      <p className="text-sm font-medium truncate">{trip.stops?.[trip.stops.length - 1]?.siteName || "ไม่ระบุไซต์งาน"}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{trip.tripId} • {trip.driverName || "-"}</p>
                     </div>
                   </div>

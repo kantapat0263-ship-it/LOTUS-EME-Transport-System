@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -83,7 +84,7 @@ function formatDateDisplay(dateStr: string) {
 
 // Category mapping for filtering
 const CATEGORIES = [
-  { id: 'site', label: 'ไซน์งาน', icon: Building2, types: ['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
+  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
   { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
   { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
   { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
@@ -91,7 +92,7 @@ const CATEGORIES = [
 ] as const;
 
 function getCategoryFromType(type: string): string {
-  if (['ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
+  if (['ไซต์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
   if (type === 'ร้านค้า / ซัพพลายเออร์') return 'store';
   if (type === 'ธนาคาร') return 'bank';
   if (type === 'บริษัท / หน่วยงานราชการ') return 'company';
@@ -840,7 +841,7 @@ export default function RequestsPage() {
         coordinates: d.lat && d.lng ? `${d.lat}, ${d.lng}` : "",
         jobDescription: d.jobDescription || "",
         saveAsSite: false,
-        locationType: "ไซน์งาน"
+        locationType: "ไซต์งาน"
       }))
     })
     setIsEditOpen(true)
@@ -1079,7 +1080,7 @@ export default function RequestsPage() {
                     className="border-accent text-accent"
                     onClick={() => setEditFormData({
                       ...editFormData,
-                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซน์งาน" }]
+                      destinations: [...editFormData.destinations, { id: `new-${Date.now()}`, type: "site", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }]
                     })}
                   >
                     <Plus className="h-4 w-4 mr-2" /> เพิ่มจุดหมาย
@@ -1254,7 +1255,7 @@ export default function RequestsPage() {
                                 >
                                   <SelectTrigger className="h-11 bg-background/50"><SelectValue /></SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="ไซน์งาน">ไซน์งาน</SelectItem>
+                                    <SelectItem value="ไซต์งาน">ไซต์งาน</SelectItem>
                                     <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
                                     <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
                                     <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>

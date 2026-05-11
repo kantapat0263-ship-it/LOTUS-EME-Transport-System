@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -386,7 +387,7 @@ export default function ReportPage() {
           {/* TOP SITES */}
           <Card className="bg-secondary/20 border-border/50">
             <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2"><MapPin className="h-5 w-5 text-accent" /> Top 10 ไซน์งาน/สถานที่</CardTitle>
+              <CardTitle className="text-lg flex items-center gap-2"><MapPin className="h-5 w-5 text-accent" /> Top 10 ไซต์งาน/สถานที่</CardTitle>
               <CardDescription>สถานที่ที่มีการเข้าถึงบ่อยที่สุด</CardDescription>
             </CardHeader>
             <CardContent>
