@@ -159,7 +159,11 @@ export default function SitesPage() {
   const filteredSites = sites?.filter(site => {
     const matchesSearch = site.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (site.address || "").toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = filterType === "ทั้งหมด" || site.projectTypeTag === filterType;
+    
+    // Support legacy "ไซน์งาน" spelling in filtering
+    const normalizedTag = site.projectTypeTag === 'ไซน์งาน' ? 'ไซต์งาน' : site.projectTypeTag;
+    const matchesFilter = filterType === "ทั้งหมด" || normalizedTag === filterType;
+    
     return matchesSearch && matchesFilter;
   }) || []
 
@@ -220,7 +224,7 @@ export default function SitesPage() {
       name: site.name,
       address: site.address,
       coordinates: site.latitude && site.longitude ? `${site.latitude}, ${site.longitude}` : "",
-      projectTypeTag: site.projectTypeTag,
+      projectTypeTag: site.projectTypeTag === 'ไซน์งาน' ? 'ไซต์งาน' : site.projectTypeTag,
     })
     
     setTimeout(() => {
@@ -257,7 +261,8 @@ export default function SitesPage() {
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'ไซต์งาน': return <Building2 className="h-4 w-4" />
+      case 'ไซต์งาน':
+      case 'ไซน์งาน': return <Building2 className="h-4 w-4" />
       case 'ร้านค้า / ซัพพลายเออร์': return <Store className="h-4 w-4" />
       case 'ธนาคาร': return <Landmark className="h-4 w-4" />
       case 'บริษัท / หน่วยงานราชการ': return <Briefcase className="h-4 w-4" />
@@ -333,6 +338,7 @@ export default function SitesPage() {
                   <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">ไม่พบข้อมูล</TableCell></TableRow>
                 ) : filteredSites.map((site) => {
                   const canManage = isStaff || (site.addedBy === user?.email);
+                  const displayTag = site.projectTypeTag === 'ไซน์งาน' ? 'ไซต์งาน' : site.projectTypeTag;
                   return (
                     <TableRow key={site.id}>
                       <TableCell>
@@ -342,7 +348,7 @@ export default function SitesPage() {
                             {site.isUserAdded && <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-400 border-blue-500/20">เพิ่มโดยผู้ใช้</Badge>}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            {getTypeIcon(site.projectTypeTag)} {site.projectTypeTag}
+                            {getTypeIcon(site.projectTypeTag)} {displayTag}
                           </div>
                         </div>
                       </TableCell>
@@ -385,13 +391,14 @@ export default function SitesPage() {
           <div className="md:hidden divide-y">
             {filteredSites.map(site => {
               const canManage = isStaff || (site.addedBy === user?.email);
+              const displayTag = site.projectTypeTag === 'ไซน์งาน' ? 'ไซต์งาน' : site.projectTypeTag;
               return (
                 <div key={site.id} className="p-4 space-y-3">
                   <div className="flex justify-between items-start">
                     <div>
                       <div className="font-bold">{site.name}</div>
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-1">
-                        {getTypeIcon(site.projectTypeTag)} {site.projectTypeTag}
+                        {getTypeIcon(site.projectTypeTag)} {displayTag}
                       </div>
                     </div>
                     <DropdownMenu>
