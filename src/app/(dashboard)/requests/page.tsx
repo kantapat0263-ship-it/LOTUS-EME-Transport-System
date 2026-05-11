@@ -82,7 +82,6 @@ function formatDateDisplay(dateStr: string) {
   return dateStr;
 }
 
-// Category mapping for filtering - Support both spellings for legacy data
 const CATEGORIES = [
   { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
   { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
@@ -99,7 +98,6 @@ function getCategoryFromType(type: string): string {
   return 'custom';
 }
 
-// Inline modified RequestManager to support "Manage Vehicle" flow and Split Trip
 function InlineRequestManager({ userRole, profileName }: { userRole?: string, profileName?: string }) {
   const { toast } = useToast()
   const db = useFirestore()
@@ -110,7 +108,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const { data: companySettings } = useDoc<any>(settingsRef)
 
   const [showCancelled, setShowCancelled] = React.useState(false)
-  
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
     where("status", "in", showCancelled ? ["pending", "partial", "acknowledged", "cancelled"] : ["pending", "partial", "acknowledged"])
@@ -132,15 +129,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [rejectReason, setRejectReason] = React.useState("")
   const [isProcessing, setIsStaffProcessing] = React.useState(false)
   const [searchTerm, setSearchTerm] = React.useState("")
-  
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
-  
   const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const [modalMarkers, setModalMarkers] = React.useState<google.maps.Marker[]>([])
-
-  // State for per-stop dispatcher notes
   const [stopNotes, setStopNotes] = React.useState<Record<string, string>>({})
   const [isSavingNote, setIsSavingNote] = React.useState<number | null>(null)
 
@@ -159,7 +152,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       setSelectedDestIndexes(new Set(available))
       setStopNotes(selectedReq.stopNotes || {})
     }
-  }, [selectedReqId])
+  }, [selectedReqId, selectedReq])
 
   React.useEffect(() => {
     let mapTimeout: NodeJS.Timeout;
@@ -238,7 +231,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       clearTimeout(mapTimeout);
       modalMarkers.forEach(m => m.setMap(null));
     }
-  }, [isDetailOpen, selectedReqId, companySettings]);
+  }, [isDetailOpen, selectedReqId, companySettings, selectedReq, modalMarkers]);
 
   const filteredRequests = requests?.filter(req => 
     req.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -308,7 +301,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const handleReject = async () => {
     if (!selectedReq) return
-    
     if (!rejectReason.trim()) {
       toast({ title: "ระบุเหตุผล", description: "กรุณาระบุเหตุผลที่ไม่นุมัติ", variant: "destructive" })
       return
@@ -763,21 +755,15 @@ export default function RequestsPage() {
   const sitesRef = useMemoFirebase(() => db ? query(collection(db, "sites"), where("status", "==", "Active")) : null, [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
-  // Edit State
   const [editingReq, setEditingReq] = React.useState<any | null>(null)
   const [isEditDialogOpen, setIsEditOpen] = React.useState(false)
   const [editFormData, setEditFormData] = React.useState<any>(null)
   const [isSavingEdit, setIsSavingEdit] = React.useState(false)
-
-  // Cancel Confirmation State
   const [reqToCancel, setReqToCancel] = React.useState<any | null>(null)
   const [isCancelConfirmOpen, setIsCancelOpen] = React.useState(false)
-
-  // Clear Data State
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
 
-  // Fetch requests with role-based filtering
   React.useEffect(() => {
     if (isUserLoading || !user || !db || isProfileLoading || !profile) return
 
@@ -1093,7 +1079,8 @@ export default function RequestsPage() {
                     const filteredSites = sites?.filter(s => {
                       if (dest.category === 'custom') return false;
                       const matchesType = category?.types.includes(s.projectTypeTag);
-                      const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase());
+                      const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase()) || 
+                                           (s.address || "").toLowerCase().includes(dest.searchTerm.toLowerCase());
                       return matchesType && matchesSearch;
                     }) || [];
 
@@ -1158,8 +1145,8 @@ export default function RequestsPage() {
                             <div className="relative">
                               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                               <Input 
-                                placeholder="พิมพ์เพื่อค้นหาสถานที่..." 
-                                className="pl-10 h-10 text-xs bg-background/50"
+                                placeholder="พิมพ์เพื่อค้นหาชื่อสถานที่ หรือ ที่อยู่..." 
+                                className="pl-10 h-11 text-sm bg-background/50"
                                 value={dest.searchTerm}
                                 onChange={(e) => updateEditDest({ searchTerm: e.target.value })}
                               />
@@ -1173,7 +1160,7 @@ export default function RequestsPage() {
                                   onValueChange={(val) => updateEditDest({ siteId: val })}
                                 >
                                   <SelectTrigger className="h-11 bg-background/50">
-                                    <SelectValue placeholder={`-- ค้นหา/เลือก${CATEGORIES.find(c => c.id === dest.category)?.label} --`} />
+                                    <SelectValue placeholder={dest.searchTerm ? `พบผลลัพธ์ ${filteredSites.length} รายการ` : `เลือก${category?.label}...`} />
                                   </SelectTrigger>
                                   <SelectContent className="max-h-64">
                                     {filteredSites.length > 0 ? filteredSites.map(s => (
