@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -128,9 +127,18 @@ export default function LoginPage() {
       toast({ title: "ลงทะเบียนสำเร็จ", description: `สร้างบัญชีผู้ใช้งานบทบาท ${role} เรียบร้อยแล้ว` })
       router.push("/dashboard")
     } catch (error: any) {
+      let errorMessage = "เกิดข้อผิดพลาดในการลงทะเบียน"
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = "อีเมลนี้มีผู้ใช้งานแล้วในระบบ"
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = "รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร"
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = "รูปแบบอีเมลไม่ถูกต้อง"
+      }
+
       toast({ 
         title: "ลงทะเบียนไม่สำเร็จ", 
-        description: error.message, 
+        description: errorMessage, 
         variant: "destructive" 
       })
     } finally {
