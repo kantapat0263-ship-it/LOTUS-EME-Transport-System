@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -107,7 +106,6 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     },
     { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
-    { name: "วางแผนการส่ง", href: "/trips/plan", icon: Route, roles: ['admin', 'dispatcher'] },
     { 
       name: "จัดกลุ่มเที่ยววิ่ง", 
       href: "/trip-grouping", 
