@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -82,22 +81,6 @@ function formatDateDisplay(dateStr: string) {
   return dateStr;
 }
 
-const CATEGORIES = [
-  { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
-  { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
-  { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
-  { id: 'company', label: 'บริษัท', icon: Briefcase, types: ['บริษัท / หน่วยงานราชการ'] },
-  { id: 'custom', label: 'กำหนดเอง', icon: MapPin, types: [] },
-] as const;
-
-function getCategoryFromType(type: string): string {
-  if (['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'].includes(type)) return 'site';
-  if (type === 'ร้านค้า / ซัพพลายเออร์') return 'store';
-  if (type === 'ธนาคาร') return 'bank';
-  if (type === 'บริษัท / หน่วยงานราชการ') return 'company';
-  return 'custom';
-}
-
 const getStatusBadge = (status: string) => {
   const config: any = {
     'pending': { label: 'รอดำเนินการ', color: 'bg-orange-500', textColor: 'text-orange-500', dot: true },
@@ -123,7 +106,6 @@ const getStatusBadge = (status: string) => {
 function InlineRequestManager({ userRole, profileName }: { userRole?: string, profileName?: string }) {
   const { toast } = useToast()
   const db = useFirestore()
-  const router = useRouter()
   const isStaff = userRole === 'admin' || userRole === 'dispatcher'
   
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
@@ -747,6 +729,62 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+export default function RequestsPage() {
+  const { user } = useUser()
+  const db = useFirestore()
+  const { toast } = useToast()
+  
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
+
+  const [activeTab, setActiveTab] = React.useState("form")
+  const [isCancelOpen, setIsCancelOpen] = React.useState(false)
+  const [reqToCancel, setReqToCancel] = React.useState<any>(null)
+
+  const myRequestsRef = useMemoFirebase(() => (db && user) ? query(
+    collection(db, "vehicleRequests"),
+    where("userId", "==", user.uid)
+  ) : null, [db, user])
+  
+  const { data: myRequests, isLoading: isDataLoading } = useCollection<any>(myRequestsRef)
+
+  const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
+
+  const handleOpenEdit = (req: any) => {
+    // Logic for editing a request if needed, otherwise this is a placeholder
+    toast({ title: "Coming soon", description: "ระบบแก้ไขคำขอกำลังอยู่ในการพัฒนา" })
+  }
+
+  const handleCancelRequest = async () => {
+    if (!reqToCancel) return
+    try {
+      await updateDoc(doc(db, "vehicleRequests", reqToCancel.id), {
+        status: "cancelled",
+        cancelledAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
+      toast({ title: "ยกเลิกสำเร็จ", description: `คำขอ ${reqToCancel.requestId} ถูกยกเลิกแล้ว` })
+      setIsCancelOpen(false)
+      setReqToCancel(null)
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    }
+  }
+
+  if (isProfileLoading) {
+    return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-2">
+        <h2 className="text-2xl md:text-3xl font-bold tracking-tight">ขอใช้รถและจัดการคำขอ</h2>
+        <p className="text-sm md:text-base text-muted-foreground">ระบบส่งคำขอใช้รถวัสดุและติดตามสถานะคิวงาน</p>
+      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto">
@@ -776,7 +814,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 ))}
               </div>
             ) : myRequests && myRequests.length > 0 ? (
-              myRequests.map((req: any) => (
+              [...myRequests].sort((a,b) => (b.createdAt?.toDate()?.getTime() || 0) - (a.createdAt?.toDate()?.getTime() || 0)).map((req: any) => (
                 <Card key={req.id} className={cn(
                   "border-border/50 hover:border-accent/30 transition-all overflow-hidden group",
                   req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
@@ -838,13 +876,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 </Button>
                               </>
                             )}
-                            <div className="shrink-0">
-                              {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-orange-500" /> :
-                               (req.status === "in_progress" || req.status === "partial") ? <Clock className="h-5 w-5 text-blue-500" /> :
-                               req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
-                               req.status === "cancelled" ? <XCircle className="h-5 w-5 text-gray-400" /> :
-                               <XCircle className="h-5 w-5 text-red-500" />}
-                            </div>
                           </div>
                         </div>
 
@@ -901,19 +932,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                             </Badge>
                           </div>
                         )}
-
-                        {req.status === "cancelled" && (
-                          <div className="bg-gray-500/5 border border-gray-500/20 p-3 rounded-lg animate-in slide-in-from-top-1">
-                            <p className="text-xs text-gray-400 font-bold">ยกเลิกแล้วเมื่อ: {req.cancelledAt?.toDate()?.toLocaleString('th-TH')}</p>
-                          </div>
-                        )}
-
-                        {req.status === "rejected" && req.rejectReason && (
-                          <div className="bg-red-500/5 border border-green-500/20 p-3 rounded-lg animate-in slide-in-from-top-1">
-                            <p className="text-xs text-red-500 font-bold mb-1">เหตุผลที่ไม่นุมัติ:</p>
-                            <p className="text-xs text-muted-foreground italic">"{req.rejectReason}"</p>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -939,6 +957,21 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
           </TabsContent>
         )}
       </Tabs>
+
+      <AlertDialog open={isCancelOpen} onOpenChange={setIsCancelOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ยืนยันการยกเลิกคำขอ</AlertDialogTitle>
+            <AlertDialogDescription>
+              คุณต้องการยกเลิกคำขอ {reqToCancel?.requestId} ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ปิด</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCancelRequest} className="bg-red-500 hover:bg-red-600">ยืนยันยกเลิก</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
