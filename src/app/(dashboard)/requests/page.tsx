@@ -893,6 +893,23 @@ export default function RequestsPage() {
                           </div>
                         </div>
 
+                        {req.status === 'rejected' && req.rejectReason && (
+                          <div style={{
+                            marginTop: '8px',
+                            padding: '8px 12px',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            borderLeft: '3px solid #ef4444',
+                            borderRadius: '0 4px 4px 0'
+                          }} className="animate-in slide-in-from-top-1">
+                            <span style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '13px' }} className="flex items-center gap-1.5">
+                              <XCircle className="h-3.5 w-3.5" /> ❌ เหตุผลที่ปฏิเสธ:
+                            </span>
+                            <p style={{ color: '#e2e8f0', marginLeft: '24px', fontSize: '13px', marginTop: '2px' }} className="italic">
+                              "{req.rejectReason}"
+                            </p>
+                          </div>
+                        )}
+
                         <Separator className="bg-border/50" />
 
                         <div className="grid grid-cols-1 gap-3">
