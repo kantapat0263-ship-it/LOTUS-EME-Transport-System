@@ -43,7 +43,7 @@ interface VehicleRequest {
   requestedBy: string;
   requestedByEmail: string;
   destinations: any[];
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "in_progress" | "approved" | "rejected";
   createdAt: any;
   tripId?: string;
   rejectReason?: string;
@@ -73,7 +73,7 @@ export function RequestManager() {
     req.requestedBy.toLowerCase().includes(searchTerm.toLowerCase())
   ) || []
 
-  const handleUpdateStatus = async (status: "approved" | "rejected") => {
+  const handleUpdateStatus = async (status: "in_progress" | "rejected") => {
     if (!selectedReq) return
     
     if (status === "rejected" && !rejectReason.trim()) {
@@ -87,10 +87,12 @@ export function RequestManager() {
       await updateDoc(ref, {
         status,
         rejectReason: status === "rejected" ? rejectReason : null,
-        tripId: status === "approved" ? (tripId || null) : null,
         updatedAt: serverTimestamp()
       })
-      toast({ title: "ดำเนินการสำเร็จ", description: `คำขอ ${selectedReq.requestId} ถูก ${status === "approved" ? 'อนุมัติ' : 'ปฏิเสธ'} แล้ว` })
+      toast({ 
+        title: status === 'in_progress' ? "รับงานแล้ว" : "ปฏิเสธงานแล้ว", 
+        description: `คำขอ ${selectedReq.requestId} ถูก ${status === "in_progress" ? 'เปลี่ยนเป็นกำลังดำเนินการ' : 'ปฏิเสธ'} แล้ว` 
+      })
       setIsDetailOpen(false)
       setSelectedReq(null)
       setRejectReason("")
@@ -103,12 +105,20 @@ export function RequestManager() {
   }
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "pending": return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
-      case "approved": return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">อนุมัติแล้ว</Badge>
-      case "rejected": return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
-      default: return null
+    const config: any = {
+      'pending': { label: 'รอดำเนินการ', color: 'bg-orange-500', textColor: 'text-orange-500', dot: true },
+      'in_progress': { label: 'กำลังดำเนินการ', color: 'bg-blue-500', textColor: 'text-blue-400', dot: true },
+      'approved': { label: '✅ จัดรถแล้ว', color: 'bg-green-500', textColor: 'text-green-500', dot: false },
+      'rejected': { label: '❌ ปฏิเสธ', color: 'bg-red-500', textColor: 'text-red-500', dot: false },
     }
+    const item = config[status] || { label: status, color: 'bg-gray-500', textColor: 'text-gray-400', dot: false }
+
+    return (
+      <Badge variant="outline" className={cn("gap-1.5", item.textColor, "bg-secondary/30 border-border/50")}>
+        {item.dot && <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse", item.color)} />}
+        {item.label}
+      </Badge>
+    )
   }
 
   if (isLoading) {
@@ -134,7 +144,7 @@ export function RequestManager() {
               key={req.id} 
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
-                req.status === "pending" && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5"
+                req.status === "pending" && "border-orange-500/30 bg-orange-500/5 shadow-lg shadow-orange-500/5"
               )}
               onClick={() => {
                 setSelectedReq(req)
@@ -142,7 +152,7 @@ export function RequestManager() {
               }}
             >
               {req.status === "pending" && (
-                <div className="absolute top-0 left-0 w-1 h-full bg-yellow-500" />
+                <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
               )}
               <CardContent className="p-4 space-y-3">
                 <div className="flex justify-between items-start">
@@ -256,15 +266,6 @@ export function RequestManager() {
                 <div className="pt-6 border-t border-border/50 space-y-5">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
-                      <Label className="text-xs font-bold uppercase tracking-wider">รหัส Trip ID (ถ้ามี)</Label>
-                      <Input 
-                        placeholder="เช่น T-1234 (สำหรับเชื่อมโยงแผนงาน)"
-                        className="bg-secondary/20 h-11"
-                        value={tripId}
-                        onChange={(e) => setTripId(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
                       <Label className="text-xs font-bold uppercase tracking-wider text-red-400">เหตุผลกรณีไม่อนุมัติ</Label>
                       <Textarea 
                         placeholder="ระบุเหตุผลเพื่อให้ผู้ขอรับทราบ..."
@@ -284,12 +285,12 @@ export function RequestManager() {
                       <XCircle className="mr-2 h-4 w-4" /> ปฏิเสธคำขอ
                     </Button>
                     <Button 
-                      className="flex-[2] h-12 bg-green-600 hover:bg-green-700 shadow-lg shadow-green-900/20" 
-                      onClick={() => handleUpdateStatus("approved")}
+                      className="flex-[2] h-12 bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-900/20" 
+                      onClick={() => handleUpdateStatus("in_progress")}
                       disabled={isProcessing}
                     >
                       {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                      อนุมัติคำขอรถ
+                      ✅ รับทราบและดำเนินการ
                     </Button>
                   </div>
                 </div>
@@ -300,7 +301,7 @@ export function RequestManager() {
                 )}>
                   <div className="flex items-center justify-center gap-2 font-bold text-lg">
                     {selectedReq.status === "approved" ? <CheckCircle2 className="h-6 w-6" /> : <XCircle className="h-6 w-6" />}
-                    {selectedReq.status === "approved" ? "อนุมัติแล้ว" : "ไม่อนุมัติ"}
+                    {selectedReq.status === "approved" ? "จัดรถแล้ว" : "ไม่อนุมัติ"}
                   </div>
                   {selectedReq.tripId && (
                     <Badge variant="outline" className="bg-green-500 text-white border-transparent">

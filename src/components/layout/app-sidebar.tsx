@@ -46,33 +46,50 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   
   // States for different types of alerts
   const [pendingReqCount, setPendingReqCount] = React.useState(0)
-  const [acknowledgedReqCount, setAcknowledgedReqCount] = React.useState(0)
+  const [inProgressReqCount, setInProgressReqCount] = React.useState(0)
 
-  // Listen for requests if Admin/Dispatcher
+  // Listen for requests
   React.useEffect(() => {
-    if (!db || (userRole !== 'admin' && userRole !== 'dispatcher')) return
+    if (!db || !user) return
 
-    // Listen to all active statuses to calculate separate counts
-    const q = query(
-      collection(db, "vehicleRequests"), 
-      where("status", "in", ["pending", "acknowledged", "partial"])
-    )
+    const isStaff = userRole === 'admin' || userRole === 'dispatcher'
+    
+    // Listen to all active statuses
+    let q;
+    if (isStaff) {
+      q = query(
+        collection(db, "vehicleRequests"), 
+        where("status", "in", ["pending", "in_progress", "partial"])
+      )
+    } else {
+      q = query(
+        collection(db, "vehicleRequests"), 
+        where("userId", "==", user.uid),
+        where("status", "==", "pending")
+      )
+    }
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(d => d.data())
       
-      // 1. Pending: Not yet acknowledged
-      const pCount = docs.filter(r => r.status === 'pending').length
-      
-      // 2. Acknowledged: Received by dispatcher but not fully planned
-      const aCount = docs.filter(r => r.status === 'acknowledged').length
-      
-      setPendingReqCount(pCount)
-      setAcknowledgedReqCount(aCount)
+      if (isStaff) {
+        // 1. Pending: Not yet acknowledged
+        const pCount = docs.filter(r => r.status === 'pending').length
+        
+        // 2. In Progress: Received by dispatcher but not fully planned
+        const iCount = docs.filter(r => r.status === 'in_progress' || r.status === 'partial').length
+        
+        setPendingReqCount(pCount)
+        setInProgressReqCount(iCount)
+      } else {
+        // For Viewers, only count their own pending
+        setPendingReqCount(docs.length)
+        setInProgressReqCount(0)
+      }
     })
 
     return () => unsubscribe()
-  }, [db, userRole])
+  }, [db, user, userRole])
 
   const handleLogout = async () => {
     await auth.signOut()
@@ -86,7 +103,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       href: "/requests", 
       icon: Car, 
       roles: ['admin', 'dispatcher', 'viewer'], 
-      badge: (userRole === 'admin' || userRole === 'dispatcher') && pendingReqCount > 0 ? pendingReqCount : null 
+      badge: pendingReqCount > 0 ? pendingReqCount : null 
     },
     { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
@@ -96,7 +113,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       href: "/trip-grouping", 
       icon: Layers, 
       roles: ['admin', 'dispatcher'], 
-      badge: (userRole === 'admin' || userRole === 'dispatcher') && acknowledgedReqCount > 0 ? acknowledgedReqCount : null 
+      badge: inProgressReqCount > 0 ? inProgressReqCount : null 
     },
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "สรุปคิวรถประจำวัน", href: "/daily-summary", icon: FileText, roles: ['admin', 'dispatcher'] },

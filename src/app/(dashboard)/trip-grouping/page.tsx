@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -33,10 +34,10 @@ export default function TripGroupingPage() {
   // Data Fetching
   const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
-  // Updated query to include 'acknowledged'
+  // Updated query to include 'in_progress' and 'pending'
   const vrRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", ["pending", "partial", "acknowledged"])
+    where("status", "in", ["pending", "partial", "in_progress"])
   ), [db])
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
 

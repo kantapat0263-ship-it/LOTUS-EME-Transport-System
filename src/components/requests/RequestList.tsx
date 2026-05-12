@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -32,7 +33,7 @@ interface VehicleRequest {
   requestedBy: string;
   requestedByEmail: string;
   destinations: RequestDestination[];
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "in_progress" | "approved" | "rejected";
   createdAt: any;
   tripId?: string;
   rejectReason?: string;
@@ -53,26 +54,22 @@ export function RequestList() {
 
   const { data: requests, isLoading } = useCollection<VehicleRequest>(requestsRef)
 
-  const getStatusBadge = (status: VehicleRequest["status"]) => {
-    switch (status) {
-      case "pending":
-        return <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
-      case "approved":
-        return <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">อนุมัติแล้ว</Badge>
-      case "rejected":
-        return <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
+  const getStatusBadge = (status: VehicleRequest["status"] | string) => {
+    const config: any = {
+      'pending': { label: 'รอดำเนินการ', color: 'bg-orange-500', textColor: 'text-orange-500', dot: true },
+      'in_progress': { label: 'กำลังดำเนินการ', color: 'bg-blue-500', textColor: 'text-blue-400', dot: true },
+      'approved': { label: '✅ จัดรถแล้ว', color: 'bg-green-500', textColor: 'text-green-500', dot: false },
+      'rejected': { label: '❌ ปฏิเสธ', color: 'bg-red-500', textColor: 'text-red-500', dot: false },
     }
-  }
+    
+    const item = config[status] || { label: status, color: 'bg-gray-500', textColor: 'text-gray-400', dot: false }
 
-  const getStatusIcon = (status: VehicleRequest["status"]) => {
-    switch (status) {
-      case "pending":
-        return <AlertCircle className="h-5 w-5 text-yellow-500" />
-      case "approved":
-        return <CheckCircle2 className="h-5 w-5 text-green-500" />
-      case "rejected":
-        return <XCircle className="h-5 w-5 text-red-500" />
-    }
+    return (
+      <Badge variant="outline" className={cn("gap-1.5", item.textColor, "bg-secondary/30 border-border/50")}>
+        {item.dot && <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse", item.color)} />}
+        {item.label}
+      </Badge>
+    )
   }
 
   if (isLoading) {
@@ -93,7 +90,8 @@ export function RequestList() {
                 {/* Side Status Bar */}
                 <div className={cn(
                   "w-full sm:w-1.5 h-1.5 sm:h-auto",
-                  req.status === "pending" ? "bg-yellow-500" :
+                  req.status === "pending" ? "bg-orange-500" :
+                  req.status === "in_progress" ? "bg-blue-500" :
                   req.status === "approved" ? "bg-green-500" : "bg-red-500"
                 )} />
                 
@@ -117,7 +115,10 @@ export function RequestList() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {getStatusIcon(req.status)}
+                      {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-orange-500" /> :
+                       req.status === "in_progress" ? <Clock className="h-5 w-5 text-blue-500" /> :
+                       req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
+                       <XCircle className="h-5 w-5 text-red-500" />}
                     </div>
                   </div>
 

@@ -98,6 +98,28 @@ function getCategoryFromType(type: string): string {
   return 'custom';
 }
 
+const getStatusBadge = (status: string) => {
+  const config: any = {
+    'pending': { label: 'รอดำเนินการ', color: 'bg-orange-500', textColor: 'text-orange-500', dot: true },
+    'in_progress': { label: 'กำลังดำเนินการ', color: 'bg-blue-500', textColor: 'text-blue-400', dot: true },
+    'partial': { label: 'จัดบางส่วน', color: 'bg-blue-500', textColor: 'text-blue-400', dot: true },
+    'approved': { label: '✅ จัดรถแล้ว', color: 'bg-green-500', textColor: 'text-green-500', dot: false },
+    'rejected': { label: '❌ ปฏิเสธ', color: 'bg-red-500', textColor: 'text-red-500', dot: false },
+    'cancelled': { label: 'ยกเลิกแล้ว', color: 'bg-gray-500', textColor: 'text-gray-400', dot: false },
+  }
+
+  const item = config[status] || { label: status, color: 'bg-gray-500', textColor: 'text-gray-400', dot: false }
+
+  return (
+    <Badge variant="outline" className={cn("gap-1.5", item.textColor, `border-border/50 bg-secondary/30`)}>
+      {item.dot && (
+        <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse", item.color)} />
+      )}
+      {item.label}
+    </Badge>
+  )
+}
+
 function InlineRequestManager({ userRole, profileName }: { userRole?: string, profileName?: string }) {
   const { toast } = useToast()
   const db = useFirestore()
@@ -110,7 +132,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [showCancelled, setShowCancelled] = React.useState(false)
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", showCancelled ? ["pending", "partial", "acknowledged", "cancelled"] : ["pending", "partial", "acknowledged"])
+    where("status", "in", showCancelled ? ["pending", "partial", "in_progress", "cancelled"] : ["pending", "partial", "in_progress"])
   ), [db, showCancelled])
 
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
@@ -284,12 +306,12 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     try {
       const ref = doc(db, "vehicleRequests", selectedReq.id)
       await updateDoc(ref, {
-        status: "acknowledged",
+        status: "in_progress",
         acknowledgedBy: profileName || "Dispatcher",
         acknowledgedAt: new Date().toISOString(),
         updatedAt: serverTimestamp()
       })
-      toast({ title: "รับทราบคำขอแล้ว", description: `คำขอ ${selectedReq.requestId} เปลี่ยนสถานะเป็นรับทราบแล้ว` })
+      toast({ title: "รับงานและกำลังดำเนินการ", description: `คำขอ ${selectedReq.requestId} เปลี่ยนสถานะเป็นกำลังดำเนินการแล้ว` })
       setIsDetailOpen(false)
       setSelectedReqId(null)
     } catch (e) {
@@ -345,20 +367,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "pending": return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
-      case "acknowledged": return <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20">รับทราบแล้ว</Badge>
-      case "partial": return <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
-      case "approved": return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
-      case "rejected": return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
-      case "cancelled": return <Badge className="bg-gray-500/10 text-gray-400 border-gray-500/20">ยกเลิกแล้ว</Badge>
-      default: return null
-    }
-  }
-
-  const hasCoordinates = selectedReq?.destinations?.some((d: any) => d.lat && d.lng);
-
   if (isLoading) {
     return <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div>
   }
@@ -404,7 +412,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
               key={req.id} 
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
-                (req.status === "pending" || req.status === "acknowledged" || req.status === "partial") && "border-yellow-500/30 bg-yellow-500/5 shadow-lg shadow-yellow-500/5",
+                (req.status === "pending" || req.status === "in_progress" || req.status === "partial") && "border-accent/30 bg-accent/5 shadow-lg shadow-accent/5",
                 req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
               )}
               onClick={() => {
@@ -412,12 +420,12 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 setIsDetailOpen(true)
               }}
             >
-              {(req.status === "pending" || req.status === "acknowledged" || req.status === "partial" || req.status === "cancelled") && (
+              {(req.status === "pending" || req.status === "in_progress" || req.status === "partial" || req.status === "cancelled") && (
                 <div className={cn(
                   "absolute top-0 left-0 w-1 h-full", 
                   req.status === "partial" ? "bg-blue-500" : 
                   req.status === "cancelled" ? "bg-gray-500" : 
-                  req.status === "acknowledged" ? "bg-orange-500" : "bg-yellow-500"
+                  req.status === "in_progress" ? "bg-blue-500" : "bg-orange-500"
                 )} />
               )}
               <CardContent className="p-4 space-y-3">
@@ -676,7 +684,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
               )}
 
-              {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "acknowledged") ? (
+              {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "in_progress") ? (
                 <div className="pt-6 border-t border-border/50 space-y-5">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
@@ -704,7 +712,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                       disabled={isProcessing}
                     >
                       {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      ✅ รับทราบคำขอ
+                      ✅ รับทราบและดำเนินการ
                     </Button>
                   </div>
                 </div>
@@ -923,24 +931,7 @@ export default function RequestsPage() {
   const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
   const isAdmin = profile?.role === 'admin'
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "pending":
-        return <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">รอดำเนินการ</Badge>
-      case "acknowledged":
-        return <Badge variant="outline" className="bg-orange-500/10 text-orange-500 border-orange-500/20">รับทราบแล้ว</Badge>
-      case "partial":
-        return <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/20">จัดบางส่วน</Badge>
-      case "approved":
-        return <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">จัดรถแล้ว</Badge>
-      case "rejected":
-        return <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">ไม่อนุมัติ</Badge>
-      case "cancelled":
-        return <Badge variant="outline" className="bg-gray-500/10 text-gray-400 border-gray-500/20">ยกเลิกแล้ว</Badge>
-      default:
-        return null
-    }
-  }
+  const hasCoordinates = (destinations: any[]) => destinations?.some((d: any) => d.lat && d.lng);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -1322,9 +1313,8 @@ export default function RequestsPage() {
                     <div className="flex flex-col sm:flex-row">
                       <div className={cn(
                         "w-full sm:w-1.5 h-1.5 sm:h-auto shrink-0",
-                        req.status === "pending" ? "bg-yellow-500" :
-                        req.status === "acknowledged" ? "bg-orange-500" :
-                        req.status === "partial" ? "bg-blue-500" :
+                        req.status === "pending" ? "bg-orange-500" :
+                        (req.status === "in_progress" || req.status === "partial") ? "bg-blue-500" :
                         req.status === "approved" ? "bg-green-500" :
                         req.status === "cancelled" ? "bg-gray-500" : "bg-red-500"
                       )} />
@@ -1353,7 +1343,7 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {(req.status === "pending" || req.status === "partial" || req.status === "acknowledged") && req.userId === user?.uid && (
+                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && (
                               <>
                                 <Button 
                                   variant="outline" 
@@ -1377,9 +1367,8 @@ export default function RequestsPage() {
                               </>
                             )}
                             <div className="shrink-0">
-                              {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-yellow-500" /> :
-                               req.status === "acknowledged" ? <Clock className="h-5 w-5 text-orange-500" /> :
-                               req.status === "partial" ? <Clock className="h-5 w-5 text-blue-400" /> :
+                              {req.status === "pending" ? <AlertCircle className="h-5 w-5 text-orange-500" /> :
+                               (req.status === "in_progress" || req.status === "partial") ? <Clock className="h-5 w-5 text-blue-500" /> :
                                req.status === "approved" ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
                                req.status === "cancelled" ? <XCircle className="h-5 w-5 text-gray-400" /> :
                                <XCircle className="h-5 w-5 text-red-500" />}
