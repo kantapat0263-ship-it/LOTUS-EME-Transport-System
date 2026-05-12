@@ -18,7 +18,6 @@ import {
 } from "@/components/ui/select"
 import { 
   Plus, 
-  Trash2, 
   MapPin, 
   ExternalLink, 
   Loader2, 
@@ -333,9 +332,6 @@ export function RequestForm() {
                               </Button>
                             ))}
                           </div>
-                          <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive h-8 w-8 self-end sm:self-auto" onClick={() => removeDestination(dest.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
                         </div>
 
                         {dest.category !== "custom" ? (
