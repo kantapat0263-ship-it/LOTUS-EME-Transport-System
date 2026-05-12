@@ -40,7 +40,7 @@ import { format } from "date-fns"
 
 interface DestinationRequest {
   id: string;
-  category: "site" | "store" | "bank" | "company" | "custom";
+  category: "all" | "site" | "store" | "bank" | "company" | "custom";
   searchTerm: string;
   siteId: string;
   siteName: string;
@@ -52,6 +52,7 @@ interface DestinationRequest {
 }
 
 const CATEGORIES = [
+  { id: 'all', label: 'ทั้งหมด', icon: Search, types: [] },
   { id: 'site', label: 'ไซต์งาน', icon: Building2, types: ['ไซต์งาน', 'ไซน์งาน', 'Electrical', 'Plumbing', 'HVAC', 'Mixed'] },
   { id: 'store', label: 'ร้านค้า', icon: Store, types: ['ร้านค้า / ซัพพลายเออร์'] },
   { id: 'bank', label: 'ธนาคาร', icon: Landmark, types: ['ธนาคาร'] },
@@ -76,7 +77,7 @@ export function RequestForm() {
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
-    { id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
+    { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
   ])
 
   const addDestination = () => {
@@ -86,7 +87,7 @@ export function RequestForm() {
     }
     setDestinations(prev => [...prev, { 
       id: Date.now().toString(), 
-      category: "site",
+      category: "all",
       searchTerm: "",
       siteId: "", 
       siteName: "", 
@@ -207,7 +208,7 @@ export function RequestForm() {
       setRequestDate(new Date().toISOString().split('T')[0])
       setRequestTime("08:30")
       setNote("")
-      setDestinations([{ id: "1", category: "site", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
+      setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
     } catch (error) {
       console.error("Error saving request:", error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
@@ -294,7 +295,7 @@ export function RequestForm() {
                   const category = CATEGORIES.find(c => c.id === dest.category);
                   const filteredSites = sites?.filter(s => {
                     if (dest.category === 'custom') return false;
-                    const matchesType = category?.types.includes(s.projectTypeTag);
+                    const matchesType = dest.category === 'all' ? true : category?.types.includes(s.projectTypeTag);
                     const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase()) || 
                                          (s.address || "").toLowerCase().includes(dest.searchTerm.toLowerCase());
                     return matchesType && matchesSearch;
@@ -366,7 +367,24 @@ export function RequestForm() {
                                 </Select>
                               </div>
                               <div className="space-y-2">
-                                <Label>พิกัด (ดึงข้อมูลอัตโนมัติ)</Label>
+                                <div className="flex items-center justify-between">
+                                  <Label>พิกัด (ดึงข้อมูลอัตโนมัติ)</Label>
+                                  {dest.coordinates && (
+                                    <Button
+                                      type="button"
+                                      variant="link"
+                                      className="h-auto p-0 text-[10px] text-accent"
+                                      onClick={() => {
+                                        const [lat, lng] = dest.coordinates.split(',').map(s => s.trim());
+                                        if (lat && lng) {
+                                          window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
+                                        }
+                                      }}
+                                    >
+                                      🗺️ ตรวจสอบตำแหน่ง
+                                    </Button>
+                                  )}
+                                </div>
                                 <Input className="h-11 bg-muted/30" value={dest.coordinates} readOnly />
                               </div>
                             </div>
@@ -385,14 +403,31 @@ export function RequestForm() {
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
                                 <Label>พิกัด (lat, lng)</Label>
-                                <Button 
-                                  type="button" 
-                                  variant="link" 
-                                  className="h-auto p-0 text-[10px] text-accent"
-                                  onClick={() => window.open('https://maps.google.com', '_blank')}
-                                >
-                                  <ExternalLink className="mr-1 h-3 w-3" /> เปิด Google Maps
-                                </Button>
+                                <div className="flex items-center gap-2">
+                                  {dest.coordinates && (
+                                    <Button
+                                      type="button"
+                                      variant="link"
+                                      className="h-auto p-0 text-[10px] text-accent"
+                                      onClick={() => {
+                                        const [lat, lng] = dest.coordinates.split(',').map(s => s.trim());
+                                        if (lat && lng) {
+                                          window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
+                                        }
+                                      }}
+                                    >
+                                      🗺️ ตรวจสอบตำแหน่ง
+                                    </Button>
+                                  )}
+                                  <Button 
+                                    type="button" 
+                                    variant="link" 
+                                    className="h-auto p-0 text-[10px] text-accent"
+                                    onClick={() => window.open('https://maps.google.com', '_blank')}
+                                  >
+                                    <ExternalLink className="mr-1 h-3 w-3" /> เปิด Google Maps
+                                  </Button>
+                                </div>
                               </div>
                               <Input 
                                 placeholder="14.0815, 100.7129" 
