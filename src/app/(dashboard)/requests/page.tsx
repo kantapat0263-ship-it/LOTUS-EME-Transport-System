@@ -136,8 +136,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
   const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
+  
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
-  const [modalMarkers, setModalMarkers] = React.useState<google.maps.Marker[]>([])
+  const mapInstanceRef = React.useRef<google.maps.Map | null>(null)
+  const markersRef = React.useRef<google.maps.Marker[]>([])
+
   const [stopNotes, setStopNotes] = React.useState<Record<string, string>>({})
   const [isSavingNote, setIsSavingNote] = React.useState<number | null>(null)
 
@@ -158,84 +161,95 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }, [selectedReqId, selectedReq])
 
+  // Improved map effect to prevent flickering and interaction issues
   React.useEffect(() => {
-    let mapTimeout: NodeJS.Timeout;
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
-    if (isDetailOpen && selectedReq && apiKey) {
-      mapTimeout = setTimeout(() => {
-        if (!mapContainerRef.current) return;
+    if (!isDetailOpen || !selectedReq || !apiKey) {
+      // Cleanup when dialog closes
+      markersRef.current.forEach(m => m.setMap(null));
+      markersRef.current = [];
+      mapInstanceRef.current = null;
+      return;
+    }
 
-        const loader = new Loader({
-          apiKey: apiKey,
-          version: "weekly",
-          libraries: ["places", "geometry"]
+    const initMap = async () => {
+      if (!mapContainerRef.current) return;
+
+      const loader = new Loader({
+        apiKey: apiKey,
+        version: "weekly",
+        libraries: ["places", "geometry"]
+      });
+
+      try {
+        await loader.load();
+        const google = window.google;
+        
+        // Re-initialize map or reuse
+        const newMap = new google.maps.Map(mapContainerRef.current!, {
+          center: { lat: 13.7563, lng: 100.5018 },
+          zoom: 12,
+          mapTypeControl: false,
+          streetViewControl: false,
+          styles: [
+            { featureType: "landscape", elementType: "all", color: "#2d3139" },
+            { featureType: "road", elementType: "all", color: "#1a1c23" },
+            { featureType: "water", elementType: "all", color: "#172899" }
+          ]
         });
 
-        loader.load().then(() => {
-          const google = window.google;
-          const newMap = new google.maps.Map(mapContainerRef.current!, {
-            center: { lat: 13.7563, lng: 100.5018 },
-            zoom: 12,
-            mapTypeControl: false,
-            streetViewControl: false,
-            styles: [
-              { featureType: "landscape", elementType: "all", color: "#2d3139" },
-              { featureType: "road", elementType: "all", color: "#1a1c23" },
-              { featureType: "water", elementType: "all", color: "#172899" }
-            ]
-          });
+        mapInstanceRef.current = newMap;
+        
+        const bounds = new google.maps.LatLngBounds();
+        let hasCoords = false;
 
-          const bounds = new google.maps.LatLngBounds();
-          const markers: google.maps.Marker[] = [];
-          let hasCoords = false;
+        selectedReq.destinations.forEach((dest: any, idx: number) => {
+          if (dest.lat && dest.lng) {
+            hasCoords = true;
+            const pos = { lat: dest.lat, lng: dest.lng };
+            bounds.extend(pos);
 
-          selectedReq.destinations.forEach((dest: any, idx: number) => {
-            if (dest.lat && dest.lng) {
-              hasCoords = true;
-              const pos = { lat: dest.lat, lng: dest.lng };
-              bounds.extend(pos);
-
-              const marker = new google.maps.Marker({
-                position: pos,
-                map: newMap,
-                label: {
-                  text: (idx + 1).toString(),
-                  color: "#ffffff",
-                  fontWeight: "bold"
-                },
-                icon: {
-                  path: google.maps.SymbolPath.CIRCLE,
-                  scale: 12,
-                  fillColor: dest.type === 'site' ? "#f59e0b" : "#9333ea",
-                  fillOpacity: 1,
-                  strokeWeight: 2,
-                  strokeColor: "#ffffff"
-                },
-                title: dest.siteName
-              });
-              markers.push(marker);
-            }
-          });
-
-          if (hasCoords) {
-            newMap.fitBounds(bounds);
-            google.maps.event.addListenerOnce(newMap, "idle", () => {
-              google.maps.event.trigger(newMap, 'resize');
-              if (newMap.getZoom()! > 15) newMap.setZoom(15);
+            const marker = new google.maps.Marker({
+              position: pos,
+              map: newMap,
+              label: {
+                text: (idx + 1).toString(),
+                color: "#ffffff",
+                fontWeight: "bold"
+              },
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 12,
+                fillColor: dest.type === 'site' ? "#f59e0b" : "#9333ea",
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#ffffff"
+              },
+              title: dest.siteName
             });
+            markersRef.current.push(marker);
           }
-
-          setModalMarkers(markers);
         });
-      }, 400); 
-    }
 
+        if (hasCoords) {
+          newMap.fitBounds(bounds);
+          google.maps.event.addListenerOnce(newMap, "idle", () => {
+            google.maps.event.trigger(newMap, 'resize');
+          });
+        }
+      } catch (err) {
+        console.error("Map initialization failed", err);
+      }
+    };
+
+    const timer = setTimeout(initMap, 300);
     return () => {
-      clearTimeout(mapTimeout);
-      modalMarkers.forEach(m => m.setMap(null));
-    }
-  }, [isDetailOpen, selectedReqId, companySettings, selectedReq, modalMarkers]);
+      clearTimeout(timer);
+      markersRef.current.forEach(m => m.setMap(null));
+      markersRef.current = [];
+    };
+  }, [isDetailOpen, selectedReqId, companySettings?.googleMapsApiKeyReference]); // Reduced dependencies
 
   const filteredRequests = requests?.filter(req => 
     req.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
