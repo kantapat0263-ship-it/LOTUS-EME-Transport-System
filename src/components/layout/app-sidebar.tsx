@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -118,6 +119,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     { name: "รายงานสรุป", href: "/report", icon: BarChart2, roles: ['admin', 'dispatcher'] },
     { name: "จัดการผู้ใช้งาน", href: "/settings/users", icon: Users, roles: ['admin'] },
     { name: "ตั้งค่าระบบ", href: "/settings", icon: Settings, roles: ['admin', 'dispatcher'] },
+    { name: "ข้อมูลส่วนตัว", href: "/profile", icon: UserIcon, roles: ['admin', 'dispatcher', 'viewer'] },
   ]
 
   const filteredItems = navItems.filter(item => item.roles.includes(userRole))

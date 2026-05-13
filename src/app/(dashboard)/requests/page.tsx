@@ -32,7 +32,8 @@ import {
   Landmark,
   Briefcase,
   Save,
-  Lock
+  Lock,
+  Phone
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
@@ -163,12 +164,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }, [selectedReqId, selectedReq])
 
-  // Improved map effect to prevent flickering and interaction issues
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
     if (!isDetailOpen || !selectedReq || !apiKey) {
-      // Cleanup when dialog closes
       markersRef.current.forEach(m => m.setMap(null));
       markersRef.current = [];
       mapInstanceRef.current = null;
@@ -188,7 +187,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         await loader.load();
         const google = window.google;
         
-        // Re-initialize map or reuse
         const newMap = new google.maps.Map(mapContainerRef.current!, {
           center: { lat: 13.7563, lng: 100.5018 },
           zoom: 12,
@@ -251,7 +249,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       markersRef.current.forEach(m => m.setMap(null));
       markersRef.current = [];
     };
-  }, [isDetailOpen, selectedReqId, companySettings?.googleMapsApiKeyReference]); // Reduced dependencies
+  }, [isDetailOpen, selectedReqId, companySettings?.googleMapsApiKeyReference]);
 
   const filteredRequests = requests?.filter(req => 
     req.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -435,8 +433,15 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                       <span className="font-bold text-accent">{req.requestId}</span>
                       {getStatusBadge(req.status)}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <UserIcon className="h-3 w-3" /> {req.requestedBy}
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <UserIcon className="h-3 w-3" /> {req.requestedBy}
+                      </div>
+                      {req.requestedByPhone && (
+                        <div className="flex items-center gap-2 text-xs text-orange-400 font-bold">
+                          <Phone className="h-3 w-3" /> {req.requestedByPhone}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="text-right text-[10px] text-muted-foreground flex flex-col">
@@ -453,23 +458,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                   )}
                 </div>
 
-                {req.note && req.note.trim() !== '' && (
-                  <div style={{ 
-                    marginTop: '8px', 
-                    padding: '6px 10px', 
-                    borderLeft: '3px solid #f97316',
-                    backgroundColor: 'rgba(249, 115, 22, 0.08)',
-                    borderRadius: '0 4px 4px 0'
-                  }}>
-                    <span style={{ fontSize: '12px', color: '#f97316', fontWeight: 500 }}>
-                      📌 หมายเหตุผู้ขอ:
-                    </span>
-                    <span style={{ fontSize: '13px', color: '#e2e8f0', marginLeft: '6px' }}>
-                      {req.note}
-                    </span>
-                  </div>
-                )}
-
                 <div className="flex justify-end pt-2 border-t border-border/20">
                   <span className="text-[10px] text-accent flex items-center group-hover:translate-x-1 transition-transform font-bold">
                     ดูรายละเอียดและจัดการ <ChevronRight className="h-3 w-3 ml-1" />
@@ -484,28 +472,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
           ไม่พบรายการคำขอใช้รถ
         </div>
       )}
-
-      <AlertDialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-red-500">ต้องการลบข้อมูลคำขอรถทั้งหมดใช่หรือไม่?</AlertDialogTitle>
-            <AlertDialogDescription>
-              การกระทำนี้จะลบรายการคำขอใช้รถ (Vehicle Requests) ทั้งหมดออกจากระบบ และไม่สามารถกู้คืนได้
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleClearAllData}
-              className="bg-red-500 hover:bg-red-600"
-              disabled={isClearing}
-            >
-              {isClearing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              ยืนยันลบทั้งหมด
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl">
@@ -537,6 +503,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 <div className="space-y-1">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">ผู้ขอใช้รถ</p>
                   <p className="text-sm font-bold text-white">{selectedReq.requestedBy}</p>
+                  {selectedReq.requestedByPhone && (
+                    <a href={`tel:${selectedReq.requestedByPhone}`} className="text-sm font-bold text-orange-400 flex items-center gap-1 hover:underline">
+                      <Phone className="h-3 w-3" /> {selectedReq.requestedByPhone}
+                    </a>
+                  )}
                   <p className="text-[10px] text-muted-foreground">{selectedReq.requestedByEmail}</p>
                 </div>
                 <div className="space-y-1 sm:text-right">
@@ -656,34 +627,6 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
               </div>
 
-              {selectedReq.note !== undefined && (
-                <div className="space-y-2">
-                  <p className="text-sm font-bold flex items-center gap-2 text-white">
-                    <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุจากผู้ขอ
-                  </p>
-                  {isStaff ? (
-                    <Textarea 
-                      defaultValue={selectedReq.note}
-                      onBlur={async (e) => {
-                        const newValue = e.target.value;
-                        if (newValue === selectedReq.note) return;
-                        await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
-                          note: newValue,
-                          updatedAt: serverTimestamp()
-                        });
-                        toast({ title: "บันทึกหมายเหตุแล้ว" });
-                      }}
-                      placeholder="ข้อมูลเพิ่มเติม..."
-                      className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed min-h-[100px] focus-visible:ring-accent/30"
-                    />
-                  ) : (
-                    <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
-                      "{selectedReq.note}"
-                    </div>
-                  )}
-                </div>
-              )}
-
               {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "in_progress") ? (
                 <div className="pt-6 border-t border-border/50 space-y-5">
                   <div className="grid grid-cols-1 gap-4">
@@ -774,7 +717,6 @@ export default function RequestsPage() {
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
 
-  // Time Lock Logic
   React.useEffect(() => {
     if (isProfileLoading || !settings) return
     if (isStaff) {
@@ -796,10 +738,6 @@ export default function RequestsPage() {
     const timer = setInterval(checkLock, 60000)
     return () => clearInterval(timer)
   }, [settings, profile?.role, isProfileLoading, isStaff])
-
-  const handleOpenEdit = (req: any) => {
-    toast({ title: "Coming soon", description: "ระบบแก้ไขคำขอกำลังอยู่ในการพัฒนา" })
-  }
 
   const handleCancelRequest = async () => {
     if (!reqToCancel) return
@@ -909,32 +847,17 @@ export default function RequestsPage() {
                           
                           <div className="flex items-center gap-2">
                             {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && !isLocked && (
-                              <>
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  className="h-8 text-xs border-border/50 hover:border-accent hover:text-accent"
-                                  onClick={() => handleOpenEdit(req)}
-                                >
-                                  <Edit className="h-3.5 w-3.5 mr-1.5" /> แก้ไข
-                                </Button>
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  className="h-8 text-xs border-red-500/30 text-red-500/70 hover:bg-red-500/10 hover:text-red-500"
-                                  onClick={() => {
-                                    setReqToCancel(req)
-                                    setIsCancelOpen(true)
-                                  }}
-                                >
-                                  <XCircle className="h-3.5 w-3.5 mr-1.5" /> ยกเลิก
-                                </Button>
-                              </>
-                            )}
-                            {isLocked && !isStaff && (req.status === "pending") && (
-                              <div className="text-[10px] text-muted-foreground flex items-center gap-1 bg-secondary/50 px-2 py-1 rounded">
-                                <Lock className="h-3 w-3" /> นอกเวลาทำการ
-                              </div>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-8 text-xs border-red-500/30 text-red-500/70 hover:bg-red-500/10 hover:text-red-500"
+                                onClick={() => {
+                                  setReqToCancel(req)
+                                  setIsCancelOpen(true)
+                                }}
+                              >
+                                <XCircle className="h-3.5 w-3.5 mr-1.5" /> ยกเลิก
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -983,32 +906,6 @@ export default function RequestsPage() {
                             );
                           })}
                         </div>
-
-                        {req.note && req.note.trim() !== '' && (
-                          <div style={{ 
-                            marginTop: '8px', 
-                            padding: '6px 10px', 
-                            borderLeft: '3px solid #f97316',
-                            backgroundColor: 'rgba(249, 115, 22, 0.08)',
-                            borderRadius: '0 4px 4px 0'
-                          }}>
-                            <span style={{ fontSize: '12px', color: '#f97316', fontWeight: 500 }}>
-                              📌 หมายเหตุผู้ขอ:
-                            </span>
-                            <span style={{ fontSize: '13px', color: '#e2e8f0', marginLeft: '6px' }}>
-                              {req.note}
-                            </span>
-                          </div>
-                        )}
-
-                        {req.status === "approved" && req.tripId && (
-                          <div className="bg-green-500/5 border border-green-500/20 p-3 rounded-lg flex items-center justify-between animate-in zoom-in-95">
-                            <p className="text-xs text-green-500 font-medium">จัดสรรงานครบถ้วนแล้ว</p>
-                            <Badge className="bg-green-600 text-white border-transparent">
-                              Trip ID: {req.tripId}
-                            </Badge>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </CardContent>

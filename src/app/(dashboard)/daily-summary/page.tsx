@@ -1,8 +1,9 @@
+
 "use client"
 
 import * as React from "react"
 import { useFirestore, useCollection, useMemoFirebase } from "@/firebase"
-import { collection, query, where, orderBy, getDocs } from "firebase/firestore"
+import { collection, query, where, orderBy, getDocs, doc } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,7 +23,8 @@ import {
   Check,
   QrCode,
   Image as ImageIcon,
-  ClipboardList
+  ClipboardList,
+  Phone
 } from "lucide-react"
 import { 
   Dialog, 
@@ -33,7 +35,7 @@ import {
   DialogFooter
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Trip } from "@/types/models"
+import { Trip, Driver } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
@@ -48,6 +50,10 @@ export default function DailySummaryPage() {
   const [isSavingImage, setIsSavingImage] = React.useState(false)
   const [isSendingLine, setIsSendingLine] = React.useState(false)
 
+  // Drivers data for phone numbers
+  const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
+  const { data: driversData } = useCollection<Driver>(driversRef)
+
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
   const [copied, setCopied] = React.useState(false)
@@ -55,7 +61,6 @@ export default function DailySummaryPage() {
   const fetchTrips = async () => {
     setIsLoading(true)
     try {
-      // Use basic query to avoid potential index errors
       const q = query(
         collection(db, "trips"),
         where("tripDate", "==", selectedDate)
@@ -65,7 +70,6 @@ export default function DailySummaryPage() {
       const results = snapshot.docs
         .map(doc => ({ ...doc.data(), id: doc.id } as Trip))
         .filter(trip => trip.status !== 'Cancelled')
-        // Sort in memory: first by departure time (if exists), then by status
         .sort((a, b) => {
           const timeA = (a as any).departureTime || "08:30"
           const timeB = (b as any).departureTime || "08:30"
@@ -86,7 +90,6 @@ export default function DailySummaryPage() {
 
   const formatThaiDate = (dateStr: string) => {
     if (!dateStr) return ""
-    // Handle YYYY-MM-DD
     if (dateStr.includes('-')) {
       const [y, m, d] = dateStr.split('-')
       return `${d}/${m}/${y}`
@@ -115,7 +118,7 @@ export default function DailySummaryPage() {
       if (!element) return
 
       const canvas = await html2canvas(element, {
-        scale: 2, // High resolution
+        scale: 2,
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false
@@ -194,7 +197,10 @@ export default function DailySummaryPage() {
     toast({ title: "คัดลอกลิงก์แล้ว", description: "ส่งลิงก์ให้คนขับได้เลย" });
   };
 
-  // Calculate statistics
+  const getDriverPhone = (driverId: string) => {
+    return driversData?.find(d => d.id === driverId)?.phoneNumber || ""
+  }
+
   const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
   const uniqueDrivers = new Set(trips.map(t => t.driverName)).size
 
@@ -289,25 +295,6 @@ export default function DailySummaryPage() {
                 {isSendingLine ? "กำลังส่ง..." : "ส่งเข้า LINE กลุ่ม"}
               </Button>
             </div>
-
-            {trips.length > 0 && (
-              <div className="pt-4 border-t border-border/50 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-secondary/20 p-3 rounded-lg border border-border/50">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold">จำนวนเที่ยววิ่ง</p>
-                    <p className="text-xl font-bold text-accent">{trips.length}</p>
-                  </div>
-                  <div className="bg-secondary/20 p-3 rounded-lg border border-border/50">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold">จำนวนคนขับ</p>
-                    <p className="text-xl font-bold text-accent">{uniqueDrivers}</p>
-                  </div>
-                </div>
-                <div className="bg-accent/5 p-3 rounded-lg border border-accent/20">
-                  <p className="text-[10px] text-accent uppercase font-bold">ระยะทางรวมทั้งหมด</p>
-                  <p className="text-xl font-bold text-white">{totalDistance.toFixed(1)} กม.</p>
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
 
@@ -341,11 +328,12 @@ export default function DailySummaryPage() {
                     </thead>
                     <tbody>
                       {trips.map((trip, idx) => {
-                        // Extract all unique requesters for summary column
                         const summaryRequesters = Array.from(new Set([
                           (trip as any).requestedBy,
                           ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
                         ])).filter(Boolean).join(", ")
+
+                        const driverPhone = getDriverPhone(trip.driverId)
 
                         return (
                           <tr key={trip.id}>
@@ -359,11 +347,9 @@ export default function DailySummaryPage() {
                               {(trip.stops || []).map((stop, sIdx) => {
                                 const locationText = (stop as any).address || (stop as any).zone || ""
                                 const stopRequester = stop.requestedBy || (trip as any).requestedBy || ""
+                                const requesterPhone = (stop as any).requestedByPhone || ""
                                 
-                                // Fetch notes from either stop or trip object
                                 const requesterNote = (stop as any).note || (stop as any).notes || ""
-                                
-                                // NEW - per-stop Dispatcher note
                                 const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`];
                                 
                                 return (
@@ -378,7 +364,6 @@ export default function DailySummaryPage() {
                                         <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
                                       </div>
                                       
-                                      {/* NEW - per-stop Dispatcher note display */}
                                       {stopDispatcherNote && (
                                         <div style={{
                                           marginTop: '4px',
@@ -400,11 +385,10 @@ export default function DailySummaryPage() {
                                       {stopRequester && (
                                         <div className="pl-3 text-[10px] text-gray-500 italic flex items-center gap-1 mt-0.5">
                                           <ClipboardList className="h-2.5 w-2.5" />
-                                          <span>ผู้ขอ: {stopRequester}</span>
+                                          <span>ผู้ขอ: {stopRequester} {requesterPhone && <span className="font-bold text-gray-700 ml-1">📞 {requesterPhone}</span>}</span>
                                         </div>
                                       )}
 
-                                      {/* Note from requester */}
                                       {requesterNote && requesterNote.trim() !== '' && (
                                         <div style={{ fontSize: '11px', color: '#555', marginTop: '2px' }} className="pl-3">
                                           📌 หมายเหตุผู้ขอ: {requesterNote}
@@ -414,13 +398,13 @@ export default function DailySummaryPage() {
                                   </div>
                                 )
                               })}
-                              {trip.stops?.length === 0 && <div className="text-gray-400 italic">ไม่มีข้อมูลจุดส่งของ</div>}
                             </td>
                             <td className="border border-black p-2 align-top">
                               <div className="flex justify-between items-start">
                                 <div className="space-y-2">
                                   <div>
                                     <p className="font-bold">คนขับ: {trip.driverName}</p>
+                                    {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
                                     <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
                                   </div>
                                   <div className="pt-2 border-t border-gray-200">
@@ -457,10 +441,6 @@ export default function DailySummaryPage() {
                         <p className="text-xs">วันที่ ______/______/______</p>
                       </div>
                     </div>
-                  </div>
-
-                  <div className="mt-6 text-[10px] text-gray-400 italic text-right">
-                    * รายงานสร้างจากระบบ LOTUS GROUP Transport Management
                   </div>
                 </div>
               ) : (

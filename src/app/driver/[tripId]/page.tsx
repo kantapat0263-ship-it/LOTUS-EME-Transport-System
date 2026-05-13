@@ -1,10 +1,11 @@
+
 "use client"
 
 import * as React from "react"
 import { useParams } from "next/navigation"
 import { initializeFirebase } from "@/firebase"
 import { doc, getDoc } from "firebase/firestore"
-import { Trip } from "@/types/models"
+import { Trip, Driver } from "@/types/models"
 import { 
   MapPin, 
   Truck, 
@@ -33,6 +34,7 @@ export default function DriverTripPage() {
   const params = useParams()
   const tripId = params.tripId as string
   const [trip, setTrip] = React.useState<Trip | null>(null)
+  const [driverPhone, setDriverPhone] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -44,7 +46,17 @@ export default function DriverTripPage() {
         const docSnap = await getDoc(docRef)
 
         if (docSnap.exists()) {
-          setTrip({ ...docSnap.data(), id: docSnap.id } as Trip)
+          const tripData = { ...docSnap.data(), id: docSnap.id } as Trip
+          setTrip(tripData)
+          
+          // Fetch driver phone
+          if (tripData.driverId) {
+            const dRef = doc(firestore, "drivers", tripData.driverId)
+            const dSnap = await getDoc(dRef)
+            if (dSnap.exists()) {
+              setDriverPhone(dSnap.data().phoneNumber || "")
+            }
+          }
         } else {
           setError(`ไม่พบข้อมูลเที่ยววิ่ง ${tripId}`)
         }
@@ -123,6 +135,7 @@ export default function DriverTripPage() {
                   <div>
                     <p className="text-blue-100 text-[10px] font-bold uppercase">คนขับรถ</p>
                     <p className="text-sm font-bold">{trip.driverName}</p>
+                    {driverPhone && <a href={`tel:${driverPhone}`} className="text-blue-200 text-[10px] font-bold underline">📞 {driverPhone}</a>}
                   </div>
                 </div>
                 <div className="text-right">
@@ -171,9 +184,16 @@ export default function DriverTripPage() {
                       </p>
                     </div>
                     {stop.requestedBy && (
-                      <div className="flex items-center gap-2 pt-2 border-t border-gray-200">
-                        <User className="h-3 w-3 text-gray-400" />
-                        <span className="text-xs text-gray-500">ผู้ขอใช้งาน: <strong className="text-gray-700">{stop.requestedBy}</strong></span>
+                      <div className="flex flex-col gap-1 pt-2 border-t border-gray-200">
+                        <div className="flex items-center gap-2">
+                          <User className="h-3 w-3 text-gray-400" />
+                          <span className="text-xs text-gray-500">ผู้ขอใช้งาน: <strong className="text-gray-700">{stop.requestedBy}</strong></span>
+                        </div>
+                        {(stop as any).requestedByPhone && (
+                          <a href={`tel:${(stop as any).requestedByPhone}`} className="flex items-center gap-2 text-sm font-bold text-orange-600 ml-5 hover:underline">
+                            <Phone className="h-3.5 w-3.5" /> {(stop as any).requestedByPhone}
+                          </a>
+                        )}
                       </div>
                     )}
                   </div>

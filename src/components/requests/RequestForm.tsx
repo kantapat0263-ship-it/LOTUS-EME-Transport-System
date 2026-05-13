@@ -71,7 +71,7 @@ export function RequestForm() {
   const { data: sites } = useCollection<Site>(sitesRef)
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
-  const [requestedBy, setRequestedBy] = React.useState(user?.displayName || "")
+  const [requestedBy, setRequestedBy] = React.useState("")
   const [requestDate, setRequestDate] = React.useState(new Date().toISOString().split('T')[0])
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [requestTime, setRequestTime] = React.useState("08:30")
@@ -79,6 +79,12 @@ export function RequestForm() {
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
   ])
+
+  React.useEffect(() => {
+    if (profile) {
+      setRequestedBy(profile.name || user?.displayName || "")
+    }
+  }, [profile, user])
 
   const addDestination = () => {
     if (destinations.length >= 10) {
@@ -183,7 +189,6 @@ export function RequestForm() {
             addedByName: profile?.name || user.email,
             createdAt: serverTimestamp()
           })
-          toast({ title: "บันทึกสถานที่แล้ว", description: `บันทึก ${d.customName} เข้าสู่รายการโปรดแล้ว` })
         }
       }
 
@@ -194,6 +199,7 @@ export function RequestForm() {
         requestTime,
         requestedBy,
         requestedByEmail: user.email,
+        requestedByPhone: (profile as any)?.phone || "", // บันทึกเบอร์โทรผู้ขอ
         userId: user.uid,
         userEmail: user.email,
         destinations: parsedDestinations,
@@ -455,6 +461,8 @@ export function RequestForm() {
                             <div className="flex items-center space-x-2">
                               <Checkbox 
                                 id={`save-site-${dest.id}`} 
+                                checked={dest.saveAsSite}
+                                onCheckedChange={(val) => updateDest(dest.id, { saveAsSite: !!val })}
                               />
                               <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-accent cursor-pointer">
                                 บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป

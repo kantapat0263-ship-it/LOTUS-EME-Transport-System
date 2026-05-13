@@ -72,6 +72,7 @@ export default function TripGroupingPage() {
             vrDocId: req.id,
             destIndex: idx,
             requestedBy: req.requestedBy,
+            requestedByPhone: req.requestedByPhone || "", // ดึงเบอร์ผู้ขอมาด้วย
             requestDate: req.requestDate,
             // Carry over notes
             note: req.note || req.notes || "",
@@ -193,6 +194,7 @@ export default function TripGroupingPage() {
           lng: d.lng,
           cargoDetails: d.jobDescription || '',
           requestedBy: d.requestedBy || '',
+          requestedByPhone: d.requestedByPhone || '', // แนบเบอร์ผู้ขอไปด้วย
           address: d.address || '',
           // Include notes in stop object for Daily Summary
           note: d.note || "",
