@@ -357,7 +357,9 @@ export function RequestForm() {
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="space-y-2">
-                                <Label>เลือก{category?.label}</Label>
+                                <div className="flex items-center justify-between min-h-[24px]">
+                                  <Label>เลือก{category?.label}</Label>
+                                </div>
                                 <Select value={dest.siteId} onValueChange={(val) => updateDest(dest.id, { siteId: val })}>
                                   <SelectTrigger className="h-11">
                                     <SelectValue placeholder={dest.searchTerm ? `พบผลลัพธ์ ${filteredSites.length} รายการ` : `เลือก${category?.label}...`} />
@@ -372,7 +374,7 @@ export function RequestForm() {
                                 </Select>
                               </div>
                               <div className="space-y-2">
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between min-h-[24px]">
                                   <Label>พิกัด (ดึงข้อมูลอัตโนมัติ)</Label>
                                   {dest.coordinates && (
                                     <Button
@@ -397,7 +399,9 @@ export function RequestForm() {
                         ) : (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                              <Label>ชื่อสถานที่</Label>
+                              <div className="flex items-center justify-between min-h-[24px]">
+                                <Label>ชื่อสถานที่</Label>
+                              </div>
                               <Input 
                                 placeholder="เช่น บริษัท TMT อยุธยา" 
                                 className="h-11"
@@ -406,7 +410,7 @@ export function RequestForm() {
                               />
                             </div>
                             <div className="space-y-2">
-                              <div className="flex items-center justify-between">
+                              <div className="flex items-center justify-between min-h-[24px]">
                                 <Label>พิกัด (lat, lng)</Label>
                                 <div className="flex items-center gap-2">
                                   {dest.coordinates && (
