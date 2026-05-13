@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -6,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Map, Save, Loader2, Building2, Fuel, Clock, Timer } from "lucide-react"
+import { Map, Save, Loader2, Building2, Fuel, Clock, Timer, Database, Download, Upload, AlertTriangle } from "lucide-react"
 import { useDoc, useFirestore, useMemoFirebase, useUser } from "@/firebase"
-import { doc, serverTimestamp } from "firebase/firestore"
+import { doc, serverTimestamp, collection, getDocs, setDoc } from "firebase/firestore"
 import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
 import { CompanySetting } from "@/types/models"
@@ -22,8 +21,16 @@ export default function SettingsPage() {
   
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings, isLoading } = useDoc<CompanySetting>(settingRef)
+
+  const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
+  const { data: profile } = useDoc<any>(userProfileRef)
+  
+  const isAdmin = profile?.role === 'admin'
   
   const [isSaving, setIsSaving] = React.useState(false)
+  const [isBackingUp, setIsBackingUp] = React.useState(false)
+  const [isRestoring, setIsRestoring] = React.useState(false)
+
   const [formData, setFormData] = React.useState({
     companyName: "LOTUS GROUP",
     warehouseName: "คลังสินค้าหลัก LOTUS GROUP",
@@ -63,7 +70,6 @@ export default function SettingsPage() {
       updatedAt: serverTimestamp(),
     }
 
-    // Detect if fuel settings changed
     const fuelChanged = settings?.dieselPrice !== formData.dieselPrice || settings?.defaultFuelRate !== formData.defaultFuelRate;
     if (fuelChanged) {
       updateData.fuelSettingsUpdatedAt = serverTimestamp();
@@ -76,6 +82,79 @@ export default function SettingsPage() {
       setIsSaving(false)
       toast({ title: "สำเร็จ", description: "บันทึกการตั้งค่าเรียบร้อยแล้ว" })
     }, 500)
+  }
+
+  const handleBackup = async () => {
+    if (!isAdmin) return
+    setIsBackingUp(true)
+    try {
+      const collectionsToBackup = ['users', 'sites', 'drivers', 'vehicles', 'companySettings']
+      const backupData: Record<string, any[]> = {}
+
+      for (const colName of collectionsToBackup) {
+        const snapshot = await getDocs(collection(db, colName))
+        backupData[colName] = snapshot.docs.map(d => ({
+          id: d.id,
+          ...d.data()
+        }))
+      }
+
+      const backup = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        exportedBy: user?.email,
+        data: backupData
+      }
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const date = format(new Date(), "dd-MM-yyyy")
+      link.download = `LOTUS-backup-${date}.json`
+      link.href = url
+      link.click()
+      URL.revokeObjectURL(url)
+      toast({ title: "Backup สำเร็จ", description: "ไฟล์สำรองข้อมูลถูกดาวน์โหลดแล้ว" })
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถ Backup ข้อมูลได้", variant: "destructive" })
+    } finally {
+      setIsBackingUp(false)
+    }
+  }
+
+  const handleRestore = async (file: File) => {
+    if (!isAdmin) return
+    if (!confirm('⚠️ การ Restore จะเขียนทับข้อมูลที่มีอยู่ (Merge) ต้องการดำเนินการต่อไหม?')) return
+    
+    setIsRestoring(true)
+    try {
+      const text = await file.text()
+      const backup = JSON.parse(text)
+
+      if (!backup.version || !backup.data) {
+        toast({ title: "ไฟล์ไม่ถูกต้อง", description: "โครงสร้างข้อมูล Backup ไม่ถูกต้อง", variant: "destructive" })
+        return
+      }
+
+      for (const [colName, docs] of Object.entries(backup.data)) {
+        for (const docData of docs as any[]) {
+          const { id, ...data } = docData
+          // Using setDoc to restore specific document IDs
+          await setDoc(doc(db, colName, id), data, { merge: true })
+        }
+      }
+
+      toast({ 
+        title: "Restore สำเร็จ", 
+        description: `นำเข้าข้อมูลจากวันที่ ${format(new Date(backup.exportedAt), "dd/MM/yyyy HH:mm")}` 
+      })
+    } catch (error) {
+      console.error(error)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไฟล์อาจไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงฐานข้อมูล", variant: "destructive" })
+    } finally {
+      setIsRestoring(false)
+    }
   }
 
   if (isLoading) {
@@ -135,7 +214,6 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Request Hours Section */}
         <Card className="border-accent/20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -172,7 +250,6 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Fuel Settings Section */}
         <Card className="border-accent/20">
           <CardHeader>
             <div className="flex justify-between items-start">
@@ -249,6 +326,63 @@ export default function SettingsPage() {
             บันทึกการตั้งค่า
           </Button>
         </div>
+
+        {/* Backup & Restore Section - Admin Only */}
+        {isAdmin && (
+          <Card className="border-blue-500/20 bg-blue-500/5 mt-8">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-blue-400">
+                <Database className="h-5 w-5" /> สำรองและกู้คืนข้อมูล (Admin Only)
+              </CardTitle>
+              <CardDescription>
+                สำรองข้อมูลหลัก: ผู้ใช้, ไซต์งาน, คนขับ, ทะเบียนรถ และตั้งค่าระบบ
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <Button 
+                  variant="outline" 
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white border-transparent h-11"
+                  onClick={handleBackup}
+                  disabled={isBackingUp}
+                >
+                  {isBackingUp ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  {isBackingUp ? "กำลังสำรองข้อมูล..." : "Backup ข้อมูลหลัก"}
+                </Button>
+
+                <div className="flex-1">
+                  <Label htmlFor="restore-upload" className="cursor-pointer">
+                    <div className={cn(
+                      "flex items-center justify-center gap-2 h-11 px-4 rounded-md border border-orange-500/50 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 transition-all font-medium text-sm",
+                      isRestoring && "opacity-50 pointer-events-none"
+                    )}>
+                      {isRestoring ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      {isRestoring ? "กำลังกู้คืนข้อมูล..." : "Restore จากไฟล์ JSON"}
+                    </div>
+                  </Label>
+                  <input 
+                    id="restore-upload" 
+                    type="file" 
+                    accept=".json" 
+                    className="hidden" 
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleRestore(file);
+                    }}
+                  />
+                </div>
+              </div>
+              
+              <Alert variant="destructive" className="bg-red-500/5 border-red-500/20 text-red-400">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle className="text-xs font-bold uppercase tracking-wider">คำเตือนด้านความปลอดภัย</AlertTitle>
+                <AlertDescription className="text-[11px] leading-relaxed">
+                  การ Restore ข้อมูลจะทำการเขียนทับข้อมูลเดิมที่มีอยู่ในฐานข้อมูล (Merge) กรุณาตรวจสอบไฟล์ให้แน่ใจก่อนดำเนินการ และควร Backup ข้อมูลปัจจุบันไว้เสมอ
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
