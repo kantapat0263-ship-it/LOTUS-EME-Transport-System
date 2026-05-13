@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Map, Save, Loader2, Building2, Fuel, Clock } from "lucide-react"
+import { Map, Save, Loader2, Building2, Fuel, Clock, Timer } from "lucide-react"
 import { useDoc, useFirestore, useMemoFirebase, useUser } from "@/firebase"
 import { doc, serverTimestamp } from "firebase/firestore"
 import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
@@ -30,7 +30,9 @@ export default function SettingsPage() {
     warehouseAddress: "14.094126450195006, 100.6893810570115",
     googleMapsApiKeyReference: "",
     dieselPrice: 32.50,
-    defaultFuelRate: 10
+    defaultFuelRate: 10,
+    requestOpenTime: "08:00",
+    requestCloseTime: "17:00"
   })
 
   React.useEffect(() => {
@@ -41,7 +43,9 @@ export default function SettingsPage() {
         warehouseAddress: settings.warehouseAddress || "14.094126450195006, 100.6893810570115",
         googleMapsApiKeyReference: settings.googleMapsApiKeyReference || "",
         dieselPrice: settings.dieselPrice || 32.50,
-        defaultFuelRate: settings.defaultFuelRate || 10
+        defaultFuelRate: settings.defaultFuelRate || 10,
+        requestOpenTime: (settings as any).requestOpenTime || "08:00",
+        requestCloseTime: (settings as any).requestCloseTime || "17:00"
       })
     }
   }, [settings])
@@ -128,6 +132,43 @@ export default function SettingsPage() {
                 * พิกัดจุดเริ่มต้นถูกกำหนดไว้ที่: 14.094126450195006, 100.6893810570115 (สำนักงาน LOTUS)
               </p>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Request Hours Section */}
+        <Card className="border-accent/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Timer className="h-5 w-5 text-accent" /> ตั้งค่าเวลาส่งคำขอรถ
+            </CardTitle>
+            <CardDescription>กำหนดช่วงเวลาที่พนักงาน (Viewer) สามารถส่งใบขอใช้รถได้</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="requestOpenTime">เวลาเปิดรับคำขอรถ</Label>
+                <Input 
+                  id="requestOpenTime" 
+                  type="time"
+                  value={formData.requestOpenTime}
+                  onChange={(e) => setFormData({...formData, requestOpenTime: e.target.value})}
+                  className="h-11"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="requestCloseTime">เวลาปิดรับคำขอรถ</Label>
+                <Input 
+                  id="requestCloseTime" 
+                  type="time"
+                  value={formData.requestCloseTime}
+                  onChange={(e) => setFormData({...formData, requestCloseTime: e.target.value})}
+                  className="h-11"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground italic">
+              * ผู้ดูแลระบบ (Admin/Dispatcher) จะไม่ถูกจำกัดโดยช่วงเวลานี้
+            </p>
           </CardContent>
         </Card>
 

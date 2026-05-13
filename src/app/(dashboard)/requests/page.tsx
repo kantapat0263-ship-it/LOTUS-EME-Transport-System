@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -30,7 +31,8 @@ import {
   Store,
   Landmark,
   Briefcase,
-  Save
+  Save,
+  Lock
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
@@ -755,9 +757,13 @@ export default function RequestsPage() {
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef)
 
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+  const { data: settings } = useDoc<any>(settingsRef)
+
   const [activeTab, setActiveTab] = React.useState("form")
   const [isCancelOpen, setIsCancelOpen] = React.useState(false)
   const [reqToCancel, setReqToCancel] = React.useState<any>(null)
+  const [isLocked, setIsLocked] = React.useState(false)
 
   const myRequestsRef = useMemoFirebase(() => (db && user) ? query(
     collection(db, "vehicleRequests"),
@@ -768,8 +774,30 @@ export default function RequestsPage() {
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
 
+  // Time Lock Logic
+  React.useEffect(() => {
+    if (isProfileLoading || !settings) return
+    if (isStaff) {
+      setIsLocked(false)
+      return
+    }
+
+    const checkLock = () => {
+      const now = new Date()
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+      const openTime = settings.requestOpenTime || "08:00"
+      const closeTime = settings.requestCloseTime || "17:00"
+      
+      const locked = timeStr < openTime || timeStr > closeTime
+      setIsLocked(locked)
+    }
+
+    checkLock()
+    const timer = setInterval(checkLock, 60000)
+    return () => clearInterval(timer)
+  }, [settings, profile?.role, isProfileLoading, isStaff])
+
   const handleOpenEdit = (req: any) => {
-    // Logic for editing a request if needed, otherwise this is a placeholder
     toast({ title: "Coming soon", description: "ระบบแก้ไขคำขอกำลังอยู่ในการพัฒนา" })
   }
 
@@ -816,7 +844,20 @@ export default function RequestsPage() {
         </TabsList>
 
         <TabsContent value="form" className="animate-in slide-in-from-left-2 duration-300">
-          <RequestForm />
+          {isLocked ? (
+            <div className="flex flex-col items-center justify-center py-24 bg-secondary/10 rounded-2xl border-2 border-dashed border-accent/20 text-center space-y-6 px-4">
+              <div className="w-24 h-24 bg-accent/10 rounded-full flex items-center justify-center animate-bounce">
+                <Lock className="h-12 w-12 text-accent" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-2xl font-bold text-white">ระบบปิดรับคำขอรถชั่วคราว</h2>
+                <p className="text-muted-foreground">ขออภัย ระบบเปิดรับคำขอในช่วงเวลา <span className="font-bold text-accent">{settings?.requestOpenTime || '08:00'} - {settings?.requestCloseTime || '17:00'} น.</span> เท่านั้น</p>
+                <p className="text-xs text-muted-foreground mt-4">หากมีงานเร่งด่วน หรือต้องจัดรถล่วงหน้าเป็นพิเศษ กรุณาติดต่อผู้จัดคิวโดยตรง</p>
+              </div>
+            </div>
+          ) : (
+            <RequestForm />
+          )}
         </TabsContent>
 
         <TabsContent value="list" className="animate-in slide-in-from-right-2 duration-300">
@@ -867,7 +908,7 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && (
+                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && !isLocked && (
                               <>
                                 <Button 
                                   variant="outline" 
@@ -889,6 +930,11 @@ export default function RequestsPage() {
                                   <XCircle className="h-3.5 w-3.5 mr-1.5" /> ยกเลิก
                                 </Button>
                               </>
+                            )}
+                            {isLocked && !isStaff && (req.status === "pending") && (
+                              <div className="text-[10px] text-muted-foreground flex items-center gap-1 bg-secondary/50 px-2 py-1 rounded">
+                                <Lock className="h-3 w-3" /> นอกเวลาทำการ
+                              </div>
                             )}
                           </div>
                         </div>

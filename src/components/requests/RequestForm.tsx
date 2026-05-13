@@ -451,8 +451,6 @@ export function RequestForm() {
                             <div className="flex items-center space-x-2">
                               <Checkbox 
                                 id={`save-site-${dest.id}`} 
-                                checked={dest.saveAsSite}
-                                onCheckedChange={(checked) => updateDest(dest.id, { saveAsSite: !!checked })}
                               />
                               <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-accent cursor-pointer">
                                 บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
