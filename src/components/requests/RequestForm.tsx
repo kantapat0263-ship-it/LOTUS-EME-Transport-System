@@ -26,7 +26,8 @@ import {
   Landmark,
   Briefcase,
   Search,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  Trash2
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Site, UserProfile } from "@/types/models"
@@ -341,6 +342,21 @@ export function RequestForm() {
                               </Button>
                             ))}
                           </div>
+                          
+                          {/* Delete Button for each stop (visible if > 1 stop) */}
+                          {destinations.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-400 hover:text-red-500 hover:bg-red-500/10 h-8 px-2 flex items-center gap-1 transition-colors"
+                              onClick={() => removeDestination(dest.id)}
+                              title="ลบจุดหมายนี้"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span className="text-[10px] font-bold">ลบจุดนี้</span>
+                            </Button>
+                          )}
                         </div>
 
                         {dest.category !== "custom" ? (
