@@ -73,6 +73,7 @@ export function RequestForm() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [requestedBy, setRequestedBy] = React.useState(user?.displayName || "")
   const [requestDate, setRequestDate] = React.useState(new Date().toISOString().split('T')[0])
+  const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
@@ -241,7 +242,7 @@ export function RequestForm() {
               </div>
               <div className="space-y-2">
                 <Label>วันที่ต้องการรถ</Label>
-                <Popover>
+                <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       variant={"outline"}
@@ -258,7 +259,10 @@ export function RequestForm() {
                     <Calendar
                       mode="single"
                       selected={requestDate ? new Date(requestDate) : undefined}
-                      onSelect={(date) => setRequestDate(date ? format(date, "yyyy-MM-dd") : "")}
+                      onSelect={(date) => {
+                        setRequestDate(date ? format(date, "yyyy-MM-dd") : "")
+                        if (date) setIsCalendarOpen(false)
+                      }}
                       initialFocus
                     />
                   </PopoverContent>
