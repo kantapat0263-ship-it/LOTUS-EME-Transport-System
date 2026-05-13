@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -199,7 +198,7 @@ export function RequestForm() {
         requestTime,
         requestedBy,
         requestedByEmail: user.email,
-        requestedByPhone: (profile as any)?.phone || "", // บันทึกเบอร์โทรผู้ขอ
+        requestedByPhone: (profile as any)?.phone || "",
         userId: user.uid,
         userEmail: user.email,
         destinations: parsedDestinations,
@@ -299,7 +298,7 @@ export function RequestForm() {
                 </Button>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-0">
                 {destinations.map((dest, index) => {
                   const category = CATEGORIES.find(c => c.id === dest.category);
                   const filteredSites = sites?.filter(s => {
@@ -311,7 +310,7 @@ export function RequestForm() {
                   }) || [];
 
                   return (
-                    <Card key={dest.id} className="bg-secondary/20 border-border/50 relative overflow-hidden">
+                    <Card key={dest.id} className="bg-secondary/20 border-border/50 relative overflow-hidden mb-4">
                       <div className="absolute top-0 left-0 w-1 h-full bg-accent" />
                       <CardContent className="p-4 md:p-6 space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
