@@ -517,6 +517,24 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
               </div>
 
+              {/* Display Request Notes for Dispatcher */}
+              {(selectedReq.note || selectedReq.notes) && (selectedReq.note?.trim() !== '' || selectedReq.notes?.trim() !== '') && (
+                <div style={{
+                  margin: '12px 0',
+                  padding: '8px 12px',
+                  borderLeft: '3px solid #f97316',
+                  backgroundColor: 'rgba(249, 115, 22, 0.08)',
+                  borderRadius: '0 4px 4px 0'
+                }}>
+                  <div style={{ color: '#f97316', fontWeight: 500, fontSize: '13px' }}>
+                    📌 หมายเหตุจากผู้ขอ:
+                  </div>
+                  <div style={{ color: '#e2e8f0', fontSize: '13px', marginTop: '4px' }}>
+                    {selectedReq.note || selectedReq.notes}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-bold flex items-center gap-2 text-white">
@@ -906,6 +924,25 @@ export default function RequestsPage() {
                             );
                           })}
                         </div>
+
+                        {/* Display Request Notes in My Requests list */}
+                        {(req.note || req.notes) && (req.note?.trim() !== '' || req.notes?.trim() !== '') && (
+                          <div style={{
+                            marginTop: '6px',
+                            padding: '6px 10px',
+                            borderLeft: '3px solid #f97316',
+                            backgroundColor: 'rgba(249, 115, 22, 0.08)',
+                            borderRadius: '0 4px 4px 0',
+                            fontSize: '13px'
+                          }}>
+                            <span style={{ color: '#f97316', fontWeight: 500 }}>
+                              📌 หมายเหตุ:
+                            </span>
+                            <span style={{ color: '#e2e8f0', marginLeft: '6px' }}>
+                              {req.note || req.notes}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
