@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast"
 import { CompanySetting } from "@/types/models"
 import { format } from "date-fns"
 import { th } from "date-fns/locale"
+import { cn } from "@/lib/utils"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 
 export default function SettingsPage() {
   const { toast } = useToast()
@@ -85,7 +87,7 @@ export default function SettingsPage() {
   }
 
   const handleBackup = async () => {
-    if (!isAdmin) return
+    if (!isAdmin || !user) return
     setIsBackingUp(true)
     try {
       const collectionsToBackup = ['users', 'sites', 'drivers', 'vehicles', 'companySettings']
@@ -102,7 +104,7 @@ export default function SettingsPage() {
       const backup = {
         version: '1.0',
         exportedAt: new Date().toISOString(),
-        exportedBy: user?.email,
+        exportedBy: user.email,
         data: backupData
       }
 
