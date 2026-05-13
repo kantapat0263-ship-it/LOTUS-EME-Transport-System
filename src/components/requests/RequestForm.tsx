@@ -310,7 +310,7 @@ export function RequestForm() {
                   }) || [];
 
                   return (
-                    <Card key={dest.id} className="bg-secondary/20 border-border/50 relative overflow-hidden mb-4">
+                    <Card key={dest.id} className="bg-secondary/20 border-accent/60 relative overflow-hidden mb-4 border-2 shadow-sm">
                       <div className="absolute top-0 left-0 w-1 h-full bg-accent" />
                       <CardContent className="p-4 md:p-6 space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
