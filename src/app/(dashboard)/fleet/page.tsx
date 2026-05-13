@@ -38,8 +38,8 @@ import {
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
-import { collection, doc, serverTimestamp, setDoc, updateDoc, deleteDoc } from "firebase/firestore"
+import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc, setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase"
+import { collection, doc, serverTimestamp } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -50,7 +50,7 @@ const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
   type: z.enum(['Pickup', '4-wheel truck', '6-wheel truck']),
   maxLoadCapacityKg: z.coerce.number().min(1, "กรุณาระบุน้ำหนักบรรทุก"),
-  fuelRate: z.coerce.number().optional(),
+  fuelRate: z.union([z.coerce.number(), z.literal("")]).optional().transform(v => v === "" ? undefined : v),
 })
 
 const driverSchema = z.object({
@@ -89,22 +89,32 @@ export default function FleetPage() {
     defaultValues: { name: "", phoneNumber: "" }
   })
 
-  async function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
+  function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
     if (isViewer) return
     setIsSavingVehicle(true)
+    
+    const data: any = {
+      ...values,
+      updatedAt: serverTimestamp()
+    }
+    
+    // Clean up undefined values before saving to Firestore
+    if (data.fuelRate === undefined) {
+      delete data.fuelRate;
+    }
+
     try {
       if (editingVehicle) {
         const vRef = doc(db, "vehicles", editingVehicle.id)
-        await updateDoc(vRef, { ...values, updatedAt: serverTimestamp() })
+        updateDocumentNonBlocking(vRef, data)
         toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลรถเรียบร้อยแล้ว" })
       } else {
         const newRef = doc(collection(db, "vehicles"))
-        await setDoc(newRef, { 
-          ...values, 
+        setDocumentNonBlocking(newRef, { 
+          ...data, 
           id: newRef.id,
           createdAt: serverTimestamp(), 
-          updatedAt: serverTimestamp() 
-        })
+        }, { merge: true })
         toast({ title: "สำเร็จ", description: "เพิ่มรถใหม่เรียบร้อยแล้ว" })
       }
       setIsVehicleDialogOpen(false)
@@ -118,22 +128,27 @@ export default function FleetPage() {
     }
   }
 
-  async function onDriverSubmit(values: z.infer<typeof driverSchema>) {
+  function onDriverSubmit(values: z.infer<typeof driverSchema>) {
     if (isViewer) return
     setIsSavingDriver(true)
+    
+    const data = {
+      ...values,
+      updatedAt: serverTimestamp()
+    }
+
     try {
       if (editingDriver) {
         const dRef = doc(db, "drivers", editingDriver.id)
-        await updateDoc(dRef, { ...values, updatedAt: serverTimestamp() })
+        updateDocumentNonBlocking(dRef, data)
         toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลคนขับเรียบร้อยแล้ว" })
       } else {
         const newRef = doc(collection(db, "drivers"))
-        await setDoc(newRef, { 
-          ...values, 
+        setDocumentNonBlocking(newRef, { 
+          ...data, 
           id: newRef.id,
           createdAt: serverTimestamp(), 
-          updatedAt: serverTimestamp() 
-        })
+        }, { merge: true })
         toast({ title: "สำเร็จ", description: "เพิ่มคนขับใหม่เรียบร้อยแล้ว" })
       }
       setIsDriverDialogOpen(false)
@@ -147,26 +162,20 @@ export default function FleetPage() {
     }
   }
 
-  const handleDeleteVehicle = async (id: string) => {
+  const handleDeleteVehicle = (id: string) => {
     if (isViewer) return
-    if (!confirm("ลบรถคันนี้?")) return
-    try {
-      await deleteDoc(doc(db, "vehicles", id))
-      toast({ title: "สำเร็จ", description: "ลบข้อมูลรถเรียบร้อยแล้ว" })
-    } catch (e) {
-      toast({ title: "ผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
-    }
+    if (!confirm("ลบรถคันนี้? การกระทำนี้ไม่สามารถย้อนกลับได้")) return
+    const vRef = doc(db, "vehicles", id)
+    deleteDocumentNonBlocking(vRef)
+    toast({ title: "สำเร็จ", description: "ลบข้อมูลรถเรียบร้อยแล้ว" })
   }
 
-  const handleDeleteDriver = async (id: string) => {
+  const handleDeleteDriver = (id: string) => {
     if (isViewer) return
-    if (!confirm("ลบคนขับคนนี้?")) return
-    try {
-      await deleteDoc(doc(db, "drivers", id))
-      toast({ title: "สำเร็จ", description: "ลบข้อมูลคนขับเรียบร้อยแล้ว" })
-    } catch (e) {
-      toast({ title: "ผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
-    }
+    if (!confirm("ลบคนขับคนนี้? การกระทำนี้ไม่สามารถย้อนกลับได้")) return
+    const dRef = doc(db, "drivers", id)
+    deleteDocumentNonBlocking(dRef)
+    toast({ title: "สำเร็จ", description: "ลบข้อมูลคนขับเรียบร้อยแล้ว" })
   }
 
   return (
