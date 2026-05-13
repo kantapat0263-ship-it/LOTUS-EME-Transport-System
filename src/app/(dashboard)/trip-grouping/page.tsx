@@ -4,11 +4,11 @@
 import * as React from "react"
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase"
 import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion, getDocs } from "firebase/firestore"
-import { Vehicle, Driver, Site, CompanySetting } from "@/types/models"
+import { Vehicle, Driver, Site, CompanySetting, Trip } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
 import { TripControlPanel } from "@/components/trip-grouping/TripControlPanel"
-import { Loader2, Inbox, AlertTriangle, ListOrdered, Trash2, RotateCcw, Zap } from "lucide-react"
+import { Loader2, Inbox, AlertTriangle, ListOrdered, Trash2, RotateCcw, Zap, CheckCircle2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import {
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -34,17 +35,23 @@ export default function TripGroupingPage() {
   // Data Fetching
   const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
-  // Updated query to include 'in_progress' and 'pending'
   const vrRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
     where("status", "in", ["pending", "partial", "in_progress"])
   ), [db])
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
 
+  const todayStr = new Date().toISOString().split('T')[0]
+  const tripsTodayRef = useMemoFirebase(() => query(
+    collection(db, "trips"),
+    where("tripDate", "==", todayStr)
+  ), [db, todayStr])
+
   const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vRef)
   const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(dRef)
   const { data: requests, isLoading: loadingRequests } = useCollection<any>(vrRef)
   const { data: settings } = useDoc<CompanySetting>(settingsRef)
+  const { data: tripsToday } = useCollection<any>(tripsTodayRef)
 
   // States
   const [mode, setMode] = React.useState<GroupingMode>('auto')
@@ -56,6 +63,13 @@ export default function TripGroupingPage() {
   const [driverId, setDriverId] = React.useState("")
   const [isConfirmOpen, setIsConfirmOpen] = React.useState(false)
   const [isProcessing, setIsProcessing] = React.useState(false)
+
+  // Merge Dialog State
+  const [mergeDialog, setMergeDialog] = React.useState<{
+    show: boolean;
+    existingTrip?: any;
+    newStops?: any[];
+  }>({ show: false })
 
   // Flatten destinations from VRs
   const availableDestinations = React.useMemo(() => {
@@ -72,9 +86,8 @@ export default function TripGroupingPage() {
             vrDocId: req.id,
             destIndex: idx,
             requestedBy: req.requestedBy,
-            requestedByPhone: req.requestedByPhone || "", // ดึงเบอร์ผู้ขอมาด้วย
+            requestedByPhone: req.requestedByPhone || "",
             requestDate: req.requestDate,
-            // Carry over notes
             note: req.note || req.notes || "",
             dispatcherNote: req.stopNotes?.[`stop_${idx}`] || "",
             dispatcherName: req.stopNotesUpdatedBy || ""
@@ -85,10 +98,8 @@ export default function TripGroupingPage() {
     return list
   }, [requests])
 
-  // Get effective order based on mode
   const currentOrderedIds = React.useMemo(() => {
     if (mode === 'manual') return manualOrder;
-    // For auto mode, we use the optimized order filtered by current selected IDs
     return optimizedOrder.filter(id => selectedIds.has(id));
   }, [mode, manualOrder, optimizedOrder, selectedIds]);
 
@@ -96,7 +107,6 @@ export default function TripGroupingPage() {
     const ids = mode === 'manual' ? manualOrder : currentOrderedIds;
     const items = ids.map(id => availableDestinations.find(d => d.id === id)).filter(Boolean);
     
-    // Add any selected items that aren't in the optimized list yet (for auto mode)
     if (mode === 'auto') {
       const remaining = availableDestinations.filter(d => selectedIds.has(d.id) && !ids.includes(d.id));
       return [...items, ...remaining];
@@ -109,7 +119,6 @@ export default function TripGroupingPage() {
     [vehicles, vehicleId]
   )
 
-  // Stable callbacks for children
   const handleToggleSelect = React.useCallback((id: string) => {
     if (mode === 'manual') {
       setManualOrder(prev => {
@@ -139,15 +148,24 @@ export default function TripGroupingPage() {
       return
     }
 
+    // Check if driver already has a trip today
+    const existingTrip = tripsToday?.find(t => t.driverId === driverId && t.status !== 'Cancelled')
+    if (existingTrip) {
+      setMergeDialog({
+        show: true,
+        existingTrip,
+        newStops: selectedDestinations
+      })
+      return
+    }
+
     setIsConfirmOpen(true)
-  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast])
+  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, tripsToday, selectedDestinations])
 
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
     try {
       const selectedDriver = drivers?.find(d => d.id === driverId)
-      
-      // Sequential Trip ID generation: T-DDMM-XXX
       const now = new Date();
       const tripDateStr = now.toISOString().split('T')[0];
       const d = String(now.getDate()).padStart(2, '0');
@@ -160,17 +178,12 @@ export default function TripGroupingPage() {
       const tripId = `${datePrefix}-${sequence}${safety}`;
       
       const lastStats = (window as any).__lastTripStats || { distance: 0, fuelCost: 0 }
-
-      // 1. Create Trip with coordinates in stops
-      const tripRef = doc(db, "trips", tripId)
-      const sourceVRIds = Array.from(new Set(selectedDestinations.map(d => d.vrId)))
-      
       const warehousePos = { 
         lat: settings?.warehouseLatitude || 14.0815, 
         lng: settings?.warehouseLongitude || 100.7129 
       }
 
-      await setDoc(tripRef, {
+      await setDoc(doc(db, "trips", tripId), {
         id: tripId,
         tripId,
         tripDate: tripDateStr,
@@ -179,7 +192,7 @@ export default function TripGroupingPage() {
         driverId,
         driverName: selectedDriver?.name || "",
         status: "Planned",
-        sourceVRIds,
+        sourceVRIds: Array.from(new Set(selectedDestinations.map(d => d.vrId))),
         totalDistanceKm: lastStats.distance || 0,
         fuelCost: lastStats.fuelCost || 0,
         createdAt: serverTimestamp(),
@@ -194,16 +207,14 @@ export default function TripGroupingPage() {
           lng: d.lng,
           cargoDetails: d.jobDescription || '',
           requestedBy: d.requestedBy || '',
-          requestedByPhone: d.requestedByPhone || '', // แนบเบอร์ผู้ขอไปด้วย
+          requestedByPhone: d.requestedByPhone || '',
           address: d.address || '',
-          // Include notes in stop object for Daily Summary
           note: d.note || "",
           dispatcherNote: d.dispatcherNote || "",
           dispatcherName: d.dispatcherName || ""
         }))
       })
 
-      // 2. Update VRs
       const vrGroups: Record<string, number[]> = {}
       selectedDestinations.forEach(d => {
         if (!vrGroups[d.vrDocId]) vrGroups[d.vrDocId] = []
@@ -215,7 +226,6 @@ export default function TripGroupingPage() {
         if (vr) {
           const newAssigned = [...(vr.assignedDestinations || []), ...indexes]
           const isComplete = newAssigned.length === vr.destinations.length
-          
           await updateDoc(doc(db, "vehicleRequests", docId), {
             assignedDestinations: arrayUnion(...indexes),
             status: isComplete ? "approved" : "partial",
@@ -226,15 +236,7 @@ export default function TripGroupingPage() {
       }
 
       toast({ title: "สำเร็จ", description: `สร้างเที่ยววิ่ง ${tripId} เรียบร้อยแล้ว` })
-      
-      // Reset
-      setSelectedIds(new Set())
-      setManualOrder([])
-      setOptimizedOrder([])
-      setVehicleId("")
-      setDriverId("")
-      setIsConfirmOpen(false)
-      sessionStorage.removeItem("pendingVR")
+      resetAll()
     } catch (e) {
       console.error(e)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถสร้างเที่ยววิ่งได้", variant: "destructive" })
@@ -243,29 +245,100 @@ export default function TripGroupingPage() {
     }
   }
 
+  const handleMergeTrip = async () => {
+    setIsProcessing(true)
+    try {
+      const { existingTrip, newStops } = mergeDialog
+      if (!existingTrip || !newStops) return
+
+      const currentStops = existingTrip.stops || []
+      const lastOrder = currentStops.length > 0 
+        ? Math.max(...currentStops.map((s: any) => s.order || 0))
+        : 0
+
+      const addedStops = newStops.map((d, index) => ({
+        order: lastOrder + index + 1,
+        siteId: d.siteId || null,
+        siteName: d.siteName || d.customName,
+        lat: d.lat,
+        lng: d.lng,
+        cargoDetails: d.jobDescription || '',
+        requestedBy: d.requestedBy || '',
+        requestedByPhone: d.requestedByPhone || '',
+        address: d.address || '',
+        note: d.note || "",
+        dispatcherNote: d.dispatcherNote || "",
+        dispatcherName: d.dispatcherName || ""
+      }))
+
+      const mergedStops = [...currentStops, ...addedStops]
+      const sourceVRIds = Array.from(new Set([
+        ...(existingTrip.sourceVRIds || []),
+        ...newStops.map(d => d.vrId)
+      ]))
+
+      await updateDoc(doc(db, "trips", existingTrip.id), {
+        stops: mergedStops,
+        sourceVRIds,
+        updatedAt: serverTimestamp()
+      })
+
+      const vrGroups: Record<string, number[]> = {}
+      newStops.forEach(d => {
+        if (!vrGroups[d.vrDocId]) vrGroups[d.vrDocId] = []
+        vrGroups[d.vrDocId].push(d.destIndex)
+      })
+
+      for (const [docId, indexes] of Object.entries(vrGroups)) {
+        const vr = requests?.find(r => r.id === docId)
+        if (vr) {
+          const newAssigned = [...(vr.assignedDestinations || []), ...indexes]
+          const isComplete = newAssigned.length === vr.destinations.length
+          await updateDoc(doc(db, "vehicleRequests", docId), {
+            assignedDestinations: arrayUnion(...indexes),
+            status: isComplete ? "approved" : "partial",
+            tripId: isComplete ? existingTrip.id : vr.tripId || null,
+            updatedAt: serverTimestamp()
+          })
+        }
+      }
+
+      toast({ title: "สำเร็จ", description: `รวมจุดใหม่เข้า Trip ${existingTrip.tripId} ของ ${existingTrip.driverName} แล้ว` })
+      resetAll()
+    } catch (e) {
+      console.error(e)
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถรวม Trip ได้", variant: "destructive" })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const resetAll = () => {
+    setSelectedIds(new Set())
+    setManualOrder([])
+    setOptimizedOrder([])
+    setVehicleId("")
+    setDriverId("")
+    setIsConfirmOpen(false)
+    setMergeDialog({ show: false })
+    sessionStorage.removeItem("pendingVR")
+  }
+
   const handleModeChange = (newMode: GroupingMode) => {
     if (newMode === 'manual') {
-      // Clear all route-related states and selection when switching to manual mode
       setManualOrder([]);
       setSelectedIds(new Set());
       setOptimizedOrder([]);
-      
-      // Reset shared trip stats
       if (typeof window !== 'undefined') {
         (window as any).__lastTripStats = { distance: 0, fuelCost: 0 };
       }
-      
       toast({ title: "โหมดจัดลำดับเอง", description: "กรุณาเลือกจุดหมายบนแผนที่ตามลำดับที่ต้องการ" });
     }
     setMode(newMode);
   }
 
   if (loadingRequests) {
-    return (
-      <div className="flex h-[80vh] items-center justify-center">
-        <Loader2 className="h-10 w-10 animate-spin text-accent" />
-      </div>
-    )
+    return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
   }
 
   return (
@@ -276,7 +349,6 @@ export default function TripGroupingPage() {
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-hidden min-h-0">
-        {/* Left: Destination List */}
         <div className="lg:col-span-5 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar">
           {mode === 'manual' ? (
             <div className="space-y-3">
@@ -285,14 +357,8 @@ export default function TripGroupingPage() {
                   <h3 className="text-sm font-bold flex items-center gap-2 text-accent uppercase tracking-wider">
                     <ListOrdered className="h-4 w-4" /> ลำดับการส่ง (จัดเอง)
                   </h3>
-                  <p className="text-[10px] text-muted-foreground mt-1">เลือกจุดบนแผนที่เพื่อเรียงลำดับ</p>
                 </div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => setManualOrder([])}
-                  className="h-8 text-[10px] border-accent/40 text-accent hover:bg-accent/10"
-                >
+                <Button variant="outline" size="sm" onClick={() => setManualOrder([])} className="h-8 text-[10px] border-accent/40 text-accent">
                   <RotateCcw className="h-3 w-3 mr-1" /> ล้างลำดับ
                 </Button>
               </div>
@@ -300,26 +366,14 @@ export default function TripGroupingPage() {
               {manualOrder.length > 0 ? (
                 <div className="space-y-3 animate-in fade-in duration-300">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard 
-                      key={dest.id} 
-                      dest={dest} 
-                      isSelected={true}
-                      onToggle={() => handleToggleSelect(dest.id)}
-                      manualIndex={idx + 1}
-                    />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} />
                   ))}
-                  
                   {availableDestinations.length > manualOrder.length && (
                     <div className="pt-4 pb-2 border-t border-border/30">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
                       <div className="space-y-3 opacity-60 grayscale-[0.5]">
                         {availableDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
-                          <DestinationCard 
-                            key={dest.id} 
-                            dest={dest} 
-                            isSelected={false}
-                            onToggle={() => handleToggleSelect(dest.id)}
-                          />
+                          <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
                         ))}
                       </div>
                     </div>
@@ -338,39 +392,15 @@ export default function TripGroupingPage() {
                 <h3 className="text-sm font-bold flex items-center gap-2">
                   <Inbox className="h-4 w-4 text-accent" /> งานที่ค้างอยู่ในระบบ ({availableDestinations.length})
                 </h3>
-                {selectedIds.size > 1 && optimizedOrder.length > 0 && (
-                  <Badge className="bg-blue-600/20 text-blue-400 border-blue-600/30 text-[10px] flex items-center gap-1">
-                    <Zap className="h-3 w-3 fill-blue-400" /> เส้นทางที่ Google แนะนำ
-                  </Badge>
-                )}
               </div>
-
               {availableDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
-                  {/* Show Selected/Optimized items first */}
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard 
-                      key={dest.id} 
-                      dest={dest} 
-                      isSelected={true}
-                      onToggle={() => handleToggleSelect(dest.id)}
-                      manualIndex={selectedIds.size > 1 ? idx + 1 : undefined}
-                    />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} />
                   ))}
-                  
-                  {/* Divider if we have unselected items */}
-                  {availableDestinations.length > selectedIds.size && selectedIds.size > 0 && (
-                    <div className="pt-4 border-t border-border/20" />
-                  )}
-
-                  {/* Show Unselected items */}
+                  {availableDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
                   {availableDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
-                    <DestinationCard 
-                      key={dest.id} 
-                      dest={dest} 
-                      isSelected={false}
-                      onToggle={() => handleToggleSelect(dest.id)}
-                    />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
                   ))}
                 </div>
               ) : (
@@ -383,33 +413,20 @@ export default function TripGroupingPage() {
           )}
         </div>
 
-        {/* Right: Map View */}
         <div className="lg:col-span-7 rounded-xl overflow-hidden border border-border bg-card h-full min-h-[300px]">
           <GroupingMap 
-            destinations={availableDestinations} 
-            selectedIds={selectedIds}
-            onSelect={handleToggleSelect}
-            selectedVehicleRate={selectedVehicle?.fuelRate}
-            mode={mode}
-            setMode={handleModeChange}
-            manualOrder={manualOrder}
-            onOptimizedOrderChange={setOptimizedOrder}
+            destinations={availableDestinations} selectedIds={selectedIds} onSelect={handleToggleSelect} 
+            selectedVehicleRate={selectedVehicle?.fuelRate} mode={mode} setMode={handleModeChange} 
+            manualOrder={manualOrder} onOptimizedOrderChange={setOptimizedOrder}
           />
         </div>
       </div>
 
-      {/* Sticky Bottom Control Panel */}
       <TripControlPanel 
         selectedCount={mode === 'manual' ? manualOrder.length : selectedIds.size}
-        vehicles={vehicles || []}
-        drivers={drivers || []}
-        vehicleId={vehicleId}
-        driverId={driverId}
-        setVehicleId={setVehicleId}
-        setDriverId={setDriverId}
-        onCreate={handleCreateTrip}
-        isProcessing={isProcessing}
-        mode={mode}
+        vehicles={vehicles || []} drivers={drivers || []} tripsToday={tripsToday || []}
+        vehicleId={vehicleId} driverId={driverId} setVehicleId={setVehicleId} setDriverId={setDriverId}
+        onCreate={handleCreateTrip} isProcessing={isProcessing} mode={mode}
       />
 
       {/* Confirmation Dialog */}
@@ -425,22 +442,60 @@ export default function TripGroupingPage() {
                   <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
                   <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
                 </div>
-                <p className="text-xs text-muted-foreground">ระบบจะสร้าง Trip และอัปเดตสถานะใบคำขอที่เกี่ยวข้องให้ทันที</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 mt-4">
             <AlertDialogCancel className="h-10 text-sm flex-1">ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmCreateTrip}
-              className="h-10 text-sm flex-1 bg-accent hover:bg-accent/90"
-              disabled={isProcessing}
-            >
+            <AlertDialogAction onClick={confirmCreateTrip} className="h-10 text-sm flex-1 bg-accent" disabled={isProcessing}>
               {isProcessing ? "กำลังประมวลผล..." : "ยืนยันสร้างงาน"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Merge Dialog */}
+      <Dialog open={mergeDialog.show} onOpenChange={(open) => !open && setMergeDialog({ show: false })}>
+        <DialogContent className="max-w-md rounded-2xl bg-[#1e293b] border-accent/20">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2 text-orange-500">
+              <AlertTriangle className="h-6 w-6" /> {drivers?.find(d => d.id === driverId)?.name} มี Trip แล้ววันนี้
+            </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Trip เดิม (ID: {mergeDialog.existingTrip?.tripId}) มี {mergeDialog.existingTrip?.stops?.length || 0} จุด ต้องการรวมจุดใหม่เข้า Trip เดิม หรือสร้าง Trip ใหม่?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-white uppercase tracking-wider">จุดที่มีอยู่แล้ว:</p>
+              {mergeDialog.existingTrip?.stops?.map((stop: any, i: number) => (
+                <div key={i} className="text-xs text-gray-400 flex gap-2">
+                  <span className="shrink-0">•</span> <span className="truncate">{stop.siteName}</span>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2 pt-2 border-t border-gray-700">
+              <p className="text-xs font-bold text-orange-400 uppercase tracking-wider">จุดใหม่ที่จะเพิ่ม (+{mergeDialog.newStops?.length}):</p>
+              {mergeDialog.newStops?.map((stop: any, i: number) => (
+                <div key={i} className="text-xs text-orange-300 flex gap-2">
+                  <span className="shrink-0">+</span> <span className="truncate">{stop.siteName}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+            <Button onClick={handleMergeTrip} className="bg-orange-600 hover:bg-orange-700 text-white font-bold" disabled={isProcessing}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />} รวม Trip เดิม
+            </Button>
+            <Button onClick={() => { setMergeDialog({ show: false }); setIsConfirmOpen(true); }} variant="secondary" className="bg-slate-700 text-white hover:bg-slate-600">
+              ➕ สร้าง Trip ใหม่แยก
+            </Button>
+            <Button onClick={() => setMergeDialog({ show: false })} variant="ghost" className="col-span-full border border-gray-700 text-gray-400">
+              ยกเลิก
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

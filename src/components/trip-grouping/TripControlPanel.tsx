@@ -17,6 +17,7 @@ interface TripControlPanelProps {
   selectedCount: number;
   vehicles: any[];
   drivers: any[];
+  tripsToday: any[];
   vehicleId: string;
   driverId: string;
   setVehicleId: (id: string) => void;
@@ -30,6 +31,7 @@ export function TripControlPanel({
   selectedCount,
   vehicles,
   drivers,
+  tripsToday,
   vehicleId,
   driverId,
   setVehicleId,
@@ -82,11 +84,17 @@ export function TripControlPanel({
                   <SelectValue placeholder="ค้นหาชื่อคนขับ..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {drivers.map(d => (
-                    <SelectItem key={d.id} value={d.id} className="text-sm">
-                      {d.name}
-                    </SelectItem>
-                  ))}
+                  {drivers.map(d => {
+                    const hasTrip = tripsToday.some(t => t.driverId === d.id && t.status !== 'Cancelled')
+                    return (
+                      <SelectItem key={d.id} value={d.id} className="text-sm">
+                        <div className="flex items-center justify-between w-full">
+                          <span>{hasTrip ? '✅ ' : '○ '}{d.name}</span>
+                          {hasTrip && <span className="ml-2 text-[10px] opacity-60">(มีงานแล้ว)</span>}
+                        </div>
+                      </SelectItem>
+                    )
+                  })}
                 </SelectContent>
               </Select>
             </div>
