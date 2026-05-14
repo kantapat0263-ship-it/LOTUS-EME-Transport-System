@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -724,7 +723,6 @@ export default function RequestsPage() {
   const [activeTab, setActiveTab] = React.useState("form")
   const [isCancelOpen, setIsCancelOpen] = React.useState(false)
   const [reqToCancel, setReqToCancel] = React.useState<any>(null)
-  const [isLocked, setIsLocked] = React.useState(false)
 
   const myRequestsRef = useMemoFirebase(() => (db && user) ? query(
     collection(db, "vehicleRequests"),
@@ -734,28 +732,6 @@ export default function RequestsPage() {
   const { data: myRequests, isLoading: isDataLoading } = useCollection<any>(myRequestsRef)
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
-
-  React.useEffect(() => {
-    if (isProfileLoading || !settings) return
-    if (isStaff) {
-      setIsLocked(false)
-      return
-    }
-
-    const checkLock = () => {
-      const now = new Date()
-      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-      const openTime = settings.requestOpenTime || "08:00"
-      const closeTime = settings.requestCloseTime || "17:00"
-      
-      const locked = timeStr < openTime || timeStr > closeTime
-      setIsLocked(locked)
-    }
-
-    checkLock()
-    const timer = setInterval(checkLock, 60000)
-    return () => clearInterval(timer)
-  }, [settings, profile?.role, isProfileLoading, isStaff])
 
   const handleCancelRequest = async () => {
     if (!reqToCancel) return
@@ -800,20 +776,7 @@ export default function RequestsPage() {
         </TabsList>
 
         <TabsContent value="form" className="animate-in slide-in-from-left-2 duration-300">
-          {isLocked ? (
-            <div className="flex flex-col items-center justify-center py-24 bg-secondary/10 rounded-2xl border-2 border-dashed border-accent/20 text-center space-y-6 px-4">
-              <div className="w-24 h-24 bg-accent/10 rounded-full flex items-center justify-center animate-bounce">
-                <Lock className="h-12 w-12 text-accent" />
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-2xl font-bold text-white">ระบบปิดรับคำขอรถชั่วคราว</h2>
-                <p className="text-muted-foreground">ขออภัย ระบบเปิดรับคำขอในช่วงเวลา <span className="font-bold text-accent">{settings?.requestOpenTime || '08:00'} - {settings?.requestCloseTime || '17:00'} น.</span> เท่านั้น</p>
-                <p className="text-xs text-muted-foreground mt-4">หากมีงานเร่งด่วน หรือต้องจัดรถล่วงหน้าเป็นพิเศษ กรุณาติดต่อผู้จัดคิวโดยตรง</p>
-              </div>
-            </div>
-          ) : (
-            <RequestForm />
-          )}
+          <RequestForm />
         </TabsContent>
 
         <TabsContent value="list" className="animate-in slide-in-from-right-2 duration-300">
@@ -864,7 +827,7 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && !isLocked && (
+                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && (
                               <Button 
                                 variant="outline" 
                                 size="sm" 

@@ -27,7 +27,8 @@ import {
   Briefcase,
   Search,
   Calendar as CalendarIcon,
-  Trash2
+  Trash2,
+  Info
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Site, UserProfile } from "@/types/models"
@@ -70,15 +71,51 @@ export function RequestForm() {
   const sitesRef = useMemoFirebase(() => db ? collection(db, "sites") : null, [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
+  const settingsRef = useMemoFirebase(() => db ? doc(db, "companySettings", "default") : null, [db])
+  const { data: settings } = useDoc<any>(settingsRef)
+
+  // Helper to calculate minimum request date based on current time
+  const getMinRequestDate = React.useCallback(() => {
+    const now = new Date()
+    const hour = now.getHours()
+    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
+    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+
+    const addDays = (n: number) => {
+      const d = new Date()
+      d.setDate(d.getDate() + n)
+      d.setHours(0, 0, 0, 0)
+      return d
+    }
+
+    if (hour >= closeHour || hour < openHour) {
+      // After close time or before open time -> allow from the day after tomorrow
+      return addDays(2)
+    } else {
+      // During business hours -> allow from tomorrow
+      return addDays(1)
+    }
+  }, [settings])
+
+  const minDate = getMinRequestDate()
+  const minDateStr = minDate.toISOString().split('T')[0]
+
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [requestedBy, setRequestedBy] = React.useState("")
-  const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0])
+  const [selectedDate, setSelectedDate] = React.useState(minDateStr)
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
   ])
+
+  // Auto-correct date if it becomes invalid (e.g. after time passes)
+  React.useEffect(() => {
+    if (selectedDate && selectedDate < minDateStr) {
+      setSelectedDate(minDateStr)
+    }
+  }, [minDateStr, selectedDate])
 
   React.useEffect(() => {
     if (profile) {
@@ -195,7 +232,7 @@ export function RequestForm() {
       const requestData = {
         id: requestId,
         requestId,
-        requestDate: selectedDate, // บันทึกวันที่ที่เลือกจริง (Schedule Date)
+        requestDate: selectedDate,
         requestTime,
         requestedBy,
         requestedByEmail: user.email,
@@ -205,13 +242,13 @@ export function RequestForm() {
         destinations: parsedDestinations,
         note,
         status: "pending",
-        createdAt: serverTimestamp(), // เก็บวันที่สร้างจริงแยกต่างหาก
+        createdAt: serverTimestamp(),
       }
 
       await setDoc(requestRef, requestData)
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
-      setSelectedDate(new Date().toISOString().split('T')[0])
+      setSelectedDate(minDateStr)
       setRequestTime("08:30")
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
@@ -222,6 +259,9 @@ export function RequestForm() {
       setIsSubmitting(false)
     }
   }
+
+  const isOutsideHours = new Date().getHours() >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
+                        new Date().getHours() < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -265,6 +305,7 @@ export function RequestForm() {
                     <Calendar
                       mode="single"
                       selected={selectedDate ? new Date(selectedDate) : undefined}
+                      fromDate={minDate}
                       onSelect={(date) => {
                         setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")
                         if (date) setIsCalendarOpen(false)
@@ -273,6 +314,12 @@ export function RequestForm() {
                     />
                   </PopoverContent>
                 </Popover>
+                {isOutsideHours && (
+                  <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1 leading-tight">
+                    <Info className="h-3 w-3 shrink-0" />
+                    นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="requestTime">เวลาที่ต้องการ</Label>
