@@ -79,7 +79,10 @@ export default function DailySummaryPage() {
     const unsubscribeTrips = onSnapshot(
       tripsQuery, 
       (snapshot) => {
-        tripDates = snapshot.docs.map(doc => doc.data().tripDate).filter(Boolean)
+        tripDates = snapshot.docs.map(doc => {
+          const data = doc.data()
+          return data.tripDate || data.date
+        }).filter(Boolean)
         updateAllDates()
       },
       async (error) => {
@@ -118,15 +121,19 @@ export default function DailySummaryPage() {
 
     setIsLoading(true)
     try {
-      const q = query(
-        collection(db, "trips"),
-        where("tripDate", "==", targetDate)
-      )
-      
-      const snapshot = await getDocs(q)
-      const results = snapshot.docs
+      const q1 = query(collection(db, "trips"), where("tripDate", "==", targetDate))
+      const q2 = query(collection(db, "trips"), where("date", "==", targetDate))
+
+      const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)])
+
+      const seen = new Set<string>()
+      const results = [...snap1.docs, ...snap2.docs]
         .map(doc => ({ ...doc.data(), id: doc.id } as Trip))
-        .filter(trip => trip.status !== 'Cancelled')
+        .filter(trip => {
+          if (seen.has(trip.id)) return false
+          seen.add(trip.id)
+          return trip.status !== 'Cancelled'
+        })
         .sort((a, b) => {
           const timeA = (a as any).departureTime || "08:30"
           const timeB = (b as any).departureTime || "08:30"
@@ -426,7 +433,7 @@ export default function DailySummaryPage() {
                           return (
                             <tr key={trip.id}>
                               <td className="border border-black p-2 text-center align-top">
-                                {formatThaiDate(trip.tripDate)}
+                                {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
                               </td>
                               <td className="border border-black p-2 text-center align-top">
                                 {(trip as any).departureTime || "08:30"} น.
