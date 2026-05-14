@@ -320,6 +320,7 @@ export default function DailySummaryPage() {
                   DayContent: ({ date }: { date: Date }) => {
                     const dateStr = format(date, "yyyy-MM-dd")
                     const hasWork = datesWithWork.has(dateStr)
+                    if (hasWork) console.log("HAS WORK ON:", dateStr)
                     return (
                       <div className="relative w-full h-full flex items-center justify-center">
                         {date.getDate()}
