@@ -306,33 +306,29 @@ export default function DailySummaryPage() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <CalendarIcon className="h-5 w-5 text-accent" /> ปฏิทินคิวงาน
               </CardTitle>
-              <CardDescription>วันที่มีจุด <span className="text-accent font-bold">●</span> คือวันที่มีคิวงานในระบบ</CardDescription>
+              <CardDescription>วันที่มีตัวหนาสีส้ม คือวันที่มีคิวงานในระบบ</CardDescription>
             </CardHeader>
             <CardContent className="flex justify-center p-0 pb-4">
               <Calendar
                 mode="single"
-                selected={selectedDate ? new Date(selectedDate) : undefined}
+                selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
                 onSelect={(date) => {
                   if (date) {
                     const dateStr = format(date, "yyyy-MM-dd")
                     setSelectedDate(dateStr)
                   }
                 }}
-                className="rounded-md bg-background"
-                components={{
-                  DayContent: ({ date }: { date: Date }) => {
-                    const dateStr = format(date, "yyyy-MM-dd")
-                    const hasWork = datesWithWorkRef.current.has(dateStr)
-                    return (
-                      <div className="relative w-full h-full flex items-center justify-center">
-                        {date.getDate()}
-                        {hasWork && (
-                          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-accent animate-pulse shadow-sm shadow-accent/50" />
-                        )}
-                      </div>
-                    )
+                modifiers={{
+                  hasWork: Array.from(datesWithWork).map(d => new Date(d + 'T00:00:00'))
+                }}
+                modifiersStyles={{
+                  hasWork: { 
+                    fontWeight: 'bold',
+                    textDecoration: 'underline',
+                    color: '#F0890D'
                   }
                 }}
+                className="rounded-md bg-background"
               />
             </CardContent>
           </Card>
@@ -553,7 +549,7 @@ export default function DailySummaryPage() {
                   <div className="flex flex-col items-center justify-center py-32 text-gray-400">
                     <FileText className="h-16 w-16 mb-4 opacity-20" />
                     <p className="text-lg font-medium">ไม่มีข้อมูลเที่ยววิ่งสำหรับวันที่เลือก</p>
-                    <p className="text-sm">กรุณาเลือกวันที่มีจุดสีส้มบนปฏิทิน</p>
+                    <p className="text-sm">กรุณาเลือกวันที่มีสัญลักษณ์แจ้งเตือนบนปฏิทิน</p>
                   </div>
                 )
               ) : (
