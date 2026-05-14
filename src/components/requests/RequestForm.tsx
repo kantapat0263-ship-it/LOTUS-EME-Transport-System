@@ -74,13 +74,9 @@ export function RequestForm() {
   const settingsRef = useMemoFirebase(() => db ? doc(db, "companySettings", "default") : null, [db])
   const { data: settings } = useDoc<any>(settingsRef)
 
-  // Helper to calculate minimum request date based on current time
+  // Helper to calculate minimum request date based on role and current time
   const getMinRequestDate = React.useCallback(() => {
     const now = new Date()
-    const hour = now.getHours()
-    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
-    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
-
     const addDays = (n: number) => {
       const d = new Date()
       d.setDate(d.getDate() + n)
@@ -88,21 +84,31 @@ export function RequestForm() {
       return d
     }
 
-    if (hour >= closeHour || hour < openHour) {
-      // After close time or before open time -> allow from the day after tomorrow
-      return addDays(2)
-    } else {
-      // During business hours -> allow from tomorrow
+    // Admin และ Dispatcher ไม่มีข้อจำกัดเวลา — ขอได้ตั้งแต่พรุ่งนี้เสมอ
+    if (profile?.role === 'admin' || profile?.role === 'dispatcher') {
       return addDays(1)
     }
-  }, [settings])
+
+    // Viewer — ตามเวลาปัจจุบัน
+    const hour = now.getHours()
+    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
+    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+
+    if (hour >= closeHour || hour < openHour) {
+      // หลัง 16:00 หรือก่อน 08:00 → ขอได้ตั้งแต่มะรืน
+      return addDays(2)
+    } else {
+      // 08:00-16:00 → ขอได้ตั้งแต่พรุ่งนี้
+      return addDays(1)
+    }
+  }, [settings, profile?.role])
 
   const minDate = getMinRequestDate()
   const minDateStr = minDate.toISOString().split('T')[0]
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [requestedBy, setRequestedBy] = React.useState("")
-  const [selectedDate, setSelectedDate] = React.useState(minDateStr)
+  const [selectedDate, setSelectedDate] = React.useState("")
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
@@ -110,9 +116,9 @@ export function RequestForm() {
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
   ])
 
-  // Auto-correct date if it becomes invalid (e.g. after time passes)
+  // Ensure default selected date is valid
   React.useEffect(() => {
-    if (selectedDate && selectedDate < minDateStr) {
+    if (!selectedDate || selectedDate < minDateStr) {
       setSelectedDate(minDateStr)
     }
   }, [minDateStr, selectedDate])
@@ -173,8 +179,10 @@ export function RequestForm() {
       return
     }
 
-    // Validate: ห้ามขอวันเดียวกับวันปัจจุบัน
     const todayStr = new Date().toISOString().split('T')[0]
+    const minDateLimit = getMinRequestDate().toISOString().split('T')[0]
+
+    // Validate: ห้ามขอวันเดียวกับวันปัจจุบัน (ทุกบทบาท)
     if (selectedDate === todayStr) {
       toast({ 
         title: "ไม่สามารถขอรถวันนี้ได้", 
@@ -182,6 +190,18 @@ export function RequestForm() {
         variant: "destructive" 
       })
       return
+    }
+
+    // Viewer เท่านั้น — บังคับตามกฎเวลาทำการ
+    if (profile?.role !== 'admin' && profile?.role !== 'dispatcher') {
+      if (selectedDate < minDateLimit) {
+        toast({ 
+          title: "ไม่สามารถจองวันนี้ได้", 
+          description: `นอกเวลารับคำขอ กรุณาจองตั้งแต่วันที่ ${format(new Date(minDateLimit), "dd/MM/yyyy")} เป็นต้นไป`, 
+          variant: "destructive" 
+        })
+        return
+      }
     }
 
     const validDestinations = destinations.filter(d => 
@@ -259,7 +279,7 @@ export function RequestForm() {
       await setDoc(requestRef, requestData)
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
-      setSelectedDate(minDateStr)
+      setSelectedDate(minDateLimit)
       setRequestTime("08:30")
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
@@ -271,8 +291,10 @@ export function RequestForm() {
     }
   }
 
-  const isOutsideHours = new Date().getHours() >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
-                        new Date().getHours() < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
+  const isViewer = profile?.role !== 'admin' && profile?.role !== 'dispatcher';
+  const hour = new Date().getHours();
+  const isOutsideHours = hour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
+                        hour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -325,10 +347,16 @@ export function RequestForm() {
                     />
                   </PopoverContent>
                 </Popover>
-                {isOutsideHours && (
+                {isViewer && isOutsideHours && (
                   <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1 leading-tight">
                     <Info className="h-3 w-3 shrink-0" />
                     นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                  </p>
+                )}
+                {!isViewer && (
+                  <p className="text-[10px] text-blue-400 flex items-center gap-1 mt-1 leading-tight">
+                    <Info className="h-3 w-3 shrink-0" />
+                    โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
                   </p>
                 )}
               </div>
