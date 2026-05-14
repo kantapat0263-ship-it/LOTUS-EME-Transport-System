@@ -54,6 +54,7 @@ export default function DailySummaryPage() {
   
   // State for dates that have work (trips or requests) to highlight on calendar
   const [datesWithWork, setDatesWithWork] = React.useState<Set<string>>(new Set())
+  const datesWithWorkRef = React.useRef<Set<string>>(new Set())
 
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -71,7 +72,9 @@ export default function DailySummaryPage() {
     let vrDates: string[] = []
 
     const updateAllDates = () => {
-      setDatesWithWork(new Set([...tripDates, ...vrDates]))
+      const newSet = new Set([...tripDates, ...vrDates])
+      datesWithWorkRef.current = newSet
+      setDatesWithWork(newSet)
     }
 
     // 1. Listen for Trip dates - no filter to avoid index requirement
@@ -316,11 +319,10 @@ export default function DailySummaryPage() {
                   }
                 }}
                 className="rounded-md bg-background"
-                components={React.useMemo(() => ({
+                components={{
                   DayContent: ({ date }: { date: Date }) => {
                     const dateStr = format(date, "yyyy-MM-dd")
-                    const hasWork = datesWithWork.has(dateStr)
-                    if (hasWork) console.log("HAS WORK ON:", dateStr)
+                    const hasWork = datesWithWorkRef.current.has(dateStr)
                     return (
                       <div className="relative w-full h-full flex items-center justify-center">
                         {date.getDate()}
@@ -330,7 +332,7 @@ export default function DailySummaryPage() {
                       </div>
                     )
                   }
-                }), [datesWithWork])}
+                }}
               />
             </CardContent>
           </Card>
