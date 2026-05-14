@@ -124,7 +124,7 @@ export function RequestForm() {
         setSelectedDate(currentMin)
       }
     }
-  }, [profile?.role, settings])
+  }, [profile?.role, settings, getMinRequestDate, selectedDate])
 
   React.useEffect(() => {
     if (profile) {
@@ -363,20 +363,16 @@ export function RequestForm() {
                   </PopoverContent>
                 </Popover>
                 {isViewer && isOutsideHours && (
-                  <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1 leading-tight">
-                    <div className="flex items-center gap-1">
-                      <Info className="h-3 w-3 shrink-0" />
-                      นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
-                    </div>
-                  </p>
+                  <div className="text-[10px] text-amber-400 flex items-center gap-1 mt-1 leading-tight">
+                    <Info className="h-3 w-3 shrink-0" />
+                    นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                  </div>
                 )}
                 {!isViewer && (
-                  <p className="text-[10px] text-blue-400 flex items-center gap-1 mt-1 leading-tight">
-                    <div className="flex items-center gap-1">
-                      <Info className="h-3 w-3 shrink-0" />
-                      โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
-                    </div>
-                  </p>
+                  <div className="text-[10px] text-blue-400 flex items-center gap-1 mt-1 leading-tight">
+                    <Info className="h-3 w-3 shrink-0" />
+                    โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
+                  </div>
                 )}
               </div>
             </div>
