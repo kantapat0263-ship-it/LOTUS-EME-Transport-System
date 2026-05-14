@@ -173,6 +173,17 @@ export function RequestForm() {
       return
     }
 
+    // Validate: ห้ามขอวันเดียวกับวันปัจจุบัน
+    const todayStr = new Date().toISOString().split('T')[0]
+    if (selectedDate === todayStr) {
+      toast({ 
+        title: "ไม่สามารถขอรถวันนี้ได้", 
+        description: "กรุณาเลือกวันที่ต้องการใช้รถเป็นวันพรุ่งนี้เป็นต้นไป", 
+        variant: "destructive" 
+      })
+      return
+    }
+
     const validDestinations = destinations.filter(d => 
       (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName && d.coordinates)
     )
@@ -462,7 +473,7 @@ export function RequestForm() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <div className="flex items-center justify-between min-h-[24px]">
-                                <Label>ชื่อสถานที่</Label>
+                                  <Label>ชื่อสถานที่</Label>
                               </div>
                               <Input 
                                 placeholder="เช่น บริษัท TMT อยุธยา" 
