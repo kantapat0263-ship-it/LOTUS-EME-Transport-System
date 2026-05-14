@@ -576,6 +576,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   {idx + 1}
                                 </span>
                                 <span className={cn(isSelected && "text-accent")}>{dest.siteName}</span>
+                                {dest.requestTime && (
+                                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-accent/5 text-accent border-accent/20">
+                                    🕗 {dest.requestTime} น.
+                                  </Badge>
+                                )}
                                 {isAssigned && (
                                   <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-[10px] h-5">
                                     <Check className="h-3 w-3 mr-1" /> จัดแล้ว
@@ -1058,13 +1063,13 @@ export default function RequestsPage() {
               )}
 
               {viewingUserReq.tripId && viewingUserReq.status === 'approved' && (
-                <Alert className="bg-green-500/10 border-green-500/30 text-green-500">
-                  <Truck className="h-4 w-4" />
-                  <AlertTitle className="text-xs font-bold uppercase">จัดรถเรียบร้อยแล้ว</AlertTitle>
-                  <AlertDescription className="text-xs">
-                    หมายเลขเที่ยววิ่ง: <span className="font-bold">{viewingUserReq.tripId}</span> สามารถติดตามสถานะได้ในหน้าประวัติการส่ง
-                  </AlertDescription>
-                </Alert>
+                <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-green-500 flex gap-3">
+                  <Truck className="h-5 w-5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-bold uppercase">จัดรถเรียบร้อยแล้ว</p>
+                    <p className="text-xs">หมายเลขเที่ยววิ่ง: <span className="font-bold">{viewingUserReq.tripId}</span> สามารถติดตามสถานะได้ในหน้าประวัติการส่ง</p>
+                  </div>
+                </div>
               )}
             </div>
           )}
