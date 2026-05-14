@@ -513,7 +513,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 <div className="space-y-1 sm:text-right">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วัน/เวลาที่ต้องการ</p>
                   <p className="text-sm font-bold text-accent">{formatDateDisplay(selectedReq.requestDate)} @ {selectedReq.requestTime} น.</p>
-                  <p className="text-[10px] text-muted-foreground">ส่งเมื่อ: {selectedReq.createdAt?.toDate()?.toLocaleString('th-TH')}</p>
+                  <p className="text-[10px] text-muted-foreground">ส่งคำขอเมื่อ: {selectedReq.createdAt?.toDate()?.toLocaleString('th-TH')}</p>
                 </div>
               </div>
 
@@ -1016,8 +1016,9 @@ export default function RequestsPage() {
                   <p className="text-[10px] text-muted-foreground">{viewingUserReq.requestedByEmail}</p>
                 </div>
                 <div className="space-y-1 sm:text-right">
-                  <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วันที่ส่งของ</p>
+                  <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วันที่ต้องการรถ</p>
                   <p className="text-sm font-bold text-accent">{formatDateDisplay(viewingUserReq.requestDate)}</p>
+                  <p className="text-[10px] text-muted-foreground">ส่งคำขอเมื่อ: {viewingUserReq.createdAt?.toDate()?.toLocaleString('th-TH')}</p>
                   <div className="flex items-center justify-end gap-2 mt-1">
                     {getStatusBadge(viewingUserReq.status)}
                   </div>
