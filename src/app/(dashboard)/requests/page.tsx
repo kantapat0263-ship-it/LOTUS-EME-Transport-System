@@ -576,11 +576,35 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   {idx + 1}
                                 </span>
                                 <span className={cn(isSelected && "text-accent")}>{dest.siteName}</span>
-                                {dest.requestTime && (
-                                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-accent/5 text-accent border-accent/20">
-                                    🕗 {dest.requestTime} น.
-                                  </Badge>
+                                
+                                {isStaff ? (
+                                  <div className="flex items-center gap-1 ml-auto">
+                                    <span className="text-[10px] text-muted-foreground font-bold">🕗</span>
+                                    <Input
+                                      defaultValue={dest.requestTime || "08:30"}
+                                      className="h-6 w-16 text-[10px] px-1 bg-background/50 border-accent/20 font-bold"
+                                      onBlur={async (e) => {
+                                        const newTime = e.target.value;
+                                        if (newTime === dest.requestTime) return;
+                                        const newDestinations = [...selectedReq.destinations];
+                                        newDestinations[idx] = { ...newDestinations[idx], requestTime: newTime };
+                                        await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
+                                          destinations: newDestinations,
+                                          updatedAt: serverTimestamp()
+                                        });
+                                        toast({ title: "อัปเดตเวลาสำเร็จ" });
+                                      }}
+                                    />
+                                    <span className="text-[10px] text-muted-foreground font-bold">น.</span>
+                                  </div>
+                                ) : (
+                                  dest.requestTime && (
+                                    <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-accent/5 text-accent border-accent/20">
+                                      🕗 {dest.requestTime} น.
+                                    </Badge>
+                                  )
                                 )}
+
                                 {isAssigned && (
                                   <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-[10px] h-5">
                                     <Check className="h-3 w-3 mr-1" /> จัดแล้ว
