@@ -171,7 +171,7 @@ export default function TripGroupingPage() {
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const now = new Date();
       const tripDateStr = selectedDestinations[0]?.requestDate || now.toISOString().split('T')[0];
-      const tripDateObj = new Date(tripDateStr);
+      const tripDateObj = new Date(tripDateStr + 'T00:00:00');
       const d = String(tripDateObj.getDate()).padStart(2, '0');
       const m = String(tripDateObj.getMonth() + 1).padStart(2, '0');
       const datePrefix = `T-${d}${m}`;
