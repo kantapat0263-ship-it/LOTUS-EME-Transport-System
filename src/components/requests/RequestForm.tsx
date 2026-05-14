@@ -49,6 +49,7 @@ interface DestinationRequest {
   jobDescription: string;
   saveAsSite: boolean;
   locationType: string;
+  requestTime: string;
 }
 
 const CATEGORIES = [
@@ -110,10 +111,9 @@ export function RequestForm() {
   const [requestedBy, setRequestedBy] = React.useState("")
   const [selectedDate, setSelectedDate] = React.useState("")
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
-  const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
-    { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }
+    { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
 
   // Ensure default selected date is valid
@@ -147,7 +147,8 @@ export function RequestForm() {
       coordinates: "", 
       jobDescription: "",
       saveAsSite: false,
-      locationType: "ไซต์งาน"
+      locationType: "ไซต์งาน",
+      requestTime: "08:30"
     }])
   }
 
@@ -177,8 +178,8 @@ export function RequestForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!requestedBy || !selectedDate || !requestTime || !user) {
-      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อผู้ขอ วันที่ และเวลา", variant: "destructive" })
+    if (!requestedBy || !selectedDate || !user) {
+      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อผู้ขอ และวันที่", variant: "destructive" })
       return
     }
 
@@ -242,7 +243,8 @@ export function RequestForm() {
           customName: d.category === "custom" ? d.customName : null,
           lat: latVal,
           lng: lngVal,
-          jobDescription: d.jobDescription
+          jobDescription: d.jobDescription,
+          requestTime: d.requestTime || "08:30"
         })
 
         if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates) {
@@ -267,7 +269,7 @@ export function RequestForm() {
         id: requestId,
         requestId,
         requestDate: selectedDate,
-        requestTime,
+        requestTime: destinations[0]?.requestTime || "08:30",
         requestedBy,
         requestedByEmail: user.email,
         requestedByPhone: (profile as any)?.phone || "",
@@ -283,9 +285,8 @@ export function RequestForm() {
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
       setSelectedDate(minDateLimit)
-      setRequestTime("08:30")
       setNote("")
-      setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
+      setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
     } catch (error) {
       console.error("Error saving request:", error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
@@ -310,7 +311,7 @@ export function RequestForm() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="requestedBy">ชื่อผู้ขอใช้รถ</Label>
                 <Input 
@@ -362,21 +363,6 @@ export function RequestForm() {
                     โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
                   </p>
                 )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="requestTime">เวลาที่ต้องการ</Label>
-                <div className="relative">
-                  <Input 
-                    id="requestTime"
-                    placeholder="08:30" 
-                    className="h-11 pr-8"
-                    value={requestTime}
-                    onChange={(e) => setRequestTime(e.target.value)}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none font-bold">
-                    น.
-                  </span>
-                </div>
               </div>
             </div>
 
@@ -561,6 +547,21 @@ export function RequestForm() {
                             value={dest.jobDescription}
                             onChange={(e) => updateDest(dest.id, { jobDescription: e.target.value })}
                           />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>เวลาที่ต้องการ (จุดนี้)</Label>
+                          <div className="relative w-40">
+                            <Input
+                              placeholder="08:30"
+                              className="h-11 pr-8"
+                              value={dest.requestTime}
+                              onChange={(e) => updateDest(dest.id, { requestTime: e.target.value })}
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none font-bold">
+                              น.
+                            </span>
+                          </div>
                         </div>
 
                         {dest.category === "custom" && (
