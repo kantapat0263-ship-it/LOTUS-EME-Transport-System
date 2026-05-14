@@ -23,7 +23,8 @@ import {
   Image as ImageIcon,
   ClipboardList,
   Phone,
-  Info
+  Info,
+  RefreshCcw
 } from "lucide-react"
 import { 
   Dialog, 
@@ -48,8 +49,8 @@ export default function DailySummaryPage() {
   const [isSavingImage, setIsSavingImage] = React.useState(false)
   const [isSendingLine, setIsSendingLine] = React.useState(false)
   
-  // State for dates that have trips to highlight on calendar
-  const [datesWithTrips, setDatesWithTrips] = React.useState<Set<string>>(new Set())
+  // State for dates that have work (trips or requests) to highlight on calendar
+  const [datesWithWork, setDatesWithWork] = React.useState<Set<string>>(new Set())
 
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -59,19 +60,29 @@ export default function DailySummaryPage() {
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
   const [copied, setCopied] = React.useState(false)
 
-  // Listen for all trip dates to highlight them
+  // Listen for all work dates to highlight them
   React.useEffect(() => {
     if (!db) return
-    const q = query(collection(db, "trips"), where("status", "!=", "Cancelled"))
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const dates = new Set<string>()
-      snapshot.docs.forEach(doc => {
-        const data = doc.data()
-        if (data.tripDate) dates.add(data.tripDate)
+    
+    // 1. Listen for Trip dates
+    const tripsQuery = query(collection(db, "trips"), where("status", "!=", "Cancelled"))
+    const unsubscribeTrips = onSnapshot(tripsQuery, (snapshot) => {
+      const tripDates = snapshot.docs.map(doc => doc.data().tripDate).filter(Boolean)
+      
+      // 2. Listen for Vehicle Request dates (The date vehicle is needed)
+      const vrQuery = query(collection(db, "vehicleRequests"), where("status", "!=", "cancelled"))
+      const unsubscribeVRs = onSnapshot(vrQuery, (vrSnapshot) => {
+        const vrDates = vrSnapshot.docs.map(doc => doc.data().requestDate).filter(Boolean)
+        
+        // Combine unique dates from both
+        const allWorkDates = new Set([...tripDates, ...vrDates])
+        setDatesWithWork(allWorkDates)
       })
-      setDatesWithTrips(dates)
+
+      return () => unsubscribeVRs()
     })
-    return () => unsubscribe()
+
+    return () => unsubscribeTrips()
   }, [db])
 
   const fetchTrips = async (dateStr?: string) => {
@@ -96,9 +107,6 @@ export default function DailySummaryPage() {
         })
 
       setTrips(results)
-      if (results.length === 0) {
-        toast({ title: "ไม่พบข้อมูล", description: "ไม่มีเที่ยววิ่งสำหรับวันที่เลือก" })
-      }
     } catch (error) {
       console.error(error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถโหลดข้อมูลได้", variant: "destructive" })
@@ -107,10 +115,10 @@ export default function DailySummaryPage() {
     }
   }
 
-  // Initial load
+  // Auto load when date changes
   React.useEffect(() => {
-    fetchTrips()
-  }, [])
+    fetchTrips(selectedDate)
+  }, [selectedDate])
 
   const formatThaiDate = (dateStr: string) => {
     if (!dateStr) return ""
@@ -249,7 +257,7 @@ export default function DailySummaryPage() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <CalendarIcon className="h-5 w-5 text-accent" /> เลือกวันที่ต้องการดูคิวรถ
               </CardTitle>
-              <CardDescription>วันที่มีจุด <span className="text-accent font-bold">●</span> คือวันที่มีคิวรถในระบบ</CardDescription>
+              <CardDescription>วันที่มีจุด <span className="text-accent font-bold">●</span> คือวันที่มีคิวงานในระบบ</CardDescription>
             </CardHeader>
             <CardContent className="flex justify-center p-0 pb-4">
               <Calendar
@@ -259,19 +267,18 @@ export default function DailySummaryPage() {
                   if (date) {
                     const dateStr = format(date, "yyyy-MM-dd")
                     setSelectedDate(dateStr)
-                    fetchTrips(dateStr)
                   }
                 }}
                 className="rounded-md bg-background"
                 components={{
                   DayContent: ({ date }) => {
                     const dateStr = format(date, "yyyy-MM-dd")
-                    const hasTrips = datesWithTrips.has(dateStr)
+                    const hasWork = datesWithWork.has(dateStr)
                     return (
                       <div className="relative w-full h-full flex items-center justify-center">
                         {date.getDate()}
-                        {hasTrips && (
-                          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-accent" />
+                        {hasWork && (
+                          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-accent animate-pulse shadow-sm shadow-accent/50" />
                         )}
                       </div>
                     )
@@ -283,7 +290,12 @@ export default function DailySummaryPage() {
 
           <Card className="bg-secondary/20">
             <CardHeader>
-              <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">จัดการรายงาน</CardTitle>
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                <span>จัดการรายงาน</span>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-accent" onClick={() => fetchTrips()}>
+                  <RefreshCcw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+                </Button>
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-2 text-sm mb-2 text-accent font-bold bg-accent/5 p-2 rounded border border-accent/20">
