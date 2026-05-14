@@ -59,6 +59,11 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex }: Des
                 วันที่ขอใช้รถ
               </p>
               <p className="text-xs font-bold text-white">{dest.requestDate}</p>
+              {dest.requestTime && (
+                <p className="text-[11px] font-bold text-accent mt-0.5">
+                  🕗 {dest.requestTime} น.
+                </p>
+              )}
             </div>
           </div>
 
