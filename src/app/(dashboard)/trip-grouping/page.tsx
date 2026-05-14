@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -213,6 +212,7 @@ export default function TripGroupingPage() {
           cargoDetails: d.jobDescription || '',
           requestedBy: d.requestedBy || '',
           requestedByPhone: d.requestedByPhone || '',
+          requestTime: d.requestTime || '',
           address: d.address || '',
           note: d.note || "",
           dispatcherNote: d.dispatcherNote || "",
@@ -270,6 +270,7 @@ export default function TripGroupingPage() {
         cargoDetails: d.jobDescription || '',
         requestedBy: d.requestedBy || '',
         requestedByPhone: d.requestedByPhone || '',
+        requestTime: d.requestTime || '',
         address: d.address || '',
         note: d.note || "",
         dispatcherNote: d.dispatcherNote || "",

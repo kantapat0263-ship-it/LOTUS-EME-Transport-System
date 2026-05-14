@@ -103,7 +103,7 @@ export function RequestForm() {
     }
   }, [settings, profile?.role])
 
-  const minDate = getMinRequestDate()
+  const minDate = React.useMemo(() => getMinRequestDate(), [getMinRequestDate, profile?.role])
   const minDateStr = minDate.toISOString().split('T')[0]
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -118,10 +118,13 @@ export function RequestForm() {
 
   // Ensure default selected date is valid
   React.useEffect(() => {
-    if (!selectedDate || selectedDate < minDateStr) {
-      setSelectedDate(minDateStr)
+    if (profile) {
+      const currentMin = getMinRequestDate().toISOString().split('T')[0]
+      if (!selectedDate || selectedDate < currentMin) {
+        setSelectedDate(currentMin)
+      }
     }
-  }, [minDateStr, selectedDate])
+  }, [profile?.role, settings])
 
   React.useEffect(() => {
     if (profile) {
@@ -150,7 +153,7 @@ export function RequestForm() {
 
   const removeDestination = (id: string) => {
     if (destinations.length > 1) {
-      setDestinations(prev => prev.filter(d => d.id !== id))
+      setDestinations(prev => prev.filter(d => d.id === id))
     }
   }
 

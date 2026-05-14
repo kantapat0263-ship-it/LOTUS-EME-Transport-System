@@ -18,7 +18,10 @@ import {
   Copy,
   Check,
   QrCode,
-  X
+  X,
+  FileText,
+  ClipboardList,
+  Info
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -385,15 +388,56 @@ export default function TripDetailPage() {
               </CardHeader>
               <CardContent className="p-4 md:p-6 space-y-4 pt-0">
                 {(trip.stops || []).map((stop: any, index: number) => (
-                  <div key={index} className="flex gap-3 md:gap-4 p-3 md:p-4 rounded-lg bg-secondary/30 relative border border-border/50">
-                    <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-bold shrink-0 text-sm">
-                      {index + 1}
-                    </div>
-                    <div className="flex-1 space-y-2 overflow-hidden">
-                      <p className="font-bold text-base md:text-lg text-accent truncate">{stop.siteName}</p>
-                      <div className="bg-background/50 p-2 md:p-3 rounded border border-dashed border-border">
-                        <p className="text-[10px] font-bold text-muted-foreground mb-1">รายการสินค้า:</p>
-                        <p className="text-xs md:text-sm whitespace-pre-wrap">{stop.cargoDetails || "ไม่มีรายละเอียด"}</p>
+                  <div key={index} className="flex flex-col gap-3 p-4 rounded-xl bg-secondary/20 border border-border/50">
+                    <div className="flex gap-4 items-start">
+                      <div className="w-8 h-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-bold shrink-0 text-sm">
+                        {index + 1}
+                      </div>
+                      <div className="flex-1 overflow-hidden space-y-2">
+                        <div className="flex justify-between items-start gap-4">
+                          <p className="font-bold text-lg text-accent truncate">{stop.siteName}</p>
+                          {stop.requestTime && (
+                            <Badge variant="outline" className="shrink-0 bg-background/50 border-accent/30 text-accent">
+                              🕗 {stop.requestTime} น.
+                            </Badge>
+                          )}
+                        </div>
+                        
+                        <div className="bg-background/50 p-3 rounded-lg border border-dashed border-border/50">
+                          <p className="text-[10px] font-bold text-muted-foreground mb-1 uppercase tracking-wider">📦 รายการสินค้า / รายละเอียดงาน:</p>
+                          <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{stop.cargoDetails || "ไม่มีรายละเอียด"}</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {stop.requestedBy && (
+                            <div className="bg-accent/5 p-2 rounded-lg border border-accent/10">
+                              <p className="text-[10px] font-bold text-muted-foreground uppercase mb-0.5">ผู้ขอใช้รถ:</p>
+                              <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <User className="h-3 w-3 text-accent" /> {stop.requestedBy}
+                              </p>
+                              {stop.requestedByPhone && (
+                                <a href={`tel:${stop.requestedByPhone}`} className="text-xs text-orange-400 font-bold hover:underline flex items-center gap-1.5 mt-1">
+                                  <Phone className="h-3 w-3" /> {stop.requestedByPhone}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          {stop.note && (
+                            <div className="bg-orange-500/5 p-2 rounded-lg border border-orange-500/10">
+                              <p className="text-[10px] font-bold text-orange-400 uppercase mb-0.5">📌 หมายเหตุผู้ขอ:</p>
+                              <p className="text-xs italic text-gray-300">"{stop.note}"</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {stop.dispatcherNote && (
+                          <div className="mt-2 bg-blue-600/5 p-2 rounded-lg border border-blue-600/20">
+                            <p className="text-[10px] font-bold text-blue-400 uppercase mb-0.5 flex items-center gap-1">
+                              <Info className="h-3 w-3" /> บันทึกจากจัดรถ:
+                            </p>
+                            <p className="text-xs text-blue-100">{stop.dispatcherNote}</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -510,15 +554,25 @@ export default function TripDetailPage() {
               </td>
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top' }}>
                 {(trip.stops || []).map((stop: any, index: number) => (
-                  <div key={index} style={{ marginBottom: '12px' }}>
-                    <div style={{ fontWeight: 'bold' }}>{index + 1}. {stop.siteName}</div>
+                  <div key={index} style={{ marginBottom: '16px', borderBottom: index < trip.stops.length - 1 ? '1px dashed #ccc' : 'none', paddingBottom: '8px' }}>
+                    <div style={{ fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{index + 1}. {stop.siteName}</span>
+                      {stop.requestTime && <span style={{ fontWeight: 'normal', fontSize: '11px' }}>⏰ นัดหมาย: {stop.requestTime} น.</span>}
+                    </div>
                     {stop.cargoDetails && (
-                      <div style={{ marginLeft: '16px', fontSize: '12px', whiteSpace: 'pre-line', marginTop: '2px' }}>
-                        {stop.cargoDetails}
+                      <div style={{ marginLeft: '16px', fontSize: '12px', whiteSpace: 'pre-line', marginTop: '4px', backgroundColor: '#f9f9f9', padding: '4px' }}>
+                        <strong>งาน:</strong> {stop.cargoDetails}
                       </div>
                     )}
-                    <div style={{ textAlign: 'right', color: '#444', fontSize: '11px', fontStyle: 'italic', marginTop: '2px' }}>
-                      สถานที่: {getStopLocation(stop)}
+                    <div style={{ marginLeft: '16px', marginTop: '6px', fontSize: '11px' }}>
+                      <div style={{ color: '#444' }}>📍 สถานที่: {getStopLocation(stop)}</div>
+                      {stop.requestedBy && (
+                        <div style={{ color: '#222', marginTop: '2px' }}>
+                          👤 ผู้ขอ: <strong>{stop.requestedBy}</strong> {stop.requestedByPhone && <span>(📞 {stop.requestedByPhone})</span>}
+                        </div>
+                      )}
+                      {stop.note && <div style={{ color: '#666', marginTop: '2px' }}>📌 หมายเหตุ: <em>"{stop.note}"</em></div>}
+                      {stop.dispatcherNote && <div style={{ color: '#0056b3', marginTop: '2px' }}>✏️ บันทึกจัดคิว: {stop.dispatcherNote}</div>}
                     </div>
                   </div>
                 ))}
@@ -526,7 +580,10 @@ export default function TripDetailPage() {
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', fontSize: '12px' }}>
                 <div style={{ marginBottom: '6px' }}><strong>ผู้ขับ:</strong> {trip.driverName}</div>
                 <div style={{ marginBottom: '6px' }}><strong>ทะเบียน:</strong> {trip.vehiclePlate}</div>
-                <div style={{ marginTop: '10px' }}><strong>ผู้ขอใช้รถ:</strong><br/>{uniqueRequesters}</div>
+                <div style={{ marginTop: '10px', borderTop: '1px solid #eee', paddingTop: '6px' }}>
+                  <strong>ผู้ขอใช้รถรวม:</strong><br/>
+                  <span style={{ fontSize: '11px' }}>{uniqueRequesters}</span>
+                </div>
                 <div style={{ marginTop: '12px', fontSize: '10px', color: '#555' }}>วันที่บันทึก: {formatDisplayDate(trip.createdAt)}</div>
               </td>
             </tr>

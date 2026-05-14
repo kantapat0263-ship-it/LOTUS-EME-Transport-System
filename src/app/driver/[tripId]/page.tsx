@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -16,7 +15,8 @@ import {
   Phone,
   ArrowLeft,
   AlertCircle,
-  FileText
+  FileText,
+  Info
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -170,19 +170,27 @@ export default function DriverTripPage() {
                         {index + 1}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-blue-600 text-xs font-black uppercase tracking-wider mb-1">📍 สถานที่</p>
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-blue-600 text-xs font-black uppercase tracking-wider">📍 สถานที่</p>
+                          {(stop as any).requestTime && (
+                            <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">
+                              ⏰ { (stop as any).requestTime } น.
+                            </span>
+                          )}
+                        </div>
                         <h3 className="text-xl font-bold text-gray-900 leading-tight">{stop.siteName}</h3>
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-3">
+                  <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-4">
                     <div>
                       <p className="text-gray-500 text-[10px] font-bold uppercase mb-1">📦 รายละเอียดงาน</p>
                       <p className="text-base font-medium text-gray-800 whitespace-pre-wrap leading-snug">
                         {stop.cargoDetails || "ส่งวัสดุตามใบเบิก"}
                       </p>
                     </div>
+
                     {stop.requestedBy && (
                       <div className="flex flex-col gap-1 pt-2 border-t border-gray-200">
                         <div className="flex items-center gap-2">
@@ -193,6 +201,23 @@ export default function DriverTripPage() {
                           <a href={`tel:${(stop as any).requestedByPhone}`} className="flex items-center gap-2 text-sm font-bold text-orange-600 ml-5 hover:underline">
                             <Phone className="h-3.5 w-3.5" /> {(stop as any).requestedByPhone}
                           </a>
+                        )}
+                      </div>
+                    )}
+
+                    {((stop as any).note || (stop as any).dispatcherNote) && (
+                      <div className="pt-2 border-t border-gray-200 space-y-2">
+                        {(stop as any).note && (
+                          <div className="flex gap-2">
+                            <Info className="h-3 w-3 text-orange-400 shrink-0 mt-0.5" />
+                            <p className="text-xs text-gray-600 italic">หมายเหตุผู้ขอ: "{(stop as any).note}"</p>
+                          </div>
+                        )}
+                        {(stop as any).dispatcherNote && (
+                          <div className="flex gap-2">
+                            <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-blue-700 font-medium">บันทึกจัดรถ: {(stop as any).dispatcherNote}</p>
+                          </div>
                         )}
                       </div>
                     )}
