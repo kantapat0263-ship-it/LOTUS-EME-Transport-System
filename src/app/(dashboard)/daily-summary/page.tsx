@@ -74,15 +74,16 @@ export default function DailySummaryPage() {
       setDatesWithWork(new Set([...tripDates, ...vrDates]))
     }
 
-    // 1. Listen for Trip dates
-    const tripsQuery = query(collection(db, "trips"), where("status", "!=", "Cancelled"))
+    // 1. Listen for Trip dates - no filter to avoid index requirement
     const unsubscribeTrips = onSnapshot(
-      tripsQuery, 
+      collection(db, "trips"),
       (snapshot) => {
-        tripDates = snapshot.docs.map(doc => {
-          const data = doc.data()
-          return data.tripDate || data.date
-        }).filter(Boolean)
+        tripDates = snapshot.docs
+          .filter(doc => doc.data().status !== 'Cancelled')
+          .map(doc => {
+            const data = doc.data()
+            return data.tripDate || data.date
+          }).filter(Boolean)
         updateAllDates()
       },
       async (error) => {
@@ -93,12 +94,13 @@ export default function DailySummaryPage() {
       }
     )
 
-    // 2. Listen for Vehicle Request dates (The date vehicle is needed)
-    const vrQuery = query(collection(db, "vehicleRequests"), where("status", "!=", "cancelled"))
+    // 2. Listen for Vehicle Request dates - no filter to avoid index requirement
     const unsubscribeVRs = onSnapshot(
-      vrQuery, 
+      collection(db, "vehicleRequests"),
       (vrSnapshot) => {
-        vrDates = vrSnapshot.docs.map(doc => doc.data().requestDate).filter(Boolean)
+        vrDates = vrSnapshot.docs
+          .filter(doc => doc.data().status !== 'cancelled')
+          .map(doc => doc.data().requestDate).filter(Boolean)
         updateAllDates()
       },
       async (error) => {
