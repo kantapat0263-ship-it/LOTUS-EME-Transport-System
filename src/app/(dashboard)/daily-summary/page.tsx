@@ -77,22 +77,16 @@ export default function DailySummaryPage() {
       setDatesWithWork(newSet)
     }
 
-    // 1. Listen for Trip dates - no filter to avoid index requirement
+    // 1. Listen for Trip dates
     const unsubscribeTrips = onSnapshot(
       collection(db, "trips"),
       (snapshot) => {
-        console.log("TRIPS SNAPSHOT - total docs:", snapshot.docs.length)
-        snapshot.docs.forEach(doc => {
-          const data = doc.data()
-          console.log("TRIP:", doc.id, "status:", data.status, "tripDate:", data.tripDate, "date:", data.date)
-        })
         tripDates = snapshot.docs
           .filter(doc => doc.data().status !== 'Cancelled')
           .map(doc => {
             const data = doc.data()
             return data.tripDate || data.date
           }).filter(Boolean)
-        console.log("tripDates result:", tripDates)
         updateAllDates()
       },
       async (error) => {
@@ -103,7 +97,7 @@ export default function DailySummaryPage() {
       }
     )
 
-    // 2. Listen for Vehicle Request dates - no filter to avoid index requirement
+    // 2. Listen for Vehicle Request dates
     const unsubscribeVRs = onSnapshot(
       collection(db, "vehicleRequests"),
       (vrSnapshot) => {
@@ -146,8 +140,8 @@ export default function DailySummaryPage() {
           return trip.status !== 'Cancelled'
         })
         .sort((a, b) => {
-          const timeA = (a as any).departureTime || "08:30"
-          const timeB = (b as any).departureTime || "08:30"
+          const timeA = (a.stops?.[0] as any)?.requestTime || (a as any).departureTime || "08:30"
+          const timeB = (b.stops?.[0] as any)?.requestTime || (b as any).departureTime || "08:30"
           return timeA.localeCompare(timeB)
         })
 
@@ -436,6 +430,7 @@ export default function DailySummaryPage() {
                           ])).filter(Boolean).join(", ")
 
                           const driverPhone = getDriverPhone(trip.driverId)
+                          const mainTime = (trip.stops?.[0] as any)?.requestTime || (trip as any).departureTime || "08:30"
 
                           return (
                             <tr key={trip.id}>
@@ -443,7 +438,7 @@ export default function DailySummaryPage() {
                                 {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
                               </td>
                               <td className="border border-black p-2 text-center align-top">
-                                {(trip as any).departureTime || "08:30"} น.
+                                {mainTime} น.
                               </td>
                               <td className="border border-black p-2 align-top space-y-4">
                                 {(trip.stops || []).map((stop, sIdx) => {
@@ -452,12 +447,14 @@ export default function DailySummaryPage() {
                                   const requesterPhone = (stop as any).requestedByPhone || ""
                                   
                                   const requesterNote = (stop as any).note || (stop as any).notes || ""
-                                  const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`];
+                                  const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`] || (stop as any).dispatcherNote;
+                                  const stopTime = (stop as any).requestTime;
                                   
                                   return (
                                     <div key={sIdx} className="space-y-1">
                                       <div className="flex gap-1.5 font-bold">
                                         <span>{sIdx + 1}.</span>
+                                        {stopTime && <span className="text-blue-700">[{stopTime} น.]</span>}
                                         <span>{stop.siteName}</span>
                                       </div>
                                       <div className="pl-5 space-y-0.5">
