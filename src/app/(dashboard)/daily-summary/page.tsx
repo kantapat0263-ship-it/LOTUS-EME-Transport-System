@@ -78,12 +78,18 @@ export default function DailySummaryPage() {
     const unsubscribeTrips = onSnapshot(
       collection(db, "trips"),
       (snapshot) => {
+        console.log("TRIPS SNAPSHOT - total docs:", snapshot.docs.length)
+        snapshot.docs.forEach(doc => {
+          const data = doc.data()
+          console.log("TRIP:", doc.id, "status:", data.status, "tripDate:", data.tripDate, "date:", data.date)
+        })
         tripDates = snapshot.docs
           .filter(doc => doc.data().status !== 'Cancelled')
           .map(doc => {
             const data = doc.data()
             return data.tripDate || data.date
           }).filter(Boolean)
+        console.log("tripDates result:", tripDates)
         updateAllDates()
       },
       async (error) => {
