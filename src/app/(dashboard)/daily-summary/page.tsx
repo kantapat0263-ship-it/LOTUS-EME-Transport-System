@@ -31,7 +31,7 @@ import {
   Dialog, 
   DialogContent, 
   DialogHeader, 
-  DialogTitle,
+  DialogTitle, 
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog"
@@ -316,8 +316,8 @@ export default function DailySummaryPage() {
                   }
                 }}
                 className="rounded-md bg-background"
-                components={{
-                  DayContent: ({ date }) => {
+                components={React.useMemo(() => ({
+                  DayContent: React.useCallback(({ date }: { date: Date }) => {
                     const dateStr = format(date, "yyyy-MM-dd")
                     const hasWork = datesWithWork.has(dateStr)
                     return (
@@ -328,8 +328,8 @@ export default function DailySummaryPage() {
                         )}
                       </div>
                     )
-                  }
-                }}
+                  }, [datesWithWork])
+                }), [datesWithWork])}
               />
             </CardContent>
           </Card>
