@@ -137,7 +137,7 @@ export default function TripGroupingPage() {
     }
   }, [mode])
 
-  const handleCreateTrip = React.useCallback(() => {
+  const handleCreateTrip = React.useCallback(async () => {
     const count = mode === 'manual' ? manualOrder.length : selectedIds.size
     if (count === 0) {
       toast({ title: "ข้อมูลไม่ครบ", description: mode === 'manual' ? "กรุณาเลือกจุดหมายบน Map" : "กรุณาเลือกอย่างน้อย 1 จุดหมาย", variant: "destructive" })
@@ -148,8 +148,11 @@ export default function TripGroupingPage() {
       return
     }
 
-    // Check if driver already has a trip today
-    const existingTrip = tripsToday?.find(t => t.driverId === driverId && t.status !== 'Cancelled')
+    // Check if driver already has a trip on the target date
+    const targetDateStr = selectedDestinations[0]?.requestDate || new Date().toISOString().split('T')[0];
+    const tripsOnTargetDate = await getDocs(query(collection(db, "trips"), where("tripDate", "==", targetDateStr), where("driverId", "==", driverId)));
+    const existingTrip = tripsOnTargetDate.docs.map(d => ({...d.data(), id: d.id})).find((t: any) => t.status !== 'Cancelled');
+
     if (existingTrip) {
       setMergeDialog({
         show: true,
@@ -160,16 +163,17 @@ export default function TripGroupingPage() {
     }
 
     setIsConfirmOpen(true)
-  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, tripsToday, selectedDestinations])
+  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, selectedDestinations, db])
 
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
     try {
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const now = new Date();
-      const tripDateStr = now.toISOString().split('T')[0];
-      const d = String(now.getDate()).padStart(2, '0');
-      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const tripDateStr = selectedDestinations[0]?.requestDate || now.toISOString().split('T')[0];
+      const tripDateObj = new Date(tripDateStr);
+      const d = String(tripDateObj.getDate()).padStart(2, '0');
+      const m = String(tripDateObj.getMonth() + 1).padStart(2, '0');
       const datePrefix = `T-${d}${m}`;
       const qTrips = query(collection(db, "trips"), where("tripDate", "==", tripDateStr));
       const snapTrips = await getDocs(qTrips);
