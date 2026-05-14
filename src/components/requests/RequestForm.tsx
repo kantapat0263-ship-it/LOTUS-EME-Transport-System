@@ -86,7 +86,8 @@ export function RequestForm() {
     }
 
     // Admin และ Dispatcher ไม่มีข้อจำกัดเวลา — ขอได้ตั้งแต่พรุ่งนี้เสมอ
-    if (profile?.role === 'admin' || profile?.role === 'dispatcher') {
+    const role = profile?.role?.toLowerCase() || ''
+    if (role === 'admin' || role === 'dispatcher') {
       return addDays(1)
     }
 
@@ -189,7 +190,8 @@ export function RequestForm() {
     const hour = now.getHours()
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
     const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
-    const isViewer = profile?.role !== 'admin' && profile?.role !== 'dispatcher'
+    const role = profile?.role?.toLowerCase() || ''
+    const isViewer = role !== 'admin' && role !== 'dispatcher'
     const isOutside = hour >= closeHour || hour < openHour
     const minDays = (isViewer && isOutside) ? 2 : 1
     const minDateLimit = new Date()
@@ -208,7 +210,7 @@ export function RequestForm() {
     }
 
     // Viewer เท่านั้น — บังคับตามกฎเวลาทำการ
-    if (profile?.role !== 'admin' && profile?.role !== 'dispatcher') {
+    if (isViewer) {
       if (selectedDate < minDateLimitStr) {
         toast({ 
           title: "ไม่สามารถจองวันนี้ได้", 
@@ -306,7 +308,7 @@ export function RequestForm() {
     }
   }
 
-  const isViewer = profile?.role !== 'admin' && profile?.role !== 'dispatcher';
+  const isViewer = profile?.role?.toLowerCase() !== 'admin' && profile?.role?.toLowerCase() !== 'dispatcher';
   const hour = new Date().getHours();
   const isOutsideHours = hour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
                         hour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
