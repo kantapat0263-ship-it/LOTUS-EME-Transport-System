@@ -32,7 +32,8 @@ import {
   Briefcase,
   Save,
   Lock,
-  Phone
+  Phone,
+  Info
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
 import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
@@ -167,7 +168,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
     if (!isDetailOpen || !selectedReq || !apiKey) {
-      markersRef.current.forEach(m => m.setMap(null));
+      if (markersRef.current) markersRef.current.forEach(m => m.setMap(null));
       markersRef.current = [];
       mapInstanceRef.current = null;
       return;
@@ -245,7 +246,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     const timer = setTimeout(initMap, 300);
     return () => {
       clearTimeout(timer);
-      markersRef.current.forEach(m => m.setMap(null));
+      if (markersRef.current) markersRef.current.forEach(m => m.setMap(null));
       markersRef.current = [];
     };
   }, [isDetailOpen, selectedReqId, companySettings?.googleMapsApiKeyReference]);
@@ -723,6 +724,7 @@ export default function RequestsPage() {
   const [activeTab, setActiveTab] = React.useState("form")
   const [isCancelOpen, setIsCancelOpen] = React.useState(false)
   const [reqToCancel, setReqToCancel] = React.useState<any>(null)
+  const [viewingUserReq, setViewingUserReq] = React.useState<any>(null)
 
   const myRequestsRef = useMemoFirebase(() => (db && user) ? query(
     collection(db, "vehicleRequests"),
@@ -789,10 +791,14 @@ export default function RequestsPage() {
               </div>
             ) : myRequests && myRequests.length > 0 ? (
               [...myRequests].sort((a,b) => (b.createdAt?.toDate()?.getTime() || 0) - (a.createdAt?.toDate()?.getTime() || 0)).map((req: any) => (
-                <Card key={req.id} className={cn(
-                  "border-border/50 hover:border-accent/30 transition-all overflow-hidden group",
-                  req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
-                )}>
+                <Card 
+                  key={req.id} 
+                  className={cn(
+                    "border-border/50 hover:border-accent/30 transition-all overflow-hidden group cursor-pointer",
+                    req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
+                  )}
+                  onClick={() => setViewingUserReq(req)}
+                >
                   <CardContent className="p-0">
                     <div className="flex flex-col sm:flex-row">
                       <div className={cn(
@@ -826,7 +832,7 @@ export default function RequestsPage() {
                             </div>
                           </div>
                           
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && (
                               <Button 
                                 variant="outline" 
@@ -874,7 +880,14 @@ export default function RequestsPage() {
                                     {isAssigned ? <Check className="h-4 w-4" /> : `${idx + 1}.`}
                                   </div>
                                   <div className="space-y-0.5">
-                                    <p className="font-semibold text-foreground">{dest.siteName}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-semibold text-foreground">{dest.siteName}</p>
+                                      {dest.requestTime && (
+                                        <Badge variant="outline" className="text-[10px] h-4 py-0 bg-accent/5 text-accent border-accent/20">
+                                          🕗 {dest.requestTime} น.
+                                        </Badge>
+                                      )}
+                                    </div>
                                     <p className="text-xs text-muted-foreground">{dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}</p>
                                   </div>
                                 </div>
@@ -906,6 +919,12 @@ export default function RequestsPage() {
                             </span>
                           </div>
                         )}
+
+                        <div className="flex justify-end pt-2">
+                          <span className="text-[10px] text-accent flex items-center group-hover:translate-x-1 transition-transform font-bold">
+                            กดเพื่อดูรายละเอียด <ChevronRight className="h-3 w-3 ml-1" />
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </CardContent>
@@ -946,6 +965,114 @@ export default function RequestsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* User Request Detail Dialog */}
+      <Dialog open={!!viewingUserReq} onOpenChange={(open) => !open && setViewingUserReq(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-accent" /> รายละเอียดคำขอ {viewingUserReq?.requestId}
+            </DialogTitle>
+            <DialogDescription>
+              ข้อมูลจุดหมายและเวลานัดหมายที่ระบุไว้
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewingUserReq && (
+            <div className="space-y-6 py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-secondary/30 p-4 rounded-xl border border-border/50">
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">ผู้ขอใช้รถ</p>
+                  <p className="text-sm font-bold text-white">{viewingUserReq.requestedBy}</p>
+                  <p className="text-[10px] text-muted-foreground">{viewingUserReq.requestedByEmail}</p>
+                </div>
+                <div className="space-y-1 sm:text-right">
+                  <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วันที่ส่งของ</p>
+                  <p className="text-sm font-bold text-accent">{formatDateDisplay(viewingUserReq.requestDate)}</p>
+                  <div className="flex items-center justify-end gap-2 mt-1">
+                    {getStatusBadge(viewingUserReq.status)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-sm font-bold flex items-center gap-2 text-white">
+                  <MapPin className="h-4 w-4 text-accent" /> จุดหมายและเวลาที่ระบุ ({viewingUserReq.destinations.length})
+                </p>
+                <div className="space-y-3">
+                  {viewingUserReq.destinations.map((dest: any, idx: number) => {
+                    const isAssigned = (viewingUserReq.assignedDestinations || []).includes(idx);
+                    
+                    return (
+                      <div key={idx} className={cn(
+                        "bg-background/50 border border-border/50 p-4 rounded-xl flex gap-4 items-start",
+                        isAssigned && "border-green-500/30 bg-green-500/5"
+                      )}>
+                        <div className={cn(
+                          "w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0",
+                          isAssigned ? "bg-green-500 text-white" : "bg-accent/20 text-accent"
+                        )}>
+                          {isAssigned ? <Check className="h-4 w-4" /> : idx + 1}
+                        </div>
+                        <div className="flex-1 space-y-2 min-w-0">
+                          <div className="flex justify-between items-start gap-4">
+                            <p className="font-bold text-white truncate">{dest.siteName}</p>
+                            <Badge className="bg-accent/10 text-accent border-accent/20 shrink-0">
+                              🕗 {dest.requestTime || "08:30"} น.
+                            </Badge>
+                          </div>
+                          <div className="bg-secondary/20 p-2 rounded text-xs text-muted-foreground border border-dashed border-border/50">
+                            <span className="font-bold text-foreground text-[10px] block mb-1 uppercase tracking-wider">📦 ลักษณะงาน / วัสดุ:</span>
+                            <p className="whitespace-pre-wrap">{dest.jobDescription || "ไม่ได้ระบุลักษณะงาน"}</p>
+                          </div>
+                          {isAssigned && viewingUserReq.stopNotes?.[`stop_${idx}`] && (
+                            <div className="p-2 rounded bg-blue-500/5 border border-blue-500/10 text-[11px] text-blue-300 italic">
+                              ✏️ บันทึกจัดรถ: {viewingUserReq.stopNotes[`stop_${idx}`]}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {(viewingUserReq.note || viewingUserReq.notes) && (
+                <div className="space-y-2">
+                  <p className="text-sm font-bold flex items-center gap-2 text-white">
+                    <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุเพิ่มเติมจากผู้ขอ
+                  </p>
+                  <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
+                    "{viewingUserReq.note || viewingUserReq.notes}"
+                  </div>
+                </div>
+              )}
+
+              {viewingUserReq.status === 'rejected' && viewingUserReq.rejectReason && (
+                <div className="p-4 rounded-xl bg-red-500/5 border border-red-500/20">
+                  <p className="text-xs text-red-500 font-bold mb-1 uppercase flex items-center gap-2">
+                    <XCircle className="h-4 w-4" /> เหตุผลที่ปฏิเสธงาน
+                  </p>
+                  <p className="text-sm text-foreground italic">"{viewingUserReq.rejectReason}"</p>
+                </div>
+              )}
+
+              {viewingUserReq.tripId && viewingUserReq.status === 'approved' && (
+                <Alert className="bg-green-500/10 border-green-500/30 text-green-500">
+                  <Truck className="h-4 w-4" />
+                  <AlertTitle className="text-xs font-bold uppercase">จัดรถเรียบร้อยแล้ว</AlertTitle>
+                  <AlertDescription className="text-xs">
+                    หมายเลขเที่ยววิ่ง: <span className="font-bold">{viewingUserReq.tripId}</span> สามารถติดตามสถานะได้ในหน้าประวัติการส่ง
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" className="w-full h-11" onClick={() => setViewingUserReq(null)}>ปิดหน้าต่าง</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
