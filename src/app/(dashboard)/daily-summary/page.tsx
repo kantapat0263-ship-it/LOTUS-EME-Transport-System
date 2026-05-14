@@ -374,7 +374,7 @@ export default function DailySummaryPage() {
               </div>
 
               <Button 
-                variant="outline"
+                variant="outline" 
                 className="bg-green-600 hover:bg-green-700 text-white h-11 w-full border-transparent font-bold"
                 onClick={handleSendLine}
                 disabled={trips.length === 0 || isSendingLine || isLoading || !selectedDate}
@@ -423,107 +423,110 @@ export default function DailySummaryPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {trips.map((trip) => {
+                        {trips.flatMap((trip) => {
+                          const stops = trip.stops || [];
+                          if (stops.length === 0) return [];
+
                           const summaryRequesters = Array.from(new Set([
                             (trip as any).requestedBy,
-                            ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
-                          ])).filter(Boolean).join(", ")
+                            ...stops.map((s: any) => s.requestedBy).filter(Boolean)
+                          ])).filter(Boolean).join(", ");
 
-                          const driverPhone = getDriverPhone(trip.driverId)
-                          const mainTime = (trip.stops?.[0] as any)?.requestTime || (trip as any).departureTime || "08:30"
+                          const driverPhone = getDriverPhone(trip.driverId);
 
-                          return (
-                            <tr key={trip.id}>
-                              <td className="border border-black p-2 text-center align-top">
-                                {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
-                              </td>
-                              <td className="border border-black p-2 text-center align-top">
-                                {mainTime} น.
-                              </td>
-                              <td className="border border-black p-2 align-top space-y-4">
-                                {(trip.stops || []).map((stop, sIdx) => {
-                                  const locationText = (stop as any).address || (stop as any).zone || ""
-                                  const stopRequester = stop.requestedBy || (trip as any).requestedBy || ""
-                                  const requesterPhone = (stop as any).requestedByPhone || ""
-                                  
-                                  const requesterNote = (stop as any).note || (stop as any).notes || ""
-                                  const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`] || (stop as any).dispatcherNote;
-                                  const stopTime = (stop as any).requestTime;
-                                  
-                                  return (
-                                    <div key={sIdx} className="space-y-1">
-                                      <div className="flex gap-1.5 font-bold">
-                                        <span>{sIdx + 1}.</span>
-                                        {stopTime && <span className="text-blue-700">[{stopTime} น.]</span>}
-                                        <span>{stop.siteName}</span>
+                          return stops.map((stop, sIdx) => {
+                            const locationText = (stop as any).address || (stop as any).zone || "";
+                            const stopRequester = stop.requestedBy || (trip as any).requestedBy || "";
+                            const requesterPhone = (stop as any).requestedByPhone || "";
+                            
+                            const requesterNote = (stop as any).note || (stop as any).notes || "";
+                            const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`] || (stop as any).dispatcherNote;
+                            const stopTime = (stop as any).requestTime;
+
+                            return (
+                              <tr key={`${trip.id}-${sIdx}`}>
+                                {sIdx === 0 && (
+                                  <td className="border border-black p-2 text-center align-top" rowSpan={stops.length}>
+                                    {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
+                                  </td>
+                                )}
+                                <td className="border border-black p-2 text-center align-top font-bold">
+                                  {stopTime || "08:30"} น.
+                                </td>
+                                <td className="border border-black p-2 align-top">
+                                  <div className="space-y-1">
+                                    <div className="flex gap-1.5 font-bold">
+                                      <span>{sIdx + 1}.</span>
+                                      <span>{stop.siteName}</span>
+                                    </div>
+                                    <div className="pl-5 space-y-0.5">
+                                      <div className="flex gap-2">
+                                        <span className="shrink-0">-</span>
+                                        <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
                                       </div>
-                                      <div className="pl-5 space-y-0.5">
-                                        <div className="flex gap-2">
-                                          <span className="shrink-0">-</span>
-                                          <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
+                                      
+                                      {stopDispatcherNote && (
+                                        <div style={{
+                                          marginTop: '4px',
+                                          paddingLeft: '8px',
+                                          borderLeft: '2px solid #3b82f6',
+                                          fontSize: '12px',
+                                          color: '#1e40af',
+                                          whiteSpace: 'pre-line'
+                                        }}>
+                                          ✏️ {stopDispatcherNote}
                                         </div>
-                                        
-                                        {stopDispatcherNote && (
-                                          <div style={{
-                                            marginTop: '4px',
-                                            paddingLeft: '8px',
-                                            borderLeft: '2px solid #3b82f6',
-                                            fontSize: '12px',
-                                            color: '#1e40af',
-                                            whiteSpace: 'pre-line'
-                                          }}>
-                                            ✏️ {stopDispatcherNote}
-                                          </div>
-                                        )}
+                                      )}
 
-                                        {locationText && (
-                                          <div className="pl-3 text-[10px] text-gray-600">
-                                            {locationText}
-                                          </div>
-                                        )}
-                                        {stopRequester && (
-                                          <div className="pl-3 text-[10px] text-gray-500 italic flex items-center gap-1 mt-0.5">
-                                            <ClipboardList className="h-2.5 w-2.5" />
-                                            <span>ผู้ขอ: {stopRequester} {requesterPhone && <span className="font-bold text-gray-700 ml-1">📞 {requesterPhone}</span>}</span>
-                                          </div>
-                                        )}
+                                      {locationText && (
+                                        <div className="pl-3 text-[10px] text-gray-600">
+                                          {locationText}
+                                        </div>
+                                      )}
+                                      {stopRequester && (
+                                        <div className="pl-3 text-[10px] text-gray-500 italic flex items-center gap-1 mt-0.5">
+                                          <ClipboardList className="h-2.5 w-2.5" />
+                                          <span>ผู้ขอ: {stopRequester} {requesterPhone && <span className="font-bold text-gray-700 ml-1">📞 {requesterPhone}</span>}</span>
+                                        </div>
+                                      )}
 
-                                        {requesterNote && requesterNote.trim() !== '' && (
-                                          <div style={{ fontSize: '11px', color: '#555', marginTop: '2px' }} className="pl-3">
-                                            📌 หมายเหตุผู้ขอ: {requesterNote}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                              </td>
-                              <td className="border border-black p-2 align-top">
-                                <div className="flex justify-between items-start">
-                                  <div className="space-y-2">
-                                    <div>
-                                      <p className="font-bold">คนขับ: {trip.driverName}</p>
-                                      {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
-                                      <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
-                                    </div>
-                                    <div className="pt-2 border-t border-gray-200">
-                                      <p className="text-[10px] font-bold text-gray-500 uppercase">ผู้ขอใช้รถ:</p>
-                                      <p className="leading-tight">{summaryRequesters || "-"}</p>
+                                      {requesterNote && requesterNote.trim() !== '' && (
+                                        <div style={{ fontSize: '11px', color: '#555', marginTop: '2px' }} className="pl-3">
+                                          📌 หมายเหตุผู้ขอ: {requesterNote}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
-                                  <Button 
-                                    variant="outline" 
-                                    size="icon" 
-                                    className="no-print h-8 w-8 shrink-0 border-blue-500 text-blue-600 hover:bg-blue-50"
-                                    onClick={() => handleShareClick(trip)}
-                                    title="ส่งใบงานให้คนขับ"
-                                  >
-                                    <Send className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
-                          )
+                                </td>
+                                {sIdx === 0 && (
+                                  <td className="border border-black p-2 align-top" rowSpan={stops.length}>
+                                    <div className="flex justify-between items-start">
+                                      <div className="space-y-2">
+                                        <div>
+                                          <p className="font-bold">คนขับ: {trip.driverName}</p>
+                                          {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
+                                          <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
+                                        </div>
+                                        <div className="pt-2 border-t border-gray-200">
+                                          <p className="text-[10px] font-bold text-gray-500 uppercase">ผู้ขอใช้รถ:</p>
+                                          <p className="leading-tight">{summaryRequesters || "-"}</p>
+                                        </div>
+                                      </div>
+                                      <Button 
+                                        variant="outline" 
+                                        size="icon" 
+                                        className="no-print h-8 w-8 shrink-0 border-blue-500 text-blue-600 hover:bg-blue-50"
+                                        onClick={() => handleShareClick(trip)}
+                                        title="ส่งใบงานให้คนขับ"
+                                      >
+                                        <Send className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          });
                         })}
                       </tbody>
                     </table>
