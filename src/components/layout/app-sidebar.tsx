@@ -25,7 +25,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { useUser, useAuth, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
+import { useUser, useAuth, useFirestore, errorEmitter, FirestorePermissionError } from "@/firebase"
 import { Badge } from "@/components/ui/badge"
 import { UserRole } from "@/types/models"
 import { collection, query, where, onSnapshot } from "firebase/firestore"
@@ -69,24 +69,33 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       )
     }
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(d => d.data())
-      
-      if (isStaff) {
-        // 1. Pending: Not yet acknowledged
-        const pCount = docs.filter(r => r.status === 'pending').length
+    const unsubscribe = onSnapshot(
+      q, 
+      (snapshot) => {
+        const docs = snapshot.docs.map(d => d.data())
         
-        // 2. In Progress: Received by dispatcher but not fully planned
-        const iCount = docs.filter(r => r.status === 'in_progress' || r.status === 'partial').length
-        
-        setPendingReqCount(pCount)
-        setInProgressReqCount(iCount)
-      } else {
-        // For Viewers, only count their own pending
-        setPendingReqCount(docs.length)
-        setInProgressReqCount(0)
+        if (isStaff) {
+          // 1. Pending: Not yet acknowledged
+          const pCount = docs.filter(r => r.status === 'pending').length
+          
+          // 2. In Progress: Received by dispatcher but not fully planned
+          const iCount = docs.filter(r => r.status === 'in_progress' || r.status === 'partial').length
+          
+          setPendingReqCount(pCount)
+          setInProgressReqCount(iCount)
+        } else {
+          // For Viewers, only count their own pending
+          setPendingReqCount(docs.length)
+          setInProgressReqCount(0)
+        }
+      },
+      async (error) => {
+        errorEmitter.emit('permission-error', new FirestorePermissionError({
+          path: 'vehicleRequests',
+          operation: 'list'
+        }))
       }
-    })
+    )
 
     return () => unsubscribe()
   }, [db, user, userRole])

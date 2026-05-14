@@ -2,7 +2,7 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useMemoFirebase } from "@/firebase"
+import { useFirestore, useCollection, useMemoFirebase, errorEmitter, FirestorePermissionError } from "@/firebase"
 import { collection, query, where, orderBy, getDocs, doc, onSnapshot } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -67,25 +67,49 @@ export default function DailySummaryPage() {
   React.useEffect(() => {
     if (!db) return
     
+    let tripDates: string[] = []
+    let vrDates: string[] = []
+
+    const updateAllDates = () => {
+      setDatesWithWork(new Set([...tripDates, ...vrDates]))
+    }
+
     // 1. Listen for Trip dates
     const tripsQuery = query(collection(db, "trips"), where("status", "!=", "Cancelled"))
-    const unsubscribeTrips = onSnapshot(tripsQuery, (snapshot) => {
-      const tripDates = snapshot.docs.map(doc => doc.data().tripDate).filter(Boolean)
-      
-      // 2. Listen for Vehicle Request dates (The date vehicle is needed)
-      const vrQuery = query(collection(db, "vehicleRequests"), where("status", "!=", "cancelled"))
-      const unsubscribeVRs = onSnapshot(vrQuery, (vrSnapshot) => {
-        const vrDates = vrSnapshot.docs.map(doc => doc.data().requestDate).filter(Boolean)
-        
-        // Combine unique dates from both
-        const allWorkDates = new Set([...tripDates, ...vrDates])
-        setDatesWithWork(allWorkDates)
-      })
+    const unsubscribeTrips = onSnapshot(
+      tripsQuery, 
+      (snapshot) => {
+        tripDates = snapshot.docs.map(doc => doc.data().tripDate).filter(Boolean)
+        updateAllDates()
+      },
+      async (error) => {
+        errorEmitter.emit('permission-error', new FirestorePermissionError({
+          path: 'trips',
+          operation: 'list'
+        }))
+      }
+    )
 
-      return () => unsubscribeVRs()
-    })
+    // 2. Listen for Vehicle Request dates (The date vehicle is needed)
+    const vrQuery = query(collection(db, "vehicleRequests"), where("status", "!=", "cancelled"))
+    const unsubscribeVRs = onSnapshot(
+      vrQuery, 
+      (vrSnapshot) => {
+        vrDates = vrSnapshot.docs.map(doc => doc.data().requestDate).filter(Boolean)
+        updateAllDates()
+      },
+      async (error) => {
+        errorEmitter.emit('permission-error', new FirestorePermissionError({
+          path: 'vehicleRequests',
+          operation: 'list'
+        }))
+      }
+    )
 
-    return () => unsubscribeTrips()
+    return () => {
+      unsubscribeTrips()
+      unsubscribeVRs()
+    }
   }, [db])
 
   const fetchTrips = async (dateStr?: string) => {
@@ -111,7 +135,10 @@ export default function DailySummaryPage() {
 
       setTrips(results)
     } catch (error) {
-      console.error(error)
+      errorEmitter.emit('permission-error', new FirestorePermissionError({
+        path: 'trips',
+        operation: 'list'
+      }))
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถโหลดข้อมูลได้", variant: "destructive" })
     } finally {
       setIsLoading(false)
