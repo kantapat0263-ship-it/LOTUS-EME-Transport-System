@@ -87,7 +87,8 @@ export default function TripGroupingPage() {
             requestedBy: req.requestedBy,
             requestedByPhone: req.requestedByPhone || "",
             requestDate: req.requestDate,
-            requestTime: req.requestTime || "",
+            // CRITICAL FIX: Prioritize destination-specific time, then fallback to global VR time
+            requestTime: dest.requestTime || req.requestTime || "08:30",
             note: req.note || req.notes || "",
             dispatcherNote: req.stopNotes?.[`stop_${idx}`] || "",
             dispatcherName: req.stopNotesUpdatedBy || ""
