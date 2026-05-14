@@ -88,6 +88,7 @@ export default function TripGroupingPage() {
             requestedBy: req.requestedBy,
             requestedByPhone: req.requestedByPhone || "",
             requestDate: req.requestDate,
+            requestTime: req.requestTime || "",
             note: req.note || req.notes || "",
             dispatcherNote: req.stopNotes?.[`stop_${idx}`] || "",
             dispatcherName: req.stopNotesUpdatedBy || ""
