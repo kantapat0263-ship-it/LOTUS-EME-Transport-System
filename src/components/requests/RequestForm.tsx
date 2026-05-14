@@ -72,7 +72,7 @@ export function RequestForm() {
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [requestedBy, setRequestedBy] = React.useState("")
-  const [requestDate, setRequestDate] = React.useState(new Date().toISOString().split('T')[0])
+  const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0])
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [requestTime, setRequestTime] = React.useState("08:30")
   const [note, setNote] = React.useState("")
@@ -131,7 +131,7 @@ export function RequestForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!requestedBy || !requestDate || !requestTime || !user) {
+    if (!requestedBy || !selectedDate || !requestTime || !user) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อผู้ขอ วันที่ และเวลา", variant: "destructive" })
       return
     }
@@ -147,9 +147,9 @@ export function RequestForm() {
 
     setIsSubmitting(true)
     try {
-      const [year, month, day] = requestDate.split('-');
+      const [year, month, day] = selectedDate.split('-');
       const datePrefix = `VR-${day}${month}`;
-      const qRequests = query(collection(db, "vehicleRequests"), where("requestDate", "==", requestDate));
+      const qRequests = query(collection(db, "vehicleRequests"), where("requestDate", "==", selectedDate));
       const snapRequests = await getDocs(qRequests);
       const sequence = String(snapRequests.size + 1).padStart(3, '0');
       const safety = Math.floor(Math.random() * 10);
@@ -195,7 +195,7 @@ export function RequestForm() {
       const requestData = {
         id: requestId,
         requestId,
-        requestDate,
+        requestDate: selectedDate, // บันทึกวันที่ที่เลือกจริง (Schedule Date)
         requestTime,
         requestedBy,
         requestedByEmail: user.email,
@@ -205,13 +205,13 @@ export function RequestForm() {
         destinations: parsedDestinations,
         note,
         status: "pending",
-        createdAt: serverTimestamp(),
+        createdAt: serverTimestamp(), // เก็บวันที่สร้างจริงแยกต่างหาก
       }
 
       await setDoc(requestRef, requestData)
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
-      setRequestDate(new Date().toISOString().split('T')[0])
+      setSelectedDate(new Date().toISOString().split('T')[0])
       setRequestTime("08:30")
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน" }])
@@ -254,19 +254,19 @@ export function RequestForm() {
                       variant={"outline"}
                       className={cn(
                         "w-full h-11 justify-start text-left font-normal bg-background",
-                        !requestDate && "text-muted-foreground"
+                        !selectedDate && "text-muted-foreground"
                       )}
                     >
                       <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                      {requestDate ? format(new Date(requestDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                      {selectedDate ? format(new Date(selectedDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0" align="start">
                     <Calendar
                       mode="single"
-                      selected={requestDate ? new Date(requestDate) : undefined}
+                      selected={selectedDate ? new Date(selectedDate) : undefined}
                       onSelect={(date) => {
-                        setRequestDate(date ? format(date, "yyyy-MM-dd") : "")
+                        setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")
                         if (date) setIsCalendarOpen(false)
                       }}
                       initialFocus
@@ -343,7 +343,6 @@ export function RequestForm() {
                             ))}
                           </div>
                           
-                          {/* Delete Button for each stop (visible if > 1 stop) */}
                           {destinations.length > 1 && (
                             <Button
                               type="button"
