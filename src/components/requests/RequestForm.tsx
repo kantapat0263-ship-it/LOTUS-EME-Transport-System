@@ -154,7 +154,7 @@ export function RequestForm() {
 
   const removeDestination = (id: string) => {
     if (destinations.length > 1) {
-      setDestinations(prev => prev.filter(d => d.id === id))
+      setDestinations(prev => prev.filter(d => d.id !== id))
     }
   }
 
@@ -184,7 +184,18 @@ export function RequestForm() {
     }
 
     const todayStr = new Date().toISOString().split('T')[0]
-    const minDateLimit = getMinRequestDate().toISOString().split('T')[0]
+    
+    const now = new Date()
+    const hour = now.getHours()
+    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
+    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+    const isViewer = profile?.role !== 'admin' && profile?.role !== 'dispatcher'
+    const isOutside = hour >= closeHour || hour < openHour
+    const minDays = (isViewer && isOutside) ? 2 : 1
+    const minDateLimit = new Date()
+    minDateLimit.setDate(minDateLimit.getDate() + minDays)
+    minDateLimit.setHours(0, 0, 0, 0)
+    const minDateLimitStr = minDateLimit.toISOString().split('T')[0]
 
     // Validate: ห้ามขอวันเดียวกับวันปัจจุบัน (ทุกบทบาท)
     if (selectedDate === todayStr) {
@@ -198,10 +209,10 @@ export function RequestForm() {
 
     // Viewer เท่านั้น — บังคับตามกฎเวลาทำการ
     if (profile?.role !== 'admin' && profile?.role !== 'dispatcher') {
-      if (selectedDate < minDateLimit) {
+      if (selectedDate < minDateLimitStr) {
         toast({ 
           title: "ไม่สามารถจองวันนี้ได้", 
-          description: `นอกเวลารับคำขอ กรุณาจองตั้งแต่วันที่ ${format(new Date(minDateLimit), "dd/MM/yyyy")} เป็นต้นไป`, 
+          description: `นอกเวลารับคำขอ กรุณาจองตั้งแต่วันที่ ${format(new Date(minDateLimitStr + 'T00:00:00'), "dd/MM/yyyy")} เป็นต้นไป`, 
           variant: "destructive" 
         })
         return
@@ -284,7 +295,7 @@ export function RequestForm() {
       await setDoc(requestRef, requestData)
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
-      setSelectedDate(minDateLimit)
+      setSelectedDate(minDateLimitStr)
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
     } catch (error) {
@@ -353,14 +364,18 @@ export function RequestForm() {
                 </Popover>
                 {isViewer && isOutsideHours && (
                   <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1 leading-tight">
-                    <Info className="h-3 w-3 shrink-0" />
-                    นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                    <div className="flex items-center gap-1">
+                      <Info className="h-3 w-3 shrink-0" />
+                      นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                    </div>
                   </p>
                 )}
                 {!isViewer && (
                   <p className="text-[10px] text-blue-400 flex items-center gap-1 mt-1 leading-tight">
-                    <Info className="h-3 w-3 shrink-0" />
-                    โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
+                    <div className="flex items-center gap-1">
+                      <Info className="h-3 w-3 shrink-0" />
+                      โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
+                    </div>
                   </p>
                 )}
               </div>
