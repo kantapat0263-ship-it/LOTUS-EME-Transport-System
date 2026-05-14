@@ -3,11 +3,9 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useMemoFirebase } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, doc } from "firebase/firestore"
+import { collection, query, where, orderBy, getDocs, doc, onSnapshot } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { 
   FileText, 
   Printer, 
@@ -24,7 +22,8 @@ import {
   QrCode,
   Image as ImageIcon,
   ClipboardList,
-  Phone
+  Phone,
+  Info
 } from "lucide-react"
 import { 
   Dialog, 
@@ -37,7 +36,6 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver } from "@/types/models"
 import { cn } from "@/lib/utils"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 
@@ -49,6 +47,9 @@ export default function DailySummaryPage() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [isSavingImage, setIsSavingImage] = React.useState(false)
   const [isSendingLine, setIsSendingLine] = React.useState(false)
+  
+  // State for dates that have trips to highlight on calendar
+  const [datesWithTrips, setDatesWithTrips] = React.useState<Set<string>>(new Set())
 
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -58,12 +59,30 @@ export default function DailySummaryPage() {
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
   const [copied, setCopied] = React.useState(false)
 
-  const fetchTrips = async () => {
+  // Listen for all trip dates to highlight them
+  React.useEffect(() => {
+    if (!db) return
+    const q = query(collection(db, "trips"), where("status", "!=", "Cancelled"))
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const dates = new Set<string>()
+      snapshot.docs.forEach(doc => {
+        const data = doc.data()
+        if (data.tripDate) dates.add(data.tripDate)
+      })
+      setDatesWithTrips(dates)
+    })
+    return () => unsubscribe()
+  }, [db])
+
+  const fetchTrips = async (dateStr?: string) => {
+    const targetDate = dateStr || selectedDate
+    if (!targetDate) return
+
     setIsLoading(true)
     try {
       const q = query(
         collection(db, "trips"),
-        where("tripDate", "==", selectedDate)
+        where("tripDate", "==", targetDate)
       )
       
       const snapshot = await getDocs(q)
@@ -87,6 +106,11 @@ export default function DailySummaryPage() {
       setIsLoading(false)
     }
   }
+
+  // Initial load
+  React.useEffect(() => {
+    fetchTrips()
+  }, [])
 
   const formatThaiDate = (dateStr: string) => {
     if (!dateStr) return ""
@@ -219,54 +243,60 @@ export default function DailySummaryPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Controls */}
-        <Card className="lg:col-span-4 no-print">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <CalendarIcon className="h-5 w-5 text-accent" /> ตั้งค่ารายงาน
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <Label>เลือกวันที่</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant={"outline"}
-                    className={cn(
-                      "w-full h-11 justify-start text-left font-normal bg-background",
-                      !selectedDate && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                    {selectedDate ? format(new Date(selectedDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={selectedDate ? new Date(selectedDate) : undefined}
-                    onSelect={(date) => setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="grid grid-cols-1 gap-3 pt-2">
-              <Button 
-                className="bg-[#F0890D] hover:bg-[#F0890D]/90 h-11" 
-                onClick={fetchTrips}
-                disabled={isLoading}
-              >
-                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-                โหลดข้อมูล
-              </Button>
+        <div className="lg:col-span-4 space-y-6 no-print">
+          <Card className="border-accent/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <CalendarIcon className="h-5 w-5 text-accent" /> เลือกวันที่ต้องการดูคิวรถ
+              </CardTitle>
+              <CardDescription>วันที่มีจุด <span className="text-accent font-bold">●</span> คือวันที่มีคิวรถในระบบ</CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center p-0 pb-4">
+              <Calendar
+                mode="single"
+                selected={selectedDate ? new Date(selectedDate) : undefined}
+                onSelect={(date) => {
+                  if (date) {
+                    const dateStr = format(date, "yyyy-MM-dd")
+                    setSelectedDate(dateStr)
+                    fetchTrips(dateStr)
+                  }
+                }}
+                className="rounded-md bg-background"
+                components={{
+                  DayContent: ({ date }) => {
+                    const dateStr = format(date, "yyyy-MM-dd")
+                    const hasTrips = datesWithTrips.has(dateStr)
+                    return (
+                      <div className="relative w-full h-full flex items-center justify-center">
+                        {date.getDate()}
+                        {hasTrips && (
+                          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-accent" />
+                        )}
+                      </div>
+                    )
+                  }
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="bg-secondary/20">
+            <CardHeader>
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">จัดการรายงาน</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-2 text-sm mb-2 text-accent font-bold bg-accent/5 p-2 rounded border border-accent/20">
+                <Info className="h-4 w-4" />
+                <span>กำลังแสดงผลวันที่: {formatThaiDate(selectedDate)}</span>
+              </div>
               
               <div className="grid grid-cols-2 gap-3">
                 <Button 
                   variant="outline"
                   className="border-accent text-accent hover:bg-accent/10 h-11"
                   onClick={handlePrint}
-                  disabled={trips.length === 0}
+                  disabled={trips.length === 0 || isLoading}
                 >
                   <Printer className="mr-2 h-4 w-4" /> พิมพ์/PDF
                 </Button>
@@ -274,41 +304,48 @@ export default function DailySummaryPage() {
                   variant="outline"
                   className="border-green-600 text-green-500 hover:bg-green-600/10 h-11"
                   onClick={handleSaveImage}
-                  disabled={trips.length === 0 || isSavingImage}
+                  disabled={trips.length === 0 || isSavingImage || isLoading}
                 >
                   {isSavingImage ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <ImageIcon className="mr-2 h-4 w-4" />
                   )}
-                  {isSavingImage ? "กำลังบันทึก..." : "บันทึกรูปภาพ"}
+                  {isSavingImage ? "รอสักครู่..." : "รูปภาพ"}
                 </Button>
               </div>
 
               <Button 
                 variant="outline"
-                className="bg-green-600 hover:bg-green-700 text-white h-11 w-full border-transparent"
+                className="bg-green-600 hover:bg-green-700 text-white h-11 w-full border-transparent font-bold"
                 onClick={handleSendLine}
-                disabled={trips.length === 0 || isSendingLine}
+                disabled={trips.length === 0 || isSendingLine || isLoading}
               >
                 {isSendingLine ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                 {isSendingLine ? "กำลังส่ง..." : "ส่งเข้า LINE กลุ่ม"}
               </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Right: Preview Area */}
         <div className="lg:col-span-8 space-y-4 min-h-[500px]">
           <div className="no-print bg-secondary/10 border border-dashed rounded-xl p-3 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
-            <AlertCircle className="h-3 w-3" /> ตัวอย่างใบงาน (Preview) สำหรับพิมพ์ลงกระดาษ A4
+            {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertCircle className="h-3 w-3" />}
+            {isLoading ? "กำลังโหลดข้อมูล..." : "ตัวอย่างใบงาน (Preview) สำหรับพิมพ์ลงกระดาษ A4"}
           </div>
 
           <Card className={cn(
             "overflow-hidden transition-all",
-            trips.length === 0 && "opacity-40 grayscale"
+            (trips.length === 0 || isLoading) && "opacity-40 grayscale"
           )}>
-            <CardContent className="p-0 bg-white text-black min-h-[600px] overflow-x-auto">
+            <CardContent className="p-0 bg-white text-black min-h-[600px] overflow-x-auto relative">
+              {isLoading && (
+                <div className="absolute inset-0 z-10 bg-white/60 flex items-center justify-center">
+                  <Loader2 className="h-10 w-10 animate-spin text-accent" />
+                </div>
+              )}
+
               {trips.length > 0 ? (
                 <div className="w-full min-w-[800px] p-8 print:p-0 bg-white" id="summary-report">
                   <div className="text-center mb-6 space-y-1">
@@ -447,7 +484,7 @@ export default function DailySummaryPage() {
                 <div className="flex flex-col items-center justify-center py-32 text-gray-400">
                   <FileText className="h-16 w-16 mb-4 opacity-20" />
                   <p className="text-lg font-medium">ไม่มีข้อมูลเที่ยววิ่งสำหรับวันที่เลือก</p>
-                  <p className="text-sm">กรุณาเลือกวันที่และกด "โหลดข้อมูล"</p>
+                  <p className="text-sm">กรุณาเลือกวันที่บนปฏิทิน</p>
                 </div>
               )}
             </CardContent>
