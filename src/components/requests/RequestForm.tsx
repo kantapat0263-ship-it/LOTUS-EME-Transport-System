@@ -346,32 +346,43 @@ export function RequestForm() {
                       )}
                     >
                       <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                      {selectedDate ? format(new Date(selectedDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                      {selectedDate ? format(new Date(selectedDate + 'T00:00:00'), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0" align="start">
                     <Calendar
                       mode="single"
-                      selected={selectedDate ? new Date(selectedDate) : undefined}
+                      selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
                       fromDate={minDate}
+                      disabled={(date) => {
+                        const dateStr = format(date, "yyyy-MM-dd")
+                        return dateStr < minDateStr
+                      }}
                       onSelect={(date) => {
-                        setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")
-                        if (date) setIsCalendarOpen(false)
+                        if (!date) return
+                        const dateStr = format(date, "yyyy-MM-dd")
+                        if (dateStr < minDateStr) return
+                        setSelectedDate(dateStr)
+                        setIsCalendarOpen(false)
                       }}
                       initialFocus
                     />
                   </PopoverContent>
                 </Popover>
                 {isViewer && isOutsideHours && (
-                  <div className="text-[10px] text-amber-400 flex items-center gap-1 mt-1 leading-tight">
-                    <Info className="h-3 w-3 shrink-0" />
-                    นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                  <div className="text-[10px] text-amber-400 mt-1 leading-tight">
+                    <div className="flex items-center gap-1">
+                      <Info className="h-3 w-3 shrink-0" />
+                      นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                    </div>
                   </div>
                 )}
                 {!isViewer && (
-                  <div className="text-[10px] text-blue-400 flex items-center gap-1 mt-1 leading-tight">
-                    <Info className="h-3 w-3 shrink-0" />
-                    โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
+                  <div className="text-[10px] text-blue-400 mt-1 leading-tight">
+                    <div className="flex items-center gap-1">
+                      <Info className="h-3 w-3 shrink-0" />
+                      โหมดผู้ดูแล — สามารถลงคิวงานล่วงหน้าได้ทุกวัน
+                    </div>
                   </div>
                 )}
               </div>
