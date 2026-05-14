@@ -317,7 +317,7 @@ export default function DailySummaryPage() {
                 }}
                 className="rounded-md bg-background"
                 components={React.useMemo(() => ({
-                  DayContent: React.useCallback(({ date }: { date: Date }) => {
+                  DayContent: ({ date }: { date: Date }) => {
                     const dateStr = format(date, "yyyy-MM-dd")
                     const hasWork = datesWithWork.has(dateStr)
                     return (
@@ -328,7 +328,7 @@ export default function DailySummaryPage() {
                         )}
                       </div>
                     )
-                  }, [datesWithWork])
+                  }
                 }), [datesWithWork])}
               />
             </CardContent>
