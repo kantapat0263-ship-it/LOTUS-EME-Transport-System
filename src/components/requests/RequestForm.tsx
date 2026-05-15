@@ -513,7 +513,7 @@ export function RequestForm() {
                             </div>
                             <div className="space-y-2">
                               <div className="flex items-center justify-between min-h-[24px]">
-                                Label>พิกัด (lat, lng)</Label>
+                                <Label>พิกัด (lat, lng)</Label>
                                 <div className="flex items-center gap-2">
                                   {dest.coordinates && (
                                     <Button
