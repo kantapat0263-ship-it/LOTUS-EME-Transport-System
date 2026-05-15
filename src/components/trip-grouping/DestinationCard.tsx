@@ -57,7 +57,12 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex }: Des
               <p className="text-[10px] font-bold text-muted-foreground uppercase flex items-center justify-end gap-1">
                 วันที่ขอใช้รถ
               </p>
-              <p className="text-xs font-bold text-white">{dest.requestDate}</p>
+              <p className="text-xs font-bold text-white">
+                {dest.requestDate ? (() => {
+                  const [y, m, d] = dest.requestDate.split('-')
+                  return `${d}/${m}/${y}`
+                })() : "-"}
+              </p>
               {dest.requestTime && (
                 <p className="text-[11px] font-bold text-accent mt-0.5">
                   🕗 {dest.requestTime} น.
