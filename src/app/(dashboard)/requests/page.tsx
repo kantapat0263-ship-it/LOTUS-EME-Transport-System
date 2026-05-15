@@ -146,6 +146,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [rescheduleNote, setRescheduleNote] = React.useState("")
   const [isRescheduling, setIsRescheduling] = React.useState(false)
   
+  const [editingCoords, setEditingCoords] = React.useState<Record<number, string>>({})
+  
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const mapInstanceRef = React.useRef<google.maps.Map | null>(null)
   const markersRef = React.useRef<google.maps.Marker[]>([])
@@ -299,6 +301,64 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       toast({ title: "ผิดพลาด", variant: "destructive" })
     } finally {
       setIsSavingNote(null)
+    }
+  }
+
+  const handleSaveCoordinates = async (destIndex: number) => {
+    if (!selectedReq) return
+    const coordStr = editingCoords[destIndex] || ""
+    if (!coordStr.trim()) {
+      toast({ title: "กรุณาใส่พิกัด", variant: "destructive" })
+      return
+    }
+    
+    const [lat, lng] = coordStr.split(',').map(s => parseFloat(s.trim()))
+    if (isNaN(lat) || isNaN(lng)) {
+      toast({ title: "พิกัดไม่ถูกต้อง", description: "รูปแบบ: 14.0815, 100.7129", variant: "destructive" })
+      return
+    }
+
+    try {
+      const newDestinations = [...selectedReq.destinations]
+      newDestinations[destIndex] = { 
+        ...newDestinations[destIndex], 
+        lat, 
+        lng 
+      }
+      
+      await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
+        destinations: newDestinations,
+        updatedAt: serverTimestamp()
+      })
+
+      // บันทึกลง /sites อัตโนมัติถ้าเป็น custom type
+      if (newDestinations[destIndex].type === 'other') {
+        const siteName = newDestinations[destIndex].siteName || newDestinations[destIndex].customName
+        if (siteName) {
+          const newSiteRef = doc(collection(db, "sites"))
+          await setDoc(newSiteRef, {
+            id: newSiteRef.id,
+            name: siteName,
+            address: "",
+            latitude: lat,
+            longitude: lng,
+            projectTypeTag: "อื่น ๆ",
+            status: "Active",
+            isUserAdded: true,
+            addedBy: "dispatcher",
+            createdAt: serverTimestamp()
+          })
+        }
+      }
+
+      toast({ title: "บันทึกพิกัดสำเร็จ", description: `อัพเดทพิกัดจุดที่ ${destIndex + 1} แล้ว` })
+      setEditingCoords(prev => {
+        const next = { ...prev }
+        delete next[destIndex]
+        return next
+      })
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
     }
   }
 
@@ -677,6 +737,43 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 )}
                               </div>
                               
+                              {(!dest.lat || !dest.lng || (dest.lat === 0 && dest.lng === 0)) && (
+                                <div style={{
+                                  marginTop: '8px',
+                                  padding: '8px 12px',
+                                  backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                                  borderLeft: '3px solid #ef4444',
+                                  borderRadius: '0 4px 4px 0'
+                                }}>
+                                  <p className="text-xs font-bold text-red-400 flex items-center gap-1 mb-2">
+                                    ⚠️ ไม่มีพิกัด — กรุณาใส่พิกัดเพื่อให้จัดคิวได้
+                                  </p>
+                                  <div className="flex gap-2 items-center">
+                                    <Input
+                                      placeholder="14.0815, 100.7129"
+                                      className="h-8 text-xs flex-1 bg-background"
+                                      value={editingCoords[idx] || ""}
+                                      onChange={(e) => setEditingCoords(prev => ({ ...prev, [idx]: e.target.value }))}
+                                    />
+                                    <Button
+                                      size="sm"
+                                      className="h-8 text-xs bg-red-500 hover:bg-red-600 text-white shrink-0"
+                                      onClick={() => handleSaveCoordinates(idx)}
+                                    >
+                                      📍 บันทึกพิกัด
+                                    </Button>
+                                  </div>
+                                  <a 
+                                    href="https://maps.google.com"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[10px] text-accent mt-1 flex items-center gap-1"
+                                  >
+                                    🗺️ เปิด Google Maps เพื่อหาพิกัด
+                                  </a>
+                                </div>
+                              )}
+
                               {isStaff && (
                                 <div style={{
                                   marginTop: '12px',

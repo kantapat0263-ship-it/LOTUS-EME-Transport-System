@@ -222,7 +222,7 @@ export function RequestForm() {
     }
 
     const validDestinations = destinations.filter(d => 
-      (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName && d.coordinates)
+      (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName)
     )
 
     if (validDestinations.length === 0) {
@@ -546,6 +546,12 @@ export function RequestForm() {
                                 value={dest.coordinates}
                                 onChange={(e) => updateDest(dest.id, { coordinates: e.target.value })}
                               />
+                              {!dest.coordinates && (
+                                <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1">
+                                  <Info className="h-3 w-3 shrink-0" />
+                                  ถ้าไม่รู้พิกัด ทีมจัดรถจะช่วยเพิ่มให้
+                                </p>
+                              )}
                             </div>
                           </div>
                         )}
