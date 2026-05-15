@@ -57,6 +57,7 @@ export default function TripGroupingPage() {
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [manualOrder, setManualOrder] = React.useState<string[]>([])
   const [optimizedOrder, setOptimizedOrder] = React.useState<string[]>([])
+  const [selectedDateFilter, setSelectedDateFilter] = React.useState<string>("all")
   
   const [vehicleId, setVehicleId] = React.useState("")
   const [driverId, setDriverId] = React.useState("")
@@ -98,6 +99,22 @@ export default function TripGroupingPage() {
     })
     return list
   }, [requests])
+
+  const availableDates = React.useMemo(() => {
+    const dateMap: Record<string, number> = {}
+    availableDestinations.forEach(dest => {
+      const d = dest.requestDate || ""
+      if (d) dateMap[d] = (dateMap[d] || 0) + 1
+    })
+    return Object.entries(dateMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, count]) => ({ date, count }))
+  }, [availableDestinations])
+
+  const filteredDestinations = React.useMemo(() => {
+    if (selectedDateFilter === "all") return availableDestinations
+    return availableDestinations.filter(d => d.requestDate === selectedDateFilter)
+  }, [availableDestinations, selectedDateFilter])
 
   const currentOrderedIds = React.useMemo(() => {
     if (mode === 'manual') return manualOrder;
@@ -328,6 +345,7 @@ export default function TripGroupingPage() {
     setDriverId("")
     setIsConfirmOpen(false)
     setMergeDialog({ show: false })
+    setSelectedDateFilter("all")
     sessionStorage.removeItem("pendingVR")
   }
 
@@ -375,11 +393,11 @@ export default function TripGroupingPage() {
                   {selectedDestinations.map((dest, idx) => (
                     <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} />
                   ))}
-                  {availableDestinations.length > manualOrder.length && (
+                  {filteredDestinations.length > manualOrder.length && (
                     <div className="pt-4 pb-2 border-t border-border/30">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
                       <div className="space-y-3 opacity-60 grayscale-[0.5]">
-                        {availableDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
+                        {filteredDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
                           <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
                         ))}
                       </div>
@@ -395,18 +413,33 @@ export default function TripGroupingPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur flex justify-between items-center">
+              <div className="bg-secondary/30 p-3 rounded-xl border border-border/50 sticky top-0 z-10 backdrop-blur space-y-2">
                 <h3 className="text-sm font-bold flex items-center gap-2">
                   <Inbox className="h-4 w-4 text-accent" /> งานที่ค้างอยู่ในระบบ ({availableDestinations.length})
                 </h3>
+                <select
+                  value={selectedDateFilter}
+                  onChange={(e) => setSelectedDateFilter(e.target.value)}
+                  className="w-full h-9 rounded-lg bg-background/80 border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <option value="all">📋 ทั้งหมด ({availableDestinations.length} งาน)</option>
+                  {availableDates.map(({ date, count }) => {
+                    const [y, m, d] = date.split('-')
+                    return (
+                      <option key={date} value={date}>
+                        📅 {d}/{m}/{y} ({count} งาน)
+                      </option>
+                    )
+                  })}
+                </select>
               </div>
-              {availableDestinations.length > 0 ? (
+              {filteredDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
                   {selectedDestinations.map((dest, idx) => (
                     <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} />
                   ))}
-                  {availableDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
-                  {availableDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
+                  {filteredDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
+                  {filteredDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
                     <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
                   ))}
                 </div>
