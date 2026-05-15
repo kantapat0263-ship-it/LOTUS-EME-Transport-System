@@ -234,7 +234,7 @@ export default function DailySummaryPage() {
       const tripData = trips.map((trip: any) => ({
         driverName: trip.driverName,
         vehiclePlate: trip.vehiclePlate,
-        driverUrl: `${window.location.origin}/driver/${trip.tripId}`
+        driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`
       }))
 
       const res = await fetch('/api/line/send-summary', {
@@ -266,7 +266,7 @@ export default function DailySummaryPage() {
 
   const handleCopyLink = () => {
     if (!selectedTripForShare) return
-    const url = `${window.location.origin}/driver/${selectedTripForShare.tripId}`;
+    const url = `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -280,7 +280,7 @@ export default function DailySummaryPage() {
   const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
 
   const shareUrl = selectedTripForShare 
-    ? `${window.location.origin}/driver/${selectedTripForShare.tripId}`
+    ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`
     : '';
 
   return (
