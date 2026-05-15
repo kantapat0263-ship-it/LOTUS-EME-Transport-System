@@ -302,28 +302,30 @@ export default function DailySummaryPage() {
               </CardTitle>
               <CardDescription>วันที่มีตัวหนาสีส้ม คือวันที่มีคิวงานในระบบ</CardDescription>
             </CardHeader>
-            <CardContent className="flex justify-center p-0 pb-4">
-              <Calendar
-                mode="single"
-                selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
-                onSelect={(date) => {
-                  if (date) {
-                    const dateStr = format(date, "yyyy-MM-dd")
-                    setSelectedDate(dateStr)
-                  }
-                }}
-                modifiers={{
-                  hasWork: Array.from(datesWithWork).map(d => new Date(d + 'T00:00:00'))
-                }}
-                modifiersStyles={{
-                  hasWork: { 
-                    fontWeight: 'bold',
-                    textDecoration: 'underline',
-                    color: '#F0890D'
-                  }
-                }}
-                className="rounded-md bg-background"
-              />
+            <CardContent className="flex justify-center p-0 pb-4 overflow-x-auto">
+              <div className="min-w-[280px] w-full max-w-[350px]">
+                <Calendar
+                  mode="single"
+                  selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
+                  onSelect={(date) => {
+                    if (date) {
+                      const dateStr = format(date, "yyyy-MM-dd")
+                      setSelectedDate(dateStr)
+                    }
+                  }}
+                  modifiers={{
+                    hasWork: Array.from(datesWithWork).map(d => new Date(d + 'T00:00:00'))
+                  }}
+                  modifiersStyles={{
+                    hasWork: { 
+                      fontWeight: 'bold',
+                      textDecoration: 'underline',
+                      color: '#F0890D'
+                    }
+                  }}
+                  className="rounded-md bg-background"
+                />
+              </div>
             </CardContent>
           </Card>
 
