@@ -308,10 +308,12 @@ export function RequestForm() {
     }
   }
 
-  const isViewer = profile?.role?.toLowerCase() !== 'admin' && profile?.role?.toLowerCase() !== 'dispatcher';
   const hour = new Date().getHours();
   const isOutsideHours = hour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
                         hour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
+
+  const role = profile?.role?.toLowerCase() || ''
+  const isViewer = role !== 'admin' && role !== 'dispatcher'
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -392,10 +394,8 @@ export function RequestForm() {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <Label className="text-base font-bold">จุดหมายปลายทาง ({destinations.length}/10)</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addDestination} className="border-accent text-accent">
-                  <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดหมาย
-                </Button>
+                <Label className="text-base font-bold">จุดหมายปลายทาง</Label>
+                {/* Multi-destination disabled: 1 VR = 1 destination */}
               </div>
 
               <div className="space-y-0">
@@ -442,19 +442,7 @@ export function RequestForm() {
                             ))}
                           </div>
                           
-                          {destinations.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-400 hover:text-red-500 hover:bg-red-500/10 h-8 px-2 flex items-center gap-1 transition-colors"
-                              onClick={() => removeDestination(dest.id)}
-                              title="ลบจุดหมายนี้"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              <span className="text-[10px] font-bold">ลบจุดนี้</span>
-                            </Button>
-                          )}
+                          {/* Single destination mode */}
                         </div>
 
                         {dest.category !== "custom" ? (
@@ -525,7 +513,7 @@ export function RequestForm() {
                             </div>
                             <div className="space-y-2">
                               <div className="flex items-center justify-between min-h-[24px]">
-                                <Label>พิกัด (lat, lng)</Label>
+                                Label>พิกัด (lat, lng)</Label>
                                 <div className="flex items-center gap-2">
                                   {dest.coordinates && (
                                     <Button
