@@ -457,7 +457,7 @@ export default function DailySummaryPage() {
                                 <td className="border border-black p-2 align-top">
                                   <div className="space-y-1">
                                     <div className="flex gap-1.5 font-bold">
-                                      <span>{sIdx + 1}.</span>
+                                      {trip.stops.length > 1 && <span>{sIdx + 1}.</span>}
                                       <span>{stop.siteName}</span>
                                     </div>
                                     <div className="pl-5 space-y-0.5">
