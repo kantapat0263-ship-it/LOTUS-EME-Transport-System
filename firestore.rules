@@ -33,10 +33,24 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (request.auth.uid == userId || hasRole('admin'));
     }
     
-    // Core collections - allowed for all authenticated users for now
+    // Publicly readable collections for Driver Job Sheets
+    match /trips/{tripId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+    
+    match /trips/{tripId}/stops/{stopId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    match /drivers/{driverId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+    
+    // Core collections - restricted to authenticated users
     match /sites/{siteId} { allow read, write: if isAuthenticated(); }
-    match /trips/{tripId} { allow read, write: if isAuthenticated(); }
-    match /drivers/{driverId} { allow read, write: if isAuthenticated(); }
     match /vehicles/{vehicleId} { allow read, write: if isAuthenticated(); }
     match /companySettings/{id} { allow read, write: if isAuthenticated(); }
 
