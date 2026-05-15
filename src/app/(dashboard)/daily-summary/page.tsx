@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -463,7 +462,7 @@ export default function DailySummaryPage() {
                                     <div className="pl-5 space-y-0.5">
                                       <div className="flex gap-2">
                                         <span className="shrink-0">-</span>
-                                        <span className="italic">{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
+                                        <span className="italic" style={{ whiteSpace: 'pre-wrap' }}>{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
                                       </div>
                                       
                                       {stopDispatcherNote && (
