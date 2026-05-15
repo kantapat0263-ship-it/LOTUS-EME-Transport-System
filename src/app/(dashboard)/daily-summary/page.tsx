@@ -298,34 +298,33 @@ export default function DailySummaryPage() {
           <Card className="border-accent/20">
             <CardHeader className="pb-3">
               <CardTitle className="text-lg flex items-center gap-2">
-                <CalendarIcon className="h-5 w-5 text-accent" /> ปฏิทินคิวงาน
+                <CalendarIcon className="h-5 w-5 text-accent" /> เลือกวันที่
               </CardTitle>
-              <CardDescription>วันที่มีตัวหนาสีส้ม คือวันที่มีคิวงานในระบบ</CardDescription>
+              <CardDescription>แสดงเฉพาะวันที่มีคิวงานในระบบ</CardDescription>
             </CardHeader>
-            <CardContent className="flex justify-center p-0 pb-4 overflow-x-auto">
-              <div className="min-w-[280px] w-full max-w-[350px]">
-                <Calendar
-                  mode="single"
-                  selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
-                  onSelect={(date) => {
-                    if (date) {
-                      const dateStr = format(date, "yyyy-MM-dd")
-                      setSelectedDate(dateStr)
-                    }
-                  }}
-                  modifiers={{
-                    hasWork: Array.from(datesWithWork).map(d => new Date(d + 'T00:00:00'))
-                  }}
-                  modifiersStyles={{
-                    hasWork: { 
-                      fontWeight: 'bold',
-                      textDecoration: 'underline',
-                      color: '#F0890D'
-                    }
-                  }}
-                  className="rounded-md bg-background"
-                />
-              </div>
+            <CardContent className="pb-4">
+              <select
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">-- เลือกวันที่ --</option>
+                {Array.from(datesWithWork)
+                  .sort()
+                  .map(date => {
+                    const [y, m, d] = date.split('-')
+                    const dateObj = new Date(date + 'T00:00:00')
+                    const dayName = dateObj.toLocaleDateString('th-TH', { weekday: 'long' })
+                    return (
+                      <option key={date} value={date}>
+                        📅 {d}/{m}/{y} ({dayName})
+                      </option>
+                    )
+                  })}
+              </select>
+              {datesWithWork.size === 0 && (
+                <p className="text-xs text-muted-foreground mt-2 text-center">ไม่มีคิวงานในระบบ</p>
+              )}
             </CardContent>
           </Card>
 
