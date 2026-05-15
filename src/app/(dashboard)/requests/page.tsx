@@ -91,6 +91,7 @@ const getStatusBadge = (status: string) => {
     'partial': { label: 'จัดบางส่วน', color: 'bg-blue-500', textColor: 'text-blue-400', dot: true },
     'approved': { label: '✅ จัดรถแล้ว', color: 'bg-green-500', textColor: 'text-green-500', dot: false },
     'rejected': { label: '❌ ปฏิเสธ', color: 'bg-red-500', textColor: 'text-red-500', dot: false },
+    'rescheduled': { label: '📅 เลื่อนวันแล้ว', color: 'bg-blue-500', textColor: 'text-blue-400', dot: false },
     'cancelled': { label: 'ยกเลิกแล้ว', color: 'bg-gray-500', textColor: 'text-gray-400', dot: false },
   }
 
@@ -117,7 +118,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [showCancelled, setShowCancelled] = React.useState(false)
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", showCancelled ? ["pending", "partial", "in_progress", "cancelled"] : ["pending", "partial", "in_progress"])
+    where("status", "in", showCancelled ? ["pending", "partial", "in_progress", "rescheduled", "cancelled"] : ["pending", "partial", "in_progress", "rescheduled"])
   ), [db, showCancelled])
 
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
@@ -139,6 +140,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [isClearConfirmOpen, setIsClearConfirmOpen] = React.useState(false)
   const [isClearing, setIsClearing] = React.useState(false)
   const [selectedDestIndexes, setSelectedDestIndexes] = React.useState<Set<number>>(new Set())
+
+  const [isRescheduleOpen, setIsRescheduleOpen] = React.useState(false)
+  const [rescheduleDate, setRescheduleDate] = React.useState("")
+  const [rescheduleNote, setRescheduleNote] = React.useState("")
+  const [isRescheduling, setIsRescheduling] = React.useState(false)
   
   const mapContainerRef = React.useRef<HTMLDivElement>(null)
   const mapInstanceRef = React.useRef<google.maps.Map | null>(null)
@@ -343,6 +349,43 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }
 
+  const handleReschedule = async () => {
+    if (!selectedReq) return
+    if (!rescheduleDate) {
+      toast({ title: "กรุณาเลือกวันที่ใหม่", variant: "destructive" })
+      return
+    }
+    if (!rescheduleNote.trim()) {
+      toast({ title: "กรุณาใส่หมายเหตุการเลื่อนวัน", variant: "destructive" })
+      return
+    }
+    setIsRescheduling(true)
+    try {
+      const ref = doc(db, "vehicleRequests", selectedReq.id)
+      await updateDoc(ref, {
+        requestDate: rescheduleDate,
+        status: "rescheduled",
+        rescheduleNote: rescheduleNote,
+        rescheduledBy: profileName || "Dispatcher",
+        rescheduledAt: new Date().toISOString(),
+        updatedAt: serverTimestamp()
+      })
+      toast({ 
+        title: "เลื่อนวันเรียบร้อย", 
+        description: `คำขอ ${selectedReq.requestId} เลื่อนไปวันที่ ${rescheduleDate} แล้ว` 
+      })
+      setIsRescheduleOpen(false)
+      setIsDetailOpen(false)
+      setSelectedReqId(null)
+      setRescheduleDate("")
+      setRescheduleNote("")
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    } finally {
+      setIsRescheduling(false)
+    }
+  }
+
   const handleClearAllData = async () => {
     if (userRole !== 'admin') return
     setIsClearing(true)
@@ -410,7 +453,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
               key={req.id} 
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
-                (req.status === "pending" || req.status === "in_progress" || req.status === "partial") && "border-accent/30 bg-accent/5 shadow-lg shadow-accent/5",
+                (req.status === "pending" || req.status === "in_progress" || req.status === "partial" || req.status === "rescheduled") && "border-accent/30 bg-accent/5 shadow-lg shadow-accent/5",
                 req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
               )}
               onClick={() => {
@@ -418,12 +461,12 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 setIsDetailOpen(true)
               }}
             >
-              {(req.status === "pending" || req.status === "in_progress" || req.status === "partial" || req.status === "cancelled") && (
+              {(req.status === "pending" || req.status === "in_progress" || req.status === "partial" || req.status === "rescheduled" || req.status === "cancelled") && (
                 <div className={cn(
                   "absolute top-0 left-0 w-1 h-full", 
                   req.status === "partial" ? "bg-blue-500" : 
                   req.status === "cancelled" ? "bg-gray-500" : 
-                  req.status === "in_progress" ? "bg-blue-500" : "bg-orange-500"
+                  req.status === "in_progress" || req.status === "rescheduled" ? "bg-blue-500" : "bg-orange-500"
                 )} />
               )}
               <CardContent className="p-4 space-y-3">
@@ -674,7 +717,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </div>
               </div>
 
-              {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "in_progress") ? (
+              {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "in_progress" || selectedReq.status === "rescheduled") ? (
                 <div className="pt-6 border-t border-border/50 space-y-5">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
@@ -688,6 +731,17 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     </div>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-3">
+                    <Button
+                      variant="outline"
+                      className="flex-1 h-12 border-blue-500/50 text-blue-400 hover:bg-blue-500 hover:text-white"
+                      onClick={() => {
+                        setRescheduleDate(selectedReq?.requestDate || "")
+                        setIsRescheduleOpen(true)
+                      }}
+                      disabled={isProcessing || isRescheduling}
+                    >
+                      📅 เลื่อนวันที่
+                    </Button>
                     <Button 
                       variant="outline"
                       className="flex-1 h-12 border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white" 
@@ -735,6 +789,72 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={isRescheduleOpen} onOpenChange={setIsRescheduleOpen}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2 text-blue-400">
+              📅 เลื่อนวันที่คำขอ {selectedReq?.requestId}
+            </DialogTitle>
+            <DialogDescription>
+              วันที่ปัจจุบัน: {selectedReq?.requestDate}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-bold uppercase tracking-wider">วันที่ใหม่</Label>
+              <Input
+                type="date"
+                value={rescheduleDate}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(e) => setRescheduleDate(e.target.value)}
+                className="h-11"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-bold uppercase tracking-wider text-blue-400">
+                หมายเหตุการเลื่อนวัน <span className="text-red-400">*</span>
+              </Label>
+              <Textarea
+                placeholder="เช่น รถเต็มในวันดังกล่าว ขอเลื่อนไปวันถัดไป"
+                value={rescheduleNote}
+                onChange={(e) => setRescheduleNote(e.target.value)}
+                className="min-h-[80px]"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setIsRescheduleOpen(false)} className="flex-1">
+              ยกเลิก
+            </Button>
+            <Button 
+              onClick={handleReschedule} 
+              disabled={isRescheduling || !rescheduleDate || !rescheduleNote.trim()}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {isRescheduling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : "📅 ยืนยันเลื่อนวัน"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ยืนยันการล้างข้อมูลทั้งหมด?</AlertDialogTitle>
+            <AlertDialogDescription>
+              การกระทำนี้จะลบข้อมูลคำขอใช้รถทั้งหมดในระบบอย่างถาวร (รวมถึงรายการที่จัดรถแล้ว) และไม่สามารถย้อนกลับได้
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction onClick={handleClearAllData} className="bg-red-500 hover:bg-red-600" disabled={isClearing}>
+              {isClearing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              ยืนยันลบข้อมูลทั้งหมด
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -833,7 +953,7 @@ export default function RequestsPage() {
                       <div className={cn(
                         "w-full sm:w-1.5 h-1.5 sm:h-auto shrink-0",
                         req.status === "pending" ? "bg-orange-500" :
-                        (req.status === "in_progress" || req.status === "partial") ? "bg-blue-500" :
+                        (req.status === "in_progress" || req.status === "partial" || req.status === "rescheduled") ? "bg-blue-500" :
                         req.status === "approved" ? "bg-green-500" :
                         req.status === "cancelled" ? "bg-gray-500" : "bg-red-500"
                       )} />
@@ -862,7 +982,7 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress") && req.userId === user?.uid && (
+                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress" || req.status === "rescheduled") && req.userId === user?.uid && (
                               <Button 
                                 variant="outline" 
                                 size="sm" 
@@ -877,6 +997,26 @@ export default function RequestsPage() {
                             )}
                           </div>
                         </div>
+
+                        {req.status === 'rescheduled' && req.rescheduleNote && (
+                          <div style={{
+                            marginTop: '8px',
+                            padding: '8px 12px',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderLeft: '3px solid #3b82f6',
+                            borderRadius: '0 4px 4px 0'
+                          }}>
+                            <span style={{ color: '#3b82f6', fontWeight: 'bold', fontSize: '13px' }}>
+                              📅 เลื่อนวันเป็น: {req.requestDate}
+                            </span>
+                            <p style={{ color: '#e2e8f0', fontSize: '12px', marginTop: '2px' }}>
+                              หมายเหตุ: {req.rescheduleNote}
+                            </p>
+                            <p style={{ color: '#94a3b8', fontSize: '11px', marginTop: '2px' }}>
+                              เลื่อนโดย: {req.rescheduledBy}
+                            </p>
+                          </div>
+                        )}
 
                         {req.status === 'rejected' && req.rejectReason && (
                           <div style={{
@@ -1024,6 +1164,17 @@ export default function RequestsPage() {
                   </div>
                 </div>
               </div>
+
+              {viewingUserReq.status === 'rescheduled' && viewingUserReq.rescheduleNote && (
+                <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
+                  <p className="text-xs text-blue-500 font-bold mb-1 uppercase flex items-center gap-2">
+                    <CalendarIcon className="h-4 w-4" /> รายละเอียดการเลื่อนวัน
+                  </p>
+                  <p className="text-sm text-foreground font-bold">เลื่อนเป็นวันที่: {formatDateDisplay(viewingUserReq.requestDate)}</p>
+                  <p className="text-sm text-muted-foreground italic mt-1">หมายเหตุ: "{viewingUserReq.rescheduleNote}"</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">ดำเนินการโดย: {viewingUserReq.rescheduledBy}</p>
+                </div>
+              )}
 
               <div className="space-y-3">
                 <p className="text-sm font-bold flex items-center gap-2 text-white">
