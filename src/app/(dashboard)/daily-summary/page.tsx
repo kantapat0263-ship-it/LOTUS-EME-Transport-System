@@ -418,7 +418,7 @@ export default function DailySummaryPage() {
                         <tr className="bg-gray-100">
                           <th className="border border-black p-2 w-[12%] text-center">วัน เดือน ปี<br/>ที่ใช้รถ</th>
                           <th className="border border-black p-2 w-[8%] text-center">เวลา</th>
-                          <th className="border border-black p-2 w-[55%] text-left">รายละเอียดของงานที่ปฏิบัติ<br/><span className="font-normal text-[10px]">ลักษณะงาน (แยกเป็นข้อ ๆ) และ สถานที่</span></th>
+                          <th className="border border-black p-2 w-[55%] text-center">รายละเอียดของงานที่ปฏิบัติ<br/><span className="font-normal text-[10px]">ลักษณะงาน (แยกเป็นข้อ ๆ) และ สถานที่</span></th>
                           <th className="border border-black p-2 w-[25%] text-left">ผู้ปฏิบัติงาน / ทะเบียนรถ<br/><span className="font-normal text-[10px]">ผู้ขอใช้รถ / ส่งงาน</span></th>
                         </tr>
                       </thead>
