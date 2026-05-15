@@ -243,7 +243,8 @@ export default function DailySummaryPage() {
         body: JSON.stringify({ 
           imageBase64, 
           trips: tripData,
-          dateStr: formatThaiDate(selectedDate)
+          dateStr: formatThaiDate(selectedDate),
+          selectedDate: selectedDate
         })
       })
 

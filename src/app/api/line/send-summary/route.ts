@@ -4,7 +4,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport
 
 export async function POST(req: NextRequest) {
   try {
-    const { trips } = await req.json()
+    const { trips, selectedDate } = await req.json()
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
     const groupId = process.env.LINE_GROUP_ID
 
@@ -13,16 +13,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing LINE config' }, { status: 500 })
     }
 
-    // สร้างวันที่ฝั่ง Server เพื่อความแม่นยำ
-    const today = new Date()
-    // แปลงเป็นเวลาไทย (UTC+7)
-    const bangkokDate = new Date(today.getTime() + (7 * 60 * 60 * 1000))
-    const dateStr = bangkokDate.toLocaleDateString('th-TH', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      weekday: 'long'
-    })
+    // ใช้วันที่จาก client (selectedDate: "2026-05-16")
+    let dateStr = selectedDate || ""
+    if (selectedDate) {
+      const [y, m, d] = selectedDate.split('-')
+      const dateObj = new Date(Number(y), Number(m) - 1, Number(d))
+      dateStr = dateObj.toLocaleDateString('th-TH', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        weekday: 'long'
+      })
+    }
 
     const driverLinks = trips.map((trip: any) =>
       `🚛 ${trip.driverName} (${trip.vehiclePlate})\n🔗 ${trip.driverUrl}`
