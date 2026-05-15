@@ -36,7 +36,7 @@ export default function TripGroupingPage() {
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const vrRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", ["pending", "partial", "in_progress"])
+    where("status", "in", ["pending", "partial", "in_progress", "rescheduled"])
   ), [db])
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
 
@@ -455,7 +455,7 @@ export default function TripGroupingPage() {
 
         <div className="lg:col-span-7 rounded-xl overflow-hidden border border-border bg-card h-full min-h-[300px]">
           <GroupingMap 
-            destinations={availableDestinations} selectedIds={selectedIds} onSelect={handleToggleSelect} 
+            destinations={filteredDestinations} selectedIds={selectedIds} onSelect={handleToggleSelect} 
             selectedVehicleRate={selectedVehicle?.fuelRate} mode={mode} setMode={handleModeChange} 
             manualOrder={manualOrder} onOptimizedOrderChange={setOptimizedOrder}
           />
@@ -516,7 +516,7 @@ export default function TripGroupingPage() {
             </div>
             <div className="space-y-2 pt-2 border-t border-gray-700">
               <p className="text-xs font-bold text-orange-400 uppercase tracking-wider">จุดใหม่ที่จะเพิ่ม (+{mergeDialog.newStops?.length}):</p>
-              {mergeDialog.newStops?.map((stop: any, i: number) => (
+              {mergeDialog.existingTrip?.newStops?.map((stop: any, i: number) => (
                 <div key={i} className="text-xs text-orange-300 flex gap-2">
                   <span className="shrink-0">+</span> <span className="truncate">{stop.siteName}</span>
                 </div>
