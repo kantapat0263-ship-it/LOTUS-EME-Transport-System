@@ -59,6 +59,7 @@ export default function TripGroupingPage() {
   const [manualOrder, setManualOrder] = React.useState<string[]>([])
   const [optimizedOrder, setOptimizedOrder] = React.useState<string[]>([])
   const [selectedDateFilter, setSelectedDateFilter] = React.useState<string>("all")
+  const [hoveredDestId, setHoveredDestId] = React.useState<string | null>(null)
   
   const [vehicleId, setVehicleId] = React.useState("")
   const [driverId, setDriverId] = React.useState("")
@@ -346,6 +347,7 @@ export default function TripGroupingPage() {
     setIsConfirmOpen(false)
     setMergeDialog({ show: false })
     setSelectedDateFilter("all")
+    setHoveredDestId(null)
     sessionStorage.removeItem("pendingVR")
   }
 
@@ -391,14 +393,14 @@ export default function TripGroupingPage() {
               {manualOrder.length > 0 ? (
                 <div className="space-y-3 animate-in fade-in duration-300">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
                   ))}
                   {filteredDestinations.length > manualOrder.length && (
                     <div className="pt-4 pb-2 border-t border-border/30">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
                       <div className="space-y-3 opacity-60 grayscale-[0.5]">
                         {filteredDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
-                          <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
+                          <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
                         ))}
                       </div>
                     </div>
@@ -412,7 +414,7 @@ export default function TripGroupingPage() {
                   </div>
                   <div className="space-y-3 opacity-80">
                     {filteredDestinations.map(dest => (
-                      <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
+                      <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
                     ))}
                   </div>
                 </div>
@@ -443,11 +445,11 @@ export default function TripGroupingPage() {
               {filteredDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId} />
                   ))}
                   {filteredDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
                   {filteredDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
                   ))}
                 </div>
               ) : (
@@ -465,6 +467,7 @@ export default function TripGroupingPage() {
             destinations={filteredDestinations} selectedIds={selectedIds} onSelect={handleToggleSelect} 
             selectedVehicleRate={selectedVehicle?.fuelRate} mode={mode} setMode={handleModeChange} 
             manualOrder={manualOrder} onOptimizedOrderChange={setOptimizedOrder}
+            hoveredId={hoveredDestId}
           />
         </div>
       </div>

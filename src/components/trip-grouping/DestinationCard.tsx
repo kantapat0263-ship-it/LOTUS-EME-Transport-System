@@ -12,9 +12,10 @@ interface DestinationCardProps {
   isSelected: boolean;
   onToggle: () => void;
   manualIndex?: number;
+  onHover?: (id: string | null) => void;
 }
 
-export function DestinationCard({ dest, isSelected, onToggle, manualIndex }: DestinationCardProps) {
+export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover }: DestinationCardProps) {
   return (
     <Card 
       className={cn(
@@ -24,6 +25,8 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex }: Des
           : "border-secondary bg-secondary/20 hover:border-accent/40"
       )}
       onClick={onToggle}
+      onMouseEnter={() => onHover?.(dest.id)}
+      onMouseLeave={() => onHover?.(null)}
     >
       <CardContent className="p-0 flex items-stretch">
         {/* Checkbox or Order Area */}

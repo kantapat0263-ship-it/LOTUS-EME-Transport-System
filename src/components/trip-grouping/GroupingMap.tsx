@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -21,6 +20,7 @@ interface GroupingMapProps {
   setMode: (mode: 'auto' | 'manual') => void;
   manualOrder: string[];
   onOptimizedOrderChange?: (ids: string[]) => void;
+  hoveredId?: string | null;
 }
 
 const DEFAULT_LAT = 13.7563
@@ -35,7 +35,8 @@ export function GroupingMap({
   mode,
   setMode,
   manualOrder,
-  onOptimizedOrderChange
+  onOptimizedOrderChange,
+  hoveredId
 }: GroupingMapProps) {
   const db = useFirestore()
   const { toast } = useToast()
@@ -325,6 +326,27 @@ export function GroupingMap({
   React.useEffect(() => {
     if (mapRef.current) updateMarkers()
   }, [destinations, selectedIds, manualOrder, mode, updateMarkers])
+
+  // Bounce animation on hover
+  React.useEffect(() => {
+    if (!window.google) return
+    markersRef.current.forEach((marker, idx) => {
+      // Find the main marker for this destination.
+      // Every destination has 2 markers: the main circle and the name label.
+      // Indexing logic: 0 = office, 1 = main dest 1, 2 = name dest 1, 3 = main dest 2, 4 = name dest 2...
+      const destIndex = Math.floor((idx - 1) / 2);
+      const isMainMarker = (idx - 1) % 2 === 0;
+      
+      const dest = destinations[destIndex];
+      if (!dest || !isMainMarker) return;
+
+      if (dest.id === hoveredId) {
+        marker.setAnimation(google.maps.Animation.BOUNCE)
+      } else {
+        marker.setAnimation(null)
+      }
+    })
+  }, [hoveredId, destinations])
 
   return (
     <div className="relative w-full h-full">
