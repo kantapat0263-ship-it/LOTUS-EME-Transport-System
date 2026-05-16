@@ -405,9 +405,16 @@ export default function TripGroupingPage() {
                   )}
                 </div>
               ) : (
-                <div className="text-center py-20 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-3">
-                  <ListOrdered className="h-10 w-10 text-muted-foreground opacity-30" />
-                  <p className="text-sm font-medium text-muted-foreground">แตะที่หมุดบนแผนที่เพื่อเริ่มจัดลำดับ</p>
+                <div className="space-y-3">
+                  <div className="text-center py-6 bg-secondary/10 rounded-2xl border border-dashed flex flex-col items-center gap-2">
+                    <ListOrdered className="h-8 w-8 text-muted-foreground opacity-30" />
+                    <p className="text-sm font-medium text-muted-foreground">แตะที่หมุดบนแผนที่เพื่อเริ่มจัดลำดับ</p>
+                  </div>
+                  <div className="space-y-3 opacity-80">
+                    {filteredDestinations.map(dest => (
+                      <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} />
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
