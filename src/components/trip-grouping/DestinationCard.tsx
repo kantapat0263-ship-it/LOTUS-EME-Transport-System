@@ -39,6 +39,7 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
             <Checkbox 
               checked={isSelected} 
               onCheckedChange={onToggle}
+              onClick={(e) => e.stopPropagation()}
               className="w-4 h-4 rounded-sm border-2 data-[state=checked]:bg-accent data-[state=checked]:border-accent"
             />
           )}
