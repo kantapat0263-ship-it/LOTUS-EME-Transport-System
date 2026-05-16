@@ -31,28 +31,6 @@ export default function TripGroupingPage() {
   const db = useFirestore()
   const { toast } = useToast()
 
-  // Data Fetching
-  const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
-  const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
-  // Updated query to exclude 'pending' - only show jobs acknowledged or partially assigned
-  const vrRef = useMemoFirebase(() => query(
-    collection(db, "vehicleRequests"), 
-    where("status", "in", ["in_progress", "partial", "rescheduled"])
-  ), [db])
-  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
-
-  const todayStr = new Date().toISOString().split('T')[0]
-  const tripsTodayRef = useMemoFirebase(() => query(
-    collection(db, "trips"),
-    where("tripDate", "==", todayStr)
-  ), [db, todayStr])
-
-  const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vRef)
-  const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(dRef)
-  const { data: requests, isLoading: loadingRequests } = useCollection<any>(vrRef)
-  const { data: settings } = useDoc<CompanySetting>(settingsRef)
-  const { data: tripsToday } = useCollection<any>(tripsTodayRef)
-
   // States
   const [mode, setMode] = React.useState<GroupingMode>('auto')
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
@@ -72,6 +50,21 @@ export default function TripGroupingPage() {
     existingTrip?: any;
     newStops?: any[];
   }>({ show: false })
+
+  // Base Data Fetching
+  const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
+  const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
+  // Updated query to exclude 'pending' - only show jobs acknowledged or partially assigned
+  const vrRef = useMemoFirebase(() => query(
+    collection(db, "vehicleRequests"), 
+    where("status", "in", ["in_progress", "partial", "rescheduled"])
+  ), [db])
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+
+  const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vRef)
+  const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(dRef)
+  const { data: requests, isLoading: loadingRequests } = useCollection<any>(vrRef)
+  const { data: settings } = useDoc<CompanySetting>(settingsRef)
 
   // Flatten destinations from VRs
   const availableDestinations = React.useMemo(() => {
@@ -100,6 +93,22 @@ export default function TripGroupingPage() {
     })
     return list
   }, [requests])
+
+  // Dynamic Data Fetching based on selected date
+  const targetDateStr = React.useMemo(() => {
+    if (selectedDateFilter !== 'all') return selectedDateFilter
+    if (availableDestinations.length > 0) {
+      return availableDestinations[0]?.requestDate || new Date().toISOString().split('T')[0]
+    }
+    return new Date().toISOString().split('T')[0]
+  }, [selectedDateFilter, availableDestinations])
+
+  const tripsTodayRef = useMemoFirebase(() => query(
+    collection(db, "trips"),
+    where("tripDate", "==", targetDateStr)
+  ), [db, targetDateStr])
+
+  const { data: tripsToday } = useCollection<any>(tripsTodayRef)
 
   const availableDates = React.useMemo(() => {
     const dateMap: Record<string, number> = {}
@@ -168,8 +177,8 @@ export default function TripGroupingPage() {
     }
 
     // Check if driver already has a trip on the target date
-    const targetDateStr = selectedDestinations[0]?.requestDate || new Date().toISOString().split('T')[0];
-    const tripsOnTargetDate = await getDocs(query(collection(db, "trips"), where("tripDate", "==", targetDateStr), where("driverId", "==", driverId)));
+    const targetDateStrForCheck = selectedDestinations[0]?.requestDate || new Date().toISOString().split('T')[0];
+    const tripsOnTargetDate = await getDocs(query(collection(db, "trips"), where("tripDate", "==", targetDateStrForCheck), where("driverId", "==", driverId)));
     const existingTrip = tripsOnTargetDate.docs.map(d => ({...d.data(), id: d.id})).find((t: any) => t.status !== 'Cancelled');
 
     if (existingTrip) {
