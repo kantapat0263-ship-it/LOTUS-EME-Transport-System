@@ -67,6 +67,15 @@ export default function DailySummaryPage() {
   React.useEffect(() => {
     if (!db) return
     
+    const today = new Date()
+    const minDate = new Date()
+    minDate.setDate(today.getDate() - 7)
+    const maxDate = new Date()
+    maxDate.setDate(today.getDate() + 7)
+    
+    const minDateStr = format(minDate, "yyyy-MM-dd")
+    const maxDateStr = format(maxDate, "yyyy-MM-dd")
+
     let tripDates: string[] = []
     let vrDates: string[] = []
 
@@ -76,9 +85,15 @@ export default function DailySummaryPage() {
       setDatesWithWork(newSet)
     }
 
-    // 1. Listen for Trip dates
-    const unsubscribeTrips = onSnapshot(
+    // 1. Listen for Trip dates in range
+    const qTrips = query(
       collection(db, "trips"),
+      where("tripDate", ">=", minDateStr),
+      where("tripDate", "<=", maxDateStr)
+    )
+
+    const unsubscribeTrips = onSnapshot(
+      qTrips,
       (snapshot) => {
         tripDates = snapshot.docs
           .filter(doc => doc.data().status !== 'Cancelled')
@@ -96,9 +111,15 @@ export default function DailySummaryPage() {
       }
     )
 
-    // 2. Listen for Vehicle Request dates
-    const unsubscribeVRs = onSnapshot(
+    // 2. Listen for Vehicle Request dates in range
+    const qVRs = query(
       collection(db, "vehicleRequests"),
+      where("requestDate", ">=", minDateStr),
+      where("requestDate", "<=", maxDateStr)
+    )
+
+    const unsubscribeVRs = onSnapshot(
+      qVRs,
       (vrSnapshot) => {
         vrDates = vrSnapshot.docs
           .filter(doc => doc.data().status !== 'cancelled')
