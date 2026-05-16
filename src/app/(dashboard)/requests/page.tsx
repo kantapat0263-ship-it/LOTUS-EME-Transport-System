@@ -160,6 +160,13 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     return requests.find(r => r.id === selectedReqId) || null
   }, [selectedReqId, requests])
 
+  // Look up related trip and driver info
+  const relatedTripRef = useMemoFirebase(() => (db && selectedReq?.tripId) ? doc(db, "trips", selectedReq.tripId) : null, [db, selectedReq?.tripId])
+  const { data: relatedTrip } = useDoc<any>(relatedTripRef)
+
+  const relatedDriverRef = useMemoFirebase(() => (db && relatedTrip?.driverId) ? doc(db, "drivers", relatedTrip.driverId) : null, [db, relatedTrip?.driverId])
+  const { data: relatedDriver } = useDoc<any>(relatedDriverRef)
+
   React.useEffect(() => {
     if (selectedReq) {
       const assigned = selectedReq.assignedDestinations || []
@@ -612,6 +619,22 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     </a>
                   )}
                   <p className="text-[10px] text-muted-foreground">{selectedReq.requestedByEmail}</p>
+
+                  {/* Driver Info for Dispatcher */}
+                  {relatedTrip && (
+                    <div className="pt-2 border-t border-border/20 mt-2 space-y-1 animate-in fade-in slide-in-from-top-1">
+                      <p className="text-[10px] uppercase text-accent font-bold tracking-wider">จัดรถโดย</p>
+                      <p className="text-sm font-bold text-white flex items-center gap-2">
+                        <Truck className="h-3.5 w-3.5 text-accent" /> {relatedTrip.driverName}
+                      </p>
+                      {relatedDriver?.phoneNumber && (
+                        <a href={`tel:${relatedDriver.phoneNumber}`} className="text-xs font-bold text-blue-400 flex items-center gap-1 hover:underline">
+                          <Phone className="h-3 w-3" /> {relatedDriver.phoneNumber}
+                        </a>
+                      )}
+                      <p className="text-[10px] text-muted-foreground">ทะเบียน: {relatedTrip.vehiclePlate}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1 sm:text-right">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วัน/เวลาที่ต้องการ</p>
@@ -972,6 +995,13 @@ export default function RequestsPage() {
   const [reqToCancel, setReqToCancel] = React.useState<any>(null)
   const [viewingUserReq, setViewingUserReq] = React.useState<any>(null)
 
+  // Related Trip and Driver lookup for user's selected request
+  const relatedTripRef = useMemoFirebase(() => (db && viewingUserReq?.tripId) ? doc(db, "trips", viewingUserReq.tripId) : null, [db, viewingUserReq?.tripId])
+  const { data: relatedTrip } = useDoc<any>(relatedTripRef)
+
+  const relatedDriverRef = useMemoFirebase(() => (db && relatedTrip?.driverId) ? doc(db, "drivers", relatedTrip.driverId) : null, [db, relatedTrip?.driverId])
+  const { data: relatedDriver } = useDoc<any>(relatedDriverRef)
+
   const myRequestsRef = useMemoFirebase(() => (db && user) ? query(
     collection(db, "vehicleRequests"),
     where("userId", "==", user.uid)
@@ -1250,7 +1280,28 @@ export default function RequestsPage() {
                 <div className="space-y-1">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">ผู้ขอใช้รถ</p>
                   <p className="text-sm font-bold text-white">{viewingUserReq.requestedBy}</p>
+                  {viewingUserReq.requestedByPhone && (
+                    <a href={`tel:${viewingUserReq.requestedByPhone}`} className="text-xs font-bold text-orange-400 flex items-center gap-1 hover:underline">
+                      <Phone className="h-3 w-3" /> {viewingUserReq.requestedByPhone}
+                    </a>
+                  )}
                   <p className="text-[10px] text-muted-foreground">{viewingUserReq.requestedByEmail}</p>
+
+                  {/* Assigned Driver Info for User */}
+                  {relatedTrip && (
+                    <div className="pt-2 border-t border-border/20 mt-2 space-y-1 animate-in fade-in slide-in-from-top-1">
+                      <p className="text-[10px] uppercase text-accent font-bold tracking-wider">คนขับรถที่มอบหมาย</p>
+                      <p className="text-sm font-bold text-white flex items-center gap-2">
+                        <Truck className="h-3.5 w-3.5 text-accent" /> {relatedTrip.driverName}
+                      </p>
+                      {relatedDriver?.phoneNumber && (
+                        <a href={`tel:${relatedDriver.phoneNumber}`} className="text-xs font-bold text-blue-400 flex items-center gap-1 hover:underline">
+                          <Phone className="h-3 w-3" /> {relatedDriver.phoneNumber}
+                        </a>
+                      )}
+                      <p className="text-[10px] text-muted-foreground">ทะเบียน: {relatedTrip.vehiclePlate}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1 sm:text-right">
                   <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">วันที่ต้องการรถ</p>
