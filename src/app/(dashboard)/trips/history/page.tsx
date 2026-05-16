@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -296,6 +295,15 @@ export default function TripHistoryPage() {
     }
   }
 
+  const getDisplayStatus = (trip: any): TripStatus => {
+    if (trip.status === 'Cancelled') return 'Cancelled'
+    const today = new Date().toISOString().split('T')[0]
+    const tripDate = trip.tripDate || ""
+    if (tripDate < today) return 'Completed'
+    if (tripDate === today) return 'In Progress'
+    return 'Planned'
+  }
+
   const getStatusColor = (status: TripStatus) => {
     switch (status) {
       case 'Completed': return 'bg-green-500 text-white hover:bg-green-600';
@@ -442,15 +450,15 @@ export default function TripHistoryPage() {
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="font-bold text-base md:text-lg truncate">{trip.tripId || "ID Error"}</span>
                     {!isStaff ? (
-                      <Badge className={cn("text-[10px] h-5", getStatusColor(trip.status))}>
-                        {trip.status}
+                      <Badge className={cn("text-[10px] h-5", getStatusColor(getDisplayStatus(trip)))}>
+                        {getDisplayStatus(trip)}
                       </Badge>
                     ) : (
                       <div onClick={(e) => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Badge className={cn("cursor-pointer text-[10px] h-5", getStatusColor(trip.status))}>
-                              {trip.status}
+                            <Badge className={cn("cursor-pointer text-[10px] h-5", getStatusColor(getDisplayStatus(trip)))}>
+                              {getDisplayStatus(trip)}
                             </Badge>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
