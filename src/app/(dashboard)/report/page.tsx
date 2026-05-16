@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -36,6 +35,7 @@ import { startOfMonth, format } from "date-fns"
 import { th } from "date-fns/locale"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -202,6 +202,27 @@ export default function ReportPage() {
     return Object.values(data).sort((a, b) => b.total - a.total)
   }, [requests])
 
+  const weeklyTrend = React.useMemo(() => {
+    const data: Record<string, { week: string, เที่ยว: number, ระยะทาง: number, ค่าน้ำมัน: number }> = {}
+    
+    trips.forEach(t => {
+      const date = new Date(t.tripDate + 'T00:00:00')
+      const weekStart = new Date(date)
+      weekStart.setDate(date.getDate() - date.getDay() + 1)
+      const weekKey = format(weekStart, 'dd/MM')
+      
+      if (!data[weekKey]) data[weekKey] = { week: weekKey, เที่ยว: 0, ระยะทาง: 0, ค่าน้ำมัน: 0 }
+      data[weekKey].เที่ยว += 1
+      data[weekKey].ระยะทาง += Math.round(t.totalDistanceKm || 0)
+      
+      const rate = settings?.defaultFuelRate || 10
+      const price = settings?.dieselPrice || 32.5
+      data[weekKey].ค่าน้ำมัน += Math.round(((t.totalDistanceKm || 0) / rate) * price)
+    })
+    
+    return Object.values(data).sort((a, b) => a.week.localeCompare(b.week))
+  }, [trips, settings])
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -320,6 +341,52 @@ export default function ReportPage() {
             </CardContent>
           </Card>
         </div>
+
+        {weeklyTrend.length > 0 && (
+          <Card className="bg-secondary/20 border-border/50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-accent" /> แนวโน้มรายสัปดาห์
+              </CardTitle>
+              <CardDescription>เปรียบเทียบจำนวนเที่ยววิ่งและค่าน้ำมันแต่ละสัปดาห์</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <p className="text-xs font-bold text-muted-foreground uppercase mb-3">จำนวนเที่ยววิ่ง</p>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={weeklyTrend} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                      <XAxis dataKey="week" tick={{ fontSize: 11, fill: '#888' }} />
+                      <YAxis tick={{ fontSize: 11, fill: '#888' }} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
+                        labelStyle={{ color: '#fff' }}
+                      />
+                      <Bar dataKey="เที่ยว" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-muted-foreground uppercase mb-3">ค่าน้ำมัน (บาท)</p>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={weeklyTrend} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                      <XAxis dataKey="week" tick={{ fontSize: 11, fill: '#888' }} />
+                      <YAxis tick={{ fontSize: 11, fill: '#888' }} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
+                        labelStyle={{ color: '#fff' }}
+                        formatter={(value: any) => [`฿${value.toLocaleString()}`, 'ค่าน้ำมัน']}
+                      />
+                      <Bar dataKey="ค่าน้ำมัน" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* DRIVER PERFORMANCE */}
