@@ -189,6 +189,27 @@ export default function ReportPage() {
       .slice(0, 10)
   }, [trips])
 
+  const siteCostStats = React.useMemo(() => {
+    const data: Record<string, any> = {}
+    const rate = settings?.defaultFuelRate || 10
+    const price = settings?.dieselPrice || 32.5
+
+    trips.forEach(t => {
+      const distPerStop = (t.totalDistanceKm || 0) / (t.stops?.length || 1)
+      t.stops?.forEach((s: any) => {
+        const name = s.siteName || "ไม่ระบุ"
+        if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0 }
+        data[name].count += 1
+        data[name].distance += distPerStop
+        data[name].cost += (distPerStop / rate) * price
+      })
+    })
+
+    return Object.values(data)
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 10)
+  }, [trips, settings])
+
   const employeeStats = React.useMemo(() => {
     const data: Record<string, any> = {}
     requests.forEach(r => {
@@ -503,6 +524,43 @@ export default function ReportPage() {
             </CardContent>
           </Card>
         </div>
+
+        {siteCostStats.length > 0 && (
+          <Card className="bg-secondary/20 border-border/50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Fuel className="h-5 w-5 text-accent" /> Top 10 ไซต์งานที่มีค่าใช้จ่ายสูงสุด
+              </CardTitle>
+              <CardDescription>ประมาณการค่าน้ำมันแยกตามไซต์งาน/สถานที่</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border/50">
+                    <TableHead className="w-8">#</TableHead>
+                    <TableHead>ไซต์งาน / สถานที่</TableHead>
+                    <TableHead className="text-right">จำนวนครั้ง</TableHead>
+                    <TableHead className="text-right">ระยะทางรวม</TableHead>
+                    <TableHead className="text-right">ค่าน้ำมันประมาณ</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {siteCostStats.map((s, i) => (
+                    <TableRow key={i} className="border-border/20">
+                      <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                      <TableCell className="font-medium text-white">{s.name}</TableCell>
+                      <TableCell className="text-right">{s.count} ครั้ง</TableCell>
+                      <TableCell className="text-right">{s.distance.toFixed(1)} กม.</TableCell>
+                      <TableCell className="text-right text-accent font-bold">
+                        ฿{s.cost.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="text-center pt-10 border-t border-border/50">
           <p className="text-[10px] text-muted-foreground italic">
