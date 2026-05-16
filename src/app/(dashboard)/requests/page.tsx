@@ -118,7 +118,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   const [showCancelled, setShowCancelled] = React.useState(false)
   const requestsRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", showCancelled ? ["pending", "partial", "in_progress", "rescheduled", "cancelled"] : ["pending", "partial", "in_progress", "rescheduled"])
+    where("status", "in", showCancelled 
+      ? ["pending", "rescheduled", "partial", "in_progress", "cancelled"] 
+      : ["pending", "rescheduled", "partial", "in_progress"])
   ), [db, showCancelled])
 
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)

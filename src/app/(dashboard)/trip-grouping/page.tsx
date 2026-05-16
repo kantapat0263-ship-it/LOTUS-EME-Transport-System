@@ -34,9 +34,10 @@ export default function TripGroupingPage() {
   // Data Fetching
   const vRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const dRef = useMemoFirebase(() => collection(db, "drivers"), [db])
+  // Updated query to exclude 'pending' - only show jobs acknowledged or partially assigned
   const vrRef = useMemoFirebase(() => query(
     collection(db, "vehicleRequests"), 
-    where("status", "in", ["pending", "partial", "in_progress", "rescheduled"])
+    where("status", "in", ["in_progress", "partial", "rescheduled"])
   ), [db])
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
 
@@ -88,7 +89,6 @@ export default function TripGroupingPage() {
             requestedBy: req.requestedBy,
             requestedByPhone: req.requestedByPhone || "",
             requestDate: req.requestDate,
-            // CRITICAL FIX: Prioritize destination-specific time, then fallback to global VR time
             requestTime: dest.requestTime || req.requestTime || "08:30",
             note: req.note || req.notes || "",
             dispatcherNote: req.stopNotes?.[`stop_${idx}`] || "",
