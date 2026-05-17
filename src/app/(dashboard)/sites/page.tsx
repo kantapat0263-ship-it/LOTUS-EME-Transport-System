@@ -278,7 +278,7 @@ export default function SitesPage() {
     }
   }
 
-  const locationTypes = ["ทั้งหมด", "ไซต์งาน", "ร้านค้า / ซัพพลายเออร์", "ธนาคาร", "บริษัท / หน่วยงานราชการ", "อื่น ๆ", "LOTUS EME", "P-ADVANCED"]
+  const locationTypes = ["ทั้งหมด", "ไซต์งาน", "ร้านค้า / ซัพพลายเออร์", "ธนาคาร", "บริษัท / หน่วยงานราชการ", "อื่น ๆ"]
 
   if (!user || isProfileLoading) return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
 
