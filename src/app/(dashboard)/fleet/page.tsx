@@ -12,7 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/dropdown-menu"
+} from "@/components/ui/dropdown-menu"
 import { 
   Dialog, 
   DialogContent, 
