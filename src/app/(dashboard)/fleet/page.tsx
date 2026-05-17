@@ -12,7 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/dropdown-menu"
 import { 
   Dialog, 
   DialogContent, 
@@ -93,11 +93,15 @@ export default function FleetPage() {
   const vehicleTypesRef = useMemoFirebase(() => collection(db, "vehicleTypes"), [db])
   const { data: vehicleTypes } = useCollection<any>(vehicleTypesRef)
 
+  const DEFAULT_VEHICLE_TYPES = ['Pickup', '4-wheel truck', '6-wheel truck']
+
   const vehicleTypeOptions = React.useMemo(() => {
-    if (vehicleTypes && vehicleTypes.length > 0) {
-      return vehicleTypes.map((t: any) => t.name).filter(Boolean)
-    }
-    return ['Pickup', '4-wheel truck', '6-wheel truck']
+    const fromFirestore = (vehicleTypes || []).map((t: any) => t.name).filter(Boolean)
+    const merged = [...DEFAULT_VEHICLE_TYPES]
+    fromFirestore.forEach((name: string) => {
+      if (!merged.includes(name)) merged.push(name)
+    })
+    return merged
   }, [vehicleTypes])
 
   const [isTypeDialogOpen, setIsTypeDialogOpen] = React.useState(false)
