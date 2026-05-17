@@ -106,7 +106,12 @@ export default function SitesPage() {
   React.useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference;
     
-    if (isMapPickerOpen && mapPickerRef.current && apiKey) {
+    if (!isMapPickerOpen || !apiKey) return
+
+    // Wait for Dialog animation to complete before initializing map
+    const timer = setTimeout(() => {
+      if (!mapPickerRef.current) return
+
       const loader = new Loader({
         apiKey: apiKey,
         version: "weekly",
@@ -114,6 +119,7 @@ export default function SitesPage() {
       })
 
       loader.load().then(() => {
+        if (!mapPickerRef.current) return
         const coordsStr = form.getValues("coordinates")
         let center = { lat: 13.7563, lng: 100.5018 }
         
@@ -153,7 +159,9 @@ export default function SitesPage() {
           }
         })
       })
-    }
+    }, 500) // Wait 500ms for Dialog animation
+
+    return () => clearTimeout(timer)
   }, [isMapPickerOpen, companySettings, form])
 
   const filteredSites = sites?.filter(site => {
