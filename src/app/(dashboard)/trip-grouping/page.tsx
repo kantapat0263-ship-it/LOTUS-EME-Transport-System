@@ -221,6 +221,7 @@ export default function TripGroupingPage() {
         tripDate: tripDateStr,
         vehicleId,
         vehiclePlate: selectedVehicle?.licensePlate || "",
+        vehicleType: selectedVehicle?.type || "",
         driverId,
         driverName: selectedDriver?.name || "",
         status: "Planned",
