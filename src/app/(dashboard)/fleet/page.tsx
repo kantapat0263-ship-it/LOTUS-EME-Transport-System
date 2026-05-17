@@ -48,7 +48,7 @@ import { Vehicle, Driver, UserProfile } from "@/types/models"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
-  type: z.enum(['Pickup', '4-wheel truck', '6-wheel truck']),
+  type: z.string().min(1, "กรุณาเลือกประเภทรถ"),
   maxLoadCapacityKg: z.coerce.number().min(1, "กรุณาระบุน้ำหนักบรรทุก"),
   fuelRate: z.union([z.coerce.number(), z.literal("")]).optional().transform(v => v === "" ? undefined : v),
 })
@@ -75,7 +75,7 @@ export default function FleetPage() {
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
-    defaultValues: { licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500, fuelRate: undefined }
+    defaultValues: { licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined }
   })
 
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
@@ -88,6 +88,47 @@ export default function FleetPage() {
     resolver: zodResolver(driverSchema),
     defaultValues: { name: "", phoneNumber: "" }
   })
+
+  // Vehicle Types management
+  const vehicleTypesRef = useMemoFirebase(() => collection(db, "vehicleTypes"), [db])
+  const { data: vehicleTypes } = useCollection<any>(vehicleTypesRef)
+
+  const vehicleTypeOptions = React.useMemo(() => {
+    if (vehicleTypes && vehicleTypes.length > 0) {
+      return vehicleTypes.map((t: any) => t.name).filter(Boolean)
+    }
+    return ['Pickup', '4-wheel truck', '6-wheel truck']
+  }, [vehicleTypes])
+
+  const [isTypeDialogOpen, setIsTypeDialogOpen] = React.useState(false)
+  const [newTypeName, setNewTypeName] = React.useState("")
+  const [isSavingType, setIsSavingType] = React.useState(false)
+
+  const handleSaveType = async () => {
+    if (!newTypeName.trim()) return
+    setIsSavingType(true)
+    try {
+      const newRef = doc(collection(db, "vehicleTypes"))
+      await setDocumentNonBlocking(newRef, {
+        id: newRef.id,
+        name: newTypeName.trim(),
+        createdAt: serverTimestamp()
+      }, { merge: true })
+      toast({ title: "สำเร็จ", description: `เพิ่มประเภทรถ "${newTypeName}" แล้ว` })
+      setNewTypeName("")
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    } finally {
+      setIsSavingType(false)
+    }
+  }
+
+  const handleDeleteType = async (id: string, name: string) => {
+    if (!confirm(`ลบประเภทรถ "${name}"?`)) return
+    const tRef = doc(db, "vehicleTypes", id)
+    deleteDocumentNonBlocking(tRef)
+    toast({ title: "ลบแล้ว", description: `ลบประเภทรถ "${name}" แล้ว` })
+  }
 
   function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
     if (isViewer) return
@@ -189,6 +230,7 @@ export default function FleetPage() {
         <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto overflow-x-auto justify-start">
           <TabsTrigger value="vehicles" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ยานพาหนะ</TabsTrigger>
           <TabsTrigger value="drivers" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">คนขับรถ</TabsTrigger>
+          <TabsTrigger value="vehicleTypes" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ประเภทรถ</TabsTrigger>
         </TabsList>
 
         <TabsContent value="vehicles" className="space-y-4">
@@ -198,7 +240,7 @@ export default function FleetPage() {
                 className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
                 onClick={() => { 
                   setEditingVehicle(null); 
-                  vehicleForm.reset({ licensePlate: "", type: "Pickup", maxLoadCapacityKg: 1500, fuelRate: undefined }); 
+                  vehicleForm.reset({ licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined }); 
                   setIsVehicleDialogOpen(true); 
                 }}
               >
@@ -319,6 +361,56 @@ export default function FleetPage() {
             </div>
           )}
         </TabsContent>
+
+        <TabsContent value="vehicleTypes" className="space-y-4">
+          {!isViewer && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">เพิ่มประเภทรถใหม่</CardTitle>
+                <CardDescription>กำหนดประเภทรถที่ใช้ในระบบ</CardDescription>
+              </CardHeader>
+              <CardContent className="flex gap-3">
+                <Input
+                  placeholder="เช่น 10-wheel truck, Van, Trailer..."
+                  className="h-11 flex-1"
+                  value={newTypeName}
+                  onChange={(e) => setNewTypeName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveType()}
+                />
+                <Button className="bg-accent h-11" onClick={handleSaveType} disabled={isSavingType || !newTypeName.trim()}>
+                  {isSavingType ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
+                  เพิ่ม
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {vehicleTypeOptions.map((name: string) => {
+              const typeDoc = vehicleTypes?.find((t: any) => t.name === name)
+              return (
+                <Card key={name} className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <Truck className="h-5 w-5 text-accent" />
+                    <span className="font-medium">{name}</span>
+                  </div>
+                  {!isViewer && typeDoc && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDeleteType(typeDoc.id, name)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {!typeDoc && (
+                    <Badge variant="outline" className="text-[10px]">ค่าเริ่มต้น</Badge>
+                  )}
+                </Card>
+              )
+            })}
+          </div>
+        </TabsContent>
       </Tabs>
 
       {/* Vehicle Dialog */}
@@ -343,7 +435,18 @@ export default function FleetPage() {
                 <FormItem><FormLabel>ทะเบียนรถ</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={vehicleForm.control} name="type" render={({ field }) => (
-                <FormItem><FormLabel>ประเภทรถ</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger className="h-11"><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="Pickup">Pickup</SelectItem><SelectItem value="4-wheel truck">4-wheel truck</SelectItem><SelectItem value="6-wheel truck">6-wheel truck</SelectItem></SelectContent></Select><FormMessage /></FormItem>
+                <FormItem>
+                  <FormLabel>ประเภทรถ</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger className="h-11"><SelectValue placeholder="เลือกประเภทรถ" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      {vehicleTypeOptions.map((typeName: string) => (
+                        <SelectItem key={typeName} value={typeName}>{typeName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
               )} />
               <FormField control={vehicleForm.control} name="maxLoadCapacityKg" render={({ field }) => (
                 <FormItem><FormLabel>น้ำหนักบรรทุกสูงสุด (kg)</FormLabel><FormControl><Input className="h-11" type="number" {...field} /></FormControl><FormMessage /></FormItem>
