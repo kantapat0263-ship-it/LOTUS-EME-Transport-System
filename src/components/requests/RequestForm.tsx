@@ -546,6 +546,17 @@ export function RequestForm() {
                                 value={dest.coordinates}
                                 onChange={(e) => updateDest(dest.id, { coordinates: e.target.value })}
                               />
+                              <p className="text-[10px] text-muted-foreground mt-1">
+                                คัดลอกจาก Google Maps → คลิกขวาบนจุดที่ต้องการ → คัดลอกพิกัด{" "}
+                                <a 
+                                  href="https://youtube.com/shorts/OruuVo7xZig?si=YIEFf6bMD0GwKZ6y" 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-accent underline font-bold"
+                                >
+                                  🎬 ดูวิธีทำ
+                                </a>
+                              </p>
                               {!dest.coordinates && (
                                 <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1">
                                   <Info className="h-3 w-3 shrink-0" />

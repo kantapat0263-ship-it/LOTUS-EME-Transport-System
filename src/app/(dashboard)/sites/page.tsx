@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -469,7 +468,17 @@ export default function SitesPage() {
                 <FormItem>
                   <FormLabel>พิกัด (lat, lng)</FormLabel>
                   <FormControl><Input placeholder="เช่น 13.7563, 100.5018" className="h-11" {...field} /></FormControl>
-                  <FormDescription className="text-[10px]">คัดลอกจาก Google Maps → คลิกขวาบนจุดที่ต้องการ → คัดลอกพิกัด</FormDescription>
+                  <FormDescription className="text-[10px]">
+                    คัดลอกจาก Google Maps → คลิกขวาบนจุดที่ต้องการ → คัดลอกพิกัด{" "}
+                    <a 
+                      href="https://youtube.com/shorts/OruuVo7xZig?si=YIEFf6bMD0GwKZ6y" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-accent underline font-bold"
+                    >
+                      🎬 ดูวิธีทำ
+                    </a>
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )} />
