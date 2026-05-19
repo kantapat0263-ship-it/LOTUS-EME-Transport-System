@@ -147,6 +147,7 @@ export function GroupingMap({
         if (typeof window !== 'undefined') {
           (window as any).__lastTripStats = {
             distance: totalDistKm,
+            duration: Math.round(totalTime / 60),
             fuelCost: fuelCost
           }
         }

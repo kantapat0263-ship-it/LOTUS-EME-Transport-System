@@ -209,7 +209,7 @@ export default function TripGroupingPage() {
       const safety = Math.floor(Math.random() * 10);
       const tripId = `${datePrefix}-${sequence}${safety}`;
       
-      const lastStats = (window as any).__lastTripStats || { distance: 0, fuelCost: 0 }
+      const lastStats = (window as any).__lastTripStats || { distance: 0, duration: 0, fuelCost: 0 }
       const warehousePos = { 
         lat: settings?.warehouseLatitude || 14.0815, 
         lng: settings?.warehouseLongitude || 100.7129 
@@ -227,6 +227,7 @@ export default function TripGroupingPage() {
         status: "Planned",
         sourceVRIds: Array.from(new Set(selectedDestinations.map(d => d.vrId))),
         totalDistanceKm: lastStats.distance || 0,
+        totalEstimatedTimeMinutes: lastStats.duration || 0,
         fuelCost: lastStats.fuelCost || 0,
         createdAt: serverTimestamp(),
         departurePoint: settings?.warehouseName || "คลังสินค้า LOTUS EME",
