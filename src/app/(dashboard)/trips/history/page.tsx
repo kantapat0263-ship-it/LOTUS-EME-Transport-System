@@ -358,13 +358,13 @@ export default function TripHistoryPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input 
                 placeholder="ค้นหา Trip ID, คนขับ..." 
-                className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:h-10" 
+                className="flex h-10 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
             <Select value={selectedStatus} onValueChange={setSelectedStatus}>
-              <SelectTrigger className="h-11 md:h-10">
+              <SelectTrigger className="h-10">
                 <SelectValue placeholder="สถานะทั้งหมด" />
               </SelectTrigger>
               <SelectContent>
@@ -405,7 +405,7 @@ export default function TripHistoryPage() {
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
                     mode="single"
-                    selected={selectedDate ? new Date(selectedDate) : undefined}
+                    selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
                     onSelect={(date) => setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")}
                     weekStartsOn={0}
                     initialFocus
@@ -413,7 +413,7 @@ export default function TripHistoryPage() {
                 </PopoverContent>
               </Popover>
             </div>
-            <Button variant="outline" className="w-full h-11 md:h-10">
+            <Button variant="outline" className="w-full h-10">
               <Filter className="mr-2 h-4 w-4" /> กรองเพิ่มเติม
             </Button>
           </div>
