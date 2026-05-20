@@ -1,7 +1,8 @@
+
 "use client"
 
 import * as React from "react"
-import { Search, Filter, Calendar as CalendarIcon, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, Phone, Edit, Plus, AlertTriangle, Save } from "lucide-react"
+import { Search, Filter, Calendar as CalendarIcon, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, Phone, Edit, Plus, AlertTriangle, Save, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -31,7 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
-import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc, addDoc } from "firebase/firestore"
+import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc, addDoc, where } from "firebase/firestore"
 import { Trip, TripStatus, UserProfile, Driver, Vehicle, Site, TripStop } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
@@ -65,7 +66,17 @@ export default function TripHistoryPage() {
 
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedStatus, setSelectedStatus] = React.useState("all")
-  const [selectedDate, setSelectedDate] = React.useState("")
+  
+  // Initialize selectedDate to today's date in YYYY-MM-DD format
+  const [selectedDate, setSelectedDate] = React.useState(() => {
+    const today = new Date();
+    // Use local time, not UTC, to avoid timezone offset issues
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+
   const [selectedTrip, setSelectedTrip] = React.useState<Trip | null>(null)
   const [isWorksheetOpen, setIsWorksheetOpen] = React.useState(false)
 
@@ -367,16 +378,29 @@ export default function TripHistoryPage() {
             <div className="relative">
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button
-                    variant={"outline"}
-                    className={cn(
-                      "w-full h-11 md:h-10 justify-start text-left font-normal bg-background",
-                      !selectedDate && "text-muted-foreground"
+                  <div className="flex w-full relative">
+                    <Button
+                      variant={"outline"}
+                      className={cn(
+                        "w-full h-11 md:h-10 justify-start text-left font-normal bg-background pr-10",
+                        !selectedDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
+                      {selectedDate ? formatDateDisplay(selectedDate) : <span>เลือกวันที่ (ทั้งหมด)</span>}
+                    </Button>
+                    {selectedDate && (
+                      <div 
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 cursor-pointer hover:bg-secondary rounded-full text-muted-foreground hover:text-foreground z-10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedDate("");
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </div>
                     )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                    {selectedDate ? formatDateDisplay(selectedDate) : <span>เลือกวันที่</span>}
-                  </Button>
+                  </div>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
