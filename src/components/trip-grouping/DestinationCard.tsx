@@ -51,7 +51,6 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-accent">{dest.vrId}</span>
-                <Badge variant="outline" className="text-[10px] h-4 px-1 bg-background/50">จุดที่ {dest.destIndex + 1}</Badge>
               </div>
               <p className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5 text-accent shrink-0" /> {dest.siteName}
