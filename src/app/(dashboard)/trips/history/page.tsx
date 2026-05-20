@@ -375,44 +375,22 @@ export default function TripHistoryPage() {
                 <SelectItem value="Cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
-            <div className="relative">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <div className="flex w-full relative">
-                    <Button
-                      variant={"outline"}
-                      className={cn(
-                        "w-full h-11 md:h-10 justify-start text-left font-normal bg-background pr-10",
-                        !selectedDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                      {selectedDate ? formatDateDisplay(selectedDate) : <span>เลือกวันที่ (ทั้งหมด)</span>}
-                    </Button>
-                    {selectedDate && (
-                      <div 
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 cursor-pointer hover:bg-secondary rounded-full text-muted-foreground hover:text-foreground z-10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedDate("");
-                        }}
-                      >
-                        <X className="h-4 w-4" />
-                      </div>
-                    )}
-                  </div>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
-                    onSelect={(date) => setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")}
-                    ISOWeek={false}
-                    weekStartsOn={0}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
+            <div className="relative flex items-center">
+              <CalendarIcon className="absolute left-3 h-4 w-4 text-accent z-10 pointer-events-none" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="flex h-11 md:h-10 w-full rounded-md border border-input bg-background pl-10 pr-10 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+              />
+              {selectedDate && (
+                <div
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 cursor-pointer hover:bg-secondary rounded-full text-muted-foreground hover:text-foreground z-10"
+                  onClick={() => setSelectedDate("")}
+                >
+                  <X className="h-4 w-4" />
+                </div>
+              )}
             </div>
             <Button variant="outline" className="w-full h-10">
               <Filter className="mr-2 h-4 w-4" /> กรองเพิ่มเติม
