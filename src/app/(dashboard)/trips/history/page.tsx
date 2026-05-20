@@ -113,6 +113,15 @@ export default function TripHistoryPage() {
   const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
   const { data: sites } = useCollection<Site>(sitesRef)
 
+  const getDisplayStatus = (trip: any): TripStatus => {
+    if (trip.status === 'Cancelled') return 'Cancelled'
+    const today = new Date().toISOString().split('T')[0]
+    const tripDate = trip.tripDate || ""
+    if (tripDate < today) return 'Completed'
+    if (tripDate === today) return 'In Progress'
+    return 'Planned'
+  }
+
   const filteredTrips = React.useMemo(() => {
     return (trips || []).filter(trip => {
       // 1. Role-based Visibility Filter
@@ -306,15 +315,6 @@ export default function TripHistoryPage() {
     }
   }
 
-  const getDisplayStatus = (trip: any): TripStatus => {
-    if (trip.status === 'Cancelled') return 'Cancelled'
-    const today = new Date().toISOString().split('T')[0]
-    const tripDate = trip.tripDate || ""
-    if (tripDate < today) return 'Completed'
-    if (tripDate === today) return 'In Progress'
-    return 'Planned'
-  }
-
   const getStatusColor = (status: TripStatus) => {
     switch (status) {
       case 'Completed': return 'bg-green-500 text-white hover:bg-green-600';
@@ -407,6 +407,7 @@ export default function TripHistoryPage() {
                     mode="single"
                     selected={selectedDate ? new Date(selectedDate) : undefined}
                     onSelect={(date) => setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")}
+                    weekStartsOn={0}
                     initialFocus
                   />
                 </PopoverContent>
