@@ -311,6 +311,16 @@ export default function TripDetailPage() {
     ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
   ])].filter(Boolean).join(", ") || "-";
 
+  const getDisplayStatus = (t: any): TripStatus => {
+    if (t.status === 'Cancelled') return 'Cancelled';
+    const today = new Date().toISOString().split('T')[0];
+    if (!t.tripDate) return t.status;
+    if (t.tripDate < today) return 'Completed';
+    if (t.tripDate === today) return 'In Progress';
+    return 'Planned';
+  };
+  const displayStatus = getDisplayStatus(trip);
+
   return (
     <>
       <div className="space-y-6 animate-in fade-in duration-500 no-print">
@@ -331,8 +341,8 @@ export default function TripDetailPage() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button className={cn("flex-1 sm:flex-none h-11 sm:h-9 hover:opacity-90", getStatusColor(trip.status))}>
-                  สถานะ: {trip.status}
+                <Button className={cn("flex-1 sm:flex-none h-11 sm:h-9 hover:opacity-90", getStatusColor(displayStatus))}>
+                  สถานะ: {displayStatus}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -354,7 +364,7 @@ export default function TripDetailPage() {
                     <CardTitle className="text-xl md:text-2xl truncate">Trip ID: {trip.tripId}</CardTitle>
                     <CardDescription className="text-xs">สร้างเมื่อ: {trip.createdAt?.toDate()?.toLocaleString('th-TH')}</CardDescription>
                   </div>
-                  <Badge className={cn("text-base md:text-lg px-3 md:px-4 py-1 self-start sm:self-auto", getStatusColor(trip.status))}>{trip.status}</Badge>
+                  <Badge className={cn("text-base md:text-lg px-3 md:px-4 py-1 self-start sm:self-auto", getStatusColor(displayStatus))}>{displayStatus}</Badge>
                 </div>
               </CardHeader>
               <CardContent className="p-4 md:p-6 pt-0">
