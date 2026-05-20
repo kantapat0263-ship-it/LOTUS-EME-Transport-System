@@ -407,6 +407,7 @@ export default function TripHistoryPage() {
                     mode="single"
                     selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
                     onSelect={(date) => setSelectedDate(date ? format(date, "yyyy-MM-dd") : "")}
+                    ISOWeek={false}
                     weekStartsOn={0}
                     initialFocus
                   />
