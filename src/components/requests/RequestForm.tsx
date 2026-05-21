@@ -441,19 +441,7 @@ export function RequestForm() {
                               </Button>
                             ))}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-muted-foreground">จุดที่ {index + 1}</span>
-                            <Button 
-                              type="button" 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeDestination(dest.id)}
-                              disabled={destinations.length === 1}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          {/* Single destination mode */}
                         </div>
 
                         {dest.category !== "custom" ? (
@@ -687,15 +675,6 @@ export function RequestForm() {
                   );
                 })}
               </div>
-
-              <Button 
-                type="button" 
-                variant="outline" 
-                className="w-full h-11 border-dashed border-accent/40 text-accent hover:bg-accent/5"
-                onClick={addDestination}
-              >
-                <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดหมายอื่น (ในเที่ยวเดียวกัน)
-              </Button>
             </div>
 
             <div className="space-y-2">
