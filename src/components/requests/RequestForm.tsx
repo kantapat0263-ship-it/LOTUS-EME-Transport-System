@@ -116,6 +116,7 @@ export function RequestForm() {
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
+  const [activeSuggestId, setActiveSuggestId] = React.useState<string | null>(null)
 
   // Ensure default selected date is valid
   React.useEffect(() => {
@@ -440,6 +441,19 @@ export function RequestForm() {
                               </Button>
                             ))}
                           </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-muted-foreground">จุดที่ {index + 1}</span>
+                            <Button 
+                              type="button" 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeDestination(dest.id)}
+                              disabled={destinations.length === 1}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
 
                         {dest.category !== "custom" ? (
@@ -506,10 +520,15 @@ export function RequestForm() {
                                   placeholder="พิมพ์เพื่อค้นหาหรือกำหนดเอง..." 
                                   className="h-11"
                                   value={dest.customName}
-                                  onChange={(e) => updateDest(dest.id, { customName: e.target.value, siteId: "", coordinates: "" })}
+                                  onChange={(e) => {
+                                    updateDest(dest.id, { customName: e.target.value, siteId: "", coordinates: "" })
+                                    setActiveSuggestId(dest.id)
+                                  }}
+                                  onBlur={() => setTimeout(() => setActiveSuggestId(null), 200)}
+                                  onFocus={() => setActiveSuggestId(dest.id)}
                                   autoComplete="off"
                                 />
-                                {dest.customName && (() => {
+                                {dest.customName && activeSuggestId === dest.id && (() => {
                                   const matched = sites?.filter(s => 
                                     s.name.toLowerCase().includes(dest.customName.toLowerCase()) && 
                                     dest.customName.length >= 2
@@ -533,6 +552,7 @@ export function RequestForm() {
                                               siteId: s.id,
                                               coordinates: s.latitude && s.longitude ? `${s.latitude}, ${s.longitude}` : ""
                                             })
+                                            setActiveSuggestId(null)
                                           }}
                                         >
                                           <span className="text-sm font-medium text-white">{s.name}</span>
@@ -667,6 +687,15 @@ export function RequestForm() {
                   );
                 })}
               </div>
+
+              <Button 
+                type="button" 
+                variant="outline" 
+                className="w-full h-11 border-dashed border-accent/40 text-accent hover:bg-accent/5"
+                onClick={addDestination}
+              >
+                <Plus className="mr-2 h-4 w-4" /> เพิ่มจุดหมายอื่น (ในเที่ยวเดียวกัน)
+              </Button>
             </div>
 
             <div className="space-y-2">
