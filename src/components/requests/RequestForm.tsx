@@ -395,7 +395,6 @@ export function RequestForm() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-bold">จุดหมายปลายทาง</Label>
-                {/* Multi-destination disabled: 1 VR = 1 destination */}
               </div>
 
               <div className="space-y-0">
@@ -441,8 +440,6 @@ export function RequestForm() {
                               </Button>
                             ))}
                           </div>
-                          
-                          {/* Single destination mode */}
                         </div>
 
                         {dest.category !== "custom" ? (
@@ -502,14 +499,53 @@ export function RequestForm() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <div className="flex items-center justify-between min-h-[24px]">
-                                  <Label>ชื่อสถานที่</Label>
+                                <Label>ชื่อสถานที่</Label>
                               </div>
-                              <Input 
-                                placeholder="เช่น บริษัท TMT อยุธยา" 
-                                className="h-11"
-                                value={dest.customName}
-                                onChange={(e) => updateDest(dest.id, { customName: e.target.value })}
-                              />
+                              <div className="relative">
+                                <Input 
+                                  placeholder="พิมพ์เพื่อค้นหาหรือกำหนดเอง..." 
+                                  className="h-11"
+                                  value={dest.customName}
+                                  onChange={(e) => updateDest(dest.id, { customName: e.target.value, siteId: "", coordinates: "" })}
+                                  autoComplete="off"
+                                />
+                                {dest.customName && (() => {
+                                  const matched = sites?.filter(s => 
+                                    s.name.toLowerCase().includes(dest.customName.toLowerCase()) && 
+                                    dest.customName.length >= 2
+                                  ).slice(0, 5) || []
+                                  
+                                  if (matched.length === 0) return null
+                                  
+                                  return (
+                                    <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-card border border-border rounded-lg shadow-xl overflow-hidden">
+                                      <p className="text-[10px] text-muted-foreground px-3 py-1.5 bg-secondary/30 border-b border-border">
+                                        🔍 พบสถานที่ที่มีอยู่แล้ว — เลือกเพื่อใช้พิกัดเดิม
+                                      </p>
+                                      {matched.map(s => (
+                                        <button
+                                          key={s.id}
+                                          type="button"
+                                          className="w-full text-left px-3 py-2.5 hover:bg-accent/10 transition-colors flex flex-col gap-0.5 border-b border-border/30 last:border-0"
+                                          onClick={() => {
+                                            updateDest(dest.id, {
+                                              customName: s.name,
+                                              siteId: s.id,
+                                              coordinates: s.latitude && s.longitude ? `${s.latitude}, ${s.longitude}` : ""
+                                            })
+                                          }}
+                                        >
+                                          <span className="text-sm font-medium text-white">{s.name}</span>
+                                          <span className="text-[10px] text-muted-foreground">
+                                            {s.latitude ? `📍 ${s.latitude?.toFixed(4)}, ${s.longitude?.toFixed(4)}` : "ไม่มีพิกัด"}
+                                            {s.projectTypeTag && ` • ${s.projectTypeTag}`}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )
+                                })()}
+                              </div>
                             </div>
                             <div className="space-y-2">
                               <div className="flex items-center justify-between min-h-[24px]">
