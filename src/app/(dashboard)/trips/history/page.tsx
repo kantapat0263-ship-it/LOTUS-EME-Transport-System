@@ -67,15 +67,11 @@ export default function TripHistoryPage() {
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedStatus, setSelectedStatus] = React.useState("all")
   
-  // Initialize selectedDate to today's date in YYYY-MM-DD format
-  const [selectedDate, setSelectedDate] = React.useState(() => {
-    const today = new Date();
-    // Use local time, not UTC, to avoid timezone offset issues
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
+  // Date range and pagination states
+  const [startDate, setStartDate] = React.useState("")
+  const [endDate, setEndDate] = React.useState("")
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [itemsPerPage, setItemsPerPage] = React.useState(20)
 
   const [selectedTrip, setSelectedTrip] = React.useState<Trip | null>(null)
   const [isWorksheetOpen, setIsWorksheetOpen] = React.useState(false)
@@ -143,7 +139,7 @@ export default function TripHistoryPage() {
         if (!isOwner) return false;
       }
 
-      // 2. Search, Status, and Date Filters
+      // 2. Search, Status, and Date Range Filters
       const matchSearch = !searchTerm || 
         (trip.tripId || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
         (trip.driverName || "").toLowerCase().includes(searchTerm.toLowerCase())
@@ -151,11 +147,26 @@ export default function TripHistoryPage() {
       const matchStatus = !selectedStatus || selectedStatus === 'all' || 
         trip.status === selectedStatus
         
-      const matchDate = !selectedDate || trip.tripDate === selectedDate
+      const matchDate = (!startDate && !endDate) ||
+        (startDate && !endDate && trip.tripDate >= startDate) ||
+        (!startDate && endDate && trip.tripDate <= endDate) ||
+        (startDate && endDate && trip.tripDate >= startDate && trip.tripDate <= endDate)
       
       return matchSearch && matchStatus && matchDate
     })
-  }, [trips, isViewer, user, profile, searchTerm, selectedStatus, selectedDate]);
+  }, [trips, isViewer, user, profile, searchTerm, selectedStatus, startDate, endDate]);
+
+  const paginatedTrips = React.useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage
+    return filteredTrips.slice(start, start + itemsPerPage)
+  }, [filteredTrips, currentPage, itemsPerPage])
+
+  const totalPages = Math.ceil(filteredTrips.length / itemsPerPage)
+
+  // Reset to page 1 when filters change
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, selectedStatus, startDate, endDate])
 
   const handleStatusChange = async (tripId: string, newStatus: TripStatus) => {
     if (isViewer) return
@@ -375,26 +386,36 @@ export default function TripHistoryPage() {
                 <SelectItem value="Cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
-            <div className="relative flex items-center">
-              <CalendarIcon className="absolute left-3 h-4 w-4 text-accent z-10 pointer-events-none" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="flex h-11 md:h-10 w-full rounded-md border border-input bg-background pl-10 pr-10 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
-              />
-              {selectedDate && (
-                <div
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 cursor-pointer hover:bg-secondary rounded-full text-muted-foreground hover:text-foreground z-10"
-                  onClick={() => setSelectedDate("")}
+            
+            <div className="flex gap-2 items-center col-span-1 sm:col-span-2 lg:col-span-2">
+              <div className="relative flex-1">
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-accent z-10 pointer-events-none" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="flex h-11 md:h-10 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+                />
+              </div>
+              <span className="text-muted-foreground text-sm shrink-0">ถึง</span>
+              <div className="relative flex-1">
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-accent z-10 pointer-events-none" />
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="flex h-11 md:h-10 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+                />
+              </div>
+              {(startDate || endDate) && (
+                <button
+                  onClick={() => { setStartDate(""); setEndDate("") }}
+                  className="shrink-0 p-1.5 hover:bg-secondary rounded-full text-muted-foreground hover:text-foreground"
                 >
                   <X className="h-4 w-4" />
-                </div>
+                </button>
               )}
             </div>
-            <Button variant="outline" className="w-full h-10">
-              <Filter className="mr-2 h-4 w-4" /> กรองเพิ่มเติม
-            </Button>
           </div>
         </CardContent>
       </Card>
@@ -431,7 +452,7 @@ export default function TripHistoryPage() {
           <div className="text-center p-12 text-muted-foreground bg-secondary/20 rounded-xl border border-dashed text-sm">
             ไม่พบรายการเที่ยววิ่ง
           </div>
-        ) : filteredTrips.map((trip) => (
+        ) : paginatedTrips.map((trip) => (
           <Card key={trip.id} className={cn(
             "hover:border-accent/30 transition-all cursor-pointer overflow-hidden group relative",
             selectedIds.has(trip.id) && "border-accent bg-accent/5"
@@ -542,6 +563,66 @@ export default function TripHistoryPage() {
             </div>
           </Card>
         ))}
+
+        {totalPages > 1 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border/20">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>แสดง</span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1) }}
+                className="h-8 px-2 rounded-md border border-input bg-background text-sm text-foreground focus:outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+              <span>รายการ | ทั้งหมด {filteredTrips.length} รายการ</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="h-8 w-8 rounded-md border border-input bg-background text-sm disabled:opacity-30 hover:bg-secondary flex items-center justify-center"
+              >«</button>
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-8 w-8 rounded-md border border-input bg-background text-sm disabled:opacity-30 hover:bg-secondary flex items-center justify-center"
+              >‹</button>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let page
+                if (totalPages <= 5) page = i + 1
+                else if (currentPage <= 3) page = i + 1
+                else if (currentPage >= totalPages - 2) page = totalPages - 4 + i
+                else page = currentPage - 2 + i
+                return (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`h-8 w-8 rounded-md border text-sm flex items-center justify-center ${
+                      currentPage === page 
+                        ? 'bg-accent text-white border-accent' 
+                        : 'border-input bg-background hover:bg-secondary'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="h-8 w-8 rounded-md border border-input bg-background text-sm disabled:opacity-30 hover:bg-secondary flex items-center justify-center"
+              >›</button>
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="h-8 w-8 rounded-md border border-input bg-background text-sm disabled:opacity-30 hover:bg-secondary flex items-center justify-center"
+              >»</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Edit Trip Dialog */}
