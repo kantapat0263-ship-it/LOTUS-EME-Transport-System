@@ -269,41 +269,27 @@ export default function ReportPage() {
           <div className="grid grid-cols-2 gap-4 flex-1">
             <div className="space-y-2">
               <Label>ตั้งแต่วันที่</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full h-11 justify-start text-left font-normal bg-background">
-                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                    {startDate ? formatDateDisplay(startDate) : <span>เริ่มวันที่</span>}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={startDate ? new Date(startDate) : undefined}
-                    onSelect={(date) => setStartDate(date ? format(date, "yyyy-MM-dd") : "")}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
+              <div className="relative">
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-accent pointer-events-none z-10" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>ถึงวันที่</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full h-11 justify-start text-left font-normal bg-background">
-                    <CalendarIcon className="mr-2 h-4 w-4 text-accent" />
-                    {endDate ? formatDateDisplay(endDate) : <span>ถึงวันที่</span>}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={endDate ? new Date(endDate) : undefined}
-                    onSelect={(date) => setEndDate(date ? format(date, "yyyy-MM-dd") : "")}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
+              <div className="relative">
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-accent pointer-events-none z-10" />
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="flex h-11 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+                />
+              </div>
             </div>
           </div>
           <Button className="bg-accent h-11 w-full md:w-auto" onClick={fetchData} disabled={isLoading}>
