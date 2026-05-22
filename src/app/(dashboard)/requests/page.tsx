@@ -123,6 +123,12 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       : ["pending", "rescheduled", "partial", "in_progress"])
   ), [db, showCancelled])
 
+  const urgentRef = useMemoFirebase(() => query(
+    collection(db, "urgentRequests"),
+    where("status", "==", "pending")
+  ), [db])
+  const { data: urgentRequests } = useCollection<any>(urgentRef)
+
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
 
   const requests = React.useMemo(() => {
@@ -281,6 +287,22 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       newSet.add(idx);
     }
     setSelectedDestIndexes(newSet);
+  }
+
+  const handleApproveUrgent = async (urgentId: string, requestedBy: string, requestedDate: string) => {
+    try {
+      await updateDoc(doc(db, "urgentRequests", urgentId), {
+        status: "approved",
+        approvedBy: profileName || "Dispatcher",
+        approvedAt: serverTimestamp()
+      })
+      toast({ 
+        title: "อนุมัติแล้ว", 
+        description: `${requestedBy} สามารถขอรถวันที่ ${requestedDate} ได้แล้ว` 
+      })
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    }
   }
 
   const handleSaveStopNote = async (stopIndex: number) => {
@@ -465,7 +487,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         batch.delete(doc.ref)
       })
       await batch.commit()
-      toast({ title: "ล้างข้อมูลสำเร็จ", description: "ลบข้อมูลคำขอรถทั้งหมดเรียบร้อยแล้ว" })
+      toast({ title: "ล้างข้อมูลสำเร็จ", description: "ลบข้อมูลคำขอใช้รถทั้งหมดเรียบร้อยแล้ว" })
       setIsClearConfirmOpen(false)
     } catch (error) {
       console.error(error)
@@ -483,6 +505,28 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
+      {urgentRequests && urgentRequests.length > 0 && (
+        <div className="mb-4 p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 space-y-2">
+          <p className="text-xs font-bold text-orange-400 flex items-center gap-2">
+            🔔 คำขออนุมัติพิเศษ ({urgentRequests.length} รายการ)
+          </p>
+          {urgentRequests.map((u: any) => (
+            <div key={u.id} className="flex items-center justify-between bg-background/50 p-2 rounded-lg">
+              <div>
+                <p className="text-xs font-bold text-white">{u.requestedBy}</p>
+                <p className="text-[10px] text-muted-foreground">ขอรถวันที่: {u.requestedDate}</p>
+              </div>
+              <Button
+                size="sm"
+                className="h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white"
+                onClick={() => handleApproveUrgent(u.id, u.requestedBy, u.requestedDate)}
+              >
+                ✅ อนุมัติ
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

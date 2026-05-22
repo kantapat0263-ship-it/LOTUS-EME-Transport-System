@@ -109,6 +109,8 @@ export function RequestForm() {
   const minDateStr = minDate.toISOString().split('T')[0]
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
+  const [isSendingUrgent, setIsSendingUrgent] = React.useState(false)
   const [requestedBy, setRequestedBy] = React.useState("")
   const [selectedDate, setSelectedDate] = React.useState("")
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
@@ -152,6 +154,32 @@ export function RequestForm() {
       locationType: "ไซต์งาน",
       requestTime: "08:30"
     }])
+  }
+
+  const handleRequestUrgentApproval = async () => {
+    if (!user || !selectedDate) return
+    setIsSendingUrgent(true)
+    try {
+      const urgentRef = doc(collection(db, "urgentRequests"))
+      await setDoc(urgentRef, {
+        id: urgentRef.id,
+        requestedBy: requestedBy || profile?.name || user.email,
+        requestedByEmail: user.email,
+        userId: user.uid,
+        requestedDate: selectedDate,
+        status: "pending",
+        createdAt: serverTimestamp()
+      })
+      setUrgentApprovalRequested(true)
+      toast({ 
+        title: "ส่งคำขออนุมัติแล้ว", 
+        description: "รอ Dispatcher อนุมัติก่อนกรอกใบขอรถครับ" 
+      })
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    } finally {
+      setIsSendingUrgent(false)
+    }
   }
 
   const removeDestination = (id: string) => {
@@ -211,14 +239,31 @@ export function RequestForm() {
     }
 
     // Viewer เท่านั้น — บังคับตามกฎเวลาทำการ
-    if (isViewer) {
-      if (selectedDate < minDateLimitStr) {
-        toast({ 
-          title: "ไม่สามารถจองวันนี้ได้", 
-          description: `นอกเวลารับคำขอ กรุณาจองตั้งแต่วันที่ ${format(new Date(minDateLimitStr + 'T00:00:00'), "dd/MM/yyyy")} เป็นต้นไป`, 
-          variant: "destructive" 
-        })
-        return
+    if (isViewer && isOutside) {
+      const tomorrowStr = (() => {
+        const d = new Date()
+        d.setDate(d.getDate() + 1)
+        d.setHours(0,0,0,0)
+        return d.toISOString().split('T')[0]
+      })()
+      
+      if (selectedDate === tomorrowStr) {
+        // ตรวจสอบว่ามีการอนุมัติเร่งด่วนหรือไม่
+        const urgentSnap = await getDocs(query(
+          collection(db, "urgentRequests"),
+          where("userId", "==", user.uid),
+          where("requestedDate", "==", selectedDate),
+          where("status", "==", "approved")
+        ))
+        
+        if (urgentSnap.empty) {
+          toast({ 
+            title: "เกินเวลารับคำขอ", 
+            description: "กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้", 
+            variant: "destructive" 
+          })
+          return
+        }
       }
     }
 
@@ -374,14 +419,46 @@ export function RequestForm() {
                     />
                   </PopoverContent>
                 </Popover>
-                {isViewer && isOutsideHours && (
-                  <div className="text-[10px] text-amber-400 mt-1 leading-tight">
-                    <div className="flex items-center gap-1">
-                      <Info className="h-3 w-3 shrink-0" />
-                      นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                {isViewer && isOutsideHours && (() => {
+                  const tomorrowStr = (() => {
+                    const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(0,0,0,0)
+                    return d.toISOString().split('T')[0]
+                  })()
+                  const isSelectingTomorrow = selectedDate === tomorrowStr
+
+                  return (
+                    <div className="mt-2 space-y-2">
+                      {isSelectingTomorrow ? (
+                        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 space-y-2">
+                          <p className="text-xs text-red-400 font-bold flex items-center gap-1">
+                            🚫 เกินเวลารับคำขอ — ต้องขออนุมัติก่อน
+                          </p>
+                          {!urgentApprovalRequested ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8 text-xs bg-orange-500 hover:bg-orange-600 text-white w-full"
+                              onClick={handleRequestUrgentApproval}
+                              disabled={isSendingUrgent}
+                            >
+                              {isSendingUrgent ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : "🔔"}
+                              ขออนุมัติพิเศษจาก Dispatcher
+                            </Button>
+                          ) : (
+                            <p className="text-xs text-green-400 flex items-center gap-1">
+                              ✅ ส่งคำขออนุมัติแล้ว — รอ Dispatcher ยืนยันก่อนครับ
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-amber-400 flex items-center gap-1">
+                          <Info className="h-3 w-3 shrink-0" />
+                          นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
                 {!isViewer && (
                   <div className="text-[10px] text-blue-400 mt-1 leading-tight">
                     <div className="flex items-center gap-1">
