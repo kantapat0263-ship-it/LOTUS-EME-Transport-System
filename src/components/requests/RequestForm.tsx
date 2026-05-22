@@ -222,29 +222,16 @@ export function RequestForm() {
     const role = profile?.role?.toLowerCase() || ''
     const isViewer = role !== 'admin' && role !== 'dispatcher'
     const isOutside = hour >= closeHour || hour < openHour
-    const minDays = (isViewer && isOutside) ? 2 : 1
-    const minDateLimit = new Date()
-    minDateLimit.setDate(minDateLimit.getDate() + minDays)
-    minDateLimit.setHours(0, 0, 0, 0)
-    const minDateLimitStr = minDateLimit.toISOString().split('T')[0]
-
-    // Validate: ห้ามขอวันเดียวกับวันปัจจุบัน (ทุกบทบาท)
-    if (selectedDate === todayStr) {
-      toast({ 
-        title: "ไม่สามารถขอรถวันนี้ได้", 
-        description: "กรุณาเลือกวันที่ต้องการใช้รถเป็นวันพรุ่งนี้เป็นต้นไป", 
-        variant: "destructive" 
-      })
-      return
-    }
 
     // Viewer เท่านั้น — บังคับตามกฎเวลาทำการ
     if (isViewer && isOutside) {
       const tomorrowStr = (() => {
-        const d = new Date()
-        d.setDate(d.getDate() + 1)
-        d.setHours(0,0,0,0)
-        return d.toISOString().split('T')[0]
+        const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+        bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
+        const y = bangkokNow.getUTCFullYear()
+        const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
+        const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
+        return `${y}-${m}-${d}`
       })()
       
       if (selectedDate === tomorrowStr) {
@@ -343,7 +330,6 @@ export function RequestForm() {
       await setDoc(requestRef, requestData)
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
-      setSelectedDate(minDateLimitStr)
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
     } catch (error) {
@@ -421,8 +407,12 @@ export function RequestForm() {
                 </Popover>
                 {isViewer && isOutsideHours && (() => {
                   const tomorrowStr = (() => {
-                    const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(0,0,0,0)
-                    return d.toISOString().split('T')[0]
+                    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+                    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
+                    const y = bangkokNow.getUTCFullYear()
+                    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
+                    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
+                    return `${y}-${m}-${d}`
                   })()
                   const isSelectingTomorrow = selectedDate === tomorrowStr
 
