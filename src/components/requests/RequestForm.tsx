@@ -136,26 +136,6 @@ export function RequestForm() {
     }
   }, [profile, user])
 
-  const addDestination = () => {
-    if (destinations.length >= 10) {
-      toast({ title: "เต็มแล้ว", description: "เพิ่มจุดหมายได้สูงสุด 10 จุด", variant: "destructive" })
-      return
-    }
-    setDestinations(prev => [...prev, { 
-      id: Date.now().toString(), 
-      category: "all",
-      searchTerm: "",
-      siteId: "", 
-      siteName: "", 
-      customName: "", 
-      coordinates: "", 
-      jobDescription: "",
-      saveAsSite: false,
-      locationType: "ไซต์งาน",
-      requestTime: "08:30"
-    }])
-  }
-
   const handleRequestUrgentApproval = async () => {
     if (!user || !selectedDate) return
     setIsSendingUrgent(true)
@@ -180,6 +160,26 @@ export function RequestForm() {
     } finally {
       setIsSendingUrgent(false)
     }
+  }
+
+  const addDestination = () => {
+    if (destinations.length >= 10) {
+      toast({ title: "เต็มแล้ว", description: "เพิ่มจุดหมายได้สูงสุด 10 จุด", variant: "destructive" })
+      return
+    }
+    setDestinations(prev => [...prev, { 
+      id: Date.now().toString(), 
+      category: "all",
+      searchTerm: "",
+      siteId: "", 
+      siteName: "", 
+      customName: "", 
+      coordinates: "", 
+      jobDescription: "",
+      saveAsSite: false,
+      locationType: "ไซต์งาน",
+      requestTime: "08:30"
+    }])
   }
 
   const removeDestination = (id: string) => {
@@ -213,8 +213,6 @@ export function RequestForm() {
       return
     }
 
-    const todayStr = new Date().toISOString().split('T')[0]
-    
     const now = new Date()
     const hour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours()
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
