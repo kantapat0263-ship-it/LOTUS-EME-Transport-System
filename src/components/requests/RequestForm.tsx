@@ -91,12 +91,12 @@ export function RequestForm() {
       return addDays(1)
     }
 
-    // Viewer — ตามเวลาปัจจุบัน
-    const hour = now.getHours()
+    // Viewer — ตามเวลาประเทศไทย (Bangkok GMT+7)
+    const bangkokHour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours();
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
     const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
 
-    if (hour >= closeHour || hour < openHour) {
+    if (bangkokHour >= closeHour || bangkokHour < openHour) {
       // หลัง 16:00 หรือก่อน 08:00 → ขอได้ตั้งแต่มะรืน
       return addDays(2)
     } else {
@@ -216,7 +216,7 @@ export function RequestForm() {
     const todayStr = new Date().toISOString().split('T')[0]
     
     const now = new Date()
-    const hour = now.getHours()
+    const hour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours()
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
     const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
     const role = profile?.role?.toLowerCase() || ''
@@ -354,9 +354,9 @@ export function RequestForm() {
     }
   }
 
-  const hour = new Date().getHours();
-  const isOutsideHours = hour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
-                        hour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
+  const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
+  const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
+                        bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
 
   const role = profile?.role?.toLowerCase() || ''
   const isViewer = role !== 'admin' && role !== 'dispatcher'
