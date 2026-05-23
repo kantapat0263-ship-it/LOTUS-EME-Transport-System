@@ -28,7 +28,8 @@ import {
   Search,
   Calendar as CalendarIcon,
   Trash2,
-  Info
+  Info,
+  Sparkles
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Site, UserProfile } from "@/types/models"
@@ -37,6 +38,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
+import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 
 interface DestinationRequest {
   id: string;
@@ -78,6 +80,34 @@ export function RequestForm() {
   const role = profile?.role?.toLowerCase() || ''
   const isViewer = role !== 'admin' && role !== 'dispatcher'
 
+  const [activeSuggestId, setActiveSuggestId] = React.useState<string | null>(null)
+
+  // Real-time urgent request status
+  const urgentRequestRef = useMemoFirebase(() => {
+    if (!db || !user || !isViewer) return null
+    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
+    const y = bangkokNow.getUTCFullYear()
+    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
+    const tomorrowStr = `${y}-${m}-${d}`
+    return query(
+      collection(db, "urgentRequests"),
+      where("userId", "==", user.uid),
+      where("requestedDate", "==", tomorrowStr)
+    )
+  }, [db, user, isViewer])
+
+  const { data: urgentRequests } = useCollection<any>(urgentRequestRef)
+
+  const urgentStatus = React.useMemo(() => {
+    if (!urgentRequests || urgentRequests.length === 0) return null
+    const latest = [...urgentRequests].sort((a: any, b: any) => 
+      (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)
+    )[0]
+    return latest?.status || null
+  }, [urgentRequests])
+
   // Helper to calculate minimum request date based on role and current time
   const getMinRequestDate = React.useCallback(() => {
     const addDays = (n: number) => {
@@ -91,7 +121,8 @@ export function RequestForm() {
       return addDays(1)
     }
 
-    const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
+    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+    const bangkokHour = bangkokNow.getUTCHours();
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
     const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
 
@@ -115,9 +146,7 @@ export function RequestForm() {
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
-  const [activeSuggestId, setActiveSuggestId] = React.useState<string | null>(null)
 
-  // Tomorrow String in Bangkok Time
   const tomorrowStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
     bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
@@ -127,26 +156,6 @@ export function RequestForm() {
     return `${y}-${m}-${d}`
   }, [])
 
-  // Real-time urgent request status
-  const urgentRequestRef = useMemoFirebase(() => {
-    if (!db || !user || !isViewer) return null
-    return query(
-      collection(db, "urgentRequests"),
-      where("userId", "==", user.uid),
-      where("requestedDate", "==", tomorrowStr)
-    )
-  }, [db, user, isViewer, tomorrowStr])
-
-  const { data: urgentRequests } = useCollection<any>(urgentRequestRef)
-
-  const urgentStatus = React.useMemo(() => {
-    if (!urgentRequests || urgentRequests.length === 0) return null
-    const latest = [...urgentRequests].sort((a: any, b: any) => 
-      (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)
-    )[0]
-    return latest?.status || null
-  }, [urgentRequests])
-
   const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
   const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
                         bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
@@ -154,7 +163,6 @@ export function RequestForm() {
   const isSelectingTomorrow = selectedDate === tomorrowStr
   const isBlockedByUrgent = isViewer && isOutsideHours && isSelectingTomorrow && urgentStatus !== 'approved'
 
-  // Ensure default selected date is valid
   React.useEffect(() => {
     if (profile) {
       const currentMin = getMinRequestDate().toISOString().split('T')[0]
@@ -172,6 +180,16 @@ export function RequestForm() {
 
   const handleRequestUrgentApproval = async () => {
     if (!user || !selectedDate) return
+
+    if (urgentStatus === 'pending') {
+      toast({ title: "รออนุมัติอยู่", description: "Dispatcher กำลังพิจารณาคำขอของคุณครับ" })
+      return
+    }
+    if (urgentStatus === 'approved') {
+      toast({ title: "ได้รับอนุมัติแล้ว", description: "กรอกใบขอรถได้เลยครับ" })
+      return
+    }
+
     setIsSendingUrgent(true)
     try {
       const urgentRef = doc(collection(db, "urgentRequests"))
@@ -238,6 +256,21 @@ export function RequestForm() {
       }
       return d;
     }))
+  }
+
+  const handleAiDescription = async (destId: string, currentDescription: string) => {
+    if (!currentDescription) {
+      toast({ title: "แจ้งเตือน", description: "กรุณาระบุลักษณะงานเบื้องต้น", variant: "destructive" })
+      return
+    }
+    toast({ title: "กำลังประมวลผล", description: "AI กำลังช่วยคุณแยกรายการสินค้า..." })
+    try {
+      const result = await intelligentCargoDescriptionAssistant({ highLevelDescription: currentDescription })
+      updateDest(destId, { jobDescription: result.detailedDescription })
+      toast({ title: "สำเร็จ", description: "AI แยกรายการสินค้าให้เรียบร้อยแล้ว" })
+    } catch (error) {
+      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถเรียกใช้งาน AI ได้ในขณะนี้", variant: "destructive" })
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -688,7 +721,19 @@ export function RequestForm() {
                         )}
 
                         <div className="space-y-2">
-                          <Label>ลักษณะงานที่ต้องทำ</Label>
+                          <div className="flex items-center justify-between">
+                            <Label>ลักษณะงานที่ต้องทำ</Label>
+                            <Button 
+                              type="button"
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-7 text-[10px] text-accent hover:bg-accent/10 gap-1.5"
+                              onClick={() => handleAiDescription(dest.id, dest.jobDescription)}
+                              disabled={!dest.jobDescription}
+                            >
+                              <Sparkles className="h-3 w-3" /> ให้ AI ช่วยแยกรายการ
+                            </Button>
+                          </div>
                           <Textarea 
                             placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ" 
                             className="min-h-[80px] bg-background/30"
