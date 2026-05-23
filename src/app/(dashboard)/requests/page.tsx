@@ -305,6 +305,22 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }
 
+  const handleRejectUrgent = async (urgentId: string, requestedBy: string) => {
+    const reason = prompt(`เหตุผลที่ปฏิเสธคำขอของ ${requestedBy}:`)
+    if (!reason) return
+    try {
+      await updateDoc(doc(db, "urgentRequests", urgentId), {
+        status: "rejected",
+        rejectReason: reason,
+        rejectedBy: profileName || "Dispatcher",
+        rejectedAt: serverTimestamp()
+      })
+      toast({ title: "ปฏิเสธแล้ว", description: `ปฏิเสธคำขอของ ${requestedBy} แล้ว` })
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    }
+  }
+
   const handleSaveStopNote = async (stopIndex: number) => {
     if (!selectedReq) return
     setIsSavingNote(stopIndex)
@@ -516,13 +532,22 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 <p className="text-xs font-bold text-white">{u.requestedBy}</p>
                 <p className="text-[10px] text-muted-foreground">ขอรถวันที่: {u.requestedDate}</p>
               </div>
-              <Button
-                size="sm"
-                className="h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white"
-                onClick={() => handleApproveUrgent(u.id, u.requestedBy, u.requestedDate)}
-              >
-                ✅ อนุมัติ
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
+                  onClick={() => handleApproveUrgent(u.id, u.requestedBy, u.requestedDate)}
+                >
+                  ✅ อนุมัติ
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs bg-red-600 hover:bg-red-700 text-white"
+                  onClick={() => handleRejectUrgent(u.id, u.requestedBy)}
+                >
+                  ❌ ปฏิเสธ
+                </Button>
+              </div>
             </div>
           ))}
         </div>
@@ -675,7 +700,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                       </p>
                       {relatedDriver?.phoneNumber && (
                         <a href={`tel:${relatedDriver.phoneNumber}`} className="text-xs font-bold text-blue-400 flex items-center gap-1 hover:underline">
-                          <Phone className="h-3 w-3" /> {relatedDriver.phoneNumber}
+                          <Phone className="h-3.5 w-3.5" /> {relatedDriver.phoneNumber}
                         </a>
                       )}
                       <p className="text-[10px] text-muted-foreground">ทะเบียน: {relatedTrip.vehiclePlate}</p>
@@ -1342,7 +1367,7 @@ export default function RequestsPage() {
                       </p>
                       {relatedDriver?.phoneNumber && (
                         <a href={`tel:${relatedDriver.phoneNumber}`} className="text-xs font-bold text-blue-400 flex items-center gap-1 hover:underline">
-                          <Phone className="h-3 w-3" /> {relatedDriver.phoneNumber}
+                          <Phone className="h-3.5 w-3.5" /> {relatedDriver.phoneNumber}
                         </a>
                       )}
                       <p className="text-[10px] text-muted-foreground">ทะเบียน: {relatedTrip.vehiclePlate}</p>

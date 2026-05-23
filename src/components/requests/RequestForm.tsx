@@ -75,9 +75,11 @@ export function RequestForm() {
   const settingsRef = useMemoFirebase(() => db ? doc(db, "companySettings", "default") : null, [db])
   const { data: settings } = useDoc<any>(settingsRef)
 
+  const role = profile?.role?.toLowerCase() || ''
+  const isViewer = role !== 'admin' && role !== 'dispatcher'
+
   // Helper to calculate minimum request date based on role and current time
   const getMinRequestDate = React.useCallback(() => {
-    const now = new Date()
     const addDays = (n: number) => {
       const d = new Date()
       d.setDate(d.getDate() + n)
@@ -85,27 +87,22 @@ export function RequestForm() {
       return d
     }
 
-    // Admin และ Dispatcher ไม่มีข้อจำกัดเวลา — ขอได้ตั้งแต่พรุ่งนี้เสมอ
-    const role = profile?.role?.toLowerCase() || ''
-    if (role === 'admin' || role === 'dispatcher') {
+    if (!isViewer) {
       return addDays(1)
     }
 
-    // Viewer — ตามเวลาประเทศไทย (Bangkok GMT+7)
-    const bangkokHour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours();
+    const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
     const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
 
     if (bangkokHour >= closeHour || bangkokHour < openHour) {
-      // หลัง 16:00 หรือก่อน 08:00 → ขอได้ตั้งแต่มะรืน
       return addDays(2)
     } else {
-      // 08:00-16:00 → ขอได้ตั้งแต่พรุ่งนี้
       return addDays(1)
     }
-  }, [settings, profile?.role])
+  }, [settings, isViewer])
 
-  const minDate = React.useMemo(() => getMinRequestDate(), [getMinRequestDate, profile?.role])
+  const minDate = React.useMemo(() => getMinRequestDate(), [getMinRequestDate])
   const minDateStr = minDate.toISOString().split('T')[0]
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -119,6 +116,43 @@ export function RequestForm() {
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
   const [activeSuggestId, setActiveSuggestId] = React.useState<string | null>(null)
+
+  // Tomorrow String in Bangkok Time
+  const tomorrowStr = React.useMemo(() => {
+    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
+    const y = bangkokNow.getUTCFullYear()
+    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }, [])
+
+  // Real-time urgent request status
+  const urgentRequestRef = useMemoFirebase(() => {
+    if (!db || !user || !isViewer) return null
+    return query(
+      collection(db, "urgentRequests"),
+      where("userId", "==", user.uid),
+      where("requestedDate", "==", tomorrowStr)
+    )
+  }, [db, user, isViewer, tomorrowStr])
+
+  const { data: urgentRequests } = useCollection<any>(urgentRequestRef)
+
+  const urgentStatus = React.useMemo(() => {
+    if (!urgentRequests || urgentRequests.length === 0) return null
+    const latest = [...urgentRequests].sort((a: any, b: any) => 
+      (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)
+    )[0]
+    return latest?.status || null
+  }, [urgentRequests])
+
+  const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
+  const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
+                        bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
+  
+  const isSelectingTomorrow = selectedDate === tomorrowStr
+  const isBlockedByUrgent = isViewer && isOutsideHours && isSelectingTomorrow && urgentStatus !== 'approved'
 
   // Ensure default selected date is valid
   React.useEffect(() => {
@@ -213,43 +247,13 @@ export function RequestForm() {
       return
     }
 
-    const now = new Date()
-    const hour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours()
-    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
-    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
-    const role = profile?.role?.toLowerCase() || ''
-    const isViewer = role !== 'admin' && role !== 'dispatcher'
-    const isOutside = hour >= closeHour || hour < openHour
-
-    // Viewer เท่านั้น — บังคับตามกฎเวลาทำการ
-    if (isViewer && isOutside) {
-      const tomorrowStr = (() => {
-        const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-        bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
-        const y = bangkokNow.getUTCFullYear()
-        const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
-        const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
-        return `${y}-${m}-${d}`
-      })()
-      
-      if (selectedDate === tomorrowStr) {
-        // ตรวจสอบว่ามีการอนุมัติเร่งด่วนหรือไม่
-        const urgentSnap = await getDocs(query(
-          collection(db, "urgentRequests"),
-          where("userId", "==", user.uid),
-          where("requestedDate", "==", selectedDate),
-          where("status", "==", "approved")
-        ))
-        
-        if (urgentSnap.empty) {
-          toast({ 
-            title: "เกินเวลารับคำขอ", 
-            description: "กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้", 
-            variant: "destructive" 
-          })
-          return
-        }
-      }
+    if (isBlockedByUrgent) {
+      toast({ 
+        title: "ยังไม่ได้รับอนุมัติ", 
+        description: "กรุณารอการอนุมัติเร่งด่วนจาก Dispatcher ก่อนครับ", 
+        variant: "destructive" 
+      })
+      return
     }
 
     const validDestinations = destinations.filter(d => 
@@ -338,13 +342,6 @@ export function RequestForm() {
     }
   }
 
-  const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
-  const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
-                        bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
-
-  const role = profile?.role?.toLowerCase() || ''
-  const isViewer = role !== 'admin' && role !== 'dispatcher'
-
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <Card className="border-accent/20 bg-card/50">
@@ -403,25 +400,43 @@ export function RequestForm() {
                     />
                   </PopoverContent>
                 </Popover>
-                {isViewer && isOutsideHours && (() => {
-                  const tomorrowStr = (() => {
-                    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-                    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
-                    const y = bangkokNow.getUTCFullYear()
-                    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
-                    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
-                    return `${y}-${m}-${d}`
-                  })()
-                  const isSelectingTomorrow = selectedDate === tomorrowStr
-
-                  return (
-                    <div className="mt-2 space-y-2">
-                      {isSelectingTomorrow ? (
-                        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 space-y-2">
-                          <p className="text-xs text-red-400 font-bold flex items-center gap-1">
-                            🚫 เกินเวลารับคำขอ — ต้องขออนุมัติก่อน
+                {isViewer && isOutsideHours && (
+                  <div className="mt-2 space-y-2">
+                    {isSelectingTomorrow ? (
+                      <div className={`p-3 rounded-lg border space-y-2 ${
+                        urgentStatus === 'approved' ? 'bg-green-500/10 border-green-500/30' :
+                        urgentStatus === 'rejected' ? 'bg-red-500/10 border-red-500/30' :
+                        urgentStatus === 'pending' ? 'bg-orange-500/10 border-orange-500/30' :
+                        'bg-red-500/10 border-red-500/30'
+                      }`}>
+                        {urgentStatus === 'approved' && (
+                          <p className="text-xs text-green-400 font-bold flex items-center gap-1">
+                            ✅ ได้รับอนุมัติแล้ว — กรอกใบขอรถได้เลยครับ
                           </p>
-                          {!urgentApprovalRequested ? (
+                        )}
+                        {urgentStatus === 'rejected' && (
+                          <div className="space-y-1">
+                            <p className="text-xs text-red-400 font-bold flex items-center gap-1">
+                              ❌ คำขอถูกปฏิเสธ — กรุณาเลือกวันอื่น
+                            </p>
+                            {urgentRequests?.[0]?.rejectReason && (
+                              <p className="text-[10px] text-muted-foreground italic">
+                                เหตุผล: {urgentRequests[0].rejectReason}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {urgentStatus === 'pending' && (
+                          <p className="text-xs text-orange-400 font-bold flex items-center gap-2">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            รอ Dispatcher อนุมัติอยู่...
+                          </p>
+                        )}
+                        {!urgentStatus && (
+                          <>
+                            <p className="text-xs text-red-400 font-bold flex items-center gap-1">
+                              🚫 เกินเวลารับคำขอ — ต้องขออนุมัติก่อน
+                            </p>
                             <Button
                               type="button"
                               size="sm"
@@ -432,21 +447,17 @@ export function RequestForm() {
                               {isSendingUrgent ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : "🔔"}
                               ขออนุมัติพิเศษจาก Dispatcher
                             </Button>
-                          ) : (
-                            <p className="text-xs text-green-400 flex items-center gap-1">
-                              ✅ ส่งคำขออนุมัติแล้ว — รอ Dispatcher ยืนยันก่อนครับ
-                            </p>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-amber-400 flex items-center gap-1">
-                          <Info className="h-3 w-3 shrink-0" />
-                          นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-amber-400 flex items-center gap-1">
+                        <Info className="h-3 w-3 shrink-0" />
+                        นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                      </div>
+                    )}
+                  </div>
+                )}
                 {!isViewer && (
                   <div className="text-[10px] text-blue-400 mt-1 leading-tight">
                     <div className="flex items-center gap-1">
@@ -753,7 +764,11 @@ export function RequestForm() {
               />
             </div>
 
-            <Button type="submit" className="w-full h-12 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20" disabled={isSubmitting}>
+            <Button 
+              type="submit" 
+              className="w-full h-12 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 disabled:opacity-50 disabled:cursor-not-allowed" 
+              disabled={isSubmitting || isBlockedByUrgent}
+            >
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               ส่งคำขอรถ
             </Button>

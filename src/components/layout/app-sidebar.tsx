@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -47,14 +46,15 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   // States for different types of alerts
   const [pendingReqCount, setPendingReqCount] = React.useState(0)
   const [inProgressReqCount, setInProgressReqCount] = React.useState(0)
+  const [urgentReqCount, setUrgentReqCount] = React.useState(0)
 
-  // Listen for requests
+  // Listen for requests and urgent alerts
   React.useEffect(() => {
     if (!db || !user) return
 
     const isStaff = userRole === 'admin' || userRole === 'dispatcher'
     
-    // Listen to all active statuses
+    // 1. Listen to all active vehicle request statuses
     let q;
     if (isStaff) {
       q = query(
@@ -75,29 +75,30 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
         const docs = snapshot.docs.map(d => d.data())
         
         if (isStaff) {
-          // 1. Pending: Not yet acknowledged
           const pCount = docs.filter(r => r.status === 'pending').length
-          
-          // 2. In Progress: Received by dispatcher but not fully planned
           const iCount = docs.filter(r => r.status === 'in_progress' || r.status === 'partial').length
-          
           setPendingReqCount(pCount)
           setInProgressReqCount(iCount)
         } else {
-          // For Viewers, only count their own pending
           setPendingReqCount(docs.length)
           setInProgressReqCount(0)
         }
-      },
-      async (error) => {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: 'vehicleRequests',
-          operation: 'list'
-        }))
       }
     )
 
-    return () => unsubscribe()
+    // 2. Listen to urgent approval requests (Staff only)
+    let unsubscribeUrgent = () => {}
+    if (isStaff) {
+      const qUrgent = query(collection(db, "urgentRequests"), where("status", "==", "pending"))
+      unsubscribeUrgent = onSnapshot(qUrgent, (snapshot) => {
+        setUrgentReqCount(snapshot.size)
+      })
+    }
+
+    return () => {
+      unsubscribe()
+      unsubscribeUrgent()
+    }
   }, [db, user, userRole])
 
   const handleLogout = async () => {
@@ -112,7 +113,10 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       href: "/requests", 
       icon: Car, 
       roles: ['admin', 'dispatcher', 'viewer'], 
-      badge: pendingReqCount > 0 ? pendingReqCount : null 
+      badge: (pendingReqCount + (userRole !== 'viewer' ? urgentReqCount : 0)) > 0 
+        ? (pendingReqCount + (userRole !== 'viewer' ? urgentReqCount : 0)) 
+        : null,
+      badgeColor: urgentReqCount > 0 ? "bg-red-500" : "bg-destructive"
     },
     { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
@@ -191,7 +195,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
               )} />
               {!isActuallyCollapsed && <span className="flex-1">{item.name}</span>}
               {!isActuallyCollapsed && item.badge && (
-                <Badge variant="destructive" className="ml-auto h-5 min-w-5 flex items-center justify-center p-1 text-[10px]">
+                <Badge className={cn("ml-auto h-5 min-w-5 flex items-center justify-center p-1 text-[10px] border-none text-white", (item as any).badgeColor || "bg-destructive")}>
                   {item.badge}
                 </Badge>
               )}
