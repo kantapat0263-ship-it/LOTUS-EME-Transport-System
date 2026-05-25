@@ -325,7 +325,7 @@ export function RequestForm() {
         requestId,
         requestDate: selectedDate,
         requestTime: destinations[0]?.requestTime || "08:30",
-        requestedBy: profile?.name || user?.displayName || user?.email || "Unknown",
+        requestedBy: requestedBy || profile?.name || user?.displayName || user?.email || "Unknown",
         requestedByEmail: user.email,
         requestedByPhone: (profile as any)?.phone || "",
         userId: user.uid,
@@ -361,6 +361,16 @@ export function RequestForm() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="requestedBy">ชื่อผู้ขอใช้รถ</Label>
+                <Input
+                  id="requestedBy"
+                  placeholder="ชื่อผู้ขอใช้รถ"
+                  className="h-11 bg-background/50"
+                  value={requestedBy}
+                  onChange={(e) => setRequestedBy(e.target.value)}
+                />
+              </div>
               <div className="space-y-2">
                 <Label>วันที่ต้องการรถ</Label>
                 <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
@@ -726,7 +736,7 @@ export function RequestForm() {
                             <div className="flex items-center space-x-2">
                               <Checkbox 
                                 id={`save-site-${dest.id}`} 
-                                checked={dest.saveAsSite}
+                              checked={dest.saveAsSite}
                                 onCheckedChange={(val) => updateDest(dest.id, { saveAsSite: !!val })}
                               />
                               <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-accent cursor-pointer">
