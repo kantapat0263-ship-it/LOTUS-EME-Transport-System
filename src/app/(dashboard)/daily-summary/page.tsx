@@ -19,7 +19,7 @@ import {
   Copy,
   Check,
   QrCode,
-  Image as ImageIcon,
+  ImageIcon,
   ClipboardList,
   Phone,
   Info,
@@ -441,18 +441,13 @@ export default function DailySummaryPage() {
                           <th className="border border-black p-2 w-[12%] text-center">วัน เดือน ปี<br/>ที่ใช้รถ</th>
                           <th className="border border-black p-2 w-[8%] text-center">เวลา</th>
                           <th className="border border-black p-2 w-[55%] text-center">รายละเอียดของงานที่ปฏิบัติ<br/><span className="font-normal text-[10px]">ลักษณะงาน (แยกเป็นข้อ ๆ) และ สถานที่</span></th>
-                          <th className="border border-black p-2 w-[25%] text-left">ผู้ปฏิบัติงาน / ทะเบียนรถ<br/><span className="font-normal text-[10px]">ผู้ขอใช้รถ / ส่งงาน</span></th>
+                          <th className="border border-black p-2 w-[25%] text-left">ผู้ปฏิบัติงาน / ทะเบียนรถ</th>
                         </tr>
                       </thead>
                       <tbody>
                         {trips.flatMap((trip) => {
                           const stops = trip.stops || [];
                           if (stops.length === 0) return [];
-
-                          const summaryRequesters = Array.from(new Set([
-                            (trip as any).requestedBy,
-                            ...stops.map((s: any) => s.requestedBy).filter(Boolean)
-                          ])).filter(Boolean).join(", ");
 
                           const driverPhone = getDriverPhone(trip.driverId);
 
@@ -528,10 +523,6 @@ export default function DailySummaryPage() {
                                           <p className="font-bold">คนขับ: {trip.driverName}</p>
                                           {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
                                           <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
-                                        </div>
-                                        <div className="pt-2 border-t border-gray-200">
-                                          <p className="text-[10px] font-bold text-gray-500 uppercase">ผู้ขอใช้รถ:</p>
-                                          <p className="leading-tight">{summaryRequesters || "-"}</p>
                                         </div>
                                       </div>
                                       <Button 

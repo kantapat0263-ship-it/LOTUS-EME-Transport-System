@@ -306,11 +306,6 @@ export default function TripDetailPage() {
     ? trip.totalDistanceKm
     : (calculatedStats?.distance || 0);
 
-  const uniqueRequesters = [...new Set([
-    (trip as any).requestedBy,
-    ...(trip.stops || []).map((s: any) => s.requestedBy).filter(Boolean)
-  ])].filter(Boolean).join(", ") || "-";
-
   const getDisplayStatus = (t: any): TripStatus => {
     if (t.status === 'Cancelled') return 'Cancelled';
     const today = new Date().toISOString().split('T')[0];
@@ -550,7 +545,7 @@ export default function TripDetailPage() {
                 <span style={{ fontWeight: 'normal', fontSize: '11px' }}>ลักษณะงาน (แยกเป็นข้อ ๆ) และ สถานที่</span>
               </th>
               <th style={{ border: '1px solid #000', padding: '8px', width: '25%', textAlign: 'left' }}>
-                ผู้ปฏิบัติงาน / ทะเบียนรถ<br/>ผู้ขอใช้รถ / วันที่บันทึก
+                ผู้ปฏิบัติงาน / ทะเบียนรถ<br/>วันที่บันทึก
               </th>
             </tr>
           </thead>
@@ -590,10 +585,6 @@ export default function TripDetailPage() {
               <td style={{ border: '1px solid #000', padding: '10px', verticalAlign: 'top', fontSize: '12px' }}>
                 <div style={{ marginBottom: '6px' }}><strong>ผู้ขับ:</strong> {trip.driverName}</div>
                 <div style={{ marginBottom: '6px' }}><strong>ทะเบียน:</strong> {trip.vehiclePlate}</div>
-                <div style={{ marginTop: '10px', borderTop: '1px solid #eee', paddingTop: '6px' }}>
-                  <strong>ผู้ขอใช้รถรวม:</strong><br/>
-                  <span style={{ fontSize: '11px' }}>{uniqueRequesters}</span>
-                </div>
                 <div style={{ marginTop: '12px', fontSize: '10px', color: '#555' }}>วันที่บันทึก: {formatDisplayDate(trip.createdAt)}</div>
               </td>
             </tr>

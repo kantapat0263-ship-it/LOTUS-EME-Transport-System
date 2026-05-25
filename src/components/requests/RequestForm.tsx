@@ -214,32 +214,6 @@ export function RequestForm() {
     }
   }
 
-  const addDestination = () => {
-    if (destinations.length >= 10) {
-      toast({ title: "เต็มแล้ว", description: "เพิ่มจุดหมายได้สูงสุด 10 จุด", variant: "destructive" })
-      return
-    }
-    setDestinations(prev => [...prev, { 
-      id: Date.now().toString(), 
-      category: "all",
-      searchTerm: "",
-      siteId: "", 
-      siteName: "", 
-      customName: "", 
-      coordinates: "", 
-      jobDescription: "",
-      saveAsSite: false,
-      locationType: "ไซต์งาน",
-      requestTime: "08:30"
-    }])
-  }
-
-  const removeDestination = (id: string) => {
-    if (destinations.length > 1) {
-      setDestinations(prev => prev.filter(d => d.id !== id))
-    }
-  }
-
   const updateDest = (id: string, updates: Partial<DestinationRequest>) => {
     setDestinations(prev => prev.map(d => {
       if (d.id === id) {
@@ -275,8 +249,8 @@ export function RequestForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!requestedBy || !selectedDate || !user) {
-      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อผู้ขอ และวันที่", variant: "destructive" })
+    if (!selectedDate || !user) {
+      toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุวันที่", variant: "destructive" })
       return
     }
 
@@ -351,7 +325,7 @@ export function RequestForm() {
         requestId,
         requestDate: selectedDate,
         requestTime: destinations[0]?.requestTime || "08:30",
-        requestedBy,
+        requestedBy: profile?.name || user?.displayName || user?.email || "Unknown",
         requestedByEmail: user.email,
         requestedByPhone: (profile as any)?.phone || "",
         userId: user.uid,
@@ -386,18 +360,7 @@ export function RequestForm() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="requestedBy">ชื่อผู้ขอใช้รถ</Label>
-                <Input 
-                  id="requestedBy" 
-                  placeholder="ชื่อ-นามสกุล" 
-                  className="h-11"
-                  value={requestedBy}
-                  onChange={(e) => setRequestedBy(e.target.value)}
-                  required
-                />
-              </div>
+            <div className="space-y-4">
               <div className="space-y-2">
                 <Label>วันที่ต้องการรถ</Label>
                 <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
