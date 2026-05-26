@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -267,7 +266,8 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={() => { 
+                            <DropdownMenuItem onSelect={(e) => { 
+                              e.preventDefault();
                               setEditingVehicle(v); 
                               vehicleForm.reset({ 
                                 licensePlate: v.licensePlate, 
@@ -337,7 +337,8 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={() => { 
+                            <DropdownMenuItem onSelect={(e) => { 
+                              e.preventDefault();
                               setEditingDriver(d); 
                               driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); 
                               setIsDriverDialogOpen(true); 
