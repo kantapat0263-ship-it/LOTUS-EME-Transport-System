@@ -134,7 +134,15 @@ export function RequestForm() {
   }, [settings, isViewer])
 
   const minDate = React.useMemo(() => getMinRequestDate(), [getMinRequestDate])
-  const minDateStr = minDate.toISOString().split('T')[0]
+  const minDateStr = React.useMemo(() => {
+    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
+    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+    const currentHour = bangkokNow.getUTCHours()
+    const daysToAdd = !isViewer ? 1 : (currentHour >= closeHour || currentHour < openHour) ? 2 : 1
+    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + daysToAdd)
+    return `${bangkokNow.getUTCFullYear()}-${String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokNow.getUTCDate()).padStart(2, '0')}`
+  }, [settings, isViewer])
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
@@ -165,12 +173,11 @@ export function RequestForm() {
 
   React.useEffect(() => {
     if (profile) {
-      const currentMin = getMinRequestDate().toISOString().split('T')[0]
-      if (!selectedDate || selectedDate < currentMin) {
-        setSelectedDate(currentMin)
+      if (!selectedDate || selectedDate < minDateStr) {
+        setSelectedDate(minDateStr)
       }
     }
-  }, [profile?.role, settings, getMinRequestDate, selectedDate])
+  }, [profile?.role, settings, minDateStr, selectedDate])
 
   React.useEffect(() => {
     if (profile) {
@@ -252,6 +259,21 @@ export function RequestForm() {
     if (!selectedDate || !user) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุวันที่", variant: "destructive" })
       return
+    }
+
+    if (isViewer) {
+      const bangkokSubmitTime = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+      const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
+      const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+      const currentBangkokHour = bangkokSubmitTime.getUTCHours()
+      const isNowOutsideHours = currentBangkokHour >= closeHour || currentBangkokHour < openHour
+      const daysToAdd = isNowOutsideHours ? 2 : 1
+      bangkokSubmitTime.setUTCDate(bangkokSubmitTime.getUTCDate() + daysToAdd)
+      const currentMinStr = `${bangkokSubmitTime.getUTCFullYear()}-${String(bangkokSubmitTime.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokSubmitTime.getUTCDate()).padStart(2, '0')}`
+      if (selectedDate < currentMinStr) {
+        toast({ title: "ไม่สามารถส่งคำขอได้", description: "วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่", variant: "destructive" })
+        return
+      }
     }
 
     if (isBlockedByUrgent) {
