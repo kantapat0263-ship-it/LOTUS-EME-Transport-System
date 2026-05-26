@@ -70,7 +70,7 @@ export default function FleetPage() {
   const [isSavingVehicle, setIsSavingVehicle] = React.useState(false)
   const [editingVehicle, setEditingVehicle] = React.useState<Vehicle | null>(null)
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
-  const { data: vehicles, isLoading: isLoadingVehicles } = useCollection<Vehicle>(vehiclesRef)
+  const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vehiclesRef)
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
@@ -81,7 +81,7 @@ export default function FleetPage() {
   const [isSavingDriver, setIsSavingDriver] = React.useState(false)
   const [editingDriver, setEditingDriver] = React.useState<Driver | null>(null)
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
-  const { data: drivers, isLoading: isLoadingDrivers } = useCollection<Driver>(driversRef)
+  const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(driversRef)
 
   const driverForm = useForm<z.infer<typeof driverSchema>>({
     resolver: zodResolver(driverSchema),
@@ -251,7 +251,7 @@ export default function FleetPage() {
               </Button>
             </div>
           )}
-          {isLoadingVehicles ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
+          {loadingVehicles ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
             <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {vehicles?.map((v) => (
                 <Card key={v.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
@@ -266,16 +266,17 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={(e) => { 
-                              e.preventDefault();
-                              setEditingVehicle(v); 
-                              vehicleForm.reset({ 
-                                licensePlate: v.licensePlate, 
-                                type: v.type, 
-                                maxLoadCapacityKg: v.maxLoadCapacityKg, 
-                                fuelRate: v.fuelRate 
-                              }); 
-                              setIsVehicleDialogOpen(true); 
+                            <DropdownMenuItem onSelect={() => { 
+                              setTimeout(() => {
+                                setEditingVehicle(v); 
+                                vehicleForm.reset({ 
+                                  licensePlate: v.licensePlate, 
+                                  type: v.type, 
+                                  maxLoadCapacityKg: v.maxLoadCapacityKg, 
+                                  fuelRate: v.fuelRate 
+                                }); 
+                                setIsVehicleDialogOpen(true); 
+                              }, 0);
                             }}>
                               <Edit className="mr-2 h-4 w-4" /> แก้ไข
                             </DropdownMenuItem>
@@ -320,7 +321,7 @@ export default function FleetPage() {
               </Button>
             </div>
           )}
-          {isLoadingDrivers ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
+          {loadingDrivers ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
             <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {drivers?.map((d) => (
                 <Card key={d.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
@@ -337,11 +338,12 @@ export default function FleetPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={(e) => { 
-                              e.preventDefault();
-                              setEditingDriver(d); 
-                              driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); 
-                              setIsDriverDialogOpen(true); 
+                            <DropdownMenuItem onSelect={() => { 
+                              setTimeout(() => {
+                                setEditingDriver(d); 
+                                driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); 
+                                setIsDriverDialogOpen(true); 
+                              }, 0);
                             }}>
                               <Edit className="mr-2 h-4 w-4" /> แก้ไข
                             </DropdownMenuItem>
