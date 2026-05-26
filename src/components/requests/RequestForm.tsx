@@ -108,32 +108,6 @@ export function RequestForm() {
     return latest?.status || null
   }, [urgentRequests])
 
-  // Helper to calculate minimum request date based on role and current time
-  const getMinRequestDate = React.useCallback(() => {
-    const addDays = (n: number) => {
-      const d = new Date()
-      d.setDate(d.getDate() + n)
-      d.setHours(0, 0, 0, 0)
-      return d
-    }
-
-    if (!isViewer) {
-      return addDays(1)
-    }
-
-    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-    const bangkokHour = bangkokNow.getUTCHours();
-    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
-    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
-
-    if (bangkokHour >= closeHour || bangkokHour < openHour) {
-      return addDays(2)
-    } else {
-      return addDays(1)
-    }
-  }, [settings, isViewer])
-
-  const minDate = React.useMemo(() => getMinRequestDate(), [getMinRequestDate])
   const minDateStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
     const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
@@ -143,6 +117,15 @@ export function RequestForm() {
     bangkokNow.setUTCDate(bangkokNow.getUTCDate() + daysToAdd)
     return `${bangkokNow.getUTCFullYear()}-${String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokNow.getUTCDate()).padStart(2, '0')}`
   }, [settings, isViewer])
+
+  const tomorrowStr = React.useMemo(() => {
+    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
+    const y = bangkokNow.getUTCFullYear()
+    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }, [])
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
@@ -155,15 +138,6 @@ export function RequestForm() {
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
 
-  const tomorrowStr = React.useMemo(() => {
-    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
-    const y = bangkokNow.getUTCFullYear()
-    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
-    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }, [])
-
   const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
   const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
                         bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
@@ -173,11 +147,11 @@ export function RequestForm() {
 
   React.useEffect(() => {
     if (profile) {
-      if (!selectedDate || selectedDate < minDateStr) {
+      if (!selectedDate || selectedDate < tomorrowStr) {
         setSelectedDate(minDateStr)
       }
     }
-  }, [profile?.role, settings, minDateStr, selectedDate])
+  }, [profile?.role, settings, minDateStr, tomorrowStr, selectedDate])
 
   React.useEffect(() => {
     if (profile) {
@@ -271,8 +245,29 @@ export function RequestForm() {
       bangkokSubmitTime.setUTCDate(bangkokSubmitTime.getUTCDate() + daysToAdd)
       const currentMinStr = `${bangkokSubmitTime.getUTCFullYear()}-${String(bangkokSubmitTime.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokSubmitTime.getUTCDate()).padStart(2, '0')}`
       if (selectedDate < currentMinStr) {
-        toast({ title: "ไม่สามารถส่งคำขอได้", description: "วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่", variant: "destructive" })
-        return
+        // ตรวจสอบอนุมัติเร่งด่วนกรณีจะจองวันพรุ่งนี้
+        const tomorrowStrInside = (() => {
+          const dNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+          dNow.setUTCDate(dNow.getUTCDate() + 1)
+          return `${dNow.getUTCFullYear()}-${String(dNow.getUTCMonth() + 1).padStart(2, '0')}-${String(dNow.getUTCDate()).padStart(2, '0')}`
+        })()
+        
+        if (selectedDate === tomorrowStrInside) {
+          const urgentSnap = await getDocs(query(
+            collection(db, "urgentRequests"),
+            where("userId", "==", user.uid),
+            where("requestedDate", "==", selectedDate),
+            where("status", "==", "approved")
+          ))
+          
+          if (urgentSnap.empty) {
+            toast({ title: "ไม่สามารถส่งคำขอได้", description: "กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้", variant: "destructive" })
+            return
+          }
+        } else {
+          toast({ title: "ไม่สามารถส่งคำขอได้", description: "วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่", variant: "destructive" })
+          return
+        }
       }
     }
 
@@ -481,7 +476,7 @@ export function RequestForm() {
                     ) : (
                       <div className="text-[10px] text-amber-400 flex items-center gap-1">
                         <Info className="h-3 w-3 shrink-0" />
-                        นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(minDate, "dd/MM/yyyy")} เป็นต้นไป
+                        นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(new Date(minDateStr + 'T00:00:00'), "dd/MM/yyyy")} เป็นต้นไป
                       </div>
                     )}
                   </div>
