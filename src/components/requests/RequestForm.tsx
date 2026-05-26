@@ -412,15 +412,15 @@ export function RequestForm() {
                     <Calendar
                       mode="single"
                       selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
-                      fromDate={minDate}
+                      fromDate={new Date(tomorrowStr + 'T00:00:00')}
                       disabled={(date) => {
                         const dateStr = format(date, "yyyy-MM-dd")
-                        return dateStr < minDateStr
+                        return dateStr < tomorrowStr
                       }}
                       onSelect={(date) => {
                         if (!date) return
                         const dateStr = format(date, "yyyy-MM-dd")
-                        if (dateStr < minDateStr) return
+                        if (dateStr < tomorrowStr) return
                         setSelectedDate(dateStr)
                         setIsCalendarOpen(false)
                       }}
