@@ -176,6 +176,20 @@ export default function TripGroupingPage() {
       return
     }
 
+    const uniqueDates = Array.from(new Set(selectedDestinations.map(d => d.requestDate).filter(Boolean)))
+    if (uniqueDates.length > 1) {
+      const formatted = uniqueDates.map(ds => {
+        const [y, m, d] = ds.split('-')
+        return `${d}/${m}/${y}`
+      }).join(', ')
+      toast({
+        title: "เลือกข้ามวันไม่ได้",
+        description: `จุดที่เลือกมาจากหลายวัน (${formatted}) กรุณาจัดเที่ยวแยกตามวัน`,
+        variant: "destructive"
+      })
+      return
+    }
+
     // Check if driver already has a trip on the target date
     const targetDateStrForCheck = selectedDestinations[0]?.requestDate || new Date().toISOString().split('T')[0];
     const tripsOnTargetDate = await getDocs(query(collection(db, "trips"), where("tripDate", "==", targetDateStrForCheck), where("driverId", "==", driverId)));
