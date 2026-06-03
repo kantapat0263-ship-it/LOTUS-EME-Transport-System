@@ -65,23 +65,24 @@ export default function ReportPage() {
   const fetchData = async () => {
     setIsLoading(true)
     try {
-      // 1. Fetch Trips
+      // Trips and requests are independent queries, so fetch them in
+      // parallel instead of waiting for one before starting the other.
       const tripsQ = query(
         collection(db, "trips"),
         where("tripDate", ">=", startDate),
         where("tripDate", "<=", endDate)
       )
-      const tripsSnap = await getDocs(tripsQ)
-      const tripsData = tripsSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
-      setTrips(tripsData)
-
-      // 2. Fetch Requests
       const vrQ = query(
         collection(db, "vehicleRequests"),
         where("requestDate", ">=", startDate),
         where("requestDate", "<=", endDate)
       )
-      const vrSnap = await getDocs(vrQ)
+
+      const [tripsSnap, vrSnap] = await Promise.all([getDocs(tripsQ), getDocs(vrQ)])
+
+      const tripsData = tripsSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+      setTrips(tripsData)
+
       const vrData = vrSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
       setRequests(vrData)
 

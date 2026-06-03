@@ -270,19 +270,22 @@ export default function TripGroupingPage() {
         vrGroups[d.vrDocId].push(d.destIndex)
       })
 
-      for (const [docId, indexes] of Object.entries(vrGroups)) {
-        const vr = requests?.find(r => r.id === docId)
-        if (vr) {
+      // Update every source vehicle request in parallel instead of
+      // awaiting them one-by-one (previously O(n) sequential round-trips).
+      await Promise.all(
+        Object.entries(vrGroups).map(([docId, indexes]) => {
+          const vr = requests?.find(r => r.id === docId)
+          if (!vr) return null
           const newAssigned = [...(vr.assignedDestinations || []), ...indexes]
           const isComplete = newAssigned.length === vr.destinations.length
-          await updateDoc(doc(db, "vehicleRequests", docId), {
+          return updateDoc(doc(db, "vehicleRequests", docId), {
             assignedDestinations: arrayUnion(...indexes),
             status: isComplete ? "approved" : "partial",
             tripId: isComplete ? tripId : vr.tripId || null,
             updatedAt: serverTimestamp()
           })
-        }
-      }
+        })
+      )
 
       toast({ title: "สำเร็จ", description: `สร้างเที่ยววิ่ง ${tripId} เรียบร้อยแล้ว` })
       resetAll()
