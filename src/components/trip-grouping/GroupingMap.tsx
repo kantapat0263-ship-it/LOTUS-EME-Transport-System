@@ -46,7 +46,10 @@ export function GroupingMap({
   
   const directionsServiceRef = React.useRef<google.maps.DirectionsService | null>(null)
   const directionsRendererRef = React.useRef<google.maps.DirectionsRenderer | null>(null)
-  
+  // Identifies the inputs of the last successfully rendered route so we can
+  // skip redundant Google Directions API calls when nothing relevant changed.
+  const lastRouteKeyRef = React.useRef<string | null>(null)
+
   const [routeStats, setRouteStats] = React.useState<{ 
     distance: string, 
     duration: string,
@@ -61,33 +64,46 @@ export function GroupingMap({
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingRef)
 
-  const calculateRoute = React.useCallback(async (optimize: boolean = true) => {
+  const calculateRoute = React.useCallback(async (optimize: boolean = true, force: boolean = false) => {
     if (!directionsServiceRef.current || !directionsRendererRef.current) return;
-    
+
     const count = mode === 'manual' ? manualOrder.length : selectedIds.size
     if (count === 0) {
       setRouteStats(null)
       directionsRendererRef.current?.setDirections({ routes: [] } as any)
+      lastRouteKeyRef.current = null
       return
     }
 
-    setIsCalculating(true)
     const google = window.google
-    
+
     // Waypoints source
     const selectedDests = mode === 'manual'
       ? manualOrder.map(id => destinations.find(d => d.id === id)).filter(Boolean)
       : destinations.filter(d => selectedIds.has(d.id))
-    
+
     if (selectedDests.length === 0) {
-      setIsCalculating(false)
       return
     }
 
-    const warehousePos = { 
-      lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat, 
-      lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng 
+    const warehousePos = {
+      lat: settings?.warehouseLatitude || HEAD_OFFICE_DEFAULT.lat,
+      lng: settings?.warehouseLongitude || HEAD_OFFICE_DEFAULT.lng
     }
+
+    // Skip the API round-trip when the exact same inputs were already routed
+    // (e.g. unrelated re-renders). The refresh button passes force=true.
+    const routeKey = JSON.stringify({
+      mode,
+      optimize: mode === 'auto' ? optimize : false,
+      origin: [warehousePos.lat, warehousePos.lng],
+      stops: selectedDests.map(d => `${d.id}@${d.lat},${d.lng}`)
+    })
+    if (!force && routeKey === lastRouteKeyRef.current) {
+      return
+    }
+
+    setIsCalculating(true)
     const origin = new google.maps.LatLng(warehousePos.lat, warehousePos.lng)
 
     // For TRUE road optimization, we must use origin=warehouse and destination=warehouse
@@ -107,8 +123,9 @@ export function GroupingMap({
     }, (result, status) => {
       setIsCalculating(false)
       if (status === 'OK' && result) {
+        lastRouteKeyRef.current = routeKey
         directionsRendererRef.current?.setDirections(result)
-        
+
         const route = result.routes[0]
         
         // Handle Optimized Order callback
@@ -152,10 +169,12 @@ export function GroupingMap({
           }
         }
       } else {
-        toast({ 
-          title: "การคำนวณล้มเหลว", 
-          description: "ไม่สามารถคำนวณเส้นทางถนนจริงได้ กรุณาลองใหม่", 
-          variant: "destructive" 
+        // Allow the same inputs to be retried after a failure.
+        lastRouteKeyRef.current = null
+        toast({
+          title: "การคำนวณล้มเหลว",
+          description: "ไม่สามารถคำนวณเส้นทางถนนจริงได้ กรุณาลองใหม่",
+          variant: "destructive"
         })
       }
     })
@@ -448,7 +467,7 @@ export function GroupingMap({
                 size="sm"
                 variant="outline"
                 className="h-9 w-9 p-0 border-border hover:bg-secondary flex-1"
-                onClick={() => calculateRoute(mode === 'auto' ? optimizeMode : false)}
+                onClick={() => calculateRoute(mode === 'auto' ? optimizeMode : false, true)}
                 disabled={isCalculating}
               >
                 <RefreshCcw className={cn("h-3.5 w-3.5 mr-1", isCalculating && "animate-spin")} />
