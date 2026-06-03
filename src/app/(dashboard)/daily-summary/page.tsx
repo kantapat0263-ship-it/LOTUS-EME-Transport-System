@@ -390,7 +390,7 @@ export default function DailySummaryPage() {
         <span className="text-sm font-medium text-white">{sIdx + 1}. {stop.siteName}</span>
         <div className="flex flex-wrap gap-1.5">
           {btn('delivered', 'ตามแผน', CheckCircle2, 'border-green-500/60 bg-green-500/10 text-green-400')}
-          {btn('reassigned', 'สลับ', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
+          {btn('reassigned', 'โยกงาน', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
           {btn('postponed', 'เลื่อน', CalendarClock, 'border-amber-500/60 bg-amber-500/10 text-amber-400')}
           {btn('driver-refused', 'ไม่รับงาน', Ban, 'border-red-500/60 bg-red-500/10 text-red-400')}
         </div>
@@ -617,7 +617,7 @@ export default function DailySummaryPage() {
                                           }}
                                         >
                                           {stop.outcome === 'reassigned'
-                                            ? `🔄 สลับไปทะเบียน ${stop.reassignedToVehiclePlate || '-'}`
+                                            ? `🔄 โยกไปทะเบียน ${stop.reassignedToVehiclePlate || '-'}`
                                             : stop.outcome === 'postponed'
                                             ? '⏭️ เลื่อนวัน'
                                             : '⏭️ ไม่ได้ดำเนินการ'}
@@ -737,7 +737,7 @@ export default function DailySummaryPage() {
                 ✅ ตามแผน {outcomeStats.counts.delivered}
               </span>
               <span className="rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1">
-                🔄 สลับ {outcomeStats.counts.reassigned}
+                🔄 โยกงาน {outcomeStats.counts.reassigned}
               </span>
               <span className="rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 px-3 py-1">
                 ⏭️ เลื่อน {outcomeStats.counts.postponed}
@@ -777,7 +777,7 @@ export default function DailySummaryPage() {
 
             <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-1">
               <Info className="h-3 w-3" />
-              บันทึกอัตโนมัติทันทีที่แตะ — “สลับ/เลื่อน” จะแสดงในใบงานเวอร์ชันใหม่ ส่วน “ไม่รับงาน” เก็บไว้ดูเงียบ ๆ ไม่ขึ้นในรูปที่ส่งกลุ่ม
+              บันทึกอัตโนมัติทันทีที่แตะ — “โยกงาน/เลื่อน” จะแสดงในใบงานเวอร์ชันใหม่ ส่วน “ไม่รับงาน” เก็บไว้ดูเงียบ ๆ ไม่ขึ้นในรูปที่ส่งกลุ่ม
             </p>
           </CardContent>
         </Card>

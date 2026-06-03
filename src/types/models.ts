@@ -56,7 +56,7 @@ export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
  * An unset (undefined) outcome means the stop ran as planned (= delivered),
  * so the dispatcher only needs to mark the exceptions.
  *   - delivered     : ส่ง/ปฏิบัติงานตามแผน
- *   - reassigned    : สลับไปทำด้วยรถคันอื่น (กม. ตามไปลงคันที่ทำจริง)
+ *   - reassigned    : โยกงานไปให้รถคันอื่นทำแทน (กม. ตามไปลงคันที่ทำจริง)
  *   - postponed     : เลื่อนวัน / ลูกค้าเลื่อน (เหตุภายนอก)
  *   - driver-refused: คนขับไม่รับงาน (เก็บไว้ดู pattern เงียบ ๆ)
  */
