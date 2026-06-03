@@ -10,7 +10,10 @@ import {
   isDateInRange,
   formatTripSequence,
   nextStopOrder,
+  stopShareKm,
+  computeOutcomeStats,
   type TripLike,
+  type OutcomeTripLike,
 } from './calculations'
 
 describe('resolveFuelRate', () => {
@@ -117,5 +120,73 @@ describe('nextStopOrder', () => {
   })
   it('treats missing order values as 0', () => {
     expect(nextStopOrder([{}, { order: 2 }])).toBe(3)
+  })
+})
+
+describe('stopShareKm', () => {
+  it('divides total distance by the number of stops', () => {
+    expect(stopShareKm({ totalDistanceKm: 80, stops: [{}, {}, {}, {}] })).toBe(20)
+  })
+  it('returns 0 when there are no stops or no distance', () => {
+    expect(stopShareKm({ totalDistanceKm: 80, stops: [] })).toBe(0)
+    expect(stopShareKm({ totalDistanceKm: 80, stops: null })).toBe(0)
+    expect(stopShareKm({ stops: [{}, {}] })).toBe(0)
+  })
+})
+
+describe('computeOutcomeStats', () => {
+  it('treats unset and delivered outcomes as run-as-planned', () => {
+    const trips: OutcomeTripLike[] = [
+      { id: 'A', totalDistanceKm: 40, stops: [{}, { outcome: 'delivered' }] },
+    ]
+    const { counts, actualKmByTrip, totalActualKm } = computeOutcomeStats(trips)
+    expect(counts.delivered).toBe(2)
+    expect(counts.exceptions).toBe(0)
+    expect(actualKmByTrip['A']).toBe(40)
+    expect(totalActualKm).toBe(40)
+  })
+
+  it('moves a reassigned stop’s km share to the receiving truck', () => {
+    const trips: OutcomeTripLike[] = [
+      // 4 stops, 80km -> 20km/stop. Stop 3 reassigned to B, stop 4 refused.
+      {
+        id: 'A',
+        totalDistanceKm: 80,
+        stops: [
+          {},
+          {},
+          { outcome: 'reassigned', reassignedToTripId: 'B' },
+          { outcome: 'driver-refused' },
+        ],
+      },
+      { id: 'B', totalDistanceKm: 30, stops: [{}, {}] }, // 15km/stop
+    ]
+    const { counts, actualKmByTrip } = computeOutcomeStats(trips)
+    expect(counts.reassigned).toBe(1)
+    expect(counts.refused).toBe(1)
+    // A keeps only its 2 delivered stops = 40km
+    expect(actualKmByTrip['A']).toBe(40)
+    // B keeps its own 30km + 20km share moved in from A
+    expect(actualKmByTrip['B']).toBe(50)
+  })
+
+  it('drops postponed and refused km (driven by nobody)', () => {
+    const trips: OutcomeTripLike[] = [
+      { id: 'A', totalDistanceKm: 60, stops: [{}, { outcome: 'postponed' }, { outcome: 'driver-refused' }] },
+    ]
+    const { actualKmByTrip, totalActualKm, totalPlannedKm, counts } = computeOutcomeStats(trips)
+    expect(counts.postponed).toBe(1)
+    expect(actualKmByTrip['A']).toBe(20) // only 1 of 3 stops driven
+    expect(totalActualKm).toBe(20)
+    expect(totalPlannedKm).toBe(60)
+  })
+
+  it('does not credit km when the reassign target is not in the set', () => {
+    const trips: OutcomeTripLike[] = [
+      { id: 'A', totalDistanceKm: 40, stops: [{}, { outcome: 'reassigned', reassignedToTripId: 'Z' }] },
+    ]
+    const { actualKmByTrip, totalActualKm } = computeOutcomeStats(trips)
+    expect(actualKmByTrip['A']).toBe(20)
+    expect(totalActualKm).toBe(20)
   })
 })

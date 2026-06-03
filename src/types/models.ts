@@ -51,6 +51,17 @@ export interface CompanySetting {
 
 export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
 
+/**
+ * Actual outcome of a stop after the daily report is posted to LINE.
+ * An unset (undefined) outcome means the stop ran as planned (= delivered),
+ * so the dispatcher only needs to mark the exceptions.
+ *   - delivered     : ส่ง/ปฏิบัติงานตามแผน
+ *   - reassigned    : สลับไปทำด้วยรถคันอื่น (กม. ตามไปลงคันที่ทำจริง)
+ *   - postponed     : เลื่อนวัน / ลูกค้าเลื่อน (เหตุภายนอก)
+ *   - driver-refused: คนขับไม่รับงาน (เก็บไว้ดู pattern เงียบ ๆ)
+ */
+export type StopOutcome = 'delivered' | 'reassigned' | 'postponed' | 'driver-refused';
+
 export interface TripStop {
   siteId: string;
   siteName: string;
@@ -66,6 +77,17 @@ export interface TripStop {
   note?: string;
   dispatcherNote?: string;
   dispatcherName?: string;
+  // --- Actual-outcome reconciliation (filled in by the dispatcher in the evening) ---
+  outcome?: StopOutcome;
+  /** Free-text reason, mainly for `driver-refused`. */
+  outcomeReason?: string;
+  /** When `outcome === 'reassigned'`, the trip/vehicle that actually did the job. */
+  reassignedToTripId?: string;
+  reassignedToVehiclePlate?: string;
+  reassignedToDriverName?: string;
+  /** Who recorded the outcome, and when (ISO string — Firestore forbids serverTimestamp inside arrays). */
+  outcomeRecordedBy?: string;
+  outcomeAt?: string;
 }
 
 export interface Trip {

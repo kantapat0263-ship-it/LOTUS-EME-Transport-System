@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useMemoFirebase, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, doc, onSnapshot } from "firebase/firestore"
+import { useFirestore, useCollection, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
+import { collection, query, where, orderBy, getDocs, doc, onSnapshot, serverTimestamp } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -24,7 +24,12 @@ import {
   Phone,
   Info,
   RefreshCcw,
-  MousePointerClick
+  MousePointerClick,
+  CheckCircle2,
+  ArrowRightLeft,
+  CalendarClock,
+  Ban,
+  ListChecks
 } from "lucide-react"
 import { 
   Dialog, 
@@ -35,7 +40,8 @@ import {
   DialogFooter
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Trip, Driver } from "@/types/models"
+import { Trip, Driver, TripStop, StopOutcome } from "@/types/models"
+import { computeOutcomeStats } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -43,7 +49,8 @@ import { format } from "date-fns"
 export default function DailySummaryPage() {
   const { toast } = useToast()
   const db = useFirestore()
-  
+  const { user } = useUser()
+
   // Set initial selected date to empty to force user to click
   const [selectedDate, setSelectedDate] = React.useState<string>("")
   const [trips, setTrips] = React.useState<Trip[]>([])
@@ -300,7 +307,120 @@ export default function DailySummaryPage() {
 
   const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
 
-  const shareUrl = selectedTripForShare 
+  // --- Actual-outcome reconciliation (after the report is posted to LINE) ---
+  const recordedBy = user?.displayName || user?.email || ""
+
+  // Strip every outcome-related key so a stop can be reset cleanly back to "as planned".
+  // (Firestore rejects `undefined` values, so we omit keys rather than set them.)
+  const stripOutcome = (s: TripStop): TripStop => {
+    const {
+      outcome, outcomeReason, reassignedToTripId, reassignedToVehiclePlate,
+      reassignedToDriverName, outcomeRecordedBy, outcomeAt, ...base
+    } = s as any
+    return base
+  }
+
+  // Persist a trip's stops array (optimistic local update + non-blocking write).
+  const applyStops = (tripId: string, newStops: TripStop[], persist = true) => {
+    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: newStops } : t)))
+    if (persist && db) {
+      updateDocumentNonBlocking(doc(db, "trips", tripId), {
+        stops: newStops,
+        updatedAt: serverTimestamp(),
+      })
+    }
+  }
+
+  // Replace a single stop within a trip, returning the new stops array.
+  const buildStops = (trip: Trip, stopIdx: number, mut: (s: TripStop) => TripStop): TripStop[] =>
+    (trip.stops || []).map((s, i) => (i === stopIdx ? mut({ ...s }) : s))
+
+  const chooseOutcome = (trip: Trip, stopIdx: number, outcome: StopOutcome) => {
+    const newStops = buildStops(trip, stopIdx, (s) => {
+      const base = stripOutcome(s)
+      if (outcome === 'delivered') return base // back to "as planned"
+      return { ...base, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
+    })
+    applyStops(trip.id, newStops, true)
+  }
+
+  const setReassignTarget = (trip: Trip, stopIdx: number, targetTripId: string) => {
+    const target = trips.find(t => t.id === targetTripId)
+    const newStops = buildStops(trip, stopIdx, (s) => {
+      if (!target) {
+        const { reassignedToTripId, reassignedToVehiclePlate, reassignedToDriverName, ...rest } = s as any
+        return rest
+      }
+      return {
+        ...s,
+        reassignedToTripId: target.id,
+        reassignedToVehiclePlate: target.vehiclePlate,
+        reassignedToDriverName: target.driverName,
+      }
+    })
+    applyStops(trip.id, newStops, true)
+  }
+
+  // Reason text: update locally on every keystroke, persist on blur.
+  const setRefuseReason = (trip: Trip, stopIdx: number, reason: string, persist: boolean) => {
+    const newStops = buildStops(trip, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
+    applyStops(trip.id, newStops, persist)
+  }
+
+  const outcomeStats = computeOutcomeStats(trips as any)
+
+  const renderStopRow = (trip: Trip, stop: TripStop, sIdx: number) => {
+    const current: StopOutcome = stop.outcome || 'delivered'
+    const inputClass = "w-full h-9 rounded-md bg-background border border-border/50 text-sm px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+    const btn = (key: StopOutcome, label: string, Icon: any, activeClass: string) => (
+      <button
+        type="button"
+        onClick={() => chooseOutcome(trip, sIdx, key)}
+        className={cn(
+          "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+          current === key ? activeClass : "border-border/50 text-muted-foreground hover:bg-secondary/40"
+        )}
+      >
+        <Icon className="h-3 w-3" /> {label}
+      </button>
+    )
+
+    return (
+      <div key={`${trip.id}-${sIdx}`} className="flex flex-col gap-2 rounded-md bg-secondary/20 p-2.5">
+        <span className="text-sm font-medium text-white">{sIdx + 1}. {stop.siteName}</span>
+        <div className="flex flex-wrap gap-1.5">
+          {btn('delivered', 'ตามแผน', CheckCircle2, 'border-green-500/60 bg-green-500/10 text-green-400')}
+          {btn('reassigned', 'สลับ', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
+          {btn('postponed', 'เลื่อน', CalendarClock, 'border-amber-500/60 bg-amber-500/10 text-amber-400')}
+          {btn('driver-refused', 'ไม่รับงาน', Ban, 'border-red-500/60 bg-red-500/10 text-red-400')}
+        </div>
+        {current === 'reassigned' && (
+          <select
+            value={stop.reassignedToTripId || ''}
+            onChange={(e) => setReassignTarget(trip, sIdx, e.target.value)}
+            className={cn(inputClass, "cursor-pointer")}
+          >
+            <option value="">-- เลือกคันที่รับงานไปทำ (กม. ลงคันนั้น) --</option>
+            {trips.filter(t => t.id !== trip.id).map(t => (
+              <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
+            ))}
+          </select>
+        )}
+        {current === 'driver-refused' && (
+          <input
+            type="text"
+            value={stop.outcomeReason || ''}
+            placeholder="เหตุผลสั้น ๆ (เช่น บอกไกล ไม่คุ้ม)"
+            onChange={(e) => setRefuseReason(trip, sIdx, e.target.value, false)}
+            onBlur={(e) => setRefuseReason(trip, sIdx, e.target.value, true)}
+            className={inputClass}
+          />
+        )}
+      </div>
+    )
+  }
+
+  const shareUrl = selectedTripForShare
     ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`
     : '';
 
@@ -481,7 +601,29 @@ export default function DailySummaryPage() {
                                         <span className="shrink-0">-</span>
                                         <span className="italic" style={{ whiteSpace: 'pre-wrap' }}>{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
                                       </div>
-                                      
+
+                                      {stop.outcome && stop.outcome !== 'delivered' && (
+                                        <div
+                                          style={{
+                                            marginTop: '4px',
+                                            display: 'inline-block',
+                                            fontSize: '11px',
+                                            fontWeight: 700,
+                                            padding: '1px 6px',
+                                            borderRadius: '4px',
+                                            ...(stop.outcome === 'reassigned'
+                                              ? { background: '#dbeafe', color: '#1e40af' }
+                                              : { background: '#fef3c7', color: '#92400e' }),
+                                          }}
+                                        >
+                                          {stop.outcome === 'reassigned'
+                                            ? `🔄 สลับไปทะเบียน ${stop.reassignedToVehiclePlate || '-'}`
+                                            : stop.outcome === 'postponed'
+                                            ? '⏭️ เลื่อนวัน'
+                                            : '⏭️ ไม่ได้ดำเนินการ'}
+                                        </div>
+                                      )}
+
                                       {stopDispatcherNote && (
                                         <div style={{
                                           marginTop: '4px',
@@ -576,6 +718,70 @@ export default function DailySummaryPage() {
           </Card>
         </div>
       </div>
+
+      {/* Reconcile actual outcomes (does NOT appear in the printed/JPEG report) */}
+      {selectedDate && trips.length > 0 && !isLoading && (
+        <Card className="no-print border-accent/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2 text-white">
+              <ListChecks className="h-5 w-5 text-accent" /> ปิดผลงานจริง (หลังส่ง LINE)
+            </CardTitle>
+            <CardDescription>
+              คนขับตอบในกลุ่มแล้ว แตะเฉพาะจุดที่ “ผิดแผน” — ที่เหลือถือว่าทำตามแผนอัตโนมัติ
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Summary chips */}
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+              <span className="rounded-full bg-green-500/10 text-green-400 border border-green-500/30 px-3 py-1">
+                ✅ ตามแผน {outcomeStats.counts.delivered}
+              </span>
+              <span className="rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1">
+                🔄 สลับ {outcomeStats.counts.reassigned}
+              </span>
+              <span className="rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 px-3 py-1">
+                ⏭️ เลื่อน {outcomeStats.counts.postponed}
+              </span>
+              <span className="rounded-full bg-red-500/10 text-red-400 border border-red-500/30 px-3 py-1">
+                🚫 ไม่รับงาน {outcomeStats.counts.refused}
+              </span>
+              <span className="ml-auto rounded-full bg-secondary/40 text-muted-foreground border border-border/50 px-3 py-1">
+                กม.จริง <span className="text-white">{outcomeStats.totalActualKm.toFixed(1)}</span> / แผน {outcomeStats.totalPlannedKm.toFixed(1)}
+              </span>
+            </div>
+
+            {/* Per-trip outcome editor */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {trips.map((trip) => {
+                const actualKm = outcomeStats.actualKmByTrip[trip.id] || 0
+                const plannedKm = outcomeStats.plannedKmByTrip[trip.id] || 0
+                const kmShifted = Math.abs(actualKm - plannedKm) > 0.05
+                return (
+                  <div key={trip.id} className="rounded-lg border border-border/50 bg-background/40 p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-sm font-bold text-white">
+                        <Truck className="h-4 w-4 text-accent" />
+                        {trip.driverName} • {trip.vehiclePlate}
+                      </div>
+                      <div className={cn("text-xs font-bold", kmShifted ? "text-amber-400" : "text-muted-foreground")}>
+                        {actualKm.toFixed(1)} / {plannedKm.toFixed(1)} กม.
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {(trip.stops || []).map((stop, sIdx) => renderStopRow(trip, stop, sIdx))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-1">
+              <Info className="h-3 w-3" />
+              บันทึกอัตโนมัติทันทีที่แตะ — “สลับ/เลื่อน” จะแสดงในใบงานเวอร์ชันใหม่ ส่วน “ไม่รับงาน” เก็บไว้ดูเงียบ ๆ ไม่ขึ้นในรูปที่ส่งกลุ่ม
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Share Dialog */}
       <Dialog open={!!selectedTripForShare} onOpenChange={(open) => !open && setSelectedTripForShare(null)}>

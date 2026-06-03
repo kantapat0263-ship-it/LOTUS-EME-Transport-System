@@ -84,3 +84,113 @@ export function nextStopOrder(stops: { order?: number }[] | null | undefined): n
   if (!stops || stops.length === 0) return 1
   return Math.max(...stops.map((s) => s.order || 0)) + 1
 }
+
+// ---------------------------------------------------------------------------
+// Actual-outcome reconciliation
+// ---------------------------------------------------------------------------
+
+/** Minimal stop shape needed for outcome aggregation. */
+export interface OutcomeStopLike {
+  outcome?: string | null
+  reassignedToTripId?: string | null
+}
+
+/** Minimal trip shape needed for outcome aggregation. */
+export interface OutcomeTripLike {
+  id?: string
+  totalDistanceKm?: number | null
+  stops?: OutcomeStopLike[] | null
+}
+
+/**
+ * Crude per-stop distance share for a trip: `totalDistanceKm / stopCount`.
+ * Mirrors the allocation already used by the report page (report/page.tsx),
+ * so we stay consistent without re-querying Google Maps when jobs move.
+ */
+export function stopShareKm(trip: OutcomeTripLike): number {
+  const stopCount = trip.stops?.length || 0
+  if (stopCount === 0) return 0
+  return (trip.totalDistanceKm || 0) / stopCount
+}
+
+/** A stop with no recorded outcome (or 'delivered') counts as run-as-planned. */
+function isDeliveredOutcome(outcome?: string | null): boolean {
+  return !outcome || outcome === 'delivered'
+}
+
+export interface OutcomeStats {
+  counts: {
+    delivered: number
+    reassigned: number
+    postponed: number
+    refused: number
+    /** Anything that is not 'delivered' (i.e. dispatcher marked an exception). */
+    exceptions: number
+    total: number
+  }
+  /** Planned km per trip id (= totalDistanceKm). */
+  plannedKmByTrip: Record<string, number>
+  /**
+   * Actual km credited to each trip's vehicle: its own delivered stops plus
+   * any stops reassigned *into* it. Postponed / refused stops are driven by
+   * nobody and contribute 0.
+   */
+  actualKmByTrip: Record<string, number>
+  totalPlannedKm: number
+  totalActualKm: number
+}
+
+/**
+ * Aggregate actual outcomes across a day's trips.
+ *
+ * Distance follows the work: when a stop is reassigned to another truck its
+ * per-stop share moves to that truck (if it is one of the supplied trips).
+ * Postponed and driver-refused stops are not driven, so their share is dropped.
+ */
+export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
+  const plannedKmByTrip: Record<string, number> = {}
+  const actualKmByTrip: Record<string, number> = {}
+  const counts = { delivered: 0, reassigned: 0, postponed: 0, refused: 0, exceptions: 0, total: 0 }
+
+  const tripIds = new Set(trips.map((t) => t.id).filter(Boolean) as string[])
+
+  for (const trip of trips) {
+    const id = trip.id || ''
+    plannedKmByTrip[id] = trip.totalDistanceKm || 0
+    if (!(id in actualKmByTrip)) actualKmByTrip[id] = 0
+  }
+
+  for (const trip of trips) {
+    const id = trip.id || ''
+    const share = stopShareKm(trip)
+
+    for (const stop of trip.stops || []) {
+      counts.total += 1
+      const outcome = stop.outcome
+
+      if (isDeliveredOutcome(outcome)) {
+        counts.delivered += 1
+        actualKmByTrip[id] += share
+        continue
+      }
+
+      counts.exceptions += 1
+      if (outcome === 'reassigned') {
+        counts.reassigned += 1
+        const target = stop.reassignedToTripId || ''
+        if (target && tripIds.has(target)) {
+          actualKmByTrip[target] = (actualKmByTrip[target] || 0) + share
+        }
+      } else if (outcome === 'postponed') {
+        counts.postponed += 1
+      } else if (outcome === 'driver-refused') {
+        counts.refused += 1
+      }
+    }
+  }
+
+  const totalPlannedKm = Object.values(plannedKmByTrip).reduce((a, b) => a + b, 0)
+  const totalActualKm = Object.values(actualKmByTrip).reduce((a, b) => a + b, 0)
+
+  return { counts, plannedKmByTrip, actualKmByTrip, totalPlannedKm, totalActualKm }
+}
