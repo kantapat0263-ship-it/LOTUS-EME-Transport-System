@@ -3,8 +3,9 @@
 import * as React from "react"
 import { useParams } from "next/navigation"
 import { initializeFirebase } from "@/firebase"
-import { doc, getDoc } from "firebase/firestore"
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore"
 import { Trip, Driver } from "@/types/models"
+import { computeDriverLeaderboard, monthRange, type DriverStat } from "@/lib/calculations"
 import { 
   MapPin, 
   Truck, 
@@ -37,6 +38,10 @@ export default function DriverTripPage() {
   const [driverPhone, setDriverPhone] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  // Monthly motivation stats (positive-only; refusals never shown to the driver)
+  const [myStat, setMyStat] = React.useState<DriverStat | null>(null)
+  const [boardSize, setBoardSize] = React.useState(0)
+  const [topKm, setTopKm] = React.useState(0)
 
   React.useEffect(() => {
     async function fetchTrip() {
@@ -56,6 +61,25 @@ export default function DriverTripPage() {
             if (dSnap.exists()) {
               setDriverPhone(dSnap.data().phoneNumber || "")
             }
+          }
+
+          // Best-effort monthly leaderboard (this driver's own stats + rank)
+          try {
+            if (tripData.tripDate && tripData.driverId) {
+              const { start, end } = monthRange(tripData.tripDate)
+              const mSnap = await getDocs(query(
+                collection(firestore, "trips"),
+                where("tripDate", ">=", start),
+                where("tripDate", "<=", end),
+              ))
+              const monthTrips = mSnap.docs.map(d => ({ ...d.data(), id: d.id })) as any[]
+              const board = computeDriverLeaderboard(monthTrips)
+              setMyStat(board.find(b => b.driverId === tripData.driverId) || null)
+              setBoardSize(board.length)
+              setTopKm(board[0]?.actualKm || 0)
+            }
+          } catch (statErr) {
+            console.error("stats unavailable", statErr)
           }
         } else {
           setError(`ไม่พบข้อมูลเที่ยววิ่ง ${tripId}`)
@@ -95,6 +119,10 @@ export default function DriverTripPage() {
       </div>
     )
   }
+
+  const monthLabel = trip.tripDate
+    ? new Date(trip.tripDate + "T00:00:00").toLocaleDateString("th-TH", { month: "long" })
+    : ""
 
   return (
     <div className="min-h-screen bg-gray-50 flex justify-center font-sans antialiased">
@@ -146,6 +174,46 @@ export default function DriverTripPage() {
             </div>
           </div>
         </header>
+
+        {/* ⭐ Personal monthly stats — positive only, motivational */}
+        {myStat && (
+          <div className="px-4 -mt-3 relative z-10">
+            <div className="relative bg-gradient-to-br from-amber-400 to-orange-500 text-white rounded-2xl p-4 shadow-lg shadow-orange-200">
+              <span className="absolute -top-2 -right-2 bg-rose-600 text-[10px] font-black px-2 py-0.5 rounded-full shadow">ของคุณ</span>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-black uppercase tracking-wider text-white/90">⭐ สถิติเดือนนี้{monthLabel ? ` (${monthLabel})` : ""}</p>
+                <span className="bg-white/25 rounded-full px-3 py-1 text-sm font-black flex items-center gap-1">🏅 อันดับ {myStat.rank}/{boardSize}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-white/15 rounded-xl py-2">
+                  <p className="text-2xl font-black leading-none">{Math.round(myStat.actualKm).toLocaleString()}</p>
+                  <p className="text-[10px] mt-1 text-white/90">กม. ที่วิ่ง</p>
+                </div>
+                <div className="bg-white/15 rounded-xl py-2">
+                  <p className="text-2xl font-black leading-none">{myStat.completedStops}</p>
+                  <p className="text-[10px] mt-1 text-white/90">จุดส่งสำเร็จ</p>
+                </div>
+                <div className="bg-white/15 rounded-xl py-2">
+                  <p className="text-2xl font-black leading-none">{myStat.workingDays}</p>
+                  <p className="text-[10px] mt-1 text-white/90">วันออกงาน</p>
+                </div>
+              </div>
+              <div className="mt-3 bg-black/15 rounded-xl px-3 py-2 flex items-center gap-2">
+                {myStat.rank === 1 ? (
+                  <>
+                    <span className="text-lg">🏆</span>
+                    <p className="text-xs font-bold">คุณคือ <span className="text-yellow-200 font-black">อันดับ 1</span> ของเดือนนี้! รักษาไว้นะ</p>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-lg">🔥</span>
+                    <p className="text-xs font-bold">อีก <span className="text-yellow-200 font-black">{Math.max(0, Math.ceil(topKm - myStat.actualKm)).toLocaleString()} กม.</span> แซงขึ้นอันดับ 1!</p>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Stops List */}
         <main className="p-4 space-y-6">

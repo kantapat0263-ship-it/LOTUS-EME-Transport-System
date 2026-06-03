@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, TripStop, StopOutcome } from "@/types/models"
-import { computeOutcomeStats } from "@/lib/calculations"
+import { computeOutcomeStats, computeDriverLeaderboard, monthRange, type DriverStat } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -61,6 +61,9 @@ export default function DailySummaryPage() {
   // State for dates that have work (trips or requests) to highlight on calendar
   const [datesWithWork, setDatesWithWork] = React.useState<Set<string>>(new Set())
   const datesWithWorkRef = React.useRef<Set<string>>(new Set())
+
+  // Top 3 drivers of the selected date's month (by actual km) — shown on the A4
+  const [topDrivers, setTopDrivers] = React.useState<DriverStat[]>([])
 
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -190,6 +193,27 @@ export default function DailySummaryPage() {
       fetchTrips(selectedDate)
     }
   }, [selectedDate])
+
+  // Top 3 drivers of the selected month (by actual km driven) for the A4 footer
+  React.useEffect(() => {
+    if (!selectedDate || !db) {
+      setTopDrivers([])
+      return
+    }
+    let active = true
+    ;(async () => {
+      const { start, end } = monthRange(selectedDate)
+      const snap = await getDocs(query(
+        collection(db, "trips"),
+        where("tripDate", ">=", start),
+        where("tripDate", "<=", end),
+      ))
+      if (!active) return
+      const monthTrips = snap.docs.map(d => ({ ...d.data(), id: d.id })) as any[]
+      setTopDrivers(computeDriverLeaderboard(monthTrips).slice(0, 3))
+    })().catch(() => { if (active) setTopDrivers([]) })
+    return () => { active = false }
+  }, [selectedDate, db])
 
   const formatThaiDate = (dateStr: string) => {
     if (!dateStr) return ""
@@ -706,6 +730,23 @@ export default function DailySummaryPage() {
                         </div>
                       </div>
                     </div>
+
+                    {topDrivers.length > 0 && (
+                      <div className="mt-6 border-2 border-gray-400 rounded-lg p-3">
+                        <p className="font-bold text-center mb-3 text-[14px]">
+                          🏆 สุดยอดนักขับประจำเดือน{new Date(selectedDate + 'T00:00:00').toLocaleDateString('th-TH', { month: 'long' })}
+                        </p>
+                        <div className="flex justify-center gap-10">
+                          {topDrivers.map((d, i) => (
+                            <div key={d.driverId} className="text-center">
+                              <div className="text-2xl leading-none">{['🥇', '🥈', '🥉'][i]}</div>
+                              <div className="font-bold mt-1">{d.driverName}</div>
+                              <div className="text-gray-600 text-[12px]">{Math.round(d.actualKm).toLocaleString()} กม.</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-32 text-gray-400">

@@ -193,3 +193,105 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
 
   return { counts, plannedKmByTrip, actualKmByTrip, totalPlannedKm, totalActualKm }
 }
+
+// ---------------------------------------------------------------------------
+// Driver leaderboard (monthly motivation stats)
+// ---------------------------------------------------------------------------
+
+/** Inclusive `YYYY-MM-DD` first/last day of the month that `dateStr` falls in. */
+export function monthRange(dateStr: string): { start: string; end: string } {
+  const [y, m] = dateStr.split('-').map(Number)
+  const mm = String(m).padStart(2, '0')
+  const lastDay = new Date(y, m, 0).getDate() // day 0 of next month = last day of this one
+  return { start: `${y}-${mm}-01`, end: `${y}-${mm}-${String(lastDay).padStart(2, '0')}` }
+}
+
+export interface LeaderboardTripLike extends OutcomeTripLike {
+  driverId?: string | null
+  driverName?: string | null
+  tripDate?: string | null
+}
+
+export interface DriverStat {
+  driverId: string
+  driverName: string
+  /** Actual km driven (work follows the truck: reassigned-in counts, moved-away does not). */
+  actualKm: number
+  completedStops: number
+  workingDays: number
+  /** 1-based rank by actualKm (desc). */
+  rank: number
+}
+
+/**
+ * Aggregate per-driver monthly stats and rank them by actual km driven.
+ *
+ * Reassignment credit is resolved per day (a job can only move to a truck
+ * that ran the same day), then summed across the month. Positive metrics
+ * only — refusals are never surfaced here.
+ */
+export function computeDriverLeaderboard(trips: LeaderboardTripLike[]): DriverStat[] {
+  const byDate = new Map<string, LeaderboardTripLike[]>()
+  for (const t of trips) {
+    const d = t.tripDate || ''
+    if (!byDate.has(d)) byDate.set(d, [])
+    byDate.get(d)!.push(t)
+  }
+
+  interface Acc { driverId: string; driverName: string; actualKm: number; completedStops: number; days: Set<string> }
+  const accs = new Map<string, Acc>()
+  const ensure = (driverId: string, driverName: string): Acc => {
+    let a = accs.get(driverId)
+    if (!a) {
+      a = { driverId, driverName, actualKm: 0, completedStops: 0, days: new Set() }
+      accs.set(driverId, a)
+    }
+    if (driverName) a.driverName = driverName
+    return a
+  }
+
+  for (const [date, dayTrips] of byDate) {
+    const tripIds = new Set<string>()
+    const driverByTrip = new Map<string, { driverId: string; driverName: string }>()
+    for (const t of dayTrips) {
+      if (t.id) {
+        tripIds.add(t.id)
+        driverByTrip.set(t.id, { driverId: t.driverId || '', driverName: t.driverName || '' })
+      }
+    }
+
+    for (const t of dayTrips) {
+      if (t.driverId) ensure(t.driverId, t.driverName || '').days.add(date)
+      const share = stopShareKm(t)
+      for (const stop of t.stops || []) {
+        // Which truck actually performed this stop?
+        let creditTripId: string | null = null
+        if (isDeliveredOutcome(stop.outcome)) {
+          creditTripId = t.id || null
+        } else {
+          const target = stop.reassignedToTripId || ''
+          if (target && tripIds.has(target)) creditTripId = target
+        }
+        if (!creditTripId) continue
+        const cd = driverByTrip.get(creditTripId)
+        if (!cd || !cd.driverId) continue
+        const acc = ensure(cd.driverId, cd.driverName)
+        acc.actualKm += share
+        acc.completedStops += 1
+      }
+    }
+  }
+
+  const result = Array.from(accs.values())
+    .map((a) => ({
+      driverId: a.driverId,
+      driverName: a.driverName,
+      actualKm: a.actualKm,
+      completedStops: a.completedStops,
+      workingDays: a.days.size,
+      rank: 0,
+    }))
+    .sort((x, y) => y.actualKm - x.actualKm)
+  result.forEach((r, i) => { r.rank = i + 1 })
+  return result
+}

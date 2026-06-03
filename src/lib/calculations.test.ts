@@ -12,8 +12,11 @@ import {
   nextStopOrder,
   stopShareKm,
   computeOutcomeStats,
+  monthRange,
+  computeDriverLeaderboard,
   type TripLike,
   type OutcomeTripLike,
+  type LeaderboardTripLike,
 } from './calculations'
 
 describe('resolveFuelRate', () => {
@@ -200,5 +203,46 @@ describe('computeOutcomeStats', () => {
     const { actualKmByTrip, totalActualKm } = computeOutcomeStats(trips)
     expect(actualKmByTrip['A']).toBe(20)
     expect(totalActualKm).toBe(20)
+  })
+})
+
+describe('monthRange', () => {
+  it('returns the first and last day of the month', () => {
+    expect(monthRange('2026-06-03')).toEqual({ start: '2026-06-01', end: '2026-06-30' })
+    expect(monthRange('2026-02-15')).toEqual({ start: '2026-02-01', end: '2026-02-28' })
+    expect(monthRange('2024-02-10')).toEqual({ start: '2024-02-01', end: '2024-02-29' }) // leap year
+    expect(monthRange('2026-12-31')).toEqual({ start: '2026-12-01', end: '2026-12-31' })
+  })
+})
+
+describe('computeDriverLeaderboard', () => {
+  it('ranks drivers by actual km driven and counts days/stops', () => {
+    const trips: LeaderboardTripLike[] = [
+      // Day 1
+      { id: 'T1', tripDate: '2026-06-01', driverId: 'd1', driverName: 'สมชาย', totalDistanceKm: 100, stops: [{}, {}] },
+      { id: 'T2', tripDate: '2026-06-01', driverId: 'd2', driverName: 'สมหญิง', totalDistanceKm: 40, stops: [{}, {}] },
+      // Day 2 — สมชาย works again
+      { id: 'T3', tripDate: '2026-06-02', driverId: 'd1', driverName: 'สมชาย', totalDistanceKm: 60, stops: [{}] },
+    ]
+    const board = computeDriverLeaderboard(trips)
+    expect(board.map(b => b.driverId)).toEqual(['d1', 'd2'])
+    expect(board[0]).toMatchObject({ rank: 1, actualKm: 160, completedStops: 3, workingDays: 2 })
+    expect(board[1]).toMatchObject({ rank: 2, actualKm: 40, completedStops: 2, workingDays: 1 })
+  })
+
+  it('moves credit to the driver who actually did a reassigned/refused stop', () => {
+    const trips: LeaderboardTripLike[] = [
+      // d1: 2 stops, 40km -> 20/stop. stop2 refused but picked up by d2's trip.
+      { id: 'A', tripDate: '2026-06-01', driverId: 'd1', driverName: 'A', totalDistanceKm: 40,
+        stops: [{}, { outcome: 'driver-refused', reassignedToTripId: 'B' }] },
+      { id: 'B', tripDate: '2026-06-01', driverId: 'd2', driverName: 'B', totalDistanceKm: 20, stops: [{}] },
+    ]
+    const board = computeDriverLeaderboard(trips)
+    const a = board.find(b => b.driverId === 'd1')!
+    const b = board.find(b => b.driverId === 'd2')!
+    expect(a.actualKm).toBe(20)        // d1 keeps only its delivered stop
+    expect(a.completedStops).toBe(1)
+    expect(b.actualKm).toBe(40)        // d2's own 20 + 20 taken over from d1
+    expect(b.completedStops).toBe(2)
   })
 })
