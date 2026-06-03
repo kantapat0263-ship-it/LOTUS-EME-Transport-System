@@ -175,17 +175,16 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
       }
 
       counts.exceptions += 1
-      if (outcome === 'reassigned') {
-        counts.reassigned += 1
-        const target = stop.reassignedToTripId || ''
-        if (target && tripIds.has(target)) {
-          actualKmByTrip[target] = (actualKmByTrip[target] || 0) + share
-        }
-      } else if (outcome === 'postponed') {
-        counts.postponed += 1
-      } else if (outcome === 'driver-refused') {
-        counts.refused += 1
+      // Distance follows the job: whenever a stop was handed to another truck
+      // — an operational โยกงาน, or a refusal that someone else picked up —
+      // credit that truck. Postponed / unpicked refusals are driven by nobody.
+      const target = stop.reassignedToTripId || ''
+      if (target && tripIds.has(target)) {
+        actualKmByTrip[target] = (actualKmByTrip[target] || 0) + share
       }
+      if (outcome === 'reassigned') counts.reassigned += 1
+      else if (outcome === 'postponed') counts.postponed += 1
+      else if (outcome === 'driver-refused') counts.refused += 1
     }
   }
 

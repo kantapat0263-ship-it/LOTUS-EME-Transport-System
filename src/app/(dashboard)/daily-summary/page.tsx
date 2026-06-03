@@ -392,29 +392,33 @@ export default function DailySummaryPage() {
           {btn('delivered', 'ตามแผน', CheckCircle2, 'border-green-500/60 bg-green-500/10 text-green-400')}
           {btn('reassigned', 'โยกงาน', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
           {btn('postponed', 'เลื่อน', CalendarClock, 'border-amber-500/60 bg-amber-500/10 text-amber-400')}
-          {btn('driver-refused', 'ไม่รับงาน', Ban, 'border-red-500/60 bg-red-500/10 text-red-400')}
+          {btn('driver-refused', 'คนขับปฏิเสธ', Ban, 'border-red-500/60 bg-red-500/10 text-red-400')}
         </div>
-        {current === 'reassigned' && (
+        {current === 'driver-refused' && (
+          <input
+            type="text"
+            value={stop.outcomeReason || ''}
+            placeholder="เหตุผลที่ปฏิเสธ (เช่น บอกไกล ไม่คุ้ม)"
+            onChange={(e) => setRefuseReason(trip, sIdx, e.target.value, false)}
+            onBlur={(e) => setRefuseReason(trip, sIdx, e.target.value, true)}
+            className={inputClass}
+          />
+        )}
+        {(current === 'reassigned' || current === 'driver-refused') && (
           <select
             value={stop.reassignedToTripId || ''}
             onChange={(e) => setReassignTarget(trip, sIdx, e.target.value)}
             className={cn(inputClass, "cursor-pointer")}
           >
-            <option value="">-- เลือกคันที่รับงานไปทำ (กม. ลงคันนั้น) --</option>
+            <option value="">
+              {current === 'driver-refused'
+                ? '-- มีคันรับไปทำแทนไหม? (กม. ลงคันนั้น) --'
+                : '-- เลือกคันที่รับงานไปทำ (กม. ลงคันนั้น) --'}
+            </option>
             {trips.filter(t => t.id !== trip.id).map(t => (
               <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
             ))}
           </select>
-        )}
-        {current === 'driver-refused' && (
-          <input
-            type="text"
-            value={stop.outcomeReason || ''}
-            placeholder="เหตุผลสั้น ๆ (เช่น บอกไกล ไม่คุ้ม)"
-            onChange={(e) => setRefuseReason(trip, sIdx, e.target.value, false)}
-            onBlur={(e) => setRefuseReason(trip, sIdx, e.target.value, true)}
-            className={inputClass}
-          />
         )}
       </div>
     )
@@ -579,6 +583,9 @@ export default function DailySummaryPage() {
                             const requesterNote = (stop as any).note || (stop as any).notes || "";
                             const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`] || (stop as any).dispatcherNote;
                             const stopTime = (stop as any).requestTime;
+                            // Public-safe: if the job was picked up by another truck (โยก, or a
+                            // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
+                            const movedToPlate = (stop as any).reassignedToVehiclePlate;
 
                             return (
                               <tr key={`${trip.id}-${sIdx}`}>
@@ -611,13 +618,13 @@ export default function DailySummaryPage() {
                                             fontWeight: 700,
                                             padding: '1px 6px',
                                             borderRadius: '4px',
-                                            ...(stop.outcome === 'reassigned'
+                                            ...(movedToPlate
                                               ? { background: '#dbeafe', color: '#1e40af' }
                                               : { background: '#fef3c7', color: '#92400e' }),
                                           }}
                                         >
-                                          {stop.outcome === 'reassigned'
-                                            ? `🔄 โยกไปทะเบียน ${stop.reassignedToVehiclePlate || '-'}`
+                                          {movedToPlate
+                                            ? `🔄 โยกไปทะเบียน ${movedToPlate}`
                                             : stop.outcome === 'postponed'
                                             ? '⏭️ เลื่อนวัน'
                                             : '⏭️ ไม่ได้ดำเนินการ'}
@@ -743,7 +750,7 @@ export default function DailySummaryPage() {
                 ⏭️ เลื่อน {outcomeStats.counts.postponed}
               </span>
               <span className="rounded-full bg-red-500/10 text-red-400 border border-red-500/30 px-3 py-1">
-                🚫 ไม่รับงาน {outcomeStats.counts.refused}
+                🚫 คนขับปฏิเสธ {outcomeStats.counts.refused}
               </span>
               <span className="ml-auto rounded-full bg-secondary/40 text-muted-foreground border border-border/50 px-3 py-1">
                 กม.จริง <span className="text-white">{outcomeStats.totalActualKm.toFixed(1)}</span> / แผน {outcomeStats.totalPlannedKm.toFixed(1)}
@@ -777,7 +784,7 @@ export default function DailySummaryPage() {
 
             <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-1">
               <Info className="h-3 w-3" />
-              บันทึกอัตโนมัติทันทีที่แตะ — “โยกงาน/เลื่อน” จะแสดงในใบงานเวอร์ชันใหม่ ส่วน “ไม่รับงาน” เก็บไว้ดูเงียบ ๆ ไม่ขึ้นในรูปที่ส่งกลุ่ม
+              บันทึกอัตโนมัติทันทีที่แตะ — งานที่ถูกโยก/เลื่อนจะแสดงในใบงานเวอร์ชันใหม่ ส่วน “คนขับปฏิเสธ” เก็บไว้ดูเงียบ ๆ ไม่ขึ้นในรูปที่ส่งกลุ่ม (ในกลุ่มเห็นแค่ว่าโยกไปคันไหน)
             </p>
           </CardContent>
         </Card>

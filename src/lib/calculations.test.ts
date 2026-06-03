@@ -181,6 +181,18 @@ describe('computeOutcomeStats', () => {
     expect(totalPlannedKm).toBe(60)
   })
 
+  it('credits the receiving truck when a refused stop is picked up by someone else', () => {
+    const trips: OutcomeTripLike[] = [
+      // A: 2 stops, 40km -> 20km/stop. Stop 2 refused but picked up by B.
+      { id: 'A', totalDistanceKm: 40, stops: [{}, { outcome: 'driver-refused', reassignedToTripId: 'B' }] },
+      { id: 'B', totalDistanceKm: 20, stops: [{}] }, // 20km/stop
+    ]
+    const { counts, actualKmByTrip } = computeOutcomeStats(trips)
+    expect(counts.refused).toBe(1) // still flagged as a refusal (accountability kept)
+    expect(actualKmByTrip['A']).toBe(20) // A only keeps its one delivered stop
+    expect(actualKmByTrip['B']).toBe(40) // B's own 20km + 20km moved in from A
+  })
+
   it('does not credit km when the reassign target is not in the set', () => {
     const trips: OutcomeTripLike[] = [
       { id: 'A', totalDistanceKm: 40, stops: [{}, { outcome: 'reassigned', reassignedToTripId: 'Z' }] },

@@ -57,8 +57,8 @@ export type TripStatus = 'Planned' | 'In Progress' | 'Completed' | 'Cancelled';
  * so the dispatcher only needs to mark the exceptions.
  *   - delivered     : ส่ง/ปฏิบัติงานตามแผน
  *   - reassigned    : โยกงานไปให้รถคันอื่นทำแทน (กม. ตามไปลงคันที่ทำจริง)
- *   - postponed     : เลื่อนวัน / ลูกค้าเลื่อน (เหตุภายนอก)
- *   - driver-refused: คนขับไม่รับงาน (เก็บไว้ดู pattern เงียบ ๆ)
+ *   - postponed     : เลื่อนวัน / ลูกค้าเลื่อน (เหตุภายนอก, ไม่ใช่ความผิดคนขับ)
+ *   - driver-refused: คนขับปฏิเสธงาน (เก็บไว้ดู pattern เงียบ ๆ; ระบุคันที่รับไปทำแทนได้)
  */
 export type StopOutcome = 'delivered' | 'reassigned' | 'postponed' | 'driver-refused';
 
@@ -81,7 +81,8 @@ export interface TripStop {
   outcome?: StopOutcome;
   /** Free-text reason, mainly for `driver-refused`. */
   outcomeReason?: string;
-  /** When `outcome === 'reassigned'`, the trip/vehicle that actually did the job. */
+  /** When the job was handed to another truck (โยกงาน, or a refusal picked up
+   *  by someone else), the trip/vehicle that actually did it. */
   reassignedToTripId?: string;
   reassignedToVehiclePlate?: string;
   reassignedToDriverName?: string;
