@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Hard gate: unit tests must pass.
+      - name: Run tests
+        run: npm run test:run
+
+  quality:
+    name: Lint & typecheck (informational)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Informational for now: the codebase has pre-existing lint/type
+      # issues (the build currently sets ignoreBuildErrors/ignoreDuringBuilds).
+      # These steps surface them without blocking, and will be tightened
+      # in a later phase.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+      - name: Typecheck
+        run: npm run typecheck
+        continue-on-error: true
