@@ -231,7 +231,7 @@ export default function SitesPage() {
       name: site.name,
       address: site.address,
       coordinates: site.latitude && site.longitude ? `${site.latitude}, ${site.longitude}` : "",
-      projectTypeTag: site.projectTypeTag === 'ไซน์งาน' ? 'ไซต์งาน' : site.projectTypeTag,
+      projectTypeTag: (site.projectTypeTag as string) === 'ไซน์งาน' ? 'ไซต์งาน' : site.projectTypeTag,
     })
     
     setTimeout(() => {

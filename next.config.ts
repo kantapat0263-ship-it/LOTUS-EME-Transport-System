@@ -9,9 +9,13 @@ const withPWA = require('next-pwa')({
 const nextConfig: NextConfig = {
   /* config options here */
   typescript: {
-    ignoreBuildErrors: true,
+    // Type errors now fail the build — a safety net against shipping
+    // broken code (e.g. the kind that was previously hidden).
+    ignoreBuildErrors: false,
   },
   eslint: {
+    // ESLint stays informational during builds for now; pre-existing lint
+    // warnings will be addressed gradually so they don't block deploys.
     ignoreDuringBuilds: true,
   },
   images: {

@@ -57,6 +57,15 @@ export interface TripStop {
   order: number;
   cargoDetails: string;
   actualCargoDescription?: string;
+  lat?: number;
+  lng?: number;
+  requestedBy?: string;
+  requestedByPhone?: string;
+  requestTime?: string;
+  address?: string;
+  note?: string;
+  dispatcherNote?: string;
+  dispatcherName?: string;
 }
 
 export interface Trip {
@@ -73,6 +82,12 @@ export interface Trip {
   totalDistanceKm?: number;
   totalEstimatedTimeMinutes?: number;
   fuelCost?: number;
+  vehicleType?: string;
+  departurePoint?: string;
+  originLat?: number;
+  originLng?: number;
+  sourceVRIds?: string[];
+  requestedBy?: string;
   createdAt?: any;
   updatedAt?: any;
 }

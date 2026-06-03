@@ -502,7 +502,7 @@ export function RequestForm() {
                   const category = CATEGORIES.find(c => c.id === dest.category);
                   const filteredSites = sites?.filter(s => {
                     if (dest.category === 'custom') return false;
-                    const matchesType = dest.category === 'all' ? true : category?.types.includes(s.projectTypeTag);
+                    const matchesType = dest.category === 'all' ? true : (category?.types as readonly string[] | undefined)?.includes(s.projectTypeTag);
                     const matchesSearch = s.name.toLowerCase().includes(dest.searchTerm.toLowerCase()) || 
                                          (s.address || "").toLowerCase().includes(dest.searchTerm.toLowerCase());
                     return matchesType && matchesSearch;

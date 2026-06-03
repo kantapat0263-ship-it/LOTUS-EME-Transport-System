@@ -322,7 +322,7 @@ export function GroupingMap({
           { featureType: "landscape", elementType: "all", color: "#2d3139" },
           { featureType: "road", elementType: "all", color: "#1a1c23" },
           { featureType: "water", elementType: "all", color: "#172899" }
-        ],
+        ] as unknown as google.maps.MapTypeStyle[],
         mapTypeControl: false,
         streetViewControl: false
       })

@@ -77,7 +77,7 @@ Based on the above data, provide:
    - Efficiency improvements.
 
 Provide the output in JSON format matching the following schema:
-```json
+\`\`\`json
 {
   "summary": "Overall summary of trip performance.",
   "insights": [
@@ -87,7 +87,7 @@ Provide the output in JSON format matching the following schema:
     }
   ]
 }
-```
+\`\`\`
 `,
 });
 
