@@ -29,7 +29,8 @@ import {
   Calendar as CalendarIcon,
   Trash2,
   Info,
-  Sparkles
+  Sparkles,
+  Save
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Site, UserProfile } from "@/types/models"
@@ -319,21 +320,29 @@ export function RequestForm() {
           requestTime: d.requestTime || "08:30"
         })
 
-        if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates) {
-          const newSiteRef = doc(collection(db, "sites"))
-          await setDoc(newSiteRef, {
-            id: newSiteRef.id,
-            name: d.customName,
-            address: "",
-            latitude: latVal,
-            longitude: lngVal,
-            projectTypeTag: d.locationType,
-            status: "Active",
-            isUserAdded: true,
-            addedBy: user.email,
-            addedByName: profile?.name || user.email,
-            createdAt: serverTimestamp()
-          })
+        if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates && !d.siteId) {
+          // กันบันทึกซ้ำ: ข้ามถ้ามีสถานที่ชื่อเดิม หรือพิกัดเดียวกันอยู่แล้ว
+          const nameKey = d.customName.trim().toLowerCase()
+          const dup = (sites || []).some(s =>
+            (s.name || "").trim().toLowerCase() === nameKey ||
+            (s.latitude != null && s.longitude != null && s.latitude === latVal && s.longitude === lngVal)
+          )
+          if (!dup) {
+            const newSiteRef = doc(collection(db, "sites"))
+            await setDoc(newSiteRef, {
+              id: newSiteRef.id,
+              name: d.customName,
+              address: "",
+              latitude: latVal,
+              longitude: lngVal,
+              projectTypeTag: d.locationType,
+              status: "Active",
+              isUserAdded: true,
+              addedBy: user.email,
+              addedByName: profile?.name || user.email,
+              createdAt: serverTimestamp()
+            })
+          }
         }
       }
 
@@ -531,7 +540,9 @@ export function RequestForm() {
                                     siteName: "",
                                     customName: "",
                                     coordinates: "",
-                                    searchTerm: ""
+                                    searchTerm: "",
+                                    // สถานที่ใหม่ (กำหนดเอง) → เปิด "บันทึกไว้ใช้ครั้งหน้า" ให้เลย กันคนลืมกด
+                                    saveAsSite: cat.id === "custom"
                                   });
                                 }}
                               >
@@ -637,7 +648,9 @@ export function RequestForm() {
                                             updateDest(dest.id, {
                                               customName: s.name,
                                               siteId: s.id,
-                                              coordinates: s.latitude && s.longitude ? `${s.latitude}, ${s.longitude}` : ""
+                                              coordinates: s.latitude && s.longitude ? `${s.latitude}, ${s.longitude}` : "",
+                                              // เลือกสถานที่ที่มีอยู่แล้ว → ไม่ต้องบันทึกซ้ำ
+                                              saveAsSite: false
                                             })
                                             setActiveSuggestId(null)
                                           }}
@@ -710,6 +723,51 @@ export function RequestForm() {
                           </div>
                         )}
 
+                        {dest.category === "custom" && dest.customName && dest.coordinates && !dest.siteId && (
+                          <div className={cn(
+                            "rounded-lg border-2 p-3.5 transition-colors",
+                            dest.saveAsSite
+                              ? "border-accent bg-accent/10"
+                              : "border-dashed border-muted-foreground/40 bg-background/30"
+                          )}>
+                            <div className="flex items-start gap-3">
+                              <Checkbox
+                                id={`save-site-${dest.id}`}
+                                checked={dest.saveAsSite}
+                                onCheckedChange={(val) => updateDest(dest.id, { saveAsSite: !!val })}
+                                className="mt-0.5 h-5 w-5"
+                              />
+                              <div className="flex-1 space-y-1">
+                                <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-foreground cursor-pointer flex items-center gap-1.5">
+                                  <Save className="h-4 w-4 text-accent shrink-0" />
+                                  บันทึก “{dest.customName}” ไว้ใช้ครั้งต่อไป
+                                </Label>
+                                <p className="text-[11px] text-muted-foreground">
+                                  เป็นสถานที่ใหม่ที่ยังไม่เคยบันทึก — เก็บไว้ ครั้งหน้าเลือกจากรายการได้เลย ไม่ต้องวางพิกัดใหม่
+                                </p>
+                                {dest.saveAsSite && (
+                                  <div className="space-y-1.5 pt-2 animate-in slide-in-from-top-1">
+                                    <Label className="text-xs">ประเภทสถานที่</Label>
+                                    <Select
+                                      value={dest.locationType}
+                                      onValueChange={(val) => updateDest(dest.id, { locationType: val })}
+                                    >
+                                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="ไซต์งาน">ไซต์งาน</SelectItem>
+                                        <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
+                                        <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
+                                        <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>
+                                        <SelectItem value="อื่น ๆ">อื่น ๆ</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>ลักษณะงานที่ต้องทำ</Label>
@@ -748,39 +806,6 @@ export function RequestForm() {
                           </div>
                         </div>
 
-                        {dest.category === "custom" && (
-                          <div className="space-y-4 pt-4 border-t border-border/30">
-                            <div className="flex items-center space-x-2">
-                              <Checkbox 
-                                id={`save-site-${dest.id}`} 
-                              checked={dest.saveAsSite}
-                                onCheckedChange={(val) => updateDest(dest.id, { saveAsSite: !!val })}
-                              />
-                              <Label htmlFor={`save-site-${dest.id}`} className="text-sm font-bold text-accent cursor-pointer">
-                                บันทึกสถานที่นี้เพื่อใช้ครั้งต่อไป
-                              </Label>
-                            </div>
-
-                            {dest.saveAsSite && (
-                              <div className="space-y-2 animate-in slide-in-from-top-1">
-                                <Label>ประเภทสถานที่</Label>
-                                <Select 
-                                  value={dest.locationType} 
-                                  onValueChange={(val) => updateDest(dest.id, { locationType: val })}
-                                >
-                                  <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="ไซต์งาน">ไซต์งาน</SelectItem>
-                                    <SelectItem value="ร้านค้า / ซัพพลายเออร์">ร้านค้า / ซัพพลายเออร์</SelectItem>
-                                    <SelectItem value="ธนาคาร">ธนาคาร</SelectItem>
-                                    <SelectItem value="บริษัท / หน่วยงานราชการ">บริษัท / หน่วยงานราชการ</SelectItem>
-                                    <SelectItem value="อื่น ๆ">อื่น ๆ</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </CardContent>
                     </Card>
                   );
