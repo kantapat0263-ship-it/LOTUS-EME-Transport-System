@@ -4,8 +4,16 @@ import * as React from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import { MapPin, User, FileText, Calendar } from "lucide-react"
+import { MapPin, User, FileText, Calendar, Phone, Clock, StickyNote } from "lucide-react"
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+
+// แปลง YYYY-MM-DD → DD/MM/YYYY (กันพังถ้าไม่มีค่า)
+const fmtDate = (s?: string) => {
+  if (!s) return "-"
+  const [y, m, d] = s.split("-")
+  return d && m && y ? `${d}/${m}/${y}` : s
+}
 
 interface DestinationCardProps {
   dest: any;
@@ -17,11 +25,14 @@ interface DestinationCardProps {
 
 export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover }: DestinationCardProps) {
   return (
-    <Card 
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+    <Card
       className={cn(
         "cursor-pointer transition-all border-l-4 group overflow-hidden",
-        isSelected 
-          ? "border-accent bg-accent/5 shadow-md scale-[1.01]" 
+        isSelected
+          ? "border-accent bg-accent/5 shadow-md scale-[1.01]"
           : "border-secondary bg-secondary/20 hover:border-accent/40"
       )}
       onClick={onToggle}
@@ -93,5 +104,57 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
         </div>
       </CardContent>
     </Card>
+        </TooltipTrigger>
+        <TooltipContent side="right" align="start" className="max-w-sm space-y-2 p-3">
+          <div>
+            <span className="text-xs font-bold text-accent">{dest.vrId}</span>
+            <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 text-accent shrink-0" /> {dest.siteName}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" /> {dest.requestTime || "-"} น. · {fmtDate(dest.requestDate)}
+            </span>
+            <span className="flex items-center gap-1">
+              <User className="h-3 w-3" /> {dest.requestedBy || "-"}
+            </span>
+            {dest.requestedByPhone && (
+              <span className="flex items-center gap-1">
+                <Phone className="h-3 w-3" /> {dest.requestedByPhone}
+              </span>
+            )}
+          </div>
+
+          <div className="border-t border-border/50 pt-2">
+            <p className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 mb-0.5">
+              <FileText className="h-3 w-3 text-accent" /> ลักษณะงาน
+            </p>
+            <p className="text-xs text-foreground whitespace-pre-wrap break-words">
+              {dest.jobDescription || "ไม่ได้ระบุ"}
+            </p>
+          </div>
+
+          {dest.note && (
+            <div className="border-t border-border/50 pt-2">
+              <p className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 mb-0.5">
+                <StickyNote className="h-3 w-3" /> หมายเหตุจากผู้ขอ
+              </p>
+              <p className="text-xs text-foreground/90 whitespace-pre-wrap break-words">{dest.note}</p>
+            </div>
+          )}
+
+          {dest.dispatcherNote && (
+            <div className="border-t border-border/50 pt-2">
+              <p className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 mb-0.5">
+                <StickyNote className="h-3 w-3 text-accent" /> โน้ตคนจัดรถ{dest.dispatcherName ? ` (${dest.dispatcherName})` : ""}
+              </p>
+              <p className="text-xs text-foreground/90 whitespace-pre-wrap break-words">{dest.dispatcherNote}</p>
+            </div>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
