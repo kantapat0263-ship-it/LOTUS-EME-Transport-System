@@ -121,6 +121,17 @@ export default function TripGroupingPage() {
       .map(([date, count]) => ({ date, count }))
   }, [availableDestinations])
 
+  // ออปชัน A: ค่าเริ่มต้นเลือก "วันแรกที่มีงาน" อัตโนมัติ (แทน "ทั้งหมด")
+  // กันเจ้าหน้าที่เผลอเลือกการ์ดข้ามวันตั้งแต่ตอนเลือก — ยังกด "ทั้งหมด" เองได้ถ้าต้องการ
+  const didAutoPickDate = React.useRef(false)
+  React.useEffect(() => {
+    if (didAutoPickDate.current) return
+    if (availableDates.length > 0) {
+      setSelectedDateFilter(availableDates[0].date)
+      didAutoPickDate.current = true
+    }
+  }, [availableDates])
+
   const filteredDestinations = React.useMemo(() => {
     if (selectedDateFilter === "all") return availableDestinations
     return availableDestinations.filter(d => d.requestDate === selectedDateFilter)
@@ -374,7 +385,9 @@ export default function TripGroupingPage() {
     setDriverId("")
     setIsConfirmOpen(false)
     setMergeDialog({ show: false })
-    setSelectedDateFilter("all")
+    // กลับไปเริ่มที่ "วันแรกที่มีงาน" อัตโนมัติอีกครั้ง (ออปชัน A) ไม่เด้งกลับเป็น "ทั้งหมด"
+    didAutoPickDate.current = false
+    setSelectedDateFilter(availableDates[0]?.date || "all")
     setHoveredDestId(null)
     sessionStorage.removeItem("pendingVR")
   }
