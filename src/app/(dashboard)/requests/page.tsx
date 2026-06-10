@@ -30,7 +30,6 @@ import {
   Store,
   Landmark,
   Briefcase,
-  Save,
   Lock,
   Phone,
   Info
@@ -868,37 +867,49 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 </div>
                               )}
 
-                              {isStaff && (
+                              {isStaff && (() => {
+                                const noteKey = `stop_${idx}`
+                                const current = stopNotes[noteKey] || ''
+                                const saved = selectedReq?.stopNotes?.[noteKey] || ''
+                                const dirty = current !== saved
+                                const saving = isSavingNote === idx
+                                return (
                                 <div style={{
                                   marginTop: '12px',
                                   borderLeft: '3px solid #3b82f6',
                                   paddingLeft: '8px'
                                 }}>
                                   <small style={{ color: '#3b82f6', fontWeight: 'bold' }}>
-                                    ✏️ บันทึกโดย {profileName || "ผู้จัดคิว"} (จุดที่ {idx + 1}):
+                                    ✏️ บันทึกโดย {profileName || "ผู้จัดคิว"}:
                                   </small>
-                                  <div className="mt-1 flex flex-col gap-2">
+                                  <div className="mt-1 flex flex-col gap-1.5">
                                     <Textarea
                                       placeholder="ระบุหมายเหตุเพิ่มเติมจากผู้จัดคิว"
-                                      value={stopNotes[`stop_${idx}`] || ''}
+                                      value={current}
                                       onChange={(e) => setStopNotes(prev => ({
                                         ...prev,
-                                        [`stop_${idx}`]: e.target.value
+                                        [noteKey]: e.target.value
                                       }))}
+                                      onBlur={() => { if (dirty) handleSaveStopNote(idx) }}
                                       className="text-xs bg-background min-h-[60px]"
                                     />
-                                    <Button 
-                                      size="sm" 
-                                      className="h-7 text-[10px] w-fit bg-blue-600 hover:bg-blue-700"
-                                      onClick={() => handleSaveStopNote(idx)}
-                                      disabled={isSavingNote === idx}
-                                    >
-                                      {isSavingNote === idx ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3 mr-1" />}
-                                      บันทึกเฉพาะจุดนี้
-                                    </Button>
+                                    <div className="text-[10px] flex items-center gap-1 h-4">
+                                      {saving ? (
+                                        <span className="text-blue-400 flex items-center gap-1">
+                                          <Loader2 className="h-3 w-3 animate-spin" /> กำลังบันทึก…
+                                        </span>
+                                      ) : dirty ? (
+                                        <span className="text-amber-400">● บันทึกอัตโนมัติเมื่อคลิกออกจากช่อง</span>
+                                      ) : current ? (
+                                        <span className="text-green-400">✓ บันทึกแล้ว</span>
+                                      ) : (
+                                        <span className="text-muted-foreground">บันทึกอัตโนมัติเมื่อคลิกออกจากช่อง</span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                              )}
+                                )
+                              })()}
                             </div>
                           </div>
                         </div>
