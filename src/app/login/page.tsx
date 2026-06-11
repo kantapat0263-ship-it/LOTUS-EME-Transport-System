@@ -71,7 +71,7 @@ export default function LoginPage() {
           await auth.signOut()
           toast({ 
             title: "เข้าสู่ระบบไม่สำเร็จ", 
-            description: "บัญชีของคุณถูกระงับ กรุณาติดต่อ Admin", 
+            description: "บัญชีของคุณยังไม่ได้รับอนุมัติ หรือถูกระงับ กรุณาติดต่อ Admin",
             variant: "destructive" 
           })
           setIsLoading(false)
@@ -110,23 +110,35 @@ export default function LoginPage() {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
       const newUser = userCredential.user
-      
+
       await updateProfile(newUser, { displayName: name })
-      
-      const role = email.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? "admin" : "viewer"
-      
+
+      const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase()
+      const role = isAdmin ? "admin" : "viewer"
+
       await setDoc(doc(db, "users", newUser.uid), {
         id: newUser.uid,
         email: newUser.email,
         name: name,
         role: role,
-        active: true,
+        // ผู้สมัครใหม่ต้องรอ Admin อนุมัติก่อน (admin เปิดสวิตช์ Active ที่หน้าจัดการผู้ใช้)
+        active: isAdmin,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       })
 
-      toast({ title: "ลงทะเบียนสำเร็จ", description: `สร้างบัญชีผู้ใช้งานบทบาท ${role} เรียบร้อยแล้ว` })
-      router.push("/dashboard")
+      if (isAdmin) {
+        toast({ title: "ลงทะเบียนสำเร็จ", description: "เข้าสู่ระบบในฐานะ Admin" })
+        router.push("/dashboard")
+      } else {
+        // ออกจากระบบทันที กันไม่ให้เข้าใช้งานก่อนได้รับอนุมัติ (และกัน useEffect เด้งเข้า dashboard)
+        await auth.signOut()
+        toast({
+          title: "สมัครสมาชิกสำเร็จ — รอการอนุมัติ",
+          description: "บัญชีถูกสร้างแล้ว กรุณารอ Admin อนุมัติก่อนเข้าใช้งาน"
+        })
+        setPassword("")
+      }
     } catch (error: any) {
       let errorMessage = "เกิดข้อผิดพลาดในการลงทะเบียน"
       if (error.code === 'auth/email-already-in-use') {
