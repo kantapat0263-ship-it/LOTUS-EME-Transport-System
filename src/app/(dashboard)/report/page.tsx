@@ -128,15 +128,19 @@ export default function ReportPage() {
     }
   }
 
+  // ค่าน้ำมันต่อทริป: ใช้ค่าที่ freeze ไว้ตอนสร้างทริป (ราคาวันนั้น) ถ้าไม่มี (ทริปเก่า) ค่อยคำนวณด้วยค่าปัจจุบัน
+  const tripFuelCost = (t: any) => {
+    if (typeof t.fuelCost === 'number' && t.fuelCost > 0) return t.fuelCost
+    const rate = t.fuelRateUsed || settings?.defaultFuelRate || 10
+    const price = t.dieselPriceUsed || settings?.dieselPrice || 32.5
+    return ((t.totalDistanceKm || 0) / rate) * price
+  }
+
   // AGGREGATIONS
   const stats = React.useMemo(() => {
     const totalDist = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
     const totalStops = trips.reduce((sum, t) => sum + (t.stops?.length || 0), 0)
-    
-    // Calculation: (Total Distance / defaultFuelRate) * dieselPrice
-    const fuelRate = settings?.defaultFuelRate || 10
-    const dieselPrice = settings?.dieselPrice || 32.5
-    const totalFuelCost = (totalDist / fuelRate) * dieselPrice
+    const totalFuelCost = trips.reduce((sum, t) => sum + tripFuelCost(t), 0)
 
     return {
       trips: trips.length,
@@ -154,10 +158,7 @@ export default function ReportPage() {
       data[name].count += 1
       data[name].distance += (t.totalDistanceKm || 0)
       data[name].stops += (t.stops?.length || 0)
-      
-      const rate = settings?.defaultFuelRate || 10
-      const price = settings?.dieselPrice || 32.5
-      data[name].cost += ((t.totalDistanceKm || 0) / rate) * price
+      data[name].cost += tripFuelCost(t)
     })
     return Object.values(data).sort((a, b) => b.distance - a.distance)
   }, [trips, settings])
@@ -169,10 +170,7 @@ export default function ReportPage() {
       if (!data[plate]) data[plate] = { plate, count: 0, distance: 0, cost: 0 }
       data[plate].count += 1
       data[plate].distance += (t.totalDistanceKm || 0)
-      
-      const rate = settings?.defaultFuelRate || 10
-      const price = settings?.dieselPrice || 32.5
-      data[plate].cost += ((t.totalDistanceKm || 0) / rate) * price
+      data[plate].cost += tripFuelCost(t)
     })
     return Object.values(data).sort((a, b) => b.distance - a.distance)
   }, [trips, settings])
@@ -192,17 +190,17 @@ export default function ReportPage() {
 
   const siteCostStats = React.useMemo(() => {
     const data: Record<string, any> = {}
-    const rate = settings?.defaultFuelRate || 10
-    const price = settings?.dieselPrice || 32.5
 
     trips.forEach(t => {
-      const distPerStop = (t.totalDistanceKm || 0) / (t.stops?.length || 1)
+      const stopCount = t.stops?.length || 1
+      const distPerStop = (t.totalDistanceKm || 0) / stopCount
+      const costPerStop = tripFuelCost(t) / stopCount
       t.stops?.forEach((s: any) => {
         const name = s.siteName || "ไม่ระบุ"
         if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0 }
         data[name].count += 1
         data[name].distance += distPerStop
-        data[name].cost += (distPerStop / rate) * price
+        data[name].cost += costPerStop
       })
     })
 
@@ -236,10 +234,7 @@ export default function ReportPage() {
       if (!data[weekKey]) data[weekKey] = { week: weekKey, เที่ยว: 0, ระยะทาง: 0, ค่าน้ำมัน: 0 }
       data[weekKey].เที่ยว += 1
       data[weekKey].ระยะทาง += Math.round(t.totalDistanceKm || 0)
-      
-      const rate = settings?.defaultFuelRate || 10
-      const price = settings?.dieselPrice || 32.5
-      data[weekKey].ค่าน้ำมัน += Math.round(((t.totalDistanceKm || 0) / rate) * price)
+      data[weekKey].ค่าน้ำมัน += Math.round(tripFuelCost(t))
     })
     
     return Object.values(data).sort((a, b) => a.week.localeCompare(b.week))

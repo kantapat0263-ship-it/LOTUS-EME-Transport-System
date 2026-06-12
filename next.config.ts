@@ -8,6 +8,8 @@ const withPWA = require('next-pwa')({
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // firebase-admin เป็น Node-only — อย่า bundle เข้า build (ใช้เฉพาะใน API route)
+  serverExternalPackages: ['firebase-admin'],
   typescript: {
     // Type errors now fail the build — a safety net against shipping
     // broken code (e.g. the kind that was previously hidden).

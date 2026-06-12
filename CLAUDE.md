@@ -63,8 +63,34 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 
 ---
 
+## ราคาน้ำมัน: freeze ต่อทริป + อัปเดตอัตโนมัติ (เฟส 1+2)
+
+### ปัญหา
+หน้า `report` คำนวณค่าน้ำมันทริปเก่าด้วย `companySettings.dieselPrice` **ปัจจุบัน** → พอแก้ราคา ต้นทุนย้อนหลังเปลี่ยนหมด ดูต้นทุนจริงของวันนั้นไม่ได้
+
+### เฟส 1 — freeze ราคาต่อทริป (ทำแล้ว)
+- ตอนสร้างทริป (`trip-grouping`) บันทึก `dieselPriceUsed` + `fuelRateUsed` ติดไปกับทริป (นอกจาก `fuelCost` ที่มีอยู่)
+- หน้า `report` ทุก aggregation ใช้ helper `tripFuelCost(t)` = ใช้ `t.fuelCost` ที่ freeze ไว้ก่อน, ถ้าไม่มี (ทริปเก่า) ค่อย fallback ด้วย `dieselPriceUsed`/`fuelRateUsed` หรือราคาปัจจุบัน
+- `GroupingMap.tsx` เก็บ `dieselPrice`/`fuelRate` เพิ่มลง `window.__lastTripStats`
+
+### เฟส 2 — ดึงราคา B7 อัตโนมัติรายวัน (ทำแล้ว — ต้องตั้ง env บน Vercel ก่อนถึงทำงาน)
+- **Vercel Cron** (`vercel.json`) เรียก `GET /api/cron/update-diesel-price` ทุกวัน 06:00 ไทย (`0 23 * * *` UTC)
+- route ดึงราคาจากแหล่ง JSON → `extractB7Price()` แกะ defensive (เดินทุก node หา B7/ดีเซล + sanity 20-60 บาท)
+  - **แกะ/ดึงพลาด → ไม่เขียนทับราคาเดิม** (กันค่าเพี้ยน) แต่ยังบันทึกประวัติไว้ตรวจ
+  - อัปเดต `companySettings/default.dieselPrice` เฉพาะตอนราคาเปลี่ยน (`fuelSettingsUpdatedBy: 'auto:diesel-cron'`)
+  - บันทึก `dieselPriceHistory/{YYYY-MM-DD}` ทุกครั้ง (audit: fetchedPrice/previousPrice/status/note/source)
+- เขียน Firestore ฝั่ง server ผ่าน **firebase-admin** (`src/firebase/admin.ts`, bypass rules อย่างถูกต้อง)
+
+**ENV ที่ต้องตั้งบน Vercel (เฟส 2):**
+- `FIREBASE_SERVICE_ACCOUNT_BASE64` — base64 ของ service account JSON (Firebase Console → Project settings → Service accounts → Generate key → `base64 -w0 file.json`)
+- `CRON_SECRET` — สุ่ม 1 ค่า (Vercel แนบ `Authorization: Bearer <CRON_SECRET>` ให้ cron เอง) ถ้าไม่ตั้ง route เปิด public
+- `DIESEL_PRICE_SOURCE_URL` *(optional)* — default `https://gas.itorbenz.com`; ถ้า shape ไม่ตรง ปรับ regex ใน `extractB7Price` หรือเปลี่ยน URL
+- **ทดสอบ:** Vercel → Functions log; หรือ `curl -H "Authorization: Bearer <CRON_SECRET>" <url>/api/cron/update-diesel-price` → ดู JSON `{ ok, status, price, changed }`
+
 ## ไฟล์สำคัญ
-- `src/types/models.ts` — `TripStop` (มี outcome fields), `StopOutcome`, `Trip`
+- `src/firebase/admin.ts` — firebase-admin (server write) · `src/lib/diesel-price.ts` (+test) — แกะราคา B7
+- `src/app/api/cron/update-diesel-price/route.ts` — cron อัปเดตราคา · `vercel.json` — schedule
+- `src/types/models.ts` — `TripStop` (มี outcome fields), `StopOutcome`, `Trip` (มี `dieselPriceUsed`/`fuelRateUsed`)
 - `src/lib/calculations.ts` — pure helpers (มี unit test ใน `calculations.test.ts`):
   - `computeOutcomeStats` (นับผล + กม.จริงต่อทริป), `stopShareKm`
   - `computeDriverLeaderboard` + `monthRange` (อันดับรายเดือนนับ กม.จริง)

@@ -165,7 +165,9 @@ export function GroupingMap({
           (window as any).__lastTripStats = {
             distance: totalDistKm,
             duration: Math.round(totalTime / 60),
-            fuelCost: fuelCost
+            fuelCost: fuelCost,
+            dieselPrice: dieselPrice,
+            fuelRate: fuelRate
           }
         }
       } else {

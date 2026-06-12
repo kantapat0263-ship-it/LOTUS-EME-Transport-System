@@ -254,6 +254,9 @@ export default function TripGroupingPage() {
         totalDistanceKm: lastStats.distance || 0,
         totalEstimatedTimeMinutes: lastStats.duration || 0,
         fuelCost: lastStats.fuelCost || 0,
+        // freeze ราคาน้ำมัน + อัตราสิ้นเปลืองที่ใช้ตอนสร้างทริป เพื่อให้ต้นทุนย้อนหลังไม่เปลี่ยนเวลาแก้ราคาใน settings
+        dieselPriceUsed: lastStats.dieselPrice || settings?.dieselPrice || 32.5,
+        fuelRateUsed: lastStats.fuelRate || settings?.defaultFuelRate || 10,
         createdAt: serverTimestamp(),
         departurePoint: settings?.warehouseName || "คลังสินค้า LOTUS EME",
         originLat: warehousePos.lat,

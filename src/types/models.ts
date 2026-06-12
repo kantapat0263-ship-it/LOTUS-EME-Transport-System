@@ -105,6 +105,8 @@ export interface Trip {
   totalDistanceKm?: number;
   totalEstimatedTimeMinutes?: number;
   fuelCost?: number;
+  dieselPriceUsed?: number;
+  fuelRateUsed?: number;
   vehicleType?: string;
   departurePoint?: string;
   originLat?: number;
