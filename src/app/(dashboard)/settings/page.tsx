@@ -5,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Map, Save, Loader2, Building2, Fuel, Clock, Timer, Database, Download, Upload, AlertTriangle } from "lucide-react"
-import { useDoc, useFirestore, useMemoFirebase, useUser } from "@/firebase"
-import { doc, serverTimestamp, collection, getDocs, setDoc } from "firebase/firestore"
+import { Map, Save, Loader2, Building2, Fuel, Clock, Timer, Database, Download, Upload, AlertTriangle, History, TrendingUp, TrendingDown, CheckCircle2 } from "lucide-react"
+import { useDoc, useCollection, useFirestore, useMemoFirebase, useUser } from "@/firebase"
+import { doc, serverTimestamp, collection, getDocs, setDoc, query, orderBy, limit } from "firebase/firestore"
 import { setDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useToast } from "@/hooks/use-toast"
 import { CompanySetting } from "@/types/models"
@@ -26,8 +26,17 @@ export default function SettingsPage() {
 
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile } = useDoc<any>(userProfileRef)
-  
+
   const isAdmin = profile?.role === 'admin'
+
+  // ประวัติการดึงราคาน้ำมันอัตโนมัติ (เขียนโดย cron ทุกวัน) — ใช้โชว์ว่าระบบทำงานอยู่จริง
+  const priceHistoryRef = useMemoFirebase(
+    () => query(collection(db, "dieselPriceHistory"), orderBy("date", "desc"), limit(14)),
+    [db]
+  )
+  const { data: priceHistory } = useCollection<any>(priceHistoryRef)
+  const todayKey = new Date().toISOString().slice(0, 10) // YYYY-MM-DD (UTC, ตรงกับ key ที่ cron เขียน)
+  const ranToday = !!priceHistory?.some((h: any) => h.date === todayKey || h.id === todayKey)
   
   const [isSaving, setIsSaving] = React.useState(false)
   const [isBackingUp, setIsBackingUp] = React.useState(false)
@@ -292,6 +301,86 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* ประวัติราคาน้ำมันอัตโนมัติ + สถานะ cron — ให้ดูได้ในแอปโดยไม่ต้องเปิด Firebase Console */}
+        <Card className="border-accent/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-accent" /> ประวัติราคาน้ำมันอัตโนมัติ
+            </CardTitle>
+            <CardDescription>
+              ระบบดึงราคาดีเซล B7 อัตโนมัติทุกวันเวลา 06:00 น. — ตารางนี้คือบันทึกการทำงานย้อนหลัง (14 วันล่าสุด)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {ranToday ? (
+              <div className="flex items-center gap-2 rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm text-green-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>ระบบทำงานวันนี้แล้ว (มีบันทึกวันที่ {todayKey})</span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-400">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>ยังไม่มีบันทึกของวันนี้ — ระบบจะรันเวลา 06:00 น. (ถ้าไม่เคยมีบันทึกเลย ให้ตรวจว่าตั้งค่า ENV บน Vercel แล้วหรือยัง)</span>
+              </div>
+            )}
+
+            {(!priceHistory || priceHistory.length === 0) ? (
+              <p className="text-sm text-muted-foreground italic py-4 text-center">
+                ยังไม่มีประวัติ — จะเริ่มบันทึกเมื่อระบบดึงราคาอัตโนมัติทำงานครั้งแรก
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="py-2 pr-3 font-medium">วันที่</th>
+                      <th className="py-2 pr-3 font-medium text-right">ราคา (บาท/ลิตร)</th>
+                      <th className="py-2 pr-3 font-medium text-right">เปลี่ยนแปลง</th>
+                      <th className="py-2 pr-3 font-medium text-center">สถานะ</th>
+                      <th className="py-2 font-medium">หมายเหตุ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priceHistory.map((h: any) => {
+                      const price = typeof h.price === 'number' ? h.price : null
+                      const prev = typeof h.previousPrice === 'number' ? h.previousPrice : null
+                      const diff = price != null && prev != null ? +(price - prev).toFixed(2) : 0
+                      const updated = h.status === 'updated'
+                      return (
+                        <tr key={h.id || h.date} className="border-b border-border/50">
+                          <td className="py-2 pr-3 whitespace-nowrap">{h.date}</td>
+                          <td className="py-2 pr-3 text-right font-mono">{price != null ? price.toFixed(2) : '—'}</td>
+                          <td className="py-2 pr-3 text-right font-mono">
+                            {diff === 0 ? (
+                              <span className="text-muted-foreground">—</span>
+                            ) : diff > 0 ? (
+                              <span className="inline-flex items-center gap-0.5 text-red-400"><TrendingUp className="h-3 w-3" /> +{diff.toFixed(2)}</span>
+                            ) : (
+                              <span className="inline-flex items-center gap-0.5 text-green-400"><TrendingDown className="h-3 w-3" /> {diff.toFixed(2)}</span>
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 text-center">
+                            <span className={cn(
+                              "inline-block rounded-full px-2 py-0.5 text-[10px] font-medium",
+                              updated ? "bg-green-500/15 text-green-400" : "bg-amber-500/15 text-amber-400"
+                            )}>
+                              {updated ? "อัปเดต" : "ข้าม"}
+                            </span>
+                          </td>
+                          <td className="py-2 text-xs text-muted-foreground">{h.note || (updated ? '' : '—')}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground italic">
+              * "ข้าม" = ดึง/แกะราคาไม่สำเร็จ ระบบคงราคาเดิมไว้ (ไม่เขียนทับ) — ดูเหตุผลในช่องหมายเหตุ · ราคาขึ้น = แดง, ราคาลง = เขียว
+            </p>
           </CardContent>
         </Card>
 
