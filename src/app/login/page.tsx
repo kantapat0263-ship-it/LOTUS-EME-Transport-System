@@ -28,6 +28,7 @@ export default function LoginPage() {
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [name, setName] = React.useState("")
+  const [phone, setPhone] = React.useState("")
   const [showPassword, setShowPassword] = React.useState(false)
 
   const ADMIN_EMAIL = "ownchang@hotmail.com"
@@ -120,6 +121,7 @@ export default function LoginPage() {
         id: newUser.uid,
         email: newUser.email,
         name: name,
+        phone: phone || "",
         role: role,
         // ผู้สมัครใหม่ต้องรอ Admin อนุมัติก่อน (admin เปิดสวิตช์ Active ที่หน้าจัดการผู้ใช้)
         active: isAdmin,
@@ -251,14 +253,28 @@ export default function LoginPage() {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="signup-name">ชื่อ-นามสกุล</Label>
-                    <Input 
-                      id="signup-name" 
-                      placeholder="สมชาย ใจดี" 
-                      required 
+                    <Input
+                      id="signup-name"
+                      placeholder="สมชาย ใจดี"
+                      required
                       className="h-11"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-phone">เบอร์โทรศัพท์ที่ติดต่อได้</Label>
+                    <Input
+                      id="signup-phone"
+                      type="tel"
+                      inputMode="tel"
+                      placeholder="08X-XXX-XXXX"
+                      required
+                      className="h-11"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                    <p className="text-[10px] text-muted-foreground italic">* เบอร์นี้จะแสดงตอนขอรถ เพื่อให้คนจัดรถ/คนขับติดต่อกลับได้</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-email">อีเมล</Label>

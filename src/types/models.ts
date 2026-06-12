@@ -135,6 +135,7 @@ export interface UserProfile {
   id: string;
   email: string;
   name: string;
+  phone?: string;
   role: UserRole;
   active: boolean;
   createdAt: any;
