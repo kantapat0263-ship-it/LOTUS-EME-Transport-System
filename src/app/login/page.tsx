@@ -125,6 +125,8 @@ export default function LoginPage() {
         role: role,
         // ผู้สมัครใหม่ต้องรอ Admin อนุมัติก่อน (admin เปิดสวิตช์ Active ที่หน้าจัดการผู้ใช้)
         active: isAdmin,
+        // pending = รออนุมัติ (ใช้ขึ้น badge เตือน admin) — admin ไม่ต้องรออนุมัติ
+        pending: !isAdmin,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       })

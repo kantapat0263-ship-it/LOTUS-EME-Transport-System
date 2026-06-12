@@ -49,8 +49,10 @@ export default function UserManagementPage() {
   }
 
   const handleStatusChange = (userId: string, active: boolean) => {
-    updateDocumentNonBlocking(doc(db, "users", userId), { 
+    updateDocumentNonBlocking(doc(db, "users", userId), {
       active: active,
+      // admin จัดการบัญชีนี้แล้ว → เคลียร์สถานะรออนุมัติ (ดับ badge)
+      pending: false,
       updatedAt: serverTimestamp()
     })
     toast({ 

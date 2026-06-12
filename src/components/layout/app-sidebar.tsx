@@ -47,6 +47,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   const [pendingReqCount, setPendingReqCount] = React.useState(0)
   const [inProgressReqCount, setInProgressReqCount] = React.useState(0)
   const [urgentReqCount, setUrgentReqCount] = React.useState(0)
+  const [pendingUsersCount, setPendingUsersCount] = React.useState(0)
 
   // Listen for requests and urgent alerts
   React.useEffect(() => {
@@ -95,9 +96,19 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       })
     }
 
+    // 3. Listen to new sign-ups waiting for approval (Admin only)
+    let unsubscribePendingUsers = () => {}
+    if (userRole === 'admin') {
+      const qPendingUsers = query(collection(db, "users"), where("pending", "==", true))
+      unsubscribePendingUsers = onSnapshot(qPendingUsers, (snapshot) => {
+        setPendingUsersCount(snapshot.size)
+      })
+    }
+
     return () => {
       unsubscribe()
       unsubscribeUrgent()
+      unsubscribePendingUsers()
     }
   }, [db, user, userRole])
 
@@ -130,7 +141,10 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "สรุปคิวรถประจำวัน", href: "/daily-summary", icon: FileText, roles: ['admin', 'dispatcher'] },
     { name: "รายงานสรุป", href: "/report", icon: BarChart2, roles: ['admin', 'dispatcher'] },
-    { name: "จัดการผู้ใช้งาน", href: "/settings/users", icon: Users, roles: ['admin'] },
+    { name: "จัดการผู้ใช้งาน", href: "/settings/users", icon: Users, roles: ['admin'],
+      badge: pendingUsersCount > 0 ? pendingUsersCount : null,
+      badgeColor: "bg-red-500"
+    },
     { name: "ตั้งค่าระบบ", href: "/settings", icon: Settings, roles: ['admin', 'dispatcher'] },
     { name: "ข้อมูลส่วนตัว", href: "/profile", icon: UserIcon, roles: ['admin', 'dispatcher', 'viewer'] },
   ]

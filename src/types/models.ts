@@ -138,6 +138,7 @@ export interface UserProfile {
   phone?: string;
   role: UserRole;
   active: boolean;
+  pending?: boolean;
   createdAt: any;
   updatedAt: any;
 }
