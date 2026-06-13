@@ -16,20 +16,25 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table"
-import { 
-  BarChart2, 
-  Download, 
-  Calendar as CalendarIcon, 
-  Truck, 
-  User, 
-  MapPin, 
-  Fuel, 
+import {
+  BarChart2,
+  Download,
+  Calendar as CalendarIcon,
+  Truck,
+  User,
+  MapPin,
+  Fuel,
   Loader2,
   TrendingUp,
-  Image as ImageIcon
+  Image as ImageIcon,
+  CheckCircle2,
+  ShieldAlert,
+  Lock,
+  Repeat
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Trip, CompanySetting } from "@/types/models"
+import { computeOutcomeStats, computeDriverReliability } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
 import { th } from "date-fns/locale"
@@ -240,6 +245,38 @@ export default function ReportPage() {
     return Object.values(data).sort((a, b) => a.week.localeCompare(b.week))
   }, [trips, settings])
 
+  // --- ชั้น 3: ผลจริง (completion + pattern คนขับปฏิเสธ) ---
+  // อ่านอย่างเดียวจาก outcome ที่เก็บใน stops อยู่แล้ว — ไม่แตะ write/LINE/คำนวณเดิม
+  const outcome = React.useMemo(() => computeOutcomeStats(trips), [trips])
+  const completionRate = outcome.counts.total
+    ? Math.round((outcome.counts.delivered / outcome.counts.total) * 100)
+    : 0
+
+  // รายคนขับ (เฉพาะแอดมิน — ไม่อยู่ในภาพ export) เฉพาะคนที่มี exception ให้ดู
+  const driverReliability = React.useMemo(
+    () => computeDriverReliability(trips).filter((d) => d.exceptions > 0),
+    [trips]
+  )
+
+  // รายการ "ปฏิเสธ" พร้อมเหตุผล — ไว้คุยส่วนตัว ไม่ประจานในกลุ่ม
+  const refusalIncidents = React.useMemo(() => {
+    const out: { date: string; driver: string; site: string; reason: string; pickedUp: string }[] = []
+    trips.forEach((t) => {
+      (t.stops || []).forEach((s: any) => {
+        if (s.outcome === 'driver-refused') {
+          out.push({
+            date: t.tripDate || '',
+            driver: t.driverName || 'ไม่ระบุ',
+            site: s.siteName || 'ไม่ระบุ',
+            reason: s.outcomeReason || '—',
+            pickedUp: s.reassignedToVehiclePlate || '',
+          })
+        }
+      })
+    })
+    return out.sort((a, b) => b.date.localeCompare(a.date))
+  }, [trips])
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -344,6 +381,62 @@ export default function ReportPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* COMPLETION SUMMARY (ภาพรวม ผลจริง — ไม่ระบุตัวคน จึง export ได้) */}
+        {outcome.counts.total > 0 && (
+          <Card className="bg-secondary/20 border-border/50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-accent" /> สรุปผลจริง (Completion)
+              </CardTitle>
+              <CardDescription>
+                เทียบ "ตามแผน" กับ "ผิดแผน" จากการปิดผลงานจริงรายจุด
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                {/* อัตราสำเร็จก้อนใหญ่ */}
+                <div className="md:col-span-3 text-center bg-background/40 rounded-xl py-4 border border-border/50">
+                  <p className="text-5xl font-black text-green-500">{completionRate}%</p>
+                  <p className="text-xs text-muted-foreground mt-1">วิ่งตามแผน</p>
+                  <p className="text-[11px] text-muted-foreground/70">
+                    {outcome.counts.delivered} จาก {outcome.counts.total} จุด
+                  </p>
+                </div>
+                {/* breakdown 4 ช่อง (ตัวเลขรวม ไม่ระบุตัวคน) */}
+                <div className="md:col-span-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-background/40 rounded-lg p-3 text-center border border-border/50">
+                    <p className="text-2xl font-bold text-green-500">{outcome.counts.delivered}</p>
+                    <p className="text-[11px] text-muted-foreground">ตามแผน</p>
+                  </div>
+                  <div className="bg-background/40 rounded-lg p-3 text-center border border-border/50">
+                    <p className="text-2xl font-bold text-blue-400">{outcome.counts.reassigned}</p>
+                    <p className="text-[11px] text-muted-foreground">โยกงาน</p>
+                  </div>
+                  <div className="bg-background/40 rounded-lg p-3 text-center border border-border/50">
+                    <p className="text-2xl font-bold text-amber-400">{outcome.counts.postponed}</p>
+                    <p className="text-[11px] text-muted-foreground">เลื่อน</p>
+                  </div>
+                  <div className="bg-background/40 rounded-lg p-3 text-center border border-border/50">
+                    <p className="text-2xl font-bold text-red-400">{outcome.counts.refused}</p>
+                    <p className="text-[11px] text-muted-foreground">ปฏิเสธ</p>
+                  </div>
+                </div>
+                {/* กม. แผน vs จริง */}
+                <div className="md:col-span-3 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">กม. ตามแผน</span>
+                    <span className="text-white font-medium">{Math.round(outcome.totalPlannedKm).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">กม. วิ่งจริง</span>
+                    <span className="text-accent font-bold">{Math.round(outcome.totalActualKm).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {weeklyTrend.length > 0 && (
           <Card className="bg-secondary/20 border-border/50">
@@ -550,6 +643,92 @@ export default function ReportPage() {
           </p>
         </div>
       </div>
+
+      {/* ============================================================ */}
+      {/* เฉพาะแอดมิน — อยู่ "นอก" #report-content จึงไม่ติดไปในรูป JPEG */}
+      {/* หลักการ: จัดการคนอู้แบบส่วนตัว ไม่ประจานในกลุ่ม              */}
+      {/* ============================================================ */}
+      {(driverReliability.length > 0 || refusalIncidents.length > 0) && (
+        <Card className="border-red-500/30 bg-red-950/10">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2 text-red-300">
+              <Lock className="h-5 w-5" /> เฉพาะแอดมิน — ความน่าเชื่อถือคนขับ
+            </CardTitle>
+            <CardDescription className="flex items-center gap-1.5">
+              <ShieldAlert className="h-3.5 w-3.5 text-red-400/70 shrink-0" />
+              ข้อมูลส่วนนี้ <b className="text-red-300/90">ไม่อยู่ในไฟล์ภาพที่กดบันทึก</b> — ไว้ดูเพื่อคุยส่วนตัว ไม่ใช่ประจานในกลุ่ม
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {driverReliability.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-muted-foreground uppercase mb-2">สรุปรายคนขับ (เรียงตามจำนวนปฏิเสธ)</p>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border/50">
+                      <TableHead>คนขับ</TableHead>
+                      <TableHead className="text-right">จุดที่รับ</TableHead>
+                      <TableHead className="text-right">ตามแผน</TableHead>
+                      <TableHead className="text-right">โยกงาน</TableHead>
+                      <TableHead className="text-right">เลื่อน</TableHead>
+                      <TableHead className="text-right text-red-400">ปฏิเสธ</TableHead>
+                      <TableHead className="text-right">% สำเร็จ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {driverReliability.map((d, i) => (
+                      <TableRow key={i} className="border-border/20">
+                        <TableCell className="font-medium text-white">{d.driverName || 'ไม่ระบุ'}</TableCell>
+                        <TableCell className="text-right">{d.assignedStops}</TableCell>
+                        <TableCell className="text-right text-green-500">{d.delivered}</TableCell>
+                        <TableCell className="text-right text-blue-400">{d.reassigned || '—'}</TableCell>
+                        <TableCell className="text-right text-amber-400">{d.postponed || '—'}</TableCell>
+                        <TableCell className="text-right font-bold text-red-400">{d.refused || '—'}</TableCell>
+                        <TableCell className="text-right">
+                          <span className={cn(
+                            "font-medium",
+                            d.completionRate >= 0.9 ? "text-green-500" : d.completionRate >= 0.7 ? "text-amber-400" : "text-red-400"
+                          )}>
+                            {Math.round(d.completionRate * 100)}%
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {refusalIncidents.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                  รายการปฏิเสธ + เหตุผล ({refusalIncidents.length} ครั้ง)
+                </p>
+                <div className="space-y-2">
+                  {refusalIncidents.map((r, i) => (
+                    <div key={i} className="bg-background/40 rounded-lg p-3 border border-red-500/20 text-sm">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-xs text-muted-foreground">{formatDateDisplay(r.date)}</span>
+                        <span className="font-medium text-white">{r.driver}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground truncate">{r.site}</span>
+                        {r.pickedUp && (
+                          <Badge variant="outline" className="border-blue-500/40 text-blue-300 text-[10px] gap-1">
+                            <Repeat className="h-3 w-3" /> โยกไป {r.pickedUp}
+                          </Badge>
+                        )}
+                      </div>
+                      {r.reason && r.reason !== '—' && (
+                        <p className="text-xs text-red-300/80 mt-1">เหตุผล: {r.reason}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
