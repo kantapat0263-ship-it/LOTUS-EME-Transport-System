@@ -5,7 +5,7 @@ import { useParams } from "next/navigation"
 import { initializeFirebase } from "@/firebase"
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore"
 import { Trip, Driver } from "@/types/models"
-import { computeDriverLeaderboard, monthRange, incomingStopsForTrip, type DriverStat, type IncomingJob } from "@/lib/calculations"
+import { computeDriverLeaderboard, monthRange, incomingStopsForTrip, computeOutcomeStats, type DriverStat, type IncomingJob } from "@/lib/calculations"
 import {
   MapPin,
   Truck,
@@ -45,6 +45,8 @@ export default function DriverTripPage() {
   const [topKm, setTopKm] = React.useState(0)
   // Jobs other trucks handed to this driver today (public-safe: shown as "รับงานต่อ")
   const [incoming, setIncoming] = React.useState<IncomingJob[]>([])
+  // Actual km for this trip after work moved in/out (null = fall back to planned)
+  const [actualKm, setActualKm] = React.useState<number | null>(null)
 
   React.useEffect(() => {
     async function fetchTrip() {
@@ -82,6 +84,8 @@ export default function DriverTripPage() {
               setTopKm(board[0]?.actualKm || 0)
               // Surface jobs reassigned *into* this trip (the destination half)
               setIncoming(incomingStopsForTrip(monthTrips, tripData.id))
+              // Actual km after work moved in/out (own delivered + รับต่อ − โยกออก)
+              setActualKm(computeOutcomeStats(monthTrips).actualKmByTrip[tripData.id] ?? null)
             }
           } catch (statErr) {
             console.error("stats unavailable", statErr)
@@ -361,8 +365,8 @@ export default function DriverTripPage() {
             <div className="bg-gray-900 text-white rounded-2xl p-6 space-y-3 shadow-xl">
               <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest border-b border-white/10 pb-2 mb-3">สรุปแผนการเดินทาง</h3>
               <div className="flex justify-between items-center">
-                <span className="text-gray-400 text-sm">ระยะทางรวม (กม.)</span>
-                <span className="text-xl font-bold">{trip.totalDistanceKm?.toFixed(1) || "-"} กม.</span>
+                <span className="text-gray-400 text-sm">ระยะทางวิ่งจริง (กม.)</span>
+                <span className="text-xl font-bold">{(actualKm ?? trip.totalDistanceKm)?.toFixed(1) || "-"} กม.</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">ประมาณเวลาเดินทาง</span>

@@ -335,7 +335,8 @@ export default function DailySummaryPage() {
     return driversData?.find(d => d.id === driverId)?.phoneNumber || ""
   }
 
-  const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
+  // ระยะทางรวม "ที่วิ่งจริง" — งานที่โยก/ปฏิเสธไม่มีคนรับจะไม่ถูกนับ (ตามงานจริง)
+  const totalDistance = computeOutcomeStats(trips as any).totalActualKm
 
   // --- Actual-outcome reconciliation (after the report is posted to LINE) ---
   const recordedBy = user?.displayName || user?.email || ""
@@ -767,7 +768,7 @@ export default function DailySummaryPage() {
                     <div className="mt-8 flex justify-between text-sm">
                       <div className="space-y-1 font-bold">
                         <p>รวม: {trips.length} เที่ยว</p>
-                        <p>ระยะทางรวม: {totalDistance.toFixed(1)} กม.</p>
+                        <p>ระยะทางรวม (วิ่งจริง): {totalDistance.toFixed(1)} กม.</p>
                       </div>
                       <div className="flex gap-12">
                         <div className="text-center w-48">

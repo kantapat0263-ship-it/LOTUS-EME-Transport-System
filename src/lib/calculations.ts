@@ -99,6 +99,9 @@ export interface OutcomeStopLike {
 export interface OutcomeTripLike {
   id?: string
   totalDistanceKm?: number | null
+  /** Resolved fuel cost for the whole trip (frozen at creation when available).
+   *  Optional — when omitted, cost aggregation simply stays 0. */
+  fuelCost?: number | null
   stops?: OutcomeStopLike[] | null
 }
 
@@ -111,6 +114,13 @@ export function stopShareKm(trip: OutcomeTripLike): number {
   const stopCount = trip.stops?.length || 0
   if (stopCount === 0) return 0
   return (trip.totalDistanceKm || 0) / stopCount
+}
+
+/** Per-stop fuel-cost share, allocated the same crude way as distance. */
+export function stopShareCost(trip: OutcomeTripLike): number {
+  const stopCount = trip.stops?.length || 0
+  if (stopCount === 0) return 0
+  return (trip.fuelCost || 0) / stopCount
 }
 
 /** A stop with no recorded outcome (or 'delivered') counts as run-as-planned. */
@@ -138,6 +148,11 @@ export interface OutcomeStats {
   actualKmByTrip: Record<string, number>
   totalPlannedKm: number
   totalActualKm: number
+  /** Actual fuel cost credited to each trip's vehicle (work follows the truck,
+   *  cost share taken at the *source* trip's frozen rate). 0 when no fuelCost given. */
+  actualCostByTrip: Record<string, number>
+  totalPlannedCost: number
+  totalActualCost: number
 }
 
 /**
@@ -150,6 +165,8 @@ export interface OutcomeStats {
 export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
   const plannedKmByTrip: Record<string, number> = {}
   const actualKmByTrip: Record<string, number> = {}
+  const plannedCostByTrip: Record<string, number> = {}
+  const actualCostByTrip: Record<string, number> = {}
   const counts = { delivered: 0, reassigned: 0, postponed: 0, refused: 0, exceptions: 0, total: 0 }
 
   const tripIds = new Set(trips.map((t) => t.id).filter(Boolean) as string[])
@@ -157,12 +174,15 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
   for (const trip of trips) {
     const id = trip.id || ''
     plannedKmByTrip[id] = trip.totalDistanceKm || 0
+    plannedCostByTrip[id] = trip.fuelCost || 0
     if (!(id in actualKmByTrip)) actualKmByTrip[id] = 0
+    if (!(id in actualCostByTrip)) actualCostByTrip[id] = 0
   }
 
   for (const trip of trips) {
     const id = trip.id || ''
     const share = stopShareKm(trip)
+    const costShare = stopShareCost(trip)
 
     for (const stop of trip.stops || []) {
       counts.total += 1
@@ -171,16 +191,19 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
       if (isDeliveredOutcome(outcome)) {
         counts.delivered += 1
         actualKmByTrip[id] += share
+        actualCostByTrip[id] += costShare
         continue
       }
 
       counts.exceptions += 1
-      // Distance follows the job: whenever a stop was handed to another truck
-      // — an operational โยกงาน, or a refusal that someone else picked up —
-      // credit that truck. Postponed / unpicked refusals are driven by nobody.
+      // Distance & cost follow the job: whenever a stop was handed to another
+      // truck — an operational โยกงาน, or a refusal that someone else picked up
+      // — credit that truck (cost at the source trip's frozen rate). Postponed /
+      // unpicked refusals are driven by nobody, so their share is dropped.
       const target = stop.reassignedToTripId || ''
       if (target && tripIds.has(target)) {
         actualKmByTrip[target] = (actualKmByTrip[target] || 0) + share
+        actualCostByTrip[target] = (actualCostByTrip[target] || 0) + costShare
       }
       if (outcome === 'reassigned') counts.reassigned += 1
       else if (outcome === 'postponed') counts.postponed += 1
@@ -188,10 +211,18 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
     }
   }
 
-  const totalPlannedKm = Object.values(plannedKmByTrip).reduce((a, b) => a + b, 0)
-  const totalActualKm = Object.values(actualKmByTrip).reduce((a, b) => a + b, 0)
+  const sum = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0)
 
-  return { counts, plannedKmByTrip, actualKmByTrip, totalPlannedKm, totalActualKm }
+  return {
+    counts,
+    plannedKmByTrip,
+    actualKmByTrip,
+    totalPlannedKm: sum(plannedKmByTrip),
+    totalActualKm: sum(actualKmByTrip),
+    actualCostByTrip,
+    totalPlannedCost: sum(plannedCostByTrip),
+    totalActualCost: sum(actualCostByTrip),
+  }
 }
 
 // ---------------------------------------------------------------------------

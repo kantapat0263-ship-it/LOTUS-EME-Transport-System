@@ -206,6 +206,29 @@ describe('computeOutcomeStats', () => {
     expect(actualKmByTrip['A']).toBe(20)
     expect(totalActualKm).toBe(20)
   })
+
+  it('ค่าน้ำมันย้ายตามงานเหมือน กม. (ใช้เรตของทริปต้นทาง)', () => {
+    const trips: OutcomeTripLike[] = [
+      // A: 4 จุด 800 บาท -> 200/จุด, จุด3 โยกไป B, จุด4 ปฏิเสธไม่มีใครรับ
+      {
+        id: 'A', totalDistanceKm: 80, fuelCost: 800,
+        stops: [{}, {}, { outcome: 'reassigned', reassignedToTripId: 'B' }, { outcome: 'driver-refused' }],
+      },
+      { id: 'B', totalDistanceKm: 30, fuelCost: 300, stops: [{}, {}] }, // 150/จุด
+    ]
+    const { actualCostByTrip, totalActualCost } = computeOutcomeStats(trips)
+    expect(actualCostByTrip['A']).toBe(400)        // เหลือ 2 จุดที่ทำเอง = 400
+    expect(actualCostByTrip['B']).toBe(500)        // 300 ของตัวเอง + 200 (เรตของ A) ที่รับมา
+    expect(totalActualCost).toBe(900)              // จุดปฏิเสธ 200 หายไป (ไม่มีใครวิ่ง)
+  })
+
+  it('ไม่มี fuelCost ส่งมา → ต้นทุนเป็น 0 (ไม่พัง)', () => {
+    const { totalActualCost, actualCostByTrip } = computeOutcomeStats([
+      { id: 'A', totalDistanceKm: 40, stops: [{}, {}] },
+    ])
+    expect(totalActualCost).toBe(0)
+    expect(actualCostByTrip['A']).toBe(0)
+  })
 })
 
 describe('monthRange', () => {
