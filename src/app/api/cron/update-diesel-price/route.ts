@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb } from '@/firebase/admin'
-import { extractB7Price } from '@/lib/diesel-price'
+import { extractB7Price, extractB7PriceFromHtml } from '@/lib/diesel-price'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -43,12 +43,20 @@ export async function GET(req: NextRequest) {
   let note = ''
   try {
     const res = await fetch(sourceUrl, {
-      headers: { accept: 'application/json' },
+      headers: { accept: 'text/html,application/json' },
       cache: 'no-store',
     })
     if (!res.ok) throw new Error(`source HTTP ${res.status}`)
-    const data = await res.json()
-    fetchedPrice = extractB7Price(data)
+    const raw = await res.text()
+    // แหล่งบางที่เป็น JSON API, บางที่เป็นหน้าเว็บ HTML (เช่น kapook)
+    // → ลอง parse JSON ก่อน ถ้าไม่ใช่ JSON ค่อยแกะจาก HTML
+    let data: unknown = null
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      /* ไม่ใช่ JSON → ถือเป็น HTML */
+    }
+    fetchedPrice = data != null ? extractB7Price(data) : extractB7PriceFromHtml(raw)
     if (fetchedPrice == null) note = 'parse-miss'
   } catch (e: any) {
     note = `fetch-error: ${e?.message ?? 'unknown'}`

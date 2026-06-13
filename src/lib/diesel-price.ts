@@ -63,3 +63,41 @@ export function extractB7Price(data: unknown): number | null {
   // มัธยฐาน (กรณีคู่ เอาตัวล่างของกลางก็พอ — ราคามักเท่ากันอยู่แล้ว)
   return candidates[mid]
 }
+
+/**
+ * แกะราคา B7 จาก "หน้าเว็บ HTML" (แหล่งที่ไม่ใช่ JSON API เช่น kapook)
+ *
+ * วิธี: ถอด tag/script/style ออกเหลือข้อความล้วน → หา label ที่สื่อถึงดีเซล
+ *   แล้วตามด้วยราคารูปแบบ \d{1,2}\.\d{2} ในระยะใกล้ ๆ (กันไปคว้าเลขคนละคอลัมน์)
+ *   - กรอง B20/พรีเมียม ด้วย looksLikeB7, กันค่าหลุดช่วงด้วย toSanePrice
+ *   - คืน "มัธยฐาน" ของทุกค่าที่เจอ (กัน outlier บางปั๊ม) — ไม่เจอเลยคืน null
+ *
+ * reuse logic เดียวกับ extractB7Price (JSON) เพื่อให้พฤติกรรมการกรอง/sanity สอดคล้องกัน
+ */
+export function extractB7PriceFromHtml(html: string): number | null {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+
+  const candidates: number[] = []
+  // หา "ราคา" ทุกตัวก่อน (รูปแบบ \d{1,2}\.\d{2}) แล้วค่อยดูบริบทย้อนหลัง
+  // เหตุผล: anchor ที่ label โดยตรงไม่ได้ เพราะเลข "7" ใน "B7" ไปตัด gap ก่อนถึงราคา
+  const re = /\d{1,2}\.\d{2}/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const before = text.slice(Math.max(0, m.index - 30), m.index)
+    // เอาข้อความตั้งแต่ "ตัวบ่งชี้ดีเซลตัวแรก" ในบริบทถึงหน้าราคา มาเช็ค
+    // (ครอบทั้ง prefix อย่าง "ดีเซลพรีเมียม" → looksLikeB7 จะตัดทิ้งได้)
+    const label = before.match(/(?:ดีเซล|diesel|b7)[\s\S]*$/i)?.[0]
+    if (!label || !looksLikeB7(label)) continue // ไม่ใช่ดีเซล หรือเป็น B20/พรีเมียม → ข้าม
+    const p = toSanePrice(m[0])
+    if (p != null) candidates.push(p)
+  }
+
+  if (candidates.length === 0) return null
+  candidates.sort((a, b) => a - b)
+  return candidates[Math.floor(candidates.length / 2)]
+}
