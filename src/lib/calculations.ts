@@ -386,3 +386,61 @@ export function computeDriverReliability(trips: ReliabilityTripLike[]): DriverRe
     })
     .sort((x, y) => y.refused - x.refused || y.refusalRate - x.refusalRate || x.driverName.localeCompare(y.driverName))
 }
+
+// ---------------------------------------------------------------------------
+// Incoming reassignments (so the *destination* truck knows work moved to it)
+// ---------------------------------------------------------------------------
+
+export interface IncomingStopLike extends OutcomeStopLike {
+  siteName?: string | null
+  cargoDetails?: string | null
+}
+
+export interface IncomingTripLike {
+  id?: string
+  driverName?: string | null
+  vehiclePlate?: string | null
+  stops?: IncomingStopLike[] | null
+}
+
+export interface IncomingJob {
+  /** Source trip the job was moved from. */
+  fromTripId: string
+  fromDriverName: string
+  fromVehiclePlate: string
+  siteName: string
+  cargoDetails: string
+  /** True if the source stop was a refusal someone picked up — kept for internal
+   *  logic only; the destination UI must stay public-safe and never show "ปฏิเสธ". */
+  wasRefused: boolean
+}
+
+/**
+ * Jobs handed *to* `tripId` from other trips — the missing other half of the
+ * one-directional reassignment record. We read every other trip's stops and
+ * collect the ones whose `reassignedToTripId` points here, so the destination
+ * driver/dispatcher can see incoming work that was never written onto this trip.
+ *
+ * Pure & derived: no distance is recomputed (computeOutcomeStats already credits
+ * the destination truck), nothing is written — this only surfaces existing data.
+ */
+export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: string): IncomingJob[] {
+  if (!tripId) return []
+  const out: IncomingJob[] = []
+  for (const t of allTrips) {
+    if (t.id === tripId) continue // a trip never reassigns to itself
+    for (const s of t.stops || []) {
+      if (s.reassignedToTripId === tripId) {
+        out.push({
+          fromTripId: t.id || '',
+          fromDriverName: t.driverName || '',
+          fromVehiclePlate: t.vehiclePlate || '',
+          siteName: s.siteName || '',
+          cargoDetails: s.cargoDetails || '',
+          wasRefused: s.outcome === 'driver-refused',
+        })
+      }
+    }
+  }
+  return out
+}

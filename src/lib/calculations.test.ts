@@ -15,6 +15,7 @@ import {
   monthRange,
   computeDriverLeaderboard,
   computeDriverReliability,
+  incomingStopsForTrip,
   type TripLike,
   type OutcomeTripLike,
   type LeaderboardTripLike,
@@ -292,5 +293,31 @@ describe('computeDriverReliability', () => {
     expect(result[0].assignedStops).toBe(2)
     expect(result[0].reassigned).toBe(1)
     expect(result[0].refused).toBe(0)
+  })
+})
+
+describe('incomingStopsForTrip', () => {
+  const trips = [
+    {
+      id: 'A', driverName: 'เจี๊ยบ', vehiclePlate: '1ตณษ-4413',
+      stops: [
+        { siteName: 'ไซต์1', cargoDetails: 'ของ A', outcome: 'reassigned', reassignedToTripId: 'B' },
+        { siteName: 'ไซต์2', cargoDetails: 'ของ B', outcome: 'driver-refused', reassignedToTripId: 'B' },
+        { siteName: 'ไซต์3', cargoDetails: 'ของ C' }, // ทำเอง ไม่โยก
+      ],
+    },
+    { id: 'B', driverName: 'เจ', vehiclePlate: '1ตณษ-4407', stops: [{ siteName: 'งานเจ', cargoDetails: 'x' }] },
+  ]
+
+  it('เห็นงานที่ถูกโยกมาหาทริปปลายทาง พร้อมที่มา', () => {
+    const inc = incomingStopsForTrip(trips, 'B')
+    expect(inc).toHaveLength(2)
+    expect(inc[0]).toMatchObject({ fromTripId: 'A', fromDriverName: 'เจี๊ยบ', fromVehiclePlate: '1ตณษ-4413', siteName: 'ไซต์1' })
+    expect(inc[1].wasRefused).toBe(true) // จุดที่มาจากการปฏิเสธ (ไว้ใช้ภายใน ไม่โชว์คำว่าปฏิเสธ)
+  })
+
+  it('ทริปต้นทางไม่เห็น incoming ของตัวเอง / ไม่มี id → ว่าง', () => {
+    expect(incomingStopsForTrip(trips, 'A')).toHaveLength(0)
+    expect(incomingStopsForTrip(trips, '')).toHaveLength(0)
   })
 })
