@@ -295,3 +295,94 @@ export function computeDriverLeaderboard(trips: LeaderboardTripLike[]): DriverSt
   result.forEach((r, i) => { r.rank = i + 1 })
   return result
 }
+
+// ---------------------------------------------------------------------------
+// Driver reliability (admin-only — completion + refusal pattern)
+// ---------------------------------------------------------------------------
+
+export interface ReliabilityTripLike {
+  driverId?: string | null
+  driverName?: string | null
+  stops?: OutcomeStopLike[] | null
+}
+
+export interface DriverReliabilityStat {
+  driverId: string
+  driverName: string
+  /** Stops assigned to this driver's own trips (the denominator). */
+  assignedStops: number
+  /** Ran as planned (delivered / unset outcome). */
+  delivered: number
+  /** Dispatcher moved the job to another truck (โยกงาน) — not the driver's fault. */
+  reassigned: number
+  /** Postponed (external reason) — not the driver's fault. */
+  postponed: number
+  /** Driver refused the job — the metric that flags an อู้ pattern. */
+  refused: number
+  /** Anything that did not run as planned (= assigned - delivered). */
+  exceptions: number
+  /** delivered / assignedStops (0..1). */
+  completionRate: number
+  /** refused / assignedStops (0..1). */
+  refusalRate: number
+}
+
+/**
+ * Per-driver completion / refusal pattern, attributing every stop to the
+ * driver it was originally assigned to (i.e. the trip's own driver).
+ *
+ * Unlike the public leaderboard, this is the *private admin* view: refusals
+ * are counted and surfaced so a dispatcher/admin can have a quiet 1-on-1 —
+ * never shown in the LINE group. Sorted by refusals (desc) so the people who
+ * decline most float to the top; ties broken by refusal rate then name.
+ */
+export function computeDriverReliability(trips: ReliabilityTripLike[]): DriverReliabilityStat[] {
+  interface Acc {
+    driverId: string
+    driverName: string
+    assignedStops: number
+    delivered: number
+    reassigned: number
+    postponed: number
+    refused: number
+  }
+  const accs = new Map<string, Acc>()
+
+  for (const t of trips) {
+    const key = t.driverId || t.driverName || ''
+    if (!key) continue
+    let a = accs.get(key)
+    if (!a) {
+      a = { driverId: t.driverId || '', driverName: t.driverName || '', assignedStops: 0, delivered: 0, reassigned: 0, postponed: 0, refused: 0 }
+      accs.set(key, a)
+    }
+    if (t.driverName) a.driverName = t.driverName
+
+    for (const stop of t.stops || []) {
+      a.assignedStops += 1
+      const outcome = stop.outcome
+      if (isDeliveredOutcome(outcome)) a.delivered += 1
+      else if (outcome === 'reassigned') a.reassigned += 1
+      else if (outcome === 'postponed') a.postponed += 1
+      else if (outcome === 'driver-refused') a.refused += 1
+    }
+  }
+
+  return Array.from(accs.values())
+    .map((a) => {
+      const exceptions = a.assignedStops - a.delivered
+      return {
+        driverId: a.driverId,
+        driverName: a.driverName,
+        assignedStops: a.assignedStops,
+        delivered: a.delivered,
+        reassigned: a.reassigned,
+        postponed: a.postponed,
+        refused: a.refused,
+        exceptions,
+        completionRate: a.assignedStops ? a.delivered / a.assignedStops : 0,
+        refusalRate: a.assignedStops ? a.refused / a.assignedStops : 0,
+      }
+    })
+    .sort((x, y) => y.refused - x.refused || y.refusalRate - x.refusalRate || x.driverName.localeCompare(y.driverName))
+}

@@ -14,6 +14,7 @@ import {
   computeOutcomeStats,
   monthRange,
   computeDriverLeaderboard,
+  computeDriverReliability,
   type TripLike,
   type OutcomeTripLike,
   type LeaderboardTripLike,
@@ -244,5 +245,52 @@ describe('computeDriverLeaderboard', () => {
     expect(a.completedStops).toBe(1)
     expect(b.actualKm).toBe(40)        // d2's own 20 + 20 taken over from d1
     expect(b.completedStops).toBe(2)
+  })
+})
+
+describe('computeDriverReliability', () => {
+  it('นับผลรายคนขับ + completion/refusal rate (จุดที่ไม่มี outcome = ตามแผน)', () => {
+    const trips = [
+      {
+        driverId: 'd1', driverName: 'สมชาย',
+        stops: [
+          {},                                  // ไม่มี outcome = delivered
+          { outcome: 'delivered' },
+          { outcome: 'driver-refused' },
+          { outcome: 'postponed' },
+        ],
+      },
+    ]
+    const [a] = computeDriverReliability(trips)
+    expect(a.assignedStops).toBe(4)
+    expect(a.delivered).toBe(2)
+    expect(a.refused).toBe(1)
+    expect(a.postponed).toBe(1)
+    expect(a.exceptions).toBe(2)         // 4 - delivered(2)
+    expect(a.completionRate).toBe(0.5)
+    expect(a.refusalRate).toBe(0.25)
+  })
+
+  it('เรียงคนปฏิเสธมากสุดขึ้นก่อน (เพื่อจับ pattern)', () => {
+    const trips = [
+      { driverId: 'd1', driverName: 'A', stops: [{ outcome: 'driver-refused' }] },
+      { driverId: 'd2', driverName: 'B', stops: [{ outcome: 'driver-refused' }, { outcome: 'driver-refused' }] },
+      { driverId: 'd3', driverName: 'C', stops: [{ outcome: 'delivered' }] },
+    ]
+    const ranked = computeDriverReliability(trips)
+    expect(ranked.map((r) => r.driverName)).toEqual(['B', 'A', 'C'])
+  })
+
+  it('รวมหลายทริปของคนเดียวกัน + ข้ามทริปที่ไม่มีคนขับ', () => {
+    const trips = [
+      { driverId: 'd1', driverName: 'สมหญิง', stops: [{ outcome: 'delivered' }] },
+      { driverId: 'd1', driverName: 'สมหญิง', stops: [{ outcome: 'reassigned' }] },
+      { driverId: '', driverName: '', stops: [{ outcome: 'driver-refused' }] }, // ไม่มีคนขับ → ข้าม
+    ]
+    const result = computeDriverReliability(trips)
+    expect(result).toHaveLength(1)
+    expect(result[0].assignedStops).toBe(2)
+    expect(result[0].reassigned).toBe(1)
+    expect(result[0].refused).toBe(0)
   })
 })
