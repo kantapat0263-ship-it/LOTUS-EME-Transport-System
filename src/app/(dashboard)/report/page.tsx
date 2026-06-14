@@ -141,19 +141,26 @@ export default function ReportPage() {
     return ((t.totalDistanceKm || 0) / rate) * price
   }
 
-  // AGGREGATIONS
-  const stats = React.useMemo(() => {
-    const totalDist = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
-    const totalStops = trips.reduce((sum, t) => sum + (t.stops?.length || 0), 0)
-    const totalFuelCost = trips.reduce((sum, t) => sum + tripFuelCost(t), 0)
+  // ผลจริง: กม. + ค่าน้ำมัน "ย้ายตามงาน" (โยก/รับต่อ) — แนบ fuelCost ที่ resolve แล้วเข้าไป
+  // วันที่ทุกจุดตามแผน → จริง = แผน (ไม่มีอะไรเปลี่ยน)
+  const outcome = React.useMemo(
+    () => computeOutcomeStats(trips.map((t) => ({ ...t, fuelCost: tripFuelCost(t) }))),
+    [trips, settings]
+  )
+  const completionRate = outcome.counts.total
+    ? Math.round((outcome.counts.delivered / outcome.counts.total) * 100)
+    : 0
+  // กม./ค่าน้ำมัน "จริง" ของแต่ละทริป (หลังย้ายงานแล้ว)
+  const kmOf = (t: any) => outcome.actualKmByTrip[t.id] ?? (t.totalDistanceKm || 0)
+  const costOf = (t: any) => outcome.actualCostByTrip[t.id] ?? tripFuelCost(t)
 
-    return {
-      trips: trips.length,
-      distance: totalDist,
-      stops: totalStops,
-      fuelCost: totalFuelCost
-    }
-  }, [trips, settings])
+  // AGGREGATIONS — ใช้ "กม.จริง/ค่าน้ำมันจริง" ที่ย้ายตามงานแล้วทั้งหมด
+  const stats = React.useMemo(() => ({
+    trips: trips.length,
+    distance: outcome.totalActualKm,
+    stops: trips.reduce((sum, t) => sum + (t.stops?.length || 0), 0),
+    fuelCost: outcome.totalActualCost,
+  }), [trips, outcome])
 
   const driverStats = React.useMemo(() => {
     const data: Record<string, any> = {}
@@ -161,12 +168,12 @@ export default function ReportPage() {
       const name = t.driverName || "ไม่ระบุ"
       if (!data[name]) data[name] = { name, count: 0, distance: 0, stops: 0, cost: 0 }
       data[name].count += 1
-      data[name].distance += (t.totalDistanceKm || 0)
+      data[name].distance += kmOf(t)
       data[name].stops += (t.stops?.length || 0)
-      data[name].cost += tripFuelCost(t)
+      data[name].cost += costOf(t)
     })
     return Object.values(data).sort((a, b) => b.distance - a.distance)
-  }, [trips, settings])
+  }, [trips, outcome])
 
   const vehicleStats = React.useMemo(() => {
     const data: Record<string, any> = {}
@@ -174,11 +181,11 @@ export default function ReportPage() {
       const plate = t.vehiclePlate || "ไม่ระบุ"
       if (!data[plate]) data[plate] = { plate, count: 0, distance: 0, cost: 0 }
       data[plate].count += 1
-      data[plate].distance += (t.totalDistanceKm || 0)
-      data[plate].cost += tripFuelCost(t)
+      data[plate].distance += kmOf(t)
+      data[plate].cost += costOf(t)
     })
     return Object.values(data).sort((a, b) => b.distance - a.distance)
-  }, [trips, settings])
+  }, [trips, outcome])
 
   const siteStats = React.useMemo(() => {
     const data: Record<string, number> = {}
@@ -195,12 +202,17 @@ export default function ReportPage() {
 
   const siteCostStats = React.useMemo(() => {
     const data: Record<string, any> = {}
+    const tripIds = new Set(trips.map((t: any) => t.id).filter(Boolean))
 
     trips.forEach(t => {
       const stopCount = t.stops?.length || 1
       const distPerStop = (t.totalDistanceKm || 0) / stopCount
       const costPerStop = tripFuelCost(t) / stopCount
       t.stops?.forEach((s: any) => {
+        // นับเฉพาะจุดที่ "มีคนวิ่งจริง": ตามแผน หรือถูกรับต่อ — เลื่อน/ปฏิเสธไม่มีคนรับ = ไม่นับ
+        const delivered = !s.outcome || s.outcome === 'delivered'
+        const pickedUp = s.reassignedToTripId && tripIds.has(s.reassignedToTripId)
+        if (!delivered && !pickedUp) return
         const name = s.siteName || "ไม่ระบุ"
         if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0 }
         data[name].count += 1
@@ -238,19 +250,12 @@ export default function ReportPage() {
       
       if (!data[weekKey]) data[weekKey] = { week: weekKey, เที่ยว: 0, ระยะทาง: 0, ค่าน้ำมัน: 0 }
       data[weekKey].เที่ยว += 1
-      data[weekKey].ระยะทาง += Math.round(t.totalDistanceKm || 0)
-      data[weekKey].ค่าน้ำมัน += Math.round(tripFuelCost(t))
+      data[weekKey].ระยะทาง += Math.round(kmOf(t))
+      data[weekKey].ค่าน้ำมัน += Math.round(costOf(t))
     })
-    
-    return Object.values(data).sort((a, b) => a.week.localeCompare(b.week))
-  }, [trips, settings])
 
-  // --- ชั้น 3: ผลจริง (completion + pattern คนขับปฏิเสธ) ---
-  // อ่านอย่างเดียวจาก outcome ที่เก็บใน stops อยู่แล้ว — ไม่แตะ write/LINE/คำนวณเดิม
-  const outcome = React.useMemo(() => computeOutcomeStats(trips), [trips])
-  const completionRate = outcome.counts.total
-    ? Math.round((outcome.counts.delivered / outcome.counts.total) * 100)
-    : 0
+    return Object.values(data).sort((a, b) => a.week.localeCompare(b.week))
+  }, [trips, outcome])
 
   // รายคนขับ (เฉพาะแอดมิน — ไม่อยู่ในภาพ export) เฉพาะคนที่มี exception ให้ดู
   const driverReliability = React.useMemo(
@@ -353,7 +358,7 @@ export default function ReportPage() {
           <Card className="bg-secondary/20 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-accent" /> ระยะทางสะสม
+                <MapPin className="h-4 w-4 text-accent" /> ระยะทางวิ่งจริง
               </CardTitle>
             </CardHeader>
             <CardContent>

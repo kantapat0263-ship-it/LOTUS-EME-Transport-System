@@ -99,6 +99,9 @@ export interface OutcomeStopLike {
 export interface OutcomeTripLike {
   id?: string
   totalDistanceKm?: number | null
+  /** Resolved fuel cost for the whole trip (frozen at creation when available).
+   *  Optional — when omitted, cost aggregation simply stays 0. */
+  fuelCost?: number | null
   stops?: OutcomeStopLike[] | null
 }
 
@@ -111,6 +114,13 @@ export function stopShareKm(trip: OutcomeTripLike): number {
   const stopCount = trip.stops?.length || 0
   if (stopCount === 0) return 0
   return (trip.totalDistanceKm || 0) / stopCount
+}
+
+/** Per-stop fuel-cost share, allocated the same crude way as distance. */
+export function stopShareCost(trip: OutcomeTripLike): number {
+  const stopCount = trip.stops?.length || 0
+  if (stopCount === 0) return 0
+  return (trip.fuelCost || 0) / stopCount
 }
 
 /** A stop with no recorded outcome (or 'delivered') counts as run-as-planned. */
@@ -138,6 +148,11 @@ export interface OutcomeStats {
   actualKmByTrip: Record<string, number>
   totalPlannedKm: number
   totalActualKm: number
+  /** Actual fuel cost credited to each trip's vehicle (work follows the truck,
+   *  cost share taken at the *source* trip's frozen rate). 0 when no fuelCost given. */
+  actualCostByTrip: Record<string, number>
+  totalPlannedCost: number
+  totalActualCost: number
 }
 
 /**
@@ -150,6 +165,8 @@ export interface OutcomeStats {
 export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
   const plannedKmByTrip: Record<string, number> = {}
   const actualKmByTrip: Record<string, number> = {}
+  const plannedCostByTrip: Record<string, number> = {}
+  const actualCostByTrip: Record<string, number> = {}
   const counts = { delivered: 0, reassigned: 0, postponed: 0, refused: 0, exceptions: 0, total: 0 }
 
   const tripIds = new Set(trips.map((t) => t.id).filter(Boolean) as string[])
@@ -157,12 +174,15 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
   for (const trip of trips) {
     const id = trip.id || ''
     plannedKmByTrip[id] = trip.totalDistanceKm || 0
+    plannedCostByTrip[id] = trip.fuelCost || 0
     if (!(id in actualKmByTrip)) actualKmByTrip[id] = 0
+    if (!(id in actualCostByTrip)) actualCostByTrip[id] = 0
   }
 
   for (const trip of trips) {
     const id = trip.id || ''
     const share = stopShareKm(trip)
+    const costShare = stopShareCost(trip)
 
     for (const stop of trip.stops || []) {
       counts.total += 1
@@ -171,16 +191,19 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
       if (isDeliveredOutcome(outcome)) {
         counts.delivered += 1
         actualKmByTrip[id] += share
+        actualCostByTrip[id] += costShare
         continue
       }
 
       counts.exceptions += 1
-      // Distance follows the job: whenever a stop was handed to another truck
-      // — an operational โยกงาน, or a refusal that someone else picked up —
-      // credit that truck. Postponed / unpicked refusals are driven by nobody.
+      // Distance & cost follow the job: whenever a stop was handed to another
+      // truck — an operational โยกงาน, or a refusal that someone else picked up
+      // — credit that truck (cost at the source trip's frozen rate). Postponed /
+      // unpicked refusals are driven by nobody, so their share is dropped.
       const target = stop.reassignedToTripId || ''
       if (target && tripIds.has(target)) {
         actualKmByTrip[target] = (actualKmByTrip[target] || 0) + share
+        actualCostByTrip[target] = (actualCostByTrip[target] || 0) + costShare
       }
       if (outcome === 'reassigned') counts.reassigned += 1
       else if (outcome === 'postponed') counts.postponed += 1
@@ -188,10 +211,18 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
     }
   }
 
-  const totalPlannedKm = Object.values(plannedKmByTrip).reduce((a, b) => a + b, 0)
-  const totalActualKm = Object.values(actualKmByTrip).reduce((a, b) => a + b, 0)
+  const sum = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0)
 
-  return { counts, plannedKmByTrip, actualKmByTrip, totalPlannedKm, totalActualKm }
+  return {
+    counts,
+    plannedKmByTrip,
+    actualKmByTrip,
+    totalPlannedKm: sum(plannedKmByTrip),
+    totalActualKm: sum(actualKmByTrip),
+    actualCostByTrip,
+    totalPlannedCost: sum(plannedCostByTrip),
+    totalActualCost: sum(actualCostByTrip),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,4 +416,62 @@ export function computeDriverReliability(trips: ReliabilityTripLike[]): DriverRe
       }
     })
     .sort((x, y) => y.refused - x.refused || y.refusalRate - x.refusalRate || x.driverName.localeCompare(y.driverName))
+}
+
+// ---------------------------------------------------------------------------
+// Incoming reassignments (so the *destination* truck knows work moved to it)
+// ---------------------------------------------------------------------------
+
+export interface IncomingStopLike extends OutcomeStopLike {
+  siteName?: string | null
+  cargoDetails?: string | null
+}
+
+export interface IncomingTripLike {
+  id?: string
+  driverName?: string | null
+  vehiclePlate?: string | null
+  stops?: IncomingStopLike[] | null
+}
+
+export interface IncomingJob {
+  /** Source trip the job was moved from. */
+  fromTripId: string
+  fromDriverName: string
+  fromVehiclePlate: string
+  siteName: string
+  cargoDetails: string
+  /** True if the source stop was a refusal someone picked up — kept for internal
+   *  logic only; the destination UI must stay public-safe and never show "ปฏิเสธ". */
+  wasRefused: boolean
+}
+
+/**
+ * Jobs handed *to* `tripId` from other trips — the missing other half of the
+ * one-directional reassignment record. We read every other trip's stops and
+ * collect the ones whose `reassignedToTripId` points here, so the destination
+ * driver/dispatcher can see incoming work that was never written onto this trip.
+ *
+ * Pure & derived: no distance is recomputed (computeOutcomeStats already credits
+ * the destination truck), nothing is written — this only surfaces existing data.
+ */
+export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: string): IncomingJob[] {
+  if (!tripId) return []
+  const out: IncomingJob[] = []
+  for (const t of allTrips) {
+    if (t.id === tripId) continue // a trip never reassigns to itself
+    for (const s of t.stops || []) {
+      if (s.reassignedToTripId === tripId) {
+        out.push({
+          fromTripId: t.id || '',
+          fromDriverName: t.driverName || '',
+          fromVehiclePlate: t.vehiclePlate || '',
+          siteName: s.siteName || '',
+          cargoDetails: s.cargoDetails || '',
+          wasRefused: s.outcome === 'driver-refused',
+        })
+      }
+    }
+  }
+  return out
 }

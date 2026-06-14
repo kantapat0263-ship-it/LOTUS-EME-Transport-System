@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, TripStop, StopOutcome } from "@/types/models"
-import { computeOutcomeStats, computeDriverLeaderboard, monthRange, type DriverStat } from "@/lib/calculations"
+import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, type DriverStat } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -282,11 +282,17 @@ export default function DailySummaryPage() {
       })
       const imageBase64 = canvas.toDataURL('image/jpeg', 0.95)
 
-      const tripData = trips.map((trip: any) => ({
-        driverName: trip.driverName,
-        vehiclePlate: trip.vehiclePlate,
-        driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`
-      }))
+      const tripData = trips.map((trip: any) => {
+        const incoming = incomingStopsForTrip(trips as any, trip.id)
+        return {
+          driverName: trip.driverName,
+          vehiclePlate: trip.vehiclePlate,
+          driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`,
+          // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
+          incomingCount: incoming.length,
+          incomingFrom: Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean))),
+        }
+      })
 
       const res = await fetch('/api/line/send-summary', {
         method: 'POST',
@@ -329,7 +335,8 @@ export default function DailySummaryPage() {
     return driversData?.find(d => d.id === driverId)?.phoneNumber || ""
   }
 
-  const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistanceKm || 0), 0)
+  // ระยะทางรวม "ที่วิ่งจริง" — งานที่โยก/ปฏิเสธไม่มีคนรับจะไม่ถูกนับ (ตามงานจริง)
+  const totalDistance = computeOutcomeStats(trips as any).totalActualKm
 
   // --- Actual-outcome reconciliation (after the report is posted to LINE) ---
   const recordedBy = user?.displayName || user?.email || ""
@@ -598,8 +605,12 @@ export default function DailySummaryPage() {
                           if (stops.length === 0) return [];
 
                           const driverPhone = getDriverPhone(trip.driverId);
+                          // Jobs moved *into* this truck — the destination half, so this
+                          // driver/sheet (and the LINE image) actually shows the handover.
+                          const incoming = incomingStopsForTrip(trips as any, trip.id);
+                          const totalRows = stops.length + incoming.length;
 
-                          return stops.map((stop, sIdx) => {
+                          const stopRows = stops.map((stop, sIdx) => {
                             const locationText = (stop as any).address || (stop as any).zone || "";
                             const stopRequester = stop.requestedBy || (trip as any).requestedBy || "";
                             const requesterPhone = (stop as any).requestedByPhone || "";
@@ -610,11 +621,12 @@ export default function DailySummaryPage() {
                             // Public-safe: if the job was picked up by another truck (โยก, or a
                             // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
                             const movedToPlate = (stop as any).reassignedToVehiclePlate;
+                            const movedToDriver = (stop as any).reassignedToDriverName;
 
                             return (
                               <tr key={`${trip.id}-${sIdx}`}>
                                 {sIdx === 0 && (
-                                  <td className="border border-black p-2 text-center align-top" rowSpan={stops.length}>
+                                  <td className="border border-black p-2 text-center align-top" rowSpan={totalRows}>
                                     {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
                                   </td>
                                 )}
@@ -648,7 +660,7 @@ export default function DailySummaryPage() {
                                           }}
                                         >
                                           {movedToPlate
-                                            ? `🔄 โยกไปทะเบียน ${movedToPlate}`
+                                            ? `🔄 โยกไปให้ ${movedToDriver ? movedToDriver + ' ' : ''}(${movedToPlate})`
                                             : stop.outcome === 'postponed'
                                             ? '⏭️ เลื่อนวัน'
                                             : '⏭️ ไม่ได้ดำเนินการ'}
@@ -689,7 +701,7 @@ export default function DailySummaryPage() {
                                   </div>
                                 </td>
                                 {sIdx === 0 && (
-                                  <td className="border border-black p-2 align-top" rowSpan={stops.length}>
+                                  <td className="border border-black p-2 align-top" rowSpan={totalRows}>
                                     <div className="flex justify-between items-start">
                                       <div className="space-y-2">
                                         <div>
@@ -713,6 +725,42 @@ export default function DailySummaryPage() {
                               </tr>
                             );
                           });
+
+                          // Extra rows for jobs reassigned INTO this truck (public-safe: รับงานต่อ)
+                          const incomingRows = incoming.map((job, i) => (
+                            <tr key={`${trip.id}-inc-${i}`} className="bg-blue-50">
+                              <td className="border border-black p-2 text-center align-top font-bold">—</td>
+                              <td className="border border-black p-2 align-top">
+                                <div className="space-y-1">
+                                  <div className="flex gap-1.5 font-bold items-center flex-wrap">
+                                    <span>{stops.length + i + 1}.</span>
+                                    <span>{job.siteName || "ไม่ระบุสถานที่"}</span>
+                                    <span style={{
+                                      fontSize: '11px', fontWeight: 700, padding: '1px 6px',
+                                      borderRadius: '4px', background: '#dbeafe', color: '#1e40af',
+                                    }}>
+                                      🔄 รับโยกงานต่อ
+                                    </span>
+                                  </div>
+                                  <div className="pl-5 space-y-0.5">
+                                    {job.cargoDetails && (
+                                      <div className="flex gap-2">
+                                        <span className="shrink-0">-</span>
+                                        <span className="italic" style={{ whiteSpace: 'pre-wrap' }}>{job.cargoDetails}</span>
+                                      </div>
+                                    )}
+                                    {(job.fromVehiclePlate || job.fromDriverName) && (
+                                      <div className="pl-3 text-[10px] text-gray-600">
+                                        โยกมาจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ));
+
+                          return [...stopRows, ...incomingRows];
                         })}
                       </tbody>
                     </table>
@@ -720,7 +768,7 @@ export default function DailySummaryPage() {
                     <div className="mt-8 flex justify-between text-sm">
                       <div className="space-y-1 font-bold">
                         <p>รวม: {trips.length} เที่ยว</p>
-                        <p>ระยะทางรวม: {totalDistance.toFixed(1)} กม.</p>
+                        <p>ระยะทางรวม (วิ่งจริง): {totalDistance.toFixed(1)} กม.</p>
                       </div>
                       <div className="flex gap-12">
                         <div className="text-center w-48">

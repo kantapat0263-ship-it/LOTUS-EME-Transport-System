@@ -26,9 +26,17 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const driverLinks = trips.map((trip: any) =>
-      `🚛 ${trip.driverName} (${trip.vehiclePlate})\n🔗 ${trip.driverUrl}`
-    ).join('\n\n')
+    const driverLinks = trips.map((trip: any) => {
+      let line = `🚛 ${trip.driverName} (${trip.vehiclePlate})`
+      // public-safe: แจ้งคนปลายทางว่ามีงาน "รับต่อ" เพิ่ม จะได้ไม่พลาด (ไม่มีคำว่าปฏิเสธ)
+      if (trip.incomingCount > 0) {
+        const from = Array.isArray(trip.incomingFrom) && trip.incomingFrom.length > 0
+          ? ` (จาก ${trip.incomingFrom.join(', ')})`
+          : ''
+        line += `\n🔄 รับโยกงานต่อเพิ่ม ${trip.incomingCount} จุด${from}`
+      }
+      return `${line}\n🔗 ${trip.driverUrl}`
+    }).join('\n\n')
 
     const message = `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${dateStr}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}`
 

@@ -5,19 +5,20 @@ import { useParams } from "next/navigation"
 import { initializeFirebase } from "@/firebase"
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore"
 import { Trip, Driver } from "@/types/models"
-import { computeDriverLeaderboard, monthRange, type DriverStat } from "@/lib/calculations"
-import { 
-  MapPin, 
-  Truck, 
-  User, 
-  Calendar, 
-  Clock, 
-  Navigation, 
+import { computeDriverLeaderboard, monthRange, incomingStopsForTrip, computeOutcomeStats, type DriverStat, type IncomingJob } from "@/lib/calculations"
+import {
+  MapPin,
+  Truck,
+  User,
+  Calendar,
+  Clock,
+  Navigation,
   Phone,
   ArrowLeft,
   AlertCircle,
   FileText,
-  Info
+  Info,
+  Repeat
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -42,6 +43,10 @@ export default function DriverTripPage() {
   const [myStat, setMyStat] = React.useState<DriverStat | null>(null)
   const [boardSize, setBoardSize] = React.useState(0)
   const [topKm, setTopKm] = React.useState(0)
+  // Jobs other trucks handed to this driver today (public-safe: shown as "รับงานต่อ")
+  const [incoming, setIncoming] = React.useState<IncomingJob[]>([])
+  // Actual km for this trip after work moved in/out (null = fall back to planned)
+  const [actualKm, setActualKm] = React.useState<number | null>(null)
 
   React.useEffect(() => {
     async function fetchTrip() {
@@ -77,6 +82,10 @@ export default function DriverTripPage() {
               setMyStat(board.find(b => b.driverId === tripData.driverId) || null)
               setBoardSize(board.length)
               setTopKm(board[0]?.actualKm || 0)
+              // Surface jobs reassigned *into* this trip (the destination half)
+              setIncoming(incomingStopsForTrip(monthTrips, tripData.id))
+              // Actual km after work moved in/out (own delivered + รับต่อ − โยกออก)
+              setActualKm(computeOutcomeStats(monthTrips).actualKmByTrip[tripData.id] ?? null)
             }
           } catch (statErr) {
             console.error("stats unavailable", statErr)
@@ -217,6 +226,50 @@ export default function DriverTripPage() {
 
         {/* Stops List */}
         <main className="p-4 space-y-6">
+          {/* งานที่ถูกโยกมาให้คันนี้เพิ่ม — public-safe: โชว์ "รับงานต่อ" ไม่ใช่ "ปฏิเสธ" */}
+          {incoming.length > 0 && (
+            <div className="rounded-2xl border-2 border-blue-300 bg-blue-50 overflow-hidden">
+              <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center gap-2">
+                <Repeat className="h-5 w-5 shrink-0" />
+                <span className="font-bold">รับงานต่อ {incoming.length} จุด — โยกมาให้คันนี้เพิ่ม</span>
+              </div>
+              <div className="p-3 space-y-2">
+                {incoming.map((job, i) => (
+                  <div key={i} className="bg-white rounded-xl border border-blue-200 p-3">
+                    <div className="flex items-start gap-2">
+                      <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
+                        {(trip.stops?.length || 0) + i + 1}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-lg font-bold text-gray-900 leading-tight">{job.siteName || "ไม่ระบุสถานที่"}</h3>
+                        {job.cargoDetails && (
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-snug mt-0.5">{job.cargoDetails}</p>
+                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {(job.fromVehiclePlate || job.fromDriverName) && (
+                            <span className="text-[11px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                              โยกจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}
+                            </span>
+                          )}
+                          {job.siteName && (
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.siteName)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
+                            >
+                              <Navigation className="h-3 w-3" /> นำทาง
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between px-2 pt-2">
             <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
               <Navigation className="h-5 w-5 text-blue-600" /> ลำดับจุดส่งของ ({trip.stops?.length || 0})
@@ -312,8 +365,8 @@ export default function DriverTripPage() {
             <div className="bg-gray-900 text-white rounded-2xl p-6 space-y-3 shadow-xl">
               <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest border-b border-white/10 pb-2 mb-3">สรุปแผนการเดินทาง</h3>
               <div className="flex justify-between items-center">
-                <span className="text-gray-400 text-sm">ระยะทางรวม (กม.)</span>
-                <span className="text-xl font-bold">{trip.totalDistanceKm?.toFixed(1) || "-"} กม.</span>
+                <span className="text-gray-400 text-sm">ระยะทางวิ่งจริง (กม.)</span>
+                <span className="text-xl font-bold">{(actualKm ?? trip.totalDistanceKm)?.toFixed(1) || "-"} กม.</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-sm">ประมาณเวลาเดินทาง</span>

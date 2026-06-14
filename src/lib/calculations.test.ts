@@ -15,6 +15,7 @@ import {
   monthRange,
   computeDriverLeaderboard,
   computeDriverReliability,
+  incomingStopsForTrip,
   type TripLike,
   type OutcomeTripLike,
   type LeaderboardTripLike,
@@ -205,6 +206,29 @@ describe('computeOutcomeStats', () => {
     expect(actualKmByTrip['A']).toBe(20)
     expect(totalActualKm).toBe(20)
   })
+
+  it('ค่าน้ำมันย้ายตามงานเหมือน กม. (ใช้เรตของทริปต้นทาง)', () => {
+    const trips: OutcomeTripLike[] = [
+      // A: 4 จุด 800 บาท -> 200/จุด, จุด3 โยกไป B, จุด4 ปฏิเสธไม่มีใครรับ
+      {
+        id: 'A', totalDistanceKm: 80, fuelCost: 800,
+        stops: [{}, {}, { outcome: 'reassigned', reassignedToTripId: 'B' }, { outcome: 'driver-refused' }],
+      },
+      { id: 'B', totalDistanceKm: 30, fuelCost: 300, stops: [{}, {}] }, // 150/จุด
+    ]
+    const { actualCostByTrip, totalActualCost } = computeOutcomeStats(trips)
+    expect(actualCostByTrip['A']).toBe(400)        // เหลือ 2 จุดที่ทำเอง = 400
+    expect(actualCostByTrip['B']).toBe(500)        // 300 ของตัวเอง + 200 (เรตของ A) ที่รับมา
+    expect(totalActualCost).toBe(900)              // จุดปฏิเสธ 200 หายไป (ไม่มีใครวิ่ง)
+  })
+
+  it('ไม่มี fuelCost ส่งมา → ต้นทุนเป็น 0 (ไม่พัง)', () => {
+    const { totalActualCost, actualCostByTrip } = computeOutcomeStats([
+      { id: 'A', totalDistanceKm: 40, stops: [{}, {}] },
+    ])
+    expect(totalActualCost).toBe(0)
+    expect(actualCostByTrip['A']).toBe(0)
+  })
 })
 
 describe('monthRange', () => {
@@ -292,5 +316,31 @@ describe('computeDriverReliability', () => {
     expect(result[0].assignedStops).toBe(2)
     expect(result[0].reassigned).toBe(1)
     expect(result[0].refused).toBe(0)
+  })
+})
+
+describe('incomingStopsForTrip', () => {
+  const trips = [
+    {
+      id: 'A', driverName: 'เจี๊ยบ', vehiclePlate: '1ตณษ-4413',
+      stops: [
+        { siteName: 'ไซต์1', cargoDetails: 'ของ A', outcome: 'reassigned', reassignedToTripId: 'B' },
+        { siteName: 'ไซต์2', cargoDetails: 'ของ B', outcome: 'driver-refused', reassignedToTripId: 'B' },
+        { siteName: 'ไซต์3', cargoDetails: 'ของ C' }, // ทำเอง ไม่โยก
+      ],
+    },
+    { id: 'B', driverName: 'เจ', vehiclePlate: '1ตณษ-4407', stops: [{ siteName: 'งานเจ', cargoDetails: 'x' }] },
+  ]
+
+  it('เห็นงานที่ถูกโยกมาหาทริปปลายทาง พร้อมที่มา', () => {
+    const inc = incomingStopsForTrip(trips, 'B')
+    expect(inc).toHaveLength(2)
+    expect(inc[0]).toMatchObject({ fromTripId: 'A', fromDriverName: 'เจี๊ยบ', fromVehiclePlate: '1ตณษ-4413', siteName: 'ไซต์1' })
+    expect(inc[1].wasRefused).toBe(true) // จุดที่มาจากการปฏิเสธ (ไว้ใช้ภายใน ไม่โชว์คำว่าปฏิเสธ)
+  })
+
+  it('ทริปต้นทางไม่เห็น incoming ของตัวเอง / ไม่มี id → ว่าง', () => {
+    expect(incomingStopsForTrip(trips, 'A')).toHaveLength(0)
+    expect(incomingStopsForTrip(trips, '')).toHaveLength(0)
   })
 })
