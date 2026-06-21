@@ -294,10 +294,21 @@ export default function DailySummaryPage() {
         }
       })
 
+      // แนบ Firebase ID token ให้ server verify ว่าเป็นพนักงานที่ล็อกอินจริง (กันคนนอกยิง API)
+      const idToken = user ? await user.getIdToken() : null
+      if (!idToken) {
+        toast({ title: "เกิดข้อผิดพลาด", description: "กรุณาเข้าสู่ระบบก่อนส่งเข้า LINE", variant: "destructive" })
+        setIsSendingLine(false)
+        return
+      }
+
       const res = await fetch('/api/line/send-summary', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
           imageBase64, 
           trips: tripData,
           dateStr: formatThaiDate(selectedDate),

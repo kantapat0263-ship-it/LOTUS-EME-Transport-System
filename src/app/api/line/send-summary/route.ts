@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireStaff } from '@/firebase/admin'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
 
 export async function POST(req: NextRequest) {
   try {
+    // ยาม: ต้องเป็นพนักงาน (admin/dispatcher) ที่ล็อกอินจริงเท่านั้น — กันคนนอกยิง API ส่ง LINE
+    try {
+      await requireStaff(req.headers.get('authorization'))
+    } catch (e: any) {
+      const status = e?.message === 'FORBIDDEN' ? 403 : 401
+      return NextResponse.json({ error: 'Unauthorized' }, { status })
+    }
+
     const { trips, selectedDate } = await req.json()
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
     const groupId = process.env.LINE_GROUP_ID

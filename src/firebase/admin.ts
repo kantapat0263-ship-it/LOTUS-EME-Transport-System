@@ -1,5 +1,6 @@
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app'
 import { getFirestore, type Firestore } from 'firebase-admin/firestore'
+import { getAuth, type Auth } from 'firebase-admin/auth'
 
 /**
  * Firebase Admin (server-only) — ใช้เขียน Firestore จาก API route / cron
@@ -11,10 +12,12 @@ import { getFirestore, type Firestore } from 'firebase-admin/firestore'
  *
  * เก็บเป็น base64 เพื่อกัน private_key (มี \n) เพี้ยนตอนใส่ใน env ของ Vercel
  */
+let cachedApp: App | null = null
 let cachedDb: Firestore | null = null
 
-export function getAdminDb(): Firestore {
-  if (cachedDb) return cachedDb
+/** init (หรือใช้ซ้ำ) firebase-admin app จาก service account ใน env */
+function getAdminApp(): App {
+  if (cachedApp) return cachedApp
 
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64
   if (!raw) {
@@ -28,7 +31,7 @@ export function getAdminDb(): Firestore {
     throw new Error('FIREBASE_SERVICE_ACCOUNT_BASE64 is not valid base64 JSON')
   }
 
-  const app: App = getApps().length
+  cachedApp = getApps().length
     ? getApps()[0]
     : initializeApp({
         credential: cert({
@@ -39,6 +42,40 @@ export function getAdminDb(): Firestore {
         }),
       })
 
-  cachedDb = getFirestore(app)
+  return cachedApp
+}
+
+export function getAdminDb(): Firestore {
+  if (cachedDb) return cachedDb
+  cachedDb = getFirestore(getAdminApp())
   return cachedDb
+}
+
+/** firebase-admin Auth — ใช้ verify Firebase ID token ที่ client แนบมา (กันคนนอกยิง API) */
+export function getAdminAuth(): Auth {
+  return getAuth(getAdminApp())
+}
+
+/**
+ * verify ID token จาก header `Authorization: Bearer <token>` แล้วคืน uid+role
+ * - ไม่มี/พัง/ไม่ใช่ staff → โยน error (route จับไปตอบ 401/403)
+ * - role อ่านจาก `users/{uid}` ให้ตรงกับ isStaff() ใน firestore.rules
+ */
+export async function requireStaff(
+  authHeader: string | null
+): Promise<{ uid: string; role: string }> {
+  const m = authHeader?.match(/^Bearer (.+)$/)
+  if (!m) {
+    throw new Error('UNAUTHENTICATED')
+  }
+
+  const decoded = await getAdminAuth().verifyIdToken(m[1])
+  const snap = await getAdminDb().collection('users').doc(decoded.uid).get()
+  const role = snap.exists ? (snap.data()?.role as string) : undefined
+
+  if (role !== 'admin' && role !== 'dispatcher') {
+    throw new Error('FORBIDDEN')
+  }
+
+  return { uid: decoded.uid, role }
 }
