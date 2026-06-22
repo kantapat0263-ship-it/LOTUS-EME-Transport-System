@@ -52,11 +52,22 @@ service cloud.firestore {
     // Core collections - restricted to authenticated users
     match /sites/{siteId} { allow read, write: if isAuthenticated(); }
     match /vehicles/{vehicleId} { allow read, write: if isAuthenticated(); }
+    match /vehicleTypes/{typeId} { allow read, write: if isAuthenticated(); }
+    match /urgentRequests/{requestId} { allow read, write: if isAuthenticated(); }
     match /companySettings/{id} { allow read, write: if isAuthenticated(); }
 
-    // Global fallback
+    // Diesel price history: client อ่านได้อย่างเดียว; เขียนเฉพาะ server cron
+    // (firebase-admin ซึ่ง bypass rules อยู่แล้ว) → ไม่มี client ตัวไหนควรเขียนตรงนี้
+    match /dieselPriceHistory/{dateId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Global fallback — deny by default.
+    // ทุก collection ที่แอปใช้จริงถูกระบุชัดด้านบนหมดแล้ว; collection แปลกปลอม
+    // (ไม่ได้ระบุ) จะถูกปฏิเสธ แทนที่จะเปิดให้ user ที่ล็อกอินเข้าถึงได้ทุกอย่าง
     match /{document=**} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if false;
     }
   }
 }
