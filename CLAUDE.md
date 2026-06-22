@@ -65,6 +65,13 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **โยกงาน → ฝั่งปลายทางเห็นงานที่ถูกโยกมา** (`c657896`) — แก้ระบบโยกที่เดิมเป็น "ทิศทางเดียว" (คันต้นทางรู้ว่าโยกออก แต่คันปลายทางไม่เห็นงานเข้า) ตอนนี้คันที่รับงานต่อ (`reassigned`/`driver-refused` + เลือกคันปลายทาง) เห็นงานที่โยกเข้ามาในใบงานคนขับแล้ว
 - **กม./ค่าน้ำมัน "วิ่งจริงตามงาน" ไหลครบทุกหน้า** (`a40ae1b`) — เดิมกม.วิ่งจริงใช้แค่ตอนคิดอันดับ leaderboard; ตอนนี้ไหลครบทั้ง `report` / `driver/[tripId]` / `daily-summary` / รูป LINE — กม.+ค่าน้ำมันย้ายตามคันที่ทำจริง (per-stop share เดิม ไม่ยิง Maps ใหม่) helper อยู่ใน `src/lib/calculations.ts` (+test)
 
+### "เลื่อน" ให้เลื่อนจริง (deploy แล้ว — 2026-06-22, `7c55b1f`)
+- **ปัญหา:** ปุ่ม "เลื่อน" ในแผง "ปิดผลงานจริง" เดิมแค่เซ็ต `stop.outcome='postponed'` (สถิติ) → ใบขอรถต้นทางไม่ขยับ งานไม่ไปโผล่วันใหม่ คนจัดรถต้องสร้างใหม่เอง
+- **ทางแก้ (อยู่ที่เดิม — ล่างใบสรุป):** กดเลื่อน → dialog เลือกวัน → **สร้างใบขอรถใหม่ `status='rescheduled'`** วันที่เลือก → ไปโผล่ในกองจัดเที่ยววิ่งวันนั้น (คนจัดรถจัดรถใหม่เอง ไม่พกคันเดิม)
+- **gotcha สำคัญ:** หน้าจัดกลุ่ม (`trip-grouping/page.tsx`) query ใบขอรถ `where status in ['in_progress','partial','rescheduled']` → **ตัด `pending` ออก!** ใบที่เลื่อนต้องเป็น `rescheduled` ถึงจะโผล่ (ห้ามใช้ pending)
+- **กันงานหาย:** สร้างใบใหม่ให้สำเร็จ **ก่อน** ค่อยติดป้าย postponed · เปลี่ยนผลออกจาก postponed/เลื่อนวันใหม่ → ลบใบเก่าทิ้ง (กันงานงอกค้าง) · เก็บ trail `rescheduledFromDate/TripId` (ใบใหม่) + `postponedToDate/RequestId` (stop)
+- **ไม่ทำ:** ผู้ขอเดิมไม่เห็นใน "ใบของฉัน" (stop ไม่มี email ผู้ขอ) — ยอมรับได้ คนจัดรถเห็นในกองจัดอยู่แล้ว
+
 ---
 
 ## ราคาน้ำมัน: freeze ต่อทริป + อัปเดตอัตโนมัติ (เฟส 1+2)
@@ -122,12 +129,19 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 
 ## งานค้าง (TODO)
 - [x] ~~**ชั้น 3:** หน้า `report` — completion rate + pattern คนขับปฏิเสธ~~ (เสร็จ `ce699e9`)
+- [x] ~~ทำ "เลื่อน" ให้สร้างงานวันใหม่จริง~~ (เสร็จ `7c55b1f` — ดู section ด้านบน)
 - [ ] (อาจมี) ปุ่ม "ปิดผลทริปนี้" เพื่อรู้ว่า reconcile ครบหรือยัง
-- [ ] (อาจมี) ทำ "เลื่อน" ให้สร้างงานวันใหม่อัตโนมัติ (ตอนนี้เป็นแค่สถิติ)
-- [ ] **ตรวจหลัง deploy `c0b3232`:** ลองเปิด `report` + ใบงานคนขับ ดูว่ากม./ค่าน้ำมัน "วิ่งจริง" ตรงงานที่ทำจริง และฝั่งคันปลายทางเห็นงานที่โยกมาครบ
-- [ ] **ตั้ง ENV เฟส 2 บน Vercel ถ้ายังไม่ได้ตั้ง** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — cron ราคาดีเซลถึงจะทำงานจริง
+- [ ] **ตั้ง ENV เฟส 2 บน Vercel ถ้ายังไม่ได้ตั้ง** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — cron ราคาดีเซล + ยาม auth API ส่ง LINE ถึงจะทำงาน
+- [ ] **publish Firestore rules ใหม่ที่ Firebase Console** (commit อยู่บน branch — ทดสอบใน Rules Playground ก่อน publish)
+- [ ] **merge ยาม auth API ส่ง LINE** (`a5fce13` บน branch) — รอตั้ง env ก่อน ไม่งั้นปุ่มส่งบอท 401
 
-## สถานะ ณ handoff (2026-06-15)
-- branch `claude/transport-system-review-QvCtP` **merge เข้า main ครบแล้ว** (`c0b3232`), working tree สะอาด, typecheck ✅ + test 48/48 ✅
-- main tip = `c0b3232` (deploy production แล้ว) — ไม่มีงานค้างใน working tree
-- งานต่อไปที่คุยกันไว้: เลือกหยิบจาก TODO ด้านบน (ปุ่ม "ปิดผลทริปนี้" หรือ "เลื่อน→สร้างงานวันใหม่อัตโนมัติ")
+## งานความปลอดภัย/ค่าใช้จ่าย (2026-06-22)
+- **ปัญหา LINE ส่งไม่ได้ปลายเดือน = โควตาเต็ม** — LINE นับ push เข้ากลุ่ม = `1 ข้อความ × จำนวนสมาชิกกลุ่ม` (กลุ่ม ~17 คน → ส่งวันละครั้งกิน 17/วัน) แผนฟรี 300/เดือน เลยตันราววันที่ ~20 ทุกเดือน → แก้ด้วย **ปุ่ม "คัดลอกข้อความ"** (`6c931ff`, deploy แล้ว): คนจัดรถก๊อปข้อความสรุปไปวางในกลุ่มเอง = ข้อความจากคน ไม่กินโควตา OA = ฟรีถาวร (ทางเลือกแทนจ่ายแผนเบสิค ฿1,280/ด.)
+- **ยาม auth API ส่ง LINE** (`a5fce13`, **ยังอยู่บน branch**) — เดิม `/api/line/send-summary` ไม่มี auth ใครก็ยิงสั่งบอทส่งกลุ่มได้ แก้: client แนบ Firebase ID token, server verify + เช็ก role staff (`requireStaff` ใน `admin.ts`) **ต้องตั้ง env `FIREBASE_SERVICE_ACCOUNT_BASE64` ก่อน merge** ไม่งั้นปุ่มส่งบอทตอบ 401
+- **รัด Firestore rules** (`firestore.rules` ใหม่บน branch) — ปิด fallback `allow if isAuthenticated()` → `if false` (deny by default) + เพิ่มกฎ collection ที่เคยพึ่ง fallback (`vehicleTypes`/`urgentRequests`/`dieselPriceHistory`) คงสิทธิ์เท่าเดิม **zero-impact** แต่ **กฎไม่ deploy ผ่าน git** — ต้อง publish ที่ Firebase Console (Rules Playground เทสก่อน). ⚠️ Firebase project เดียวกัน prod+preview → publish = มีผล prod ทันที, rollback ได้ใน Console
+
+## สถานะ ณ handoff (2026-06-22)
+- main tip = `7c55b1f` — deploy production แล้ว, working tree สะอาด, typecheck ✅ + test 48/48 ✅
+- **ขึ้น production แล้ว:** ปุ่มคัดลอก LINE (`6c931ff`) + เลื่อนจริง (`7c55b1f`)
+- **ค้างบน branch `claude/transport-system-review-QvCtP`** (ต้องทำเงื่อนไขก่อน): ยาม auth API (`a5fce13`, รอ env) + Firestore rules (`4e974ce`, รอ publish ที่ Console)
+- main vs branch: ปุ่มคัดลอก/เลื่อนจริง ขึ้น main ด้วย cherry-pick (hash ต่างกับ branch) — ระวังตอน merge branch ทีหลังอาจซ้ำ ให้ cherry-pick ทีละ commit ที่เหลือแทน merge ทั้ง branch
