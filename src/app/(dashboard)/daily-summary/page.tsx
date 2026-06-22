@@ -72,6 +72,7 @@ export default function DailySummaryPage() {
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
   const [copied, setCopied] = React.useState(false)
+  const [copiedMsg, setCopiedMsg] = React.useState(false)
 
   // Listen for all work dates to highlight them with orange dots
   React.useEffect(() => {
@@ -318,6 +319,37 @@ export default function DailySummaryPage() {
     }
   }
 
+  // สร้างข้อความสรุปแบบเดียวกับที่บอทส่ง (ใช้สำหรับปุ่ม "คัดลอกข้อความ")
+  // ต้องให้ตรงกับ format ใน src/app/api/line/send-summary/route.ts
+  const buildSummaryText = () => {
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
+    const driverLinks = trips.map((trip: any) => {
+      const incoming = incomingStopsForTrip(trips as any, trip.id)
+      const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean)))
+      let line = `🚛 ${trip.driverName} (${trip.vehiclePlate})`
+      // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
+      if (incoming.length > 0) {
+        const from = incomingFrom.length > 0 ? ` (จาก ${incomingFrom.join(', ')})` : ''
+        line += `\n🔄 รับโยกงานต่อเพิ่ม ${incoming.length} จุด${from}`
+      }
+      return `${line}\n🔗 ${base}/driver/${trip.tripId}`
+    }).join('\n\n')
+    return `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${formatThaiDate(selectedDate)}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}`
+  }
+
+  // คัดลอกข้อความเข้า clipboard → คนจัดรถไปวางในกลุ่ม LINE เอง (ไม่กินโควตา OA)
+  const handleCopyMessage = async () => {
+    if (trips.length === 0) return
+    try {
+      await navigator.clipboard.writeText(buildSummaryText())
+      setCopiedMsg(true)
+      setTimeout(() => setCopiedMsg(false), 2500)
+      toast({ title: "คัดลอกข้อความแล้ว ✅", description: "เปิดกลุ่ม LINE แล้ววาง (Paste) ส่งได้เลย — ไม่กินโควตา" })
+    } catch (e) {
+      toast({ title: "คัดลอกไม่สำเร็จ", description: "เบราว์เซอร์ไม่อนุญาตให้คัดลอก ลองกดใหม่อีกครั้ง", variant: "destructive" })
+    }
+  }
+
   const handleShareClick = (trip: Trip) => {
     setSelectedTripForShare(trip)
   }
@@ -559,6 +591,20 @@ export default function DailySummaryPage() {
                 {isSendingLine ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                 {isSendingLine ? "กำลังส่ง..." : "ส่งเข้า LINE กลุ่ม"}
               </Button>
+
+              {/* ทางเลือกฟรี: คัดลอกข้อความไปวางในกลุ่มเอง (ไม่กินโควตา LINE) — ใช้ตอนโควตาบอทเต็ม */}
+              <Button
+                variant="outline"
+                className="h-11 w-full font-bold"
+                onClick={handleCopyMessage}
+                disabled={trips.length === 0 || isLoading || !selectedDate}
+              >
+                {copiedMsg ? <Check className="mr-2 h-4 w-4 text-green-600" /> : <Copy className="mr-2 h-4 w-4" />}
+                {copiedMsg ? "คัดลอกแล้ว — ไปวางในกลุ่ม LINE" : "คัดลอกข้อความ (ไม่กินโควตา)"}
+              </Button>
+              <p className="text-[11px] text-muted-foreground text-center leading-snug">
+                โควตาบอทเต็ม? กดคัดลอกแล้วเปิดกลุ่ม LINE → วาง (Paste) → ส่งเอง · ฟรีไม่จำกัด
+              </p>
             </CardContent>
           </Card>
         </div>
