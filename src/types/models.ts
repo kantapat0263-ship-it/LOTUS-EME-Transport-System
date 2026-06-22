@@ -89,6 +89,11 @@ export interface TripStop {
   /** Who recorded the outcome, and when (ISO string — Firestore forbids serverTimestamp inside arrays). */
   outcomeRecordedBy?: string;
   outcomeAt?: string;
+  /** When `postponed`, the date this stop was rescheduled to, and the id of the
+   *  new `rescheduled` vehicleRequest spawned for that day (for audit + cleanup
+   *  if the dispatcher later changes the outcome away from postponed). */
+  postponedToDate?: string;
+  postponedRequestId?: string;
 }
 
 export interface Trip {

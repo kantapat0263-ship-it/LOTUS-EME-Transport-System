@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, doc, onSnapshot, serverTimestamp } from "firebase/firestore"
+import { collection, query, where, orderBy, getDocs, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -73,6 +73,12 @@ export default function DailySummaryPage() {
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
   const [copied, setCopied] = React.useState(false)
   const [copiedMsg, setCopiedMsg] = React.useState(false)
+
+  // "เลื่อนงาน" dialog — เลือกวันใหม่แล้วสร้างใบขอรถ rescheduled ให้ไปโผล่ในกองจัดเที่ยววิ่งวันนั้น
+  const [postponeDialog, setPostponeDialog] = React.useState<{ trip: Trip; stopIdx: number } | null>(null)
+  const [postponeDateStr, setPostponeDateStr] = React.useState<string>("")
+  const [isPostponing, setIsPostponing] = React.useState(false)
+  const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
   React.useEffect(() => {
@@ -389,7 +395,8 @@ export default function DailySummaryPage() {
   const stripOutcome = (s: TripStop): TripStop => {
     const {
       outcome, outcomeReason, reassignedToTripId, reassignedToVehiclePlate,
-      reassignedToDriverName, outcomeRecordedBy, outcomeAt, ...base
+      reassignedToDriverName, outcomeRecordedBy, outcomeAt,
+      postponedToDate, postponedRequestId, ...base
     } = s as any
     return base
   }
@@ -410,12 +417,113 @@ export default function DailySummaryPage() {
     (trip.stops || []).map((s, i) => (i === stopIdx ? mut({ ...s }) : s))
 
   const chooseOutcome = (trip: Trip, stopIdx: number, outcome: StopOutcome) => {
+    // "เลื่อน" ไม่ได้แค่ติดป้าย — ต้องเลือกวันใหม่ก่อน (เปิด dialog) แล้วสร้างใบขอรถจริง
+    if (outcome === 'postponed') {
+      openPostponeDialog(trip, stopIdx)
+      return
+    }
+    // ถ้าจุดนี้เคยถูกเลื่อน (มีใบที่สร้างไว้) แล้วเปลี่ยนเป็นผลอื่น → ลบใบที่เลื่อนทิ้ง กันงานงอกค้างในวันใหม่
+    const prev = trip.stops?.[stopIdx] as any
+    if (prev?.postponedRequestId && db) {
+      deleteDoc(doc(db, "vehicleRequests", prev.postponedRequestId)).catch(() => {})
+    }
     const newStops = buildStops(trip, stopIdx, (s) => {
       const base = stripOutcome(s)
       if (outcome === 'delivered') return base // back to "as planned"
       return { ...base, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
     })
     applyStops(trip.id, newStops, true)
+  }
+
+  const tomorrowStr = () => {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    return format(d, "yyyy-MM-dd")
+  }
+
+  const openPostponeDialog = (trip: Trip, stopIdx: number) => {
+    setPostponeDialog({ trip, stopIdx })
+    setPostponeDateStr(tomorrowStr())
+    setPostponeWarn("")
+  }
+
+  // เลื่อนจริง: (1) สร้างใบขอรถ rescheduled วันใหม่ให้สำเร็จก่อน → (2) ค่อยติดป้าย postponed
+  // (ลำดับสำคัญ: สร้างก่อนติดป้าย ถ้า network หลุดตอนสร้าง งานจะไม่หายจากวันเดิม)
+  const handlePostpone = async () => {
+    if (!postponeDialog || !db) return
+    const { trip, stopIdx } = postponeDialog
+    const stop = trip.stops?.[stopIdx]
+    if (!stop) return
+    const newDate = postponeDateStr
+    if (!newDate || newDate <= format(new Date(), "yyyy-MM-dd")) {
+      toast({ title: "เลือกวันไม่ถูกต้อง", description: "ต้องเลื่อนไปวันถัดจากวันนี้เป็นต้นไป", variant: "destructive" })
+      return
+    }
+    setIsPostponing(true)
+    try {
+      // ถ้าเคยเลื่อนจุดนี้ไว้แล้ว (เปลี่ยนวัน) → ลบใบเก่าทิ้งก่อน กันใบซ้ำ
+      const existingReqId = (stop as any).postponedRequestId
+      if (existingReqId) {
+        await deleteDoc(doc(db, "vehicleRequests", existingReqId)).catch(() => {})
+      }
+
+      // สร้าง requestId รูปแบบเดียวกับ RequestForm: VR-<dd><mm>-<seq><rand>
+      const [, m, d] = newDate.split('-')
+      const datePrefix = `VR-${d}${m}`
+      const snap = await getDocs(query(collection(db, "vehicleRequests"), where("requestDate", "==", newDate)))
+      const sequence = String(snap.size + 1).padStart(3, '0')
+      const safety = Math.floor(Math.random() * 10)
+      const requestId = `${datePrefix}-${sequence}${safety}`
+
+      await setDoc(doc(db, "vehicleRequests", requestId), {
+        id: requestId,
+        requestId,
+        requestDate: newDate,
+        requestTime: stop.requestTime || "08:30",
+        requestedBy: stop.requestedBy || "",
+        requestedByPhone: stop.requestedByPhone || "",
+        requestedByEmail: "",
+        userId: user?.uid || null,
+        userEmail: user?.email || "",
+        destinations: [{
+          type: stop.siteId ? "site" : "other",
+          siteId: stop.siteId || null,
+          siteName: stop.siteName,
+          customName: stop.siteId ? null : stop.siteName,
+          lat: stop.lat ?? 0,
+          lng: stop.lng ?? 0,
+          jobDescription: stop.cargoDetails || "",
+          requestTime: stop.requestTime || "08:30",
+        }],
+        note: stop.note || "",
+        status: "rescheduled", // ← ต้องเป็น rescheduled ถึงจะโผล่ในกองจัดเที่ยววิ่ง (pending ถูกตัดออก)
+        rescheduledFromDate: trip.tripDate,
+        rescheduledFromTripId: trip.tripId,
+        createdAt: serverTimestamp(),
+      })
+
+      // ติดป้าย postponed ที่จุดเดิม + เก็บ link ไว้ (audit + ใช้ลบใบถ้าเปลี่ยนใจ)
+      const newStops = buildStops(trip, stopIdx, (s) => {
+        const base = stripOutcome(s)
+        return {
+          ...base,
+          outcome: 'postponed' as StopOutcome,
+          outcomeRecordedBy: recordedBy,
+          outcomeAt: new Date().toISOString(),
+          postponedToDate: newDate,
+          postponedRequestId: requestId,
+        }
+      })
+      applyStops(trip.id, newStops, true)
+
+      toast({ title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย` })
+      setPostponeDialog(null)
+    } catch (e) {
+      console.error(e)
+      toast({ title: "เลื่อนไม่สำเร็จ", description: "ลองใหม่อีกครั้ง (งานยังอยู่ที่เดิม ไม่หาย)", variant: "destructive" })
+    } finally {
+      setIsPostponing(false)
+    }
   }
 
   const setReassignTarget = (trip: Trip, stopIdx: number, targetTripId: string) => {
@@ -440,6 +548,22 @@ export default function DailySummaryPage() {
     const newStops = buildStops(trip, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
     applyStops(trip.id, newStops, persist)
   }
+
+  // guard 4: เตือน (ไม่ห้าม) ถ้าวันที่เลือกเลื่อนไปมีเที่ยววิ่งจัดไว้แล้ว
+  React.useEffect(() => {
+    if (!postponeDialog || !postponeDateStr || !db) { setPostponeWarn(""); return }
+    let active = true
+    getDocs(query(collection(db, "trips"), where("tripDate", "==", postponeDateStr)))
+      .then(snap => {
+        if (!active) return
+        const n = snap.docs.filter(d => (d.data() as any).status !== 'Cancelled').length
+        setPostponeWarn(n > 0
+          ? `วันนี้มีเที่ยววิ่งจัดไว้แล้ว ${n} ทริป — ใบที่เลื่อนจะไปรอในกองจัด ต้องเข้าไปจัดเพิ่มเอง`
+          : "")
+      })
+      .catch(() => { if (active) setPostponeWarn("") })
+    return () => { active = false }
+  }, [postponeDialog, postponeDateStr, db])
 
   const outcomeStats = computeOutcomeStats(trips as any)
 
@@ -477,6 +601,12 @@ export default function DailySummaryPage() {
             onBlur={(e) => setRefuseReason(trip, sIdx, e.target.value, true)}
             className={inputClass}
           />
+        )}
+        {current === 'postponed' && stop.postponedToDate && (
+          <p className="text-[11px] text-amber-400/90 flex items-center gap-1">
+            <CalendarClock className="h-3 w-3" />
+            เลื่อนไป {formatThaiDate(stop.postponedToDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นแล้ว
+          </p>
         )}
         {(current === 'reassigned' || current === 'driver-refused') && (
           <select
@@ -971,6 +1101,50 @@ export default function DailySummaryPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="w-full h-11" onClick={() => setSelectedTripForShare(null)}>ปิด</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* เลื่อนงาน: เลือกวันใหม่ → สร้างใบขอรถ rescheduled เข้ากองจัดเที่ยววิ่งวันนั้น */}
+      <Dialog open={!!postponeDialog} onOpenChange={(open) => { if (!open && !isPostponing) setPostponeDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <CalendarClock className="h-5 w-5 text-amber-400" /> เลื่อนงานไปวันใหม่
+            </DialogTitle>
+            <DialogDescription>
+              {postponeDialog
+                ? `จุด: ${postponeDialog.trip.stops?.[postponeDialog.stopIdx]?.siteName || ''} — ระบบจะดึงจุดนี้ออกจากใบสรุป แล้วสร้างเป็นงานใหม่รอจัดในวันที่เลือก`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <label className="text-sm font-medium text-foreground">เลื่อนไปวันที่</label>
+            <input
+              type="date"
+              value={postponeDateStr}
+              min={tomorrowStr()}
+              onChange={(e) => setPostponeDateStr(e.target.value)}
+              className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            {postponeWarn && (
+              <p className="text-[12px] text-amber-400 flex items-start gap-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 p-2">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {postponeWarn}
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPostponeDialog(null)} disabled={isPostponing}>ยกเลิก</Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+              onClick={handlePostpone}
+              disabled={isPostponing || !postponeDateStr}
+            >
+              {isPostponing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CalendarClock className="mr-2 h-4 w-4" />}
+              {isPostponing ? "กำลังเลื่อน..." : "ยืนยันเลื่อน"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
