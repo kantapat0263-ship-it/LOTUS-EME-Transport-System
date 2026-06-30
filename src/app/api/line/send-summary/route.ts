@@ -35,6 +35,13 @@ export async function POST(req: NextRequest) {
           : ''
         line += `\n🔄 รับโยกงานต่อเพิ่ม ${trip.incomingCount} จุด${from}`
       }
+      // public-safe: แจ้งว่าคันนี้ "โยกงานไปให้" คันอื่น (ฝั่งต้นทาง — ไม่มีคำว่าปฏิเสธ)
+      if (trip.outgoingCount > 0) {
+        const to = Array.isArray(trip.outgoingTo) && trip.outgoingTo.length > 0
+          ? ` (ให้ ${trip.outgoingTo.join(', ')})`
+          : ''
+        line += `\n🔁 โยกงานไปให้ ${trip.outgoingCount} จุด${to}`
+      }
       return `${line}\n🔗 ${trip.driverUrl}`
     }).join('\n\n')
 

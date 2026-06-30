@@ -291,6 +291,8 @@ export default function DailySummaryPage() {
 
       const tripData = trips.map((trip: any) => {
         const incoming = incomingStopsForTrip(trips as any, trip.id)
+        // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
+        const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
         return {
           driverName: trip.driverName,
           vehiclePlate: trip.vehiclePlate,
@@ -298,6 +300,10 @@ export default function DailySummaryPage() {
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
           incomingCount: incoming.length,
           incomingFrom: Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean))),
+          outgoingCount: outgoing.length,
+          outgoingTo: Array.from(new Set(outgoing.map((s: any) =>
+            s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
+          ).filter(Boolean))),
         }
       })
 
@@ -332,11 +338,20 @@ export default function DailySummaryPage() {
     const driverLinks = trips.map((trip: any) => {
       const incoming = incomingStopsForTrip(trips as any, trip.id)
       const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean)))
+      // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
+      const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
+      const outgoingTo = Array.from(new Set(outgoing.map((s: any) =>
+        s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
+      ).filter(Boolean)))
       let line = `🚛 ${trip.driverName} (${trip.vehiclePlate})`
       // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
       if (incoming.length > 0) {
         const from = incomingFrom.length > 0 ? ` (จาก ${incomingFrom.join(', ')})` : ''
         line += `\n🔄 รับโยกงานต่อเพิ่ม ${incoming.length} จุด${from}`
+      }
+      if (outgoing.length > 0) {
+        const to = outgoingTo.length > 0 ? ` (ให้ ${outgoingTo.join(', ')})` : ''
+        line += `\n🔁 โยกงานไปให้ ${outgoing.length} จุด${to}`
       }
       return `${line}\n🔗 ${base}/driver/${trip.tripId}`
     }).join('\n\n')
