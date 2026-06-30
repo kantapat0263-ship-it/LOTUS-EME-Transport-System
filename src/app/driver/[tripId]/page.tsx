@@ -277,12 +277,17 @@ export default function DriverTripPage() {
           </div>
 
           <div className="space-y-4">
-            {trip.stops?.map((stop, index) => (
-              <section 
-                key={index} 
+            {trip.stops?.map((stop, index) => {
+              const movedToPlate = (stop as any).reassignedToVehiclePlate
+              const movedToDriver = (stop as any).reassignedToDriverName
+              // ฝั่งต้นทาง: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
+              const movedAway = movedToPlate && (stop as any).outcome && (stop as any).outcome !== 'delivered'
+              return (
+              <section
+                key={index}
                 className="relative bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all active:scale-[0.98]"
               >
-                <div className="absolute left-0 top-0 bottom-0 w-2 bg-blue-600" />
+                <div className={`absolute left-0 top-0 bottom-0 w-2 ${movedAway ? 'bg-amber-400' : 'bg-blue-600'}`} />
                 
                 <div className="p-5">
                   <div className="flex justify-between items-start mb-4">
@@ -300,6 +305,11 @@ export default function DriverTripPage() {
                           )}
                         </div>
                         <h3 className="text-xl font-bold text-gray-900 leading-tight">{stop.siteName}</h3>
+                        {movedAway && (
+                          <span className="inline-block mt-1 text-[11px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                            🔄 โยกไปให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate})
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -344,8 +354,13 @@ export default function DriverTripPage() {
                     )}
                   </div>
 
-                  <a 
-                    href={(stop as any).lat && (stop as any).lng 
+                  {movedAway ? (
+                    <div className="w-full min-h-[52px] bg-amber-50 text-amber-800 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-amber-200 px-3 py-2 text-center">
+                      ✋ งานนี้โยกให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate}) แล้ว — ไม่ต้องวิ่งจุดนี้
+                    </div>
+                  ) : (
+                  <a
+                    href={(stop as any).lat && (stop as any).lng
                       ? `https://www.google.com/maps/dir/?api=1&destination=${(stop as any).lat},${(stop as any).lng}&travelmode=driving`
                       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.siteName)}`}
                     target="_blank"
@@ -355,9 +370,10 @@ export default function DriverTripPage() {
                     <Navigation className="h-5 w-5" />
                     นำทางด้วย Google Maps
                   </a>
+                  )}
                 </div>
               </section>
-            ))}
+            )})}
           </div>
 
           {/* Footer Stats */}
