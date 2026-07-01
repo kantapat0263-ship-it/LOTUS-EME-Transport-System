@@ -876,6 +876,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 const saved = selectedReq?.stopNotes?.[noteKey] || ''
                                 const dirty = current !== saved
                                 const saving = isSavingNote === idx
+                                // ป้ายฟิลด์นี้เขียนชัดว่า "คนจัดรถ" เพื่อกันคนจัดรถรองพิมพ์ผิดช่อง + ต่อท้ายชื่อจริงถ้ามี (ข้ามชื่อบัญชีกลาง)
+                                const savedBy = (selectedReq as any)?.stopNoteAuthors?.[noteKey]
+                                const savedByLabel = savedBy && !['Admin', 'ผู้จัดคิว', 'Dispatcher'].includes(savedBy) ? ` (${savedBy})` : ''
                                 return (
                                 <div style={{
                                   marginTop: '12px',
@@ -883,7 +886,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   paddingLeft: '8px'
                                 }}>
                                   <small style={{ color: '#3b82f6', fontWeight: 'bold' }}>
-                                    ✏️ บันทึกโดย {(selectedReq as any)?.stopNoteAuthors?.[noteKey] || profileName || "ผู้จัดคิว"}:
+                                    ✏️ บันทึกโดยคนจัดรถ{savedByLabel}:
                                   </small>
                                   <div className="mt-1 flex flex-col gap-1.5">
                                     <Textarea
