@@ -282,6 +282,9 @@ export default function DriverTripPage() {
               const movedToDriver = (stop as any).reassignedToDriverName
               // ฝั่งต้นทาง: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
               const movedAway = movedToPlate && (stop as any).outcome && (stop as any).outcome !== 'delivered'
+              // หมายเหตุจัดรถ: อ่านจากแหล่ง canonical (trip.stopNotes) เหมือนใบสรุป + ชื่อคนจัดรถ
+              const dispatcherNote = (trip as any)?.stopNotes?.[`stop_${index}`] || (stop as any).dispatcherNote
+              const dispatcherBy = (trip as any)?.stopNoteAuthors?.[`stop_${index}`]
               return (
               <section
                 key={index}
@@ -336,7 +339,7 @@ export default function DriverTripPage() {
                       </div>
                     )}
 
-                    {((stop as any).note || (stop as any).dispatcherNote) && (
+                    {((stop as any).note || dispatcherNote) && (
                       <div className="pt-2 border-t border-gray-200 space-y-2">
                         {(stop as any).note && (
                           <div className="flex gap-2">
@@ -344,10 +347,10 @@ export default function DriverTripPage() {
                             <p className="text-xs text-gray-600 italic">หมายเหตุผู้ขอ: "{(stop as any).note}"</p>
                           </div>
                         )}
-                        {(stop as any).dispatcherNote && (
+                        {dispatcherNote && (
                           <div className="flex gap-2">
                             <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-blue-700 font-medium">บันทึกจัดรถ: {(stop as any).dispatcherNote}</p>
+                            <p className="text-xs text-blue-700 font-medium">บันทึกจัดรถ: {dispatcherNote}{dispatcherBy ? ` (โดย ${dispatcherBy})` : ''}</p>
                           </div>
                         )}
                       </div>

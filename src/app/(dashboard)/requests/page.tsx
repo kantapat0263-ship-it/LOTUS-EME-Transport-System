@@ -328,8 +328,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       const noteValue = stopNotes[noteKey] || ""
       
       const vrRef = doc(db, 'vehicleRequests', selectedReq.id)
+      const authorName = profileName || "ผู้จัดคิว"
       const updateData = {
         [`stopNotes.${noteKey}`]: noteValue,
+        [`stopNoteAuthors.${noteKey}`]: authorName, // ชื่อคนจัดรถที่ระบุหมายเหตุจุดนี้ (per-stop)
         [`stopNotesUpdatedBy`]: profileName || "Dispatcher",
         [`stopNotesUpdatedAt`]: new Date().toISOString()
       }
@@ -338,7 +340,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       if (selectedReq.tripId) {
         const tripRef = doc(db, "trips", selectedReq.tripId)
         await updateDoc(tripRef, {
-          [`stopNotes.${noteKey}`]: noteValue
+          [`stopNotes.${noteKey}`]: noteValue,
+          [`stopNoteAuthors.${noteKey}`]: authorName // mirror ชื่อไป trip ให้หน้าคนขับ/ใบสรุปโชว์ได้
         })
       }
 
@@ -880,7 +883,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   paddingLeft: '8px'
                                 }}>
                                   <small style={{ color: '#3b82f6', fontWeight: 'bold' }}>
-                                    ✏️ บันทึกโดย {profileName || "ผู้จัดคิว"}:
+                                    ✏️ บันทึกโดย {(selectedReq as any)?.stopNoteAuthors?.[noteKey] || profileName || "ผู้จัดคิว"}:
                                   </small>
                                   <div className="mt-1 flex flex-col gap-1.5">
                                     <Textarea
@@ -1438,7 +1441,7 @@ export default function RequestsPage() {
                           </div>
                           {isAssigned && viewingUserReq.stopNotes?.[`stop_${idx}`] && (
                             <div className="p-2 rounded bg-blue-500/5 border border-blue-500/10 text-[11px] text-blue-300 italic">
-                              ✏️ บันทึกจัดรถ: {viewingUserReq.stopNotes[`stop_${idx}`]}
+                              ✏️ บันทึกจัดรถ: {viewingUserReq.stopNotes[`stop_${idx}`]}{(viewingUserReq as any).stopNoteAuthors?.[`stop_${idx}`] ? ` (โดย ${(viewingUserReq as any).stopNoteAuthors[`stop_${idx}`]})` : ''}
                             </div>
                           )}
                         </div>

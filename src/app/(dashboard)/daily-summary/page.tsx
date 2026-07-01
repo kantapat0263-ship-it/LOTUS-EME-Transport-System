@@ -808,6 +808,7 @@ export default function DailySummaryPage() {
                             
                             const requesterNote = (stop as any).note || (stop as any).notes || "";
                             const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`] || (stop as any).dispatcherNote;
+                            const stopDispatcherBy = (trip as any).stopNoteAuthors?.[`stop_${sIdx}`];
                             const stopTime = (stop as any).requestTime;
                             // Public-safe: if the job was picked up by another truck (โยก, or a
                             // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
@@ -867,7 +868,7 @@ export default function DailySummaryPage() {
                                           color: '#1e40af',
                                           whiteSpace: 'pre-line'
                                         }}>
-                                          ✏️ {stopDispatcherNote}
+                                          ✏️ {stopDispatcherNote}{stopDispatcherBy ? ` (โดย ${stopDispatcherBy})` : ''}
                                         </div>
                                       )}
 
