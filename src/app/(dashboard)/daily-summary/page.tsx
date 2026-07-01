@@ -388,8 +388,15 @@ export default function DailySummaryPage() {
     return driversData?.find(d => d.id === driverId)?.phoneNumber || ""
   }
 
-  // ระยะทางรวม "ที่วิ่งจริง" — งานที่โยก/ปฏิเสธไม่มีคนรับจะไม่ถูกนับ (ตามงานจริง)
-  const totalDistance = computeOutcomeStats(trips as any).totalActualKm
+  // ระยะทางรวม + ค่าน้ำมัน "ที่วิ่งจริง" — งานที่โยก/ปฏิเสธไม่มีคนรับจะไม่ถูกนับ (ตามงานจริง)
+  // resolve ค่าน้ำมันต่อทริปแบบเดียวกับหน้า report: ใช้ fuelCost ที่ freeze ไว้ ไม่งั้นคำนวณจากอัตรา/ราคาที่ทริปเก็บไว้
+  const resolveTripFuel = (t: any) =>
+    (typeof t.fuelCost === 'number' && t.fuelCost > 0)
+      ? t.fuelCost
+      : ((t.totalDistanceKm || 0) / (t.fuelRateUsed || 10)) * (t.dieselPriceUsed || 32.5)
+  const dayOutcome = computeOutcomeStats(trips.map((t: any) => ({ ...t, fuelCost: resolveTripFuel(t) })) as any)
+  const totalDistance = dayOutcome.totalActualKm
+  const totalFuelCost = dayOutcome.totalActualCost
 
   // --- Actual-outcome reconciliation (after the report is posted to LINE) ---
   const recordedBy = user?.displayName || user?.email || ""
@@ -961,6 +968,7 @@ export default function DailySummaryPage() {
                       <div className="space-y-1 font-bold">
                         <p>รวม: {trips.length} เที่ยว</p>
                         <p>ระยะทางรวม (วิ่งจริง): {totalDistance.toFixed(1)} กม.</p>
+                        <p>ค่าน้ำมันโดยประมาณ: {totalFuelCost.toLocaleString('th-TH', { maximumFractionDigits: 0 })} บาท</p>
                       </div>
                       <div className="flex gap-12">
                         <div className="text-center w-48">
