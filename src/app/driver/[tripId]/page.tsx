@@ -284,7 +284,7 @@ export default function DriverTripPage() {
               const movedAway = movedToPlate && (stop as any).outcome && (stop as any).outcome !== 'delivered'
               // หมายเหตุจัดรถ: อ่านจากแหล่ง canonical (trip.stopNotes) เหมือนใบสรุป + ชื่อคนจัดรถ
               const dispatcherNote = (trip as any)?.stopNotes?.[`stop_${index}`] || (stop as any).dispatcherNote
-              const dispatcherBy = (trip as any)?.stopNoteAuthors?.[`stop_${index}`]
+              const dispatcherBy = (trip as any)?.stopNoteAuthors?.[`stop_${index}`] || (stop as any).dispatcherName
               return (
               <section
                 key={index}

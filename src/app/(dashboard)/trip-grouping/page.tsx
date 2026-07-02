@@ -86,7 +86,8 @@ export default function TripGroupingPage() {
             requestTime: dest.requestTime || req.requestTime || "08:30",
             note: req.note || req.notes || "",
             dispatcherNote: req.stopNotes?.[`stop_${idx}`] || "",
-            dispatcherName: req.stopNotesUpdatedBy || ""
+            // ชื่อคนจัดรถต่อจุด (map ใหม่) ก่อน — ฟิลด์เก่าเป็นชื่อคนเซฟล่าสุดทั้งใบ ใช้เป็น fallback
+            dispatcherName: req.stopNoteAuthors?.[`stop_${idx}`] || req.stopNotesUpdatedBy || ""
           })
         }
       })

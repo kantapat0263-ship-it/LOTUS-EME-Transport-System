@@ -815,7 +815,8 @@ export default function DailySummaryPage() {
                             
                             const requesterNote = (stop as any).note || (stop as any).notes || "";
                             const stopDispatcherNote = (trip as any).stopNotes?.[`stop_${sIdx}`] || (stop as any).dispatcherNote;
-                            const stopDispatcherBy = (trip as any).stopNoteAuthors?.[`stop_${sIdx}`];
+                            // ชื่อคนจัดรถ: per-stop map ก่อน แล้ว fallback ไปชื่อที่พกมากับ stop ตอนสร้างทริป (โน้ตที่เซฟก่อนจัดกลุ่ม)
+                            const stopDispatcherBy = (trip as any).stopNoteAuthors?.[`stop_${sIdx}`] || (stop as any).dispatcherName;
                             const stopTime = (stop as any).requestTime;
                             // Public-safe: if the job was picked up by another truck (โยก, or a
                             // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
