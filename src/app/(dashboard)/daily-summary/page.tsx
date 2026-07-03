@@ -830,7 +830,7 @@ export default function DailySummaryPage() {
                                     {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
                                   </td>
                                 )}
-                                <td className="border border-black p-2 text-center align-top font-bold">
+                                <td className="border border-black p-2 text-center align-top font-bold whitespace-nowrap">
                                   {stopTime || "08:30"} น.
                                 </td>
                                 <td className="border border-black p-2 align-top">
