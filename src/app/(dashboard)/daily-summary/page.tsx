@@ -277,18 +277,9 @@ export default function DailySummaryPage() {
     if (trips.length === 0) return
     setIsSendingLine(true)
     try {
-      const html2canvas = (await import('html2canvas')).default
-      const element = document.getElementById('summary-report')
-      if (!element) return
-
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false
-      })
-      const imageBase64 = canvas.toDataURL('image/jpeg', 0.95)
-
+      // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
+      // ไม่เคยใช้ imageBase64 เลย การส่ง base64 หลาย MB เสี่ยงชนลิมิต body ของ Vercel (~4.5MB)
+      // ทำปุ่มพังทั้งปุ่มในวันที่ทริปเยอะ + ทำให้กดส่งช้าโดยไม่จำเป็น
       const tripData = trips.map((trip: any) => {
         const incoming = incomingStopsForTrip(trips as any, trip.id)
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
@@ -311,7 +302,6 @@ export default function DailySummaryPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          imageBase64, 
           trips: tripData,
           dateStr: formatThaiDate(selectedDate),
           selectedDate: selectedDate
@@ -333,6 +323,15 @@ export default function DailySummaryPage() {
 
   // สร้างข้อความสรุปแบบเดียวกับที่บอทส่ง (ใช้สำหรับปุ่ม "คัดลอกข้อความ")
   // ต้องให้ตรงกับ format ใน src/app/api/line/send-summary/route.ts
+  // วันที่แบบไทยยาว (พ.ศ.) ให้เหมือนข้อความบอทเป๊ะ — logic เดียวกับ route.ts
+  const thaiLongDate = (dateStr: string) => {
+    if (!dateStr) return ""
+    const [y, m, d] = dateStr.split('-')
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString('th-TH', {
+      year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    })
+  }
+
   const buildSummaryText = () => {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
     const driverLinks = trips.map((trip: any) => {
@@ -355,7 +354,7 @@ export default function DailySummaryPage() {
       }
       return `${line}\n🔗 ${base}/driver/${trip.tripId}`
     }).join('\n\n')
-    return `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${formatThaiDate(selectedDate)}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}`
+    return `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${thaiLongDate(selectedDate)}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}`
   }
 
   // คัดลอกข้อความเข้า clipboard → คนจัดรถไปวางในกลุ่ม LINE เอง (ไม่กินโควตา OA)
