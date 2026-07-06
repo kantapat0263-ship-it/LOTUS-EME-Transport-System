@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc } from "firebase/firestore"
+import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -75,7 +75,9 @@ export default function DailySummaryPage() {
   const [copiedMsg, setCopiedMsg] = React.useState(false)
 
   // "เลื่อนงาน" dialog — เลือกวันใหม่แล้วสร้างใบขอรถ rescheduled ให้ไปโผล่ในกองจัดเที่ยววิ่งวันนั้น
-  const [postponeDialog, setPostponeDialog] = React.useState<{ trip: Trip; stopIdx: number } | null>(null)
+  // #5 เก็บแค่ tripId + stopIdx (ไม่ snapshot ทั้ง trip) → ตอนยืนยันค่อยหยิบทริปสดล่าสุด
+  //     กันเคสเปิด dialog ค้างแล้วไปแก้จุดอื่น แล้วถูกเขียนทับด้วย stops ก้อนเก่า
+  const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
   const [postponeDateStr, setPostponeDateStr] = React.useState<string>("")
   const [isPostponing, setIsPostponing] = React.useState(false)
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
@@ -216,7 +218,10 @@ export default function DailySummaryPage() {
         where("tripDate", "<=", end),
       ))
       if (!active) return
-      const monthTrips = snap.docs.map(d => ({ ...d.data(), id: d.id })) as any[]
+      // #3 ไม่นับทริปที่ยกเลิก (Cancelled) เข้าอันดับ — query ตาม tripDate range กรอง status ไม่ได้
+      const monthTrips = snap.docs
+        .map(d => ({ ...d.data(), id: d.id }) as any)
+        .filter(t => t.status !== 'Cancelled')
       setTopDrivers(computeDriverLeaderboard(monthTrips).slice(0, 3))
     })().catch(() => { if (active) setTopDrivers([]) })
     return () => { active = false }
@@ -426,7 +431,34 @@ export default function DailySummaryPage() {
   const buildStops = (trip: Trip, stopIdx: number, mut: (s: TripStop) => TripStop): TripStop[] =>
     (trip.stops || []).map((s, i) => (i === stopIdx ? mut({ ...s }) : s))
 
-  const chooseOutcome = (trip: Trip, stopIdx: number, outcome: StopOutcome) => {
+  // #2 กัน "งานผี": ใบที่เลื่อนถูกจัดเข้าเที่ยววิ่งแล้วหรือยัง (approved/partial = จัดแล้ว → ห้ามลบเงียบ ๆ)
+  const isPostponedReqGrouped = async (reqId: string): Promise<boolean> => {
+    if (!db) return false
+    try {
+      const s = await getDoc(doc(db, "vehicleRequests", reqId))
+      if (!s.exists()) return false // หายไปแล้ว = ลบได้ปลอดภัย
+      const st = (s.data() as any).status
+      return st === 'approved' || st === 'partial'
+    } catch { return false }
+  }
+
+  // #6 กันเลข VR ชน: setDoc เขียนทับ doc เดิมได้ถ้า id ซ้ำ → หา id ที่ยังว่างจริงก่อนเขียน
+  const genUniqueRequestId = async (dateStr: string): Promise<string> => {
+    const [, m, d] = dateStr.split('-')
+    const prefix = `VR-${d}${m}`
+    const snap = await getDocs(query(collection(db, "vehicleRequests"), where("requestDate", "==", dateStr)))
+    let seq = snap.size + 1
+    for (let i = 0; i < 50; i++) {
+      const safety = Math.floor(Math.random() * 10)
+      const id = `${prefix}-${String(seq).padStart(3, '0')}${safety}`
+      const exists = await getDoc(doc(db, "vehicleRequests", id))
+      if (!exists.exists()) return id
+      seq++
+    }
+    return `${prefix}-${String(seq).padStart(3, '0')}${Math.floor(Math.random() * 10)}z`
+  }
+
+  const chooseOutcome = async (trip: Trip, stopIdx: number, outcome: StopOutcome) => {
     // "เลื่อน" ไม่ได้แค่ติดป้าย — ต้องเลือกวันใหม่ก่อน (เปิด dialog) แล้วสร้างใบขอรถจริง
     if (outcome === 'postponed') {
       openPostponeDialog(trip, stopIdx)
@@ -435,7 +467,16 @@ export default function DailySummaryPage() {
     // ถ้าจุดนี้เคยถูกเลื่อน (มีใบที่สร้างไว้) แล้วเปลี่ยนเป็นผลอื่น → ลบใบที่เลื่อนทิ้ง กันงานงอกค้างในวันใหม่
     const prev = trip.stops?.[stopIdx] as any
     if (prev?.postponedRequestId && db) {
-      deleteDoc(doc(db, "vehicleRequests", prev.postponedRequestId)).catch(() => {})
+      // #2 ถ้าใบถูกจัดเข้าเที่ยววิ่งวันใหม่ไปแล้ว อย่าลบเงียบ ๆ (จะเหลือ "จุดผี" ในทริปวันนั้น)
+      if (await isPostponedReqGrouped(prev.postponedRequestId)) {
+        toast({
+          title: "เปลี่ยนผลไม่ได้",
+          description: `งานนี้ถูกจัดเข้าเที่ยววิ่งวันที่ ${prev.postponedToDate ? formatThaiDate(prev.postponedToDate) : 'ใหม่'} ไปแล้ว — ต้องไปลบจุดออกจากทริปวันนั้นก่อน แล้วค่อยเปลี่ยนผลตรงนี้`,
+          variant: "destructive",
+        })
+        return
+      }
+      await deleteDoc(doc(db, "vehicleRequests", prev.postponedRequestId)).catch(() => {})
     }
     const newStops = buildStops(trip, stopIdx, (s) => {
       const base = stripOutcome(s)
@@ -452,7 +493,7 @@ export default function DailySummaryPage() {
   }
 
   const openPostponeDialog = (trip: Trip, stopIdx: number) => {
-    setPostponeDialog({ trip, stopIdx })
+    setPostponeDialog({ tripId: trip.id, stopIdx })
     setPostponeDateStr(tomorrowStr())
     setPostponeWarn("")
   }
@@ -461,7 +502,10 @@ export default function DailySummaryPage() {
   // (ลำดับสำคัญ: สร้างก่อนติดป้าย ถ้า network หลุดตอนสร้าง งานจะไม่หายจากวันเดิม)
   const handlePostpone = async () => {
     if (!postponeDialog || !db) return
-    const { trip, stopIdx } = postponeDialog
+    const { tripId, stopIdx } = postponeDialog
+    // #5 หยิบทริปสดล่าสุดจาก state (ไม่ใช้ snapshot ตอนเปิด dialog) กันเขียนทับการแก้จุดอื่น
+    const trip = trips.find(t => t.id === tripId)
+    if (!trip) { setPostponeDialog(null); return }
     const stop = trip.stops?.[stopIdx]
     if (!stop) return
     const newDate = postponeDateStr
@@ -474,16 +518,17 @@ export default function DailySummaryPage() {
       // ถ้าเคยเลื่อนจุดนี้ไว้แล้ว (เปลี่ยนวัน) → ลบใบเก่าทิ้งก่อน กันใบซ้ำ
       const existingReqId = (stop as any).postponedRequestId
       if (existingReqId) {
+        // #2 ถ้าใบเดิมถูกจัดเข้าเที่ยววิ่งไปแล้ว เปลี่ยนวันไม่ได้ (จะเหลือจุดผีในทริปนั้น)
+        if (await isPostponedReqGrouped(existingReqId)) {
+          toast({ title: "เลื่อนซ้ำไม่ได้", description: "งานนี้ถูกจัดเข้าเที่ยววิ่งวันก่อนหน้าไปแล้ว — ต้องไปลบจุดออกจากทริปนั้นก่อน", variant: "destructive" })
+          setIsPostponing(false)
+          return
+        }
         await deleteDoc(doc(db, "vehicleRequests", existingReqId)).catch(() => {})
       }
 
-      // สร้าง requestId รูปแบบเดียวกับ RequestForm: VR-<dd><mm>-<seq><rand>
-      const [, m, d] = newDate.split('-')
-      const datePrefix = `VR-${d}${m}`
-      const snap = await getDocs(query(collection(db, "vehicleRequests"), where("requestDate", "==", newDate)))
-      const sequence = String(snap.size + 1).padStart(3, '0')
-      const safety = Math.floor(Math.random() * 10)
-      const requestId = `${datePrefix}-${sequence}${safety}`
+      // #6 gen requestId แบบกันชน (setDoc เขียนทับ doc เดิมได้ถ้า id ซ้ำ)
+      const requestId = await genUniqueRequestId(newDate)
 
       await setDoc(doc(db, "vehicleRequests", requestId), {
         id: requestId,
@@ -1127,7 +1172,7 @@ export default function DailySummaryPage() {
             </DialogTitle>
             <DialogDescription>
               {postponeDialog
-                ? `จุด: ${postponeDialog.trip.stops?.[postponeDialog.stopIdx]?.siteName || ''} — ระบบจะดึงจุดนี้ออกจากใบสรุป แล้วสร้างเป็นงานใหม่รอจัดในวันที่เลือก`
+                ? `จุด: ${trips.find(t => t.id === postponeDialog.tripId)?.stops?.[postponeDialog.stopIdx]?.siteName || ''} — ระบบจะดึงจุดนี้ออกจากใบสรุป แล้วสร้างเป็นงานใหม่รอจัดในวันที่เลือก`
                 : ''}
             </DialogDescription>
           </DialogHeader>

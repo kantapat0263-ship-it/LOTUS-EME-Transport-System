@@ -77,7 +77,10 @@ export default function DriverTripPage() {
                 where("tripDate", ">=", start),
                 where("tripDate", "<=", end),
               ))
-              const monthTrips = mSnap.docs.map(d => ({ ...d.data(), id: d.id })) as any[]
+              // #3 ไม่นับทริปที่ยกเลิก (Cancelled) เข้าอันดับ leaderboard
+              const monthTrips = mSnap.docs
+                .map(d => ({ ...d.data(), id: d.id }) as any)
+                .filter(t => t.status !== 'Cancelled')
               const board = computeDriverLeaderboard(monthTrips)
               setMyStat(board.find(b => b.driverId === tripData.driverId) || null)
               setBoardSize(board.length)

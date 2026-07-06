@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, doc, setDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore"
+import { collection, doc, setDoc, serverTimestamp, getDocs, getDoc, query, where } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -296,9 +296,16 @@ export function RequestForm() {
       const datePrefix = `VR-${day}${month}`;
       const qRequests = query(collection(db, "vehicleRequests"), where("requestDate", "==", selectedDate));
       const snapRequests = await getDocs(qRequests);
-      const sequence = String(snapRequests.size + 1).padStart(3, '0');
-      const safety = Math.floor(Math.random() * 10);
-      const requestId = `${datePrefix}-${sequence}${safety}`;
+      // gen id แบบกันชน: setDoc เขียนทับ doc เดิมได้ถ้า id ซ้ำ (เช่นมีการลบใบทำให้ seq วนกลับมาชน)
+      let seq = snapRequests.size + 1;
+      let requestId = '';
+      for (let i = 0; i < 50; i++) {
+        const safety = Math.floor(Math.random() * 10);
+        requestId = `${datePrefix}-${String(seq).padStart(3, '0')}${safety}`;
+        const existing = await getDoc(doc(db, "vehicleRequests", requestId));
+        if (!existing.exists()) break;
+        seq++;
+      }
 
       const requestRef = doc(db, "vehicleRequests", requestId)
       const parsedDestinations = []
