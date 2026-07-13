@@ -72,6 +72,15 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **กันงานหาย:** สร้างใบใหม่ให้สำเร็จ **ก่อน** ค่อยติดป้าย postponed · เปลี่ยนผลออกจาก postponed/เลื่อนวันใหม่ → ลบใบเก่าทิ้ง (กันงานงอกค้าง) · เก็บ trail `rescheduledFromDate/TripId` (ใบใหม่) + `postponedToDate/RequestId` (stop)
 - **ไม่ทำ:** ผู้ขอเดิมไม่เห็นใน "ใบของฉัน" (stop ไม่มี email ผู้ขอ) — ยอมรับได้ คนจัดรถเห็นในกองจัดอยู่แล้ว
 
+### รอบตรวจ+แก้บั๊ก 6 ตัว (deploy แล้ว — 2026-06-22, `2984509` + `3311f54`)
+สั่งตรวจบั๊ก (subagent) ฟีเจอร์ใหม่ เจอ+แก้ 6 ตัว:
+1. **ปุ่มส่ง LINE แคป A4 เป็น JPEG แล้วส่ง `imageBase64` ไปทั้งที่ route ไม่ใช้** → payload หลาย MB เสี่ยงชนลิมิต body Vercel ~4.5MB (ปุ่มพังทั้งปุ่มวันทริปเยอะ) → ตัดการแคป/ส่งรูปออก (ส่งเร็วขึ้นด้วย)
+4. **วันที่ปุ่มคัดลอกไม่ตรงบอท** (`22/06/2026` ค.ศ. vs `วันจันทร์ที่ 22 มิถุนายน 2569` พ.ศ.) → เพิ่ม `thaiLongDate()` logic เดียวกับ route.ts
+2. **"งานผี":** เลิกเลื่อน/เลื่อนซ้ำ หลังใบ `rescheduled` ถูกจัดเข้าทริปวันใหม่แล้ว → เดิมลบใบเงียบ ๆ แต่จุดที่ copy เข้า `trip.stops` ยังค้าง → เพิ่ม guard `isPostponedReqGrouped` (status `approved`/`partial` = จัดแล้ว → เตือนให้ไปลบจุดจากทริปก่อน ไม่ลบให้)
+3. **leaderboard นับทริป Cancelled** (query เดือนไม่กรอง status) → เพิ่ม filter `status !== 'Cancelled'` (ใบสรุป + หน้าคนขับ)
+5. **dialog เลื่อน lost-update:** เดิม snapshot ทั้ง `trip` ตอนเปิด dialog → เก็บแค่ `tripId` แล้วหยิบทริปสดจาก `trips` ตอนยืนยัน (กันเขียนทับการแก้จุดอื่นที่เกิดระหว่างเปิด dialog ค้าง)
+6. **เลข VR ชน = `setDoc` เขียนทับใบเดิม** (seq วนกลับหลังลบใบ) → `genUniqueRequestId` เช็ก `getDoc` ว่า id ว่างจริงก่อนเขียน (ทั้ง `handlePostpone` + `RequestForm.tsx`)
+
 ---
 
 ## ราคาน้ำมัน: freeze ต่อทริป + อัปเดตอัตโนมัติ (เฟส 1+2)
@@ -118,6 +127,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **Firebase project เดียว** (`studio-2099625459-19c42`, hardcode ใน `src/firebase/config.ts`) → **preview กับ production ใช้ Firestore + กลุ่ม LINE เดียวกัน** ระวังกดส่ง LINE จริงตอนเทส
 - **`trips` อ่านได้แบบ public** (`firestore.rules: allow read: if true`) → หน้าคนขับ (ลิงก์สาธารณะ ไม่ล็อกอิน) ดึงทริปทั้งเดือนมาคำนวณอันดับได้ แต่โชว์แค่ของตัวเอง
 - ใบงานคนขับ **ต้องคงปุ่ม "นำทางด้วย Google Maps" + รายละเอียด (cargoDetails/ผู้ขอ/เบอร์โทร/หมายเหตุ) ไว้ครบ** — คนขับจะได้ไม่ต้องโทรถามคนจัดรถ
+- **พิกัด = snapshot ไม่ realtime:** lat/lng ถูกก๊อป 2 จุด — `sites` → `vehicleRequest.destinations` (ตอน RequestForm) → `trip.stops` (ตอน grouping `trip-grouping/page.tsx:269-270,330-331`) ใบงานคนขับ (`driver/[tripId]:369-371`) ใช้ `stop.lat/lng` จากทริป → **แอดมินแก้พิกัดใน `sites` ทีหลัง = ทริป/ใบงานที่ออกไปแล้วไม่ตาม** (มีผลแค่ใบที่สร้างใหม่). ถ้าจะให้แก้แล้วตาม ต้องทำปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป (ดู TODO)
 
 ---
 
@@ -131,6 +141,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - [x] ~~**ชั้น 3:** หน้า `report` — completion rate + pattern คนขับปฏิเสธ~~ (เสร็จ `ce699e9`)
 - [x] ~~ทำ "เลื่อน" ให้สร้างงานวันใหม่จริง~~ (เสร็จ `7c55b1f` — ดู section ด้านบน)
 - [ ] (อาจมี) ปุ่ม "ปิดผลทริปนี้" เพื่อรู้ว่า reconcile ครบหรือยัง
+- [ ] **ปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป** — เคสแอดมินแก้หมุด `sites` หลังออกใบ/ส่ง LINE แล้ว งานเดิมไม่ตาม (พิกัดเป็น snapshot ดู gotcha) → ให้กดอัปเดต `stop.lat/lng` จาก `sites` ล่าสุดเฉพาะจุดที่เลือก
 - [ ] **ตั้ง ENV เฟส 2 บน Vercel ถ้ายังไม่ได้ตั้ง** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — cron ราคาดีเซล + ยาม auth API ส่ง LINE ถึงจะทำงาน
 - [ ] **publish Firestore rules ใหม่ที่ Firebase Console** (commit อยู่บน branch — ทดสอบใน Rules Playground ก่อน publish)
 - [ ] **merge ยาม auth API ส่ง LINE** (`a5fce13` บน branch) — รอตั้ง env ก่อน ไม่งั้นปุ่มส่งบอท 401
@@ -140,8 +151,9 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **ยาม auth API ส่ง LINE** (`a5fce13`, **ยังอยู่บน branch**) — เดิม `/api/line/send-summary` ไม่มี auth ใครก็ยิงสั่งบอทส่งกลุ่มได้ แก้: client แนบ Firebase ID token, server verify + เช็ก role staff (`requireStaff` ใน `admin.ts`) **ต้องตั้ง env `FIREBASE_SERVICE_ACCOUNT_BASE64` ก่อน merge** ไม่งั้นปุ่มส่งบอทตอบ 401
 - **รัด Firestore rules** (`firestore.rules` ใหม่บน branch) — ปิด fallback `allow if isAuthenticated()` → `if false` (deny by default) + เพิ่มกฎ collection ที่เคยพึ่ง fallback (`vehicleTypes`/`urgentRequests`/`dieselPriceHistory`) คงสิทธิ์เท่าเดิม **zero-impact** แต่ **กฎไม่ deploy ผ่าน git** — ต้อง publish ที่ Firebase Console (Rules Playground เทสก่อน). ⚠️ Firebase project เดียวกัน prod+preview → publish = มีผล prod ทันที, rollback ได้ใน Console
 
-## สถานะ ณ handoff (2026-06-22)
-- main tip = `7c55b1f` — deploy production แล้ว, working tree สะอาด, typecheck ✅ + test 48/48 ✅
-- **ขึ้น production แล้ว:** ปุ่มคัดลอก LINE (`6c931ff`) + เลื่อนจริง (`7c55b1f`)
-- **ค้างบน branch `claude/transport-system-review-QvCtP`** (ต้องทำเงื่อนไขก่อน): ยาม auth API (`a5fce13`, รอ env) + Firestore rules (`4e974ce`, รอ publish ที่ Console)
-- main vs branch: ปุ่มคัดลอก/เลื่อนจริง ขึ้น main ด้วย cherry-pick (hash ต่างกับ branch) — ระวังตอน merge branch ทีหลังอาจซ้ำ ให้ cherry-pick ทีละ commit ที่เหลือแทน merge ทั้ง branch
+## สถานะ ณ handoff (2026-06-22, อัปเดตหลังรอบแก้บั๊ก)
+- main tip = `3311f54` — deploy production แล้ว, typecheck ✅ + test 48/48 ✅
+- **ขึ้น production แล้ว:** ปุ่มคัดลอก LINE + เลื่อนจริง + บั๊ก 6 ตัวจากรอบตรวจ (`2984509`, `3311f54`) — ดู section "รอบตรวจ+แก้บั๊ก 6 ตัว"
+- หมายเหตุ: main มี commit จาก session อื่นแทรก (โยกงานไปให้ฝั่งต้นทางในใบงาน/LINE, ชื่อคนจัดรถต่อจุด, ค่าน้ำมันโดยประมาณในรูป ฯลฯ `72a1574`..`233d2ce`) — งานเหล่านั้นอยู่บน main ครบ
+- **ค้างบน branch `claude/transport-system-review-QvCtP`** (ยังไม่ขึ้น main, ต้องทำเงื่อนไขก่อน): ยาม auth API (รอ env `FIREBASE_SERVICE_ACCOUNT_BASE64`) + Firestore rules (รอ publish ที่ Console)
+- ⚠️ **branch ตามหลัง main อยู่เยอะ** (main มี fix บั๊ก + งาน session อื่นที่ branch ยังไม่มี) — ตอนจะเอา auth/rules ขึ้น main ให้ **cherry-pick ทีละ commit** (`a5fce13` auth, `4e974ce` rules) ไม่ใช่ merge ทั้ง branch (จะตีกับ main) หรือ rebase branch ใหม่บน main ก่อน
