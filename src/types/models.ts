@@ -124,6 +124,29 @@ export interface Trip {
   updatedAt?: any;
 }
 
+/** ตำแหน่งรถล่าสุด (เขียนโดย /api/tracking/sync จาก SinoTrack) — vehiclePositions/{deviceId} */
+export interface VehiclePositionDoc {
+  id: string; // = deviceId
+  deviceId: string;
+  licensePlate: string;
+  lat: number;
+  lng: number;
+  speed: number; // กม./ชม.
+  direction: number; // องศา
+  positionTime: number; // เวลาที่ GPS รายงาน (unix ms)
+  updatedAt?: any;
+}
+
+/** เส้นทางที่วิ่งจริงรายวัน — vehiclePositionTrails/{YYYY-MM-DD}__{deviceId} */
+export interface VehicleTrailDoc {
+  id: string;
+  deviceId: string;
+  licensePlate: string;
+  date: string; // YYYY-MM-DD (เวลาไทย)
+  points: { lat: number; lng: number; t: number; sp: number }[];
+  updatedAt?: any;
+}
+
 export interface TripEditLog {
   id: string;
   editedAt: any;

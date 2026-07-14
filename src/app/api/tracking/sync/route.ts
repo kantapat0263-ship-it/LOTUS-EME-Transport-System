@@ -2,17 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, type VehiclePosition } from '@/lib/sinotrack'
+import { trackingDateKey } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 /** จำนวนจุดสูงสุดที่เก็บใน trail ต่อคันต่อวัน (กัน doc โต — 1 จุด/นาที ~ ครอบคลุมทั้งวัน) */
 const MAX_TRAIL_POINTS = 720
-
-/** วันที่ตามเวลาไทย (UTC+7) รูปแบบ YYYY-MM-DD ใช้เป็น key ของ trail รายวัน */
-function thaiDate(nowMs: number): string {
-  return new Date(nowMs + 7 * 3600 * 1000).toISOString().slice(0, 10)
-}
 
 /**
  * ดึงตำแหน่งรถล่าสุดจาก SinoTrack → เขียนลง Firestore
@@ -79,7 +75,7 @@ export async function GET(req: NextRequest) {
   }
 
   const nowMs = Date.now()
-  const date = thaiDate(nowMs)
+  const date = trackingDateKey(nowMs)
   let written = 0
 
   // 3) เขียนตำแหน่งล่าสุด + ต่อ trail

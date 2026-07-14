@@ -50,6 +50,7 @@ const vehicleSchema = z.object({
   type: z.string().min(1, "กรุณาเลือกประเภทรถ"),
   maxLoadCapacityKg: z.coerce.number().min(1, "กรุณาระบุน้ำหนักบรรทุก"),
   fuelRate: z.union([z.coerce.number(), z.literal("")]).optional().transform(v => v === "" ? undefined : v),
+  gpsDeviceId: z.string().optional(),
 })
 
 const driverSchema = z.object({
@@ -74,7 +75,7 @@ export default function FleetPage() {
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
-    defaultValues: { licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined }
+    defaultValues: { licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined, gpsDeviceId: "" }
   })
 
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
@@ -145,6 +146,11 @@ export default function FleetPage() {
     // Clean up undefined values before saving to Firestore
     if (data.fuelRate === undefined) {
       delete data.fuelRate;
+    }
+    // เก็บเลข GPS เฉพาะเมื่อกรอก (ตัดช่องว่างหัวท้าย) — ไม่งั้นลบ key กัน string ว่างเข้า Firestore
+    if (typeof data.gpsDeviceId === "string") {
+      data.gpsDeviceId = data.gpsDeviceId.trim();
+      if (data.gpsDeviceId === "") delete data.gpsDeviceId;
     }
 
     try {
@@ -243,8 +249,8 @@ export default function FleetPage() {
                 className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
                 onClick={() => { 
                   setEditingVehicle(null); 
-                  vehicleForm.reset({ licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined }); 
-                  setIsVehicleDialogOpen(true); 
+                  vehicleForm.reset({ licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined, gpsDeviceId: "" });
+                  setIsVehicleDialogOpen(true);
                 }}
               >
                 <Plus className="mr-2 h-4 w-4" /> เพิ่มรถยนต์ใหม่
@@ -272,9 +278,10 @@ export default function FleetPage() {
                                 vehicleForm.reset({ 
                                   licensePlate: v.licensePlate, 
                                   type: v.type, 
-                                  maxLoadCapacityKg: v.maxLoadCapacityKg, 
-                                  fuelRate: v.fuelRate 
-                                }); 
+                                  maxLoadCapacityKg: v.maxLoadCapacityKg,
+                                  fuelRate: v.fuelRate,
+                                  gpsDeviceId: v.gpsDeviceId ?? ""
+                                });
                                 setIsVehicleDialogOpen(true); 
                               }, 0);
                             }}>
@@ -463,6 +470,15 @@ export default function FleetPage() {
                   <FormLabel>อัตราสิ้นเปลือง (กม./ลิตร)</FormLabel>
                   <FormControl>
                     <Input className="h-11" type="number" step="0.1" placeholder="ถ้าไม่กรอก ใช้ค่ามาตรฐานจาก Settings" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={vehicleForm.control} name="gpsDeviceId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>เลขอุปกรณ์ GPS (SinoTrack)</FormLabel>
+                  <FormControl>
+                    <Input className="h-11" placeholder="เช่น 9170747125 — ใส่เพื่อให้ตามรถในเมนู “ติดตามรถ”" {...field} value={field.value ?? ""} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -54,6 +54,16 @@ service cloud.firestore {
     match /vehicles/{vehicleId} { allow read, write: if isAuthenticated(); }
     match /companySettings/{id} { allow read, write: if isAuthenticated(); }
 
+    // GPS tracking — อ่านได้เมื่อ login, เขียนเฉพาะฝั่ง server (firebase-admin bypass rules)
+    match /vehiclePositions/{deviceId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+    match /vehiclePositionTrails/{id} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
     // Global fallback
     match /{document=**} {
       allow read, write: if isAuthenticated();
