@@ -21,6 +21,8 @@ export interface Vehicle {
   type: VehicleType;
   maxLoadCapacityKg: number;
   fuelRate?: number; // km/liter
+  /** เลขอุปกรณ์ GPS SinoTrack (strTEID) ที่จับคู่กับรถคันนี้ — ใช้ดึงตำแหน่งในเมนูติดตามรถ */
+  gpsDeviceId?: string;
   createdAt?: any;
   updatedAt?: any;
 }
