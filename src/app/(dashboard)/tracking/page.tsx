@@ -1,7 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { collection, query, where, doc } from "firebase/firestore"
+import {
+  collection,
+  query,
+  where,
+  doc,
+  onSnapshot,
+  type Query,
+  type CollectionReference,
+  type DocumentData,
+} from "firebase/firestore"
 import { useCollection, useDoc, useFirestore, useMemoFirebase, useUser } from "@/firebase"
 import type {
   Vehicle,
@@ -52,6 +61,37 @@ function thTime(ms?: number | null): string {
   return new Date(ms).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
 }
 
+/**
+ * subscribe collection แบบ "ไม่ทำทั้งแอปพัง" — ถ้าอ่านไม่ได้ (เช่น firestore.rules
+ * ของ collection ใหม่ยังไม่ publish) จะคืน [] แทนการโยน error เข้า global listener
+ * ใช้เฉพาะ vehiclePositions/vehiclePositionTrails ที่เป็น collection ใหม่
+ */
+function useSafeCollection<T>(
+  ref: Query<DocumentData> | CollectionReference<DocumentData> | null
+): (T & { id: string })[] {
+  const { user, isUserLoading } = useUser()
+  const [data, setData] = React.useState<(T & { id: string })[]>([])
+  React.useEffect(() => {
+    if (!ref || isUserLoading || !user) {
+      setData([])
+      return
+    }
+    const unsub = onSnapshot(
+      ref,
+      (snap) => setData(snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }))),
+      (err: any) => {
+        console.warn(
+          "[tracking] อ่านตำแหน่ง/เส้นทางไม่ได้ (ต้อง publish firestore.rules ของ vehiclePositions):",
+          err?.code || err?.message
+        )
+        setData([])
+      }
+    )
+    return () => unsub()
+  }, [ref, user, isUserLoading])
+  return data
+}
+
 export default function TrackingPage() {
   const db = useFirestore()
   const { user } = useUser()
@@ -75,7 +115,7 @@ export default function TrackingPage() {
     () => (db && user ? collection(db, "vehiclePositions") : null),
     [db, user]
   )
-  const { data: positions } = useCollection<VehiclePositionDoc>(positionsRef)
+  const positions = useSafeCollection<VehiclePositionDoc>(positionsRef)
 
   const tripsRef = useMemoFirebase(
     () => (db && user ? query(collection(db, "trips"), where("tripDate", "==", today)) : null),
@@ -90,7 +130,7 @@ export default function TrackingPage() {
         : null,
     [db, user, today]
   )
-  const { data: trails } = useCollection<VehicleTrailDoc>(trailsRef)
+  const trails = useSafeCollection<VehicleTrailDoc>(trailsRef)
 
   const settingsRef = useMemoFirebase(
     () => (db && user ? doc(db, "companySettings", "default") : null),
