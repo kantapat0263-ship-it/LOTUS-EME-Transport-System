@@ -62,7 +62,9 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents }:
   React.useEffect(() => {
     if (!containerRef.current || mapRef.current || !apiKey) return
     let cancelled = false
-    const loader = new Loader({ apiKey, version: "weekly", libraries: ["geometry", "routes"] })
+    // ต้องใช้ options เดียวกับ GroupingMap เป๊ะ ๆ (Loader เป็น singleton ทั้งแอป —
+    // ถ้าต่างกันจะ throw "Loader must not be called again with different options" ตอนสลับหน้า)
+    const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
     loader
       .load()
       .then(() => {
