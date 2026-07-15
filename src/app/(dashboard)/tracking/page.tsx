@@ -105,6 +105,29 @@ export default function TrackingPage() {
     return () => clearInterval(id)
   }, [])
 
+  // ดึงตำแหน่งสดจาก SinoTrack เอง: poll /api/tracking/sync ทุก 60 วิ ระหว่างเปิดหน้านี้
+  // → ฟรี ไม่ต้องพึ่ง cron ภายนอก (server จะ login SinoTrack + เขียน Firestore ให้ แล้ว subscription ข้างล่างอัปเดตเอง)
+  React.useEffect(() => {
+    if (!user) return
+    let stopped = false
+    const runSync = async () => {
+      try {
+        const token = await user.getIdToken()
+        await fetch("/api/tracking/sync", { headers: { Authorization: `Bearer ${token}` } })
+      } catch {
+        /* เงียบไว้ — หน้ายังแสดงข้อมูลล่าสุดจาก Firestore ได้ */
+      }
+    }
+    runSync()
+    const id = setInterval(() => {
+      if (!stopped) runSync()
+    }, 60_000)
+    return () => {
+      stopped = true
+      clearInterval(id)
+    }
+  }, [user])
+
   const vehiclesRef = useMemoFirebase(
     () => (db && user ? collection(db, "vehicles") : null),
     [db, user]

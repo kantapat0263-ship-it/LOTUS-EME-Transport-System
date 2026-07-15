@@ -70,6 +70,26 @@ export default function FleetPage() {
   const [isVehicleDialogOpen, setIsVehicleDialogOpen] = React.useState(false)
   const [isSavingVehicle, setIsSavingVehicle] = React.useState(false)
   const [editingVehicle, setEditingVehicle] = React.useState<Vehicle | null>(null)
+
+  // รายชื่ออุปกรณ์ GPS จาก SinoTrack (ทำ dropdown จับคู่ — ไม่ต้องพิมพ์เลขเอง)
+  const [gpsDevices, setGpsDevices] = React.useState<{ deviceId: string; carNum: string }[]>([])
+  React.useEffect(() => {
+    if (!user || isViewer) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await user.getIdToken()
+        const res = await fetch("/api/tracking/devices", { headers: { Authorization: `Bearer ${token}` } })
+        const json = await res.json()
+        if (!cancelled && json?.ok && Array.isArray(json.devices)) setGpsDevices(json.devices)
+      } catch {
+        /* ดึงรายชื่อไม่ได้ (ยังไม่ตั้ง env) → ฟอร์มจะ fallback เป็นช่องพิมพ์เลขเอง */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user, isViewer])
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vehiclesRef)
   
@@ -476,10 +496,26 @@ export default function FleetPage() {
               )} />
               <FormField control={vehicleForm.control} name="gpsDeviceId" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>เลขอุปกรณ์ GPS (SinoTrack)</FormLabel>
-                  <FormControl>
-                    <Input className="h-11" placeholder="เช่น 9170747125 — ใส่เพื่อให้ตามรถในเมนู “ติดตามรถ”" {...field} value={field.value ?? ""} />
-                  </FormControl>
+                  <FormLabel>อุปกรณ์ GPS (SinoTrack)</FormLabel>
+                  {gpsDevices.length > 0 ? (
+                    <Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value || "__none__"}>
+                      <FormControl>
+                        <SelectTrigger className="h-11"><SelectValue placeholder="เลือกอุปกรณ์ GPS ของรถคันนี้" /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">— ไม่ผูก GPS —</SelectItem>
+                        {gpsDevices.map((d) => (
+                          <SelectItem key={d.deviceId} value={d.deviceId}>
+                            {d.carNum ? `${d.carNum} (${d.deviceId})` : d.deviceId}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <FormControl>
+                      <Input className="h-11" placeholder="ใส่เลขอุปกรณ์ GPS เช่น 9170747125 (ตั้ง env SINOTRACK แล้วจะเลือกจากรายชื่อได้)" {...field} value={field.value ?? ""} />
+                    </FormControl>
+                  )}
                   <FormMessage />
                 </FormItem>
               )} />

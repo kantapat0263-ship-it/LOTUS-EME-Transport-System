@@ -1,5 +1,6 @@
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app'
 import { getFirestore, type Firestore } from 'firebase-admin/firestore'
+import { getAuth } from 'firebase-admin/auth'
 
 /**
  * Firebase Admin (server-only) — ใช้เขียน Firestore จาก API route / cron
@@ -41,4 +42,23 @@ export function getAdminDb(): Firestore {
 
   cachedDb = getFirestore(app)
   return cachedDb
+}
+
+/**
+ * ตรวจว่า request มาจาก staff (admin/dispatcher) ที่ login จริง
+ * รับ header `Authorization: Bearer <Firebase ID token>` → verify → เช็ค role ใน users/{uid}
+ * คืน uid ถ้าเป็น staff, คืน null ถ้าไม่ผ่าน (ให้ route ตอบ 401/403 เอง)
+ */
+export async function verifyStaffToken(authHeader: string | null): Promise<string | null> {
+  if (!authHeader?.startsWith('Bearer ')) return null
+  const idToken = authHeader.slice(7)
+  try {
+    getAdminDb() // ให้ initializeApp ทำงานก่อนเรียก getAuth
+    const decoded = await getAuth().verifyIdToken(idToken)
+    const snap = await getAdminDb().collection('users').doc(decoded.uid).get()
+    const role = snap.exists ? (snap.data()?.role as string | undefined) : undefined
+    return role === 'admin' || role === 'dispatcher' ? decoded.uid : null
+  } catch {
+    return null
+  }
 }
