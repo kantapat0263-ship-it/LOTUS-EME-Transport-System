@@ -1,6 +1,6 @@
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app'
 import { getFirestore, type Firestore } from 'firebase-admin/firestore'
-import { getAuth } from 'firebase-admin/auth'
+import { firebaseConfig } from './config'
 
 /**
  * Firebase Admin (server-only) — ใช้เขียน Firestore จาก API route / cron
@@ -48,16 +48,29 @@ export function getAdminDb(): Firestore {
  * ตรวจว่า request มาจาก staff (admin/dispatcher) ที่ login จริง
  * รับ header `Authorization: Bearer <Firebase ID token>` → verify → เช็ค role ใน users/{uid}
  * คืน uid ถ้าเป็น staff, คืน null ถ้าไม่ผ่าน (ให้ route ตอบ 401/403 เอง)
+ *
+ * ใช้ Firebase REST (identitytoolkit accounts:lookup) แทน firebase-admin/auth
+ * เพราะ firebase-admin/auth ดึง `jose` (ESM) ที่ require() ไม่ได้บน Vercel Node → 500
  */
 export async function verifyStaffToken(authHeader: string | null): Promise<string | null> {
   if (!authHeader?.startsWith('Bearer ')) return null
   const idToken = authHeader.slice(7)
   try {
-    getAdminDb() // ให้ initializeApp ทำงานก่อนเรียก getAuth
-    const decoded = await getAuth().verifyIdToken(idToken)
-    const snap = await getAdminDb().collection('users').doc(decoded.uid).get()
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    const uid: string | undefined = data?.users?.[0]?.localId
+    if (!uid) return null
+    const snap = await getAdminDb().collection('users').doc(uid).get()
     const role = snap.exists ? (snap.data()?.role as string | undefined) : undefined
-    return role === 'admin' || role === 'dispatcher' ? decoded.uid : null
+    return role === 'admin' || role === 'dispatcher' ? uid : null
   } catch {
     return null
   }
