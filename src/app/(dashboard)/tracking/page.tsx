@@ -12,12 +12,14 @@ import {
   type DocumentData,
 } from "firebase/firestore"
 import { useCollection, useDoc, useFirestore, useMemoFirebase, useUser } from "@/firebase"
+import { useToast } from "@/hooks/use-toast"
 import type {
   Vehicle,
   Trip,
   CompanySetting,
   VehiclePositionDoc,
   VehicleTrailDoc,
+  TrackingDailyDoc,
 } from "@/types/models"
 import {
   computeStopStatuses,
@@ -45,6 +47,7 @@ interface TruckView {
   stale: boolean
   origin: { lat: number; lng: number } | null
   arrivedAtByOrder: Record<number, number | null>
+  daily: TrackingDailyDoc | null
 }
 
 const STATUS_META: Record<TruckStatus, { label: string; cls: string }> = {
@@ -97,6 +100,8 @@ export default function TrackingPage() {
   const [now, setNow] = React.useState<number>(() => Date.now())
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [syncInfo, setSyncInfo] = React.useState<{ ok: boolean; error?: string; detail?: string; synced?: number; skipped?: boolean } | null>(null)
+  const { toast } = useToast()
+  const shownArrivalsRef = React.useRef<Set<string>>(new Set())
 
   // อัปเดต "เวลาปัจจุบัน" ทุก 60 วิ (เพื่อคำนวณ GPS ออฟไลน์)
   React.useEffect(() => {
@@ -156,6 +161,13 @@ export default function TrackingPage() {
   )
   const trails = useSafeCollection<VehicleTrailDoc>(trailsRef)
 
+  const dailyRef = useMemoFirebase(
+    () =>
+      db && user ? query(collection(db, "trackingDaily"), where("date", "==", today)) : null,
+    [db, user, today]
+  )
+  const daily = useSafeCollection<TrackingDailyDoc>(dailyRef)
+
   const settingsRef = useMemoFirebase(
     () => (db && user ? doc(db, "companySettings", "default") : null),
     [db, user]
@@ -177,6 +189,10 @@ export default function TrackingPage() {
     const deviceToTrail: Record<string, TrailPoint[]> = {}
     ;(trails ?? []).forEach((tr) => {
       deviceToTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t }))
+    })
+    const deviceToDaily: Record<string, TrackingDailyDoc> = {}
+    ;(daily ?? []).forEach((d) => {
+      deviceToDaily[d.deviceId] = d
     })
 
     const activeTrips = (trips ?? []).filter((t) => t.status !== "Cancelled")
@@ -234,9 +250,10 @@ export default function TrackingPage() {
         stale,
         origin,
         arrivedAtByOrder,
+        daily: deviceId ? deviceToDaily[deviceId] ?? null : null,
       }
     })
-  }, [vehicles, positions, trails, trips, settings, now])
+  }, [vehicles, positions, trails, daily, trips, settings, now])
 
   // เรียงคันที่ยังวิ่งอยู่ขึ้นก่อน
   const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
@@ -250,6 +267,17 @@ export default function TrackingPage() {
   }, [sortedTrucks, selectedId])
 
   const selected = trucks.find((t) => t.trip.id === selectedId) ?? null
+
+  // แจ้งเตือนในแอปเมื่อรถกลับถึงออฟฟิศ (เฉพาะที่เพิ่งถึงใน 5 นาที กันเด้งย้อนหลังตอนเปิดหน้า)
+  React.useEffect(() => {
+    trucks.forEach((t) => {
+      const ret = t.daily?.returnedOfficeAt
+      if (ret && now - ret < 5 * 60 * 1000 && !shownArrivalsRef.current.has(t.trip.id)) {
+        shownArrivalsRef.current.add(t.trip.id)
+        toast({ title: "🏢 รถกลับถึงออฟฟิศแล้ว", description: `${t.trip.vehiclePlate} · เวลา ${thTime(ret)}` })
+      }
+    })
+  }, [trucks, now, toast])
 
   const kpis = React.useMemo(() => {
     const arrived = trucks.reduce((s, t) => s + t.arrivedCount, 0)
@@ -452,6 +480,19 @@ function TruckDetail({
         </div>
       )}
 
+      <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
+        <span>🏢 ออกออฟฟิศ <b className="text-foreground">{thTime(truck.daily?.departedOfficeAt)}</b></span>
+        <span>
+          กลับถึงออฟฟิศ{" "}
+          {truck.daily?.returnedOfficeAt ? (
+            <b className="text-emerald-400">{thTime(truck.daily.returnedOfficeAt)}</b>
+          ) : (
+            <b className="text-muted-foreground">ยังไม่กลับ</b>
+          )}
+        </span>
+        {truck.daily?.totalKm != null && <span>รวม <b className="text-foreground tabular-nums">{truck.daily.totalKm}</b> กม.</span>}
+      </div>
+
       <div className="px-4 pb-1 pt-3 text-xs text-muted-foreground">
         ROOT งานวันนี้ · {truck.arrivedCount}/{truck.totalStops} จุด — “เข้าใกล้จุดงาน ≈300 ม. = ถือว่าทำภารกิจแล้ว ✅”
       </div>
@@ -461,37 +502,46 @@ function TruckDetail({
           const tag = s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
           const tagCls = s.arrived ? "text-emerald-400" : s.isCurrent ? "text-accent" : "text-muted-foreground"
           const arrivedAt = truck.arrivedAtByOrder[s.order]
+          const t = truck.daily?.stops?.find((d) => d.order === s.order)
           return (
-            <div key={s.order} className="flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none">
-              <div
-                className={cn(
-                  "flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 text-xs font-bold",
-                  s.arrived
-                    ? "border-emerald-500 bg-emerald-500 text-white"
-                    : s.isCurrent
-                      ? "border-accent text-accent"
-                      : "border-border text-muted-foreground"
-                )}
-              >
-                {s.arrived ? "✓" : s.order}
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-medium">{s.name}</div>
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  {s.arrived ? (
-                    <>
-                      <Clock className="h-3 w-3" /> เข้าใกล้จุดงาน {arrivedAt ? thTime(arrivedAt) : "แล้ว"} ✅
-                    </>
-                  ) : s.isCurrent ? (
-                    "รถกำลังมุ่งหน้า"
-                  ) : s.lat == null ? (
-                    "จุดนี้ไม่มีพิกัด"
-                  ) : (
-                    "ยังไม่ถึงคิว"
-                  )}
+            <div key={s.order}>
+              {t?.travelMinFromPrev != null && (
+                <div className="flex items-center gap-1 py-0.5 pl-8 text-[11px] text-muted-foreground">
+                  <Navigation className="h-3 w-3 rotate-90 opacity-60" /> เดินทาง {t.travelMinFromPrev} นาที
                 </div>
+              )}
+              <div className="flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none">
+                <div
+                  className={cn(
+                    "flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 text-xs font-bold",
+                    s.arrived
+                      ? "border-emerald-500 bg-emerald-500 text-white"
+                      : s.isCurrent
+                        ? "border-accent text-accent"
+                        : "border-border text-muted-foreground"
+                  )}
+                >
+                  {s.arrived ? "✓" : s.order}
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{s.name}</div>
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    {s.arrived ? (
+                      <>
+                        <Clock className="h-3 w-3" /> ถึง {arrivedAt ? thTime(arrivedAt) : "แล้ว"}
+                        {t?.dwellMin != null && <span> · จอด {t.dwellMin} นาที</span>}
+                      </>
+                    ) : s.isCurrent ? (
+                      "รถกำลังมุ่งหน้า"
+                    ) : s.lat == null ? (
+                      "จุดนี้ไม่มีพิกัด"
+                    ) : (
+                      "ยังไม่ถึงคิว"
+                    )}
+                  </div>
+                </div>
+                <div className={cn("self-center text-xs font-bold", tagCls)}>{tag}</div>
               </div>
-              <div className={cn("self-center text-xs font-bold", tagCls)}>{tag}</div>
             </div>
           )
         })}

@@ -147,6 +147,27 @@ export interface VehicleTrailDoc {
   updatedAt?: any;
 }
 
+/** สรุปการเดินรถรายวันต่อคัน (คำนวณจาก trail) — trackingDaily/{YYYY-MM-DD}__{deviceId} */
+export interface TrackingDailyDoc {
+  id: string;
+  date: string;
+  deviceId: string;
+  licensePlate: string;
+  /** ออกจากออฟฟิศ / กลับถึงออฟฟิศ (unix ms) — null ถ้ายังไม่เกิด */
+  departedOfficeAt: number | null;
+  returnedOfficeAt: number | null;
+  totalKm: number;
+  stops: {
+    order: number;
+    siteName: string;
+    arrivedAt: number | null;
+    departedAt: number | null;
+    dwellMin: number | null;
+    travelMinFromPrev: number | null;
+  }[];
+  updatedAt?: any;
+}
+
 export interface TripEditLog {
   id: string;
   editedAt: any;

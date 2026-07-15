@@ -150,3 +150,100 @@ export function trailDistanceKm(trail: LatLng[]): number {
   for (let i = 1; i < trail.length; i++) m += haversineMeters(trail[i - 1], trail[i])
   return m / 1000
 }
+
+/** รัศมีออฟฟิศ/คลัง (เมตร) ที่ถือว่า "อยู่ที่ออฟฟิศ" */
+export const OFFICE_RADIUS_M = 250
+
+// ---------------------------------------------------------------------------
+// สรุปรายวันต่อคัน — เวลาจอด/เดินทางแต่ละจุด + เข้า-ออกออฟฟิศ (คำนวณจาก trail)
+// ---------------------------------------------------------------------------
+
+export interface StopTiming {
+  order: number
+  siteName: string
+  /** เวลาถึงจุด (unix ms) — null ถ้ายังไม่ถึง */
+  arrivedAt: number | null
+  /** เวลาออกจากจุด (unix ms) — null ถ้ายังไม่ออก/ยังไม่ถึง */
+  departedAt: number | null
+  /** จอดที่จุดกี่นาที (departedAt − arrivedAt) — null ถ้ายังคำนวณไม่ได้ */
+  dwellMin: number | null
+  /** เดินทางจากจุดก่อนหน้า (หรือจากออฟฟิศ) มากี่นาที — null ถ้าคำนวณไม่ได้ */
+  travelMinFromPrev: number | null
+}
+
+export interface DailySummary {
+  /** ออกจากออฟฟิศเมื่อ (unix ms) — null ถ้ายังไม่ออก/ไม่มีพิกัดออฟฟิศ */
+  departedOfficeAt: number | null
+  /** กลับถึงออฟฟิศเมื่อ (unix ms) — null ถ้ายังไม่กลับ */
+  returnedOfficeAt: number | null
+  totalKm: number
+  stops: StopTiming[]
+}
+
+const toMin = (ms: number) => Math.round((ms / 60000) * 10) / 10
+
+/**
+ * คำนวณสรุปรายวันจาก trail (จุด {lat,lng,t}) + จุดงาน + พิกัดออฟฟิศ
+ * - arrivedAt/departedAt ต่อจุด: จุด trail แรก/สุดท้ายที่อยู่ในรัศมี arrivalRadius
+ * - travel = arrivedAt[n] − departedAt[n-1] (จุดแรกวัดจาก departedOfficeAt)
+ * - departed/returnedOffice: ออก = จุดแรกที่พ้นรัศมีออฟฟิศ, กลับ = จุดแรกที่เข้ารัศมีอีกครั้งหลังออก
+ */
+export function computeDailySummary(
+  trail: TrailPoint[],
+  stops: { order: number; siteName?: string; lat?: number; lng?: number }[],
+  origin: LatLng | null,
+  opts: { arrivalRadius?: number; officeRadius?: number } = {}
+): DailySummary {
+  const arrivalRadius = opts.arrivalRadius ?? ARRIVAL_RADIUS_M
+  const officeRadius = opts.officeRadius ?? OFFICE_RADIUS_M
+  const pts = [...trail].filter((p) => p.t != null).sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+
+  // ---- เข้า-ออกออฟฟิศ ----
+  let departedOfficeAt: number | null = null
+  let returnedOfficeAt: number | null = null
+  if (origin && pts.length) {
+    for (const p of pts) {
+      const inOffice = haversineMeters(origin, p) <= officeRadius
+      if (departedOfficeAt == null) {
+        if (!inOffice) departedOfficeAt = p.t! // ออกจากออฟฟิศแล้ว
+      } else if (inOffice) {
+        returnedOfficeAt = p.t! // กลับเข้ารัศมีออฟฟิศครั้งแรกหลังออก
+        break
+      }
+    }
+  }
+
+  // ---- เวลาถึง/ออก ต่อจุดงาน ----
+  const ordered = [...stops].sort((a, b) => a.order - b.order)
+  const timings: StopTiming[] = ordered.map((s) => {
+    let arrivedAt: number | null = null
+    let departedAt: number | null = null
+    if (s.lat != null && s.lng != null) {
+      const stopPos = { lat: s.lat, lng: s.lng }
+      for (const p of pts) {
+        if (haversineMeters(stopPos, p) <= arrivalRadius) {
+          if (arrivedAt == null) arrivedAt = p.t!
+          departedAt = p.t!
+        }
+      }
+    }
+    const dwellMin = arrivedAt != null && departedAt != null && departedAt > arrivedAt ? toMin(departedAt - arrivedAt) : null
+    return { order: s.order, siteName: s.siteName ?? "", arrivedAt, departedAt, dwellMin, travelMinFromPrev: null }
+  })
+
+  // ---- เวลาเดินทางช่วง (ถึงจุดนี้ − ออกจุดก่อน / ออกออฟฟิศ) ----
+  let prevDepart: number | null = departedOfficeAt
+  for (const t of timings) {
+    if (t.arrivedAt != null && prevDepart != null && t.arrivedAt > prevDepart) {
+      t.travelMinFromPrev = toMin(t.arrivedAt - prevDepart)
+    }
+    if (t.departedAt != null) prevDepart = t.departedAt
+  }
+
+  return {
+    departedOfficeAt,
+    returnedOfficeAt,
+    totalKm: Math.round(trailDistanceKm(pts) * 10) / 10,
+    stops: timings,
+  }
+}

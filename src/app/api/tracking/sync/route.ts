@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -86,6 +86,41 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, synced: 0, note: 'ยังไม่มีรถที่จับคู่ GPS' })
   }
 
+  const dateKey = trackingDateKey()
+
+  // 1b) งานของแต่ละคันวันนี้ (plate → จุดงาน + ต้นทาง) สำหรับคำนวณสรุปรายวัน
+  let warehouse: { lat: number; lng: number } | null = null
+  try {
+    const cfg = await db.collection('companySettings').doc('default').get()
+    const c = cfg.data()
+    if (c?.warehouseLatitude != null && c?.warehouseLongitude != null) {
+      warehouse = { lat: Number(c.warehouseLatitude), lng: Number(c.warehouseLongitude) }
+    }
+  } catch {
+    /* ไม่มีคลังก็ข้าม — office time จะเป็น null */
+  }
+  const plateToJob: Record<string, { stops: any[]; origin: { lat: number; lng: number } | null }> = {}
+  try {
+    const tripSnap = await db.collection('trips').where('tripDate', '==', dateKey).get()
+    tripSnap.forEach((d) => {
+      const t = d.data()
+      if (t?.status === 'Cancelled' || !t?.vehiclePlate) return
+      const origin =
+        t.originLat != null && t.originLng != null
+          ? { lat: Number(t.originLat), lng: Number(t.originLng) }
+          : warehouse
+      const stops = (t.stops ?? []).map((s: any) => ({
+        order: s.order,
+        siteName: s.siteName ?? '',
+        lat: s.lat,
+        lng: s.lng,
+      }))
+      plateToJob[String(t.vehiclePlate)] = { stops, origin }
+    })
+  } catch (e: any) {
+    console.error('[tracking-sync] read trips failed:', e?.message)
+  }
+
   // 2) login + ดึงตำแหน่งล่าสุด
   let positions: VehiclePosition[]
   try {
@@ -125,14 +160,35 @@ export async function GET(req: NextRequest) {
       const trailSnap = await trailRef.get()
       const prev: any[] = trailSnap.exists ? trailSnap.data()?.points ?? [] : []
       const last = prev[prev.length - 1]
+      let effPoints: any[] = prev
       if (!last || last.t !== p.time) {
-        const points = [...prev, { lat: p.lat, lng: p.lng, t: p.time, sp: p.speed }].slice(
-          -MAX_TRAIL_POINTS
-        )
+        effPoints = [...prev, { lat: p.lat, lng: p.lng, t: p.time, sp: p.speed }].slice(-MAX_TRAIL_POINTS)
         await trailRef.set(
-          { deviceId: p.deviceId, licensePlate: plate, date, points, updatedAt: FieldValue.serverTimestamp() },
+          { deviceId: p.deviceId, licensePlate: plate, date, points: effPoints, updatedAt: FieldValue.serverTimestamp() },
           { merge: true }
         )
+      }
+
+      // สรุปรายวัน (เวลาจอด/เดินทาง/เข้า-ออกออฟฟิศ) — คำนวณจาก trail + งานของคันนั้น
+      const job = plateToJob[plate]
+      if (job) {
+        const sum = computeDailySummary(effPoints, job.stops, job.origin)
+        await db
+          .collection('trackingDaily')
+          .doc(`${date}__${p.deviceId}`)
+          .set(
+            {
+              date,
+              deviceId: p.deviceId,
+              licensePlate: plate,
+              departedOfficeAt: sum.departedOfficeAt,
+              returnedOfficeAt: sum.returnedOfficeAt,
+              totalKm: sum.totalKm,
+              stops: sum.stops,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          )
       }
       written++
     } catch (e: any) {

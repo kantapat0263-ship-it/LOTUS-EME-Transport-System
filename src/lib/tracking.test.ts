@@ -6,6 +6,7 @@ import {
   trailDistanceKm,
   distanceToPolylineMeters,
   isOffRoute,
+  computeDailySummary,
   ARRIVAL_RADIUS_M,
 } from './tracking'
 
@@ -95,6 +96,58 @@ describe('tracking: off-route detection', () => {
   it('polyline ว่าง = null / ไม่ถือว่าออกนอกเส้นทาง', () => {
     expect(distanceToPolylineMeters({ lat: 13, lng: 100 }, [])).toBeNull()
     expect(isOffRoute({ lat: 13, lng: 100 }, [])).toBe(false)
+  })
+})
+
+describe('tracking: computeDailySummary (เวลาจอด/เดินทาง/เข้า-ออกออฟฟิศ)', () => {
+  const M = 60000 // 1 นาที = ms
+  const office = { lat: 13.7, lng: 100.5 }
+  const stops = [
+    { order: 1, siteName: 'A', lat: 13.75, lng: 100.55 },
+    { order: 2, siteName: 'B', lat: 13.8, lng: 100.6 },
+  ]
+  // ออฟฟิศ(0') → ออก(5') → ถึง A(15') → ออก A(25') → ถึง B(45') → ออก B(50') → กลับออฟฟิศ(70')
+  const trail = [
+    { lat: 13.7, lng: 100.5, t: 0 * M },
+    { lat: 13.72, lng: 100.52, t: 5 * M },
+    { lat: 13.7501, lng: 100.5501, t: 15 * M },
+    { lat: 13.7502, lng: 100.55, t: 25 * M },
+    { lat: 13.78, lng: 100.58, t: 35 * M },
+    { lat: 13.8001, lng: 100.6001, t: 45 * M },
+    { lat: 13.8, lng: 100.6, t: 50 * M },
+    { lat: 13.7005, lng: 100.5003, t: 70 * M },
+  ]
+
+  it('ออก/กลับออฟฟิศตรงเวลา', () => {
+    const s = computeDailySummary(trail, stops, office)
+    expect(s.departedOfficeAt).toBe(5 * M)
+    expect(s.returnedOfficeAt).toBe(70 * M)
+  })
+
+  it('เวลาจอดแต่ละจุดถูก (A=10 นาที, B=5 นาที)', () => {
+    const s = computeDailySummary(trail, stops, office)
+    expect(s.stops[0].dwellMin).toBe(10)
+    expect(s.stops[1].dwellMin).toBe(5)
+  })
+
+  it('เวลาเดินทางช่วงถูก (ออฟฟิศ→A=10, A→B=20 นาที)', () => {
+    const s = computeDailySummary(trail, stops, office)
+    expect(s.stops[0].travelMinFromPrev).toBe(10) // ถึง A(15) − ออกออฟฟิศ(5)
+    expect(s.stops[1].travelMinFromPrev).toBe(20) // ถึง B(45) − ออก A(25)
+  })
+
+  it('trail ว่าง → ทุกค่า null, ยังไม่ถึงจุด', () => {
+    const s = computeDailySummary([], stops, office)
+    expect(s.departedOfficeAt).toBeNull()
+    expect(s.returnedOfficeAt).toBeNull()
+    expect(s.stops[0].arrivedAt).toBeNull()
+    expect(s.stops[0].dwellMin).toBeNull()
+  })
+
+  it('ไม่มีพิกัดออฟฟิศ → office เป็น null แต่จุดงานยังคำนวณได้', () => {
+    const s = computeDailySummary(trail, stops, null)
+    expect(s.departedOfficeAt).toBeNull()
+    expect(s.stops[0].dwellMin).toBe(10)
   })
 })
 
