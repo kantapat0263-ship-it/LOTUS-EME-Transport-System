@@ -20,6 +20,7 @@ import type {
   VehiclePositionDoc,
   VehicleTrailDoc,
   TrackingDailyDoc,
+  UserProfile,
 } from "@/types/models"
 import {
   computeStopStatuses,
@@ -137,6 +138,11 @@ export default function TrackingPage() {
   const { toast } = useToast()
   const shownArrivalsRef = React.useRef<Set<string>>(new Set())
 
+  // สิทธิ์ผู้ใช้ — viewer ดูได้อย่างเดียว (ไม่ยิง sync ที่ต้องใช้สิทธิ์ staff, ไม่โชว์ diag สิทธิ์)
+  const profileRef = useMemoFirebase(() => (db && user ? doc(db, "users", user.uid) : null), [db, user])
+  const { data: profile } = useDoc<UserProfile>(profileRef)
+  const isStaff = profile?.role === "admin" || profile?.role === "dispatcher"
+
   // อัปเดต "เวลาปัจจุบัน" ทุก 60 วิ (เพื่อคำนวณ GPS ออฟไลน์)
   React.useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000)
@@ -146,7 +152,7 @@ export default function TrackingPage() {
   // ดึงตำแหน่งสดจาก SinoTrack เอง: poll /api/tracking/sync ทุก 60 วิ ระหว่างเปิดหน้านี้
   // → ฟรี ไม่ต้องพึ่ง cron ภายนอก (server จะ login SinoTrack + เขียน Firestore ให้ แล้ว subscription ข้างล่างอัปเดตเอง)
   React.useEffect(() => {
-    if (!user || !isToday) return // โหมดดูย้อนหลังไม่ต้อง poll
+    if (!user || !isToday || !isStaff) return // viewer ดูอย่างเดียว / ย้อนหลังไม่ต้อง poll
     let stopped = false
     const runSync = async () => {
       try {
@@ -166,7 +172,7 @@ export default function TrackingPage() {
       stopped = true
       clearInterval(id)
     }
-  }, [user, isToday])
+  }, [user, isToday, isStaff])
 
   const vehiclesRef = useMemoFirebase(
     () => (db && user ? collection(db, "vehicles") : null),
@@ -436,7 +442,7 @@ export default function TrackingPage() {
 
   // วินิจฉัยว่าทำไมยังไม่เห็นตำแหน่งสด (แสดงเป็นแถบเตือนบอกสาเหตุตรง ๆ)
   const diag: { tone: "bad" | "warn"; msg: string } | null = (() => {
-    if (!isToday) return null // โหมดดูย้อนหลังไม่ต้องวินิจฉัย sync
+    if (!isToday || !isStaff) return null // viewer / โหมดย้อนหลัง ไม่ต้องวินิจฉัย sync
     if (positions.length > 0) return null // อ่านตำแหน่งได้แล้ว
     if (!syncInfo) return null // กำลัง sync ครั้งแรก
     if (syncInfo.ok) {

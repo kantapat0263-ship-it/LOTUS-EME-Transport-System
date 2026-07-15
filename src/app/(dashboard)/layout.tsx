@@ -58,7 +58,7 @@ export default function DashboardLayout({
         return
       }
 
-      const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings", "/trip-grouping", "/daily-summary", "/report", "/tracking"]
+      const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings", "/trip-grouping", "/daily-summary", "/report"]
       if (profile.role === "viewer") {
         const isRestricted = viewerRestrictedPaths.some(p => pathname.startsWith(p))
         if (isRestricted) {

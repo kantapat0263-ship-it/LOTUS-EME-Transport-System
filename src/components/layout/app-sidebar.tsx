@@ -138,7 +138,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       roles: ['admin', 'dispatcher'], 
       badge: inProgressReqCount > 0 ? inProgressReqCount : null 
     },
-    { name: "ติดตามรถ", href: "/tracking", icon: Route, roles: ['admin', 'dispatcher'] },
+    { name: "ติดตามรถ", href: "/tracking", icon: Route, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "ประวัติการส่ง", href: "/trips/history", icon: History, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "สรุปคิวรถประจำวัน", href: "/daily-summary", icon: FileText, roles: ['admin', 'dispatcher'] },
     { name: "รายงานสรุป", href: "/report", icon: BarChart2, roles: ['admin', 'dispatcher'] },
