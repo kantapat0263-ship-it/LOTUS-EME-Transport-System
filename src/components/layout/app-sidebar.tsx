@@ -152,6 +152,9 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
 
   const filteredItems = navItems.filter(item => item.roles.includes(userRole))
 
+  // ป้าย "New!!" เมนูติดตามรถ — กระพริบถึงสิ้นวัน 18 ก.ค. 2026 (~3 วันหลังเปิดใช้) แล้วหายเอง
+  const showTrackingNew = Date.now() < new Date("2026-07-18T23:59:59+07:00").getTime()
+
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
       case 'admin': return <Badge className="bg-red-500 text-[10px] h-4">ผู้ดูแล</Badge>
@@ -197,8 +200,8 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
               key={item.name}
               href={item.href}
               className={cn(
-                "group flex items-center px-3 py-3 md:py-2 text-sm md:text-sm font-medium rounded-md transition-colors",
-                isActive 
+                "group relative flex items-center px-3 py-3 md:py-2 text-sm md:text-sm font-medium rounded-md transition-colors",
+                isActive
                   ? "bg-primary text-primary-foreground" 
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 isActuallyCollapsed && "justify-center"
@@ -209,6 +212,15 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
                 !isActuallyCollapsed && "mr-3"
               )} />
               {!isActuallyCollapsed && <span className="flex-1">{item.name}</span>}
+              {item.href === "/tracking" && showTrackingNew && (
+                isActuallyCollapsed ? (
+                  <span className="absolute right-1 top-1 h-2 w-2 animate-ping rounded-full bg-accent" />
+                ) : (
+                  <span className="ml-auto animate-pulse rounded-full bg-accent px-1.5 py-0.5 text-[9px] font-extrabold text-white">
+                    New!!
+                  </span>
+                )
+              )}
               {!isActuallyCollapsed && item.badge && (
                 <Badge className={cn("ml-auto h-5 min-w-5 flex items-center justify-center p-1 text-[10px] border-none text-white", (item as any).badgeColor || "bg-destructive")}>
                   {item.badge}
