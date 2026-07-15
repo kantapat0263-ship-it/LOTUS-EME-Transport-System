@@ -96,8 +96,10 @@ function useSafeCollection<T>(
 export default function TrackingPage() {
   const db = useFirestore()
   const { user } = useUser()
-  const today = React.useMemo(() => trackingDateKey(), [])
   const [now, setNow] = React.useState<number>(() => Date.now())
+  const todayKey = trackingDateKey(now)
+  const [selectedDate, setSelectedDate] = React.useState<string>(() => trackingDateKey())
+  const isToday = selectedDate === todayKey
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [syncInfo, setSyncInfo] = React.useState<{ ok: boolean; error?: string; detail?: string; synced?: number; skipped?: boolean } | null>(null)
   const { toast } = useToast()
@@ -112,7 +114,7 @@ export default function TrackingPage() {
   // ดึงตำแหน่งสดจาก SinoTrack เอง: poll /api/tracking/sync ทุก 60 วิ ระหว่างเปิดหน้านี้
   // → ฟรี ไม่ต้องพึ่ง cron ภายนอก (server จะ login SinoTrack + เขียน Firestore ให้ แล้ว subscription ข้างล่างอัปเดตเอง)
   React.useEffect(() => {
-    if (!user) return
+    if (!user || !isToday) return // โหมดดูย้อนหลังไม่ต้อง poll
     let stopped = false
     const runSync = async () => {
       try {
@@ -132,7 +134,7 @@ export default function TrackingPage() {
       stopped = true
       clearInterval(id)
     }
-  }, [user])
+  }, [user, isToday])
 
   const vehiclesRef = useMemoFirebase(
     () => (db && user ? collection(db, "vehicles") : null),
@@ -147,24 +149,24 @@ export default function TrackingPage() {
   const positions = useSafeCollection<VehiclePositionDoc>(positionsRef)
 
   const tripsRef = useMemoFirebase(
-    () => (db && user ? query(collection(db, "trips"), where("tripDate", "==", today)) : null),
-    [db, user, today]
+    () => (db && user ? query(collection(db, "trips"), where("tripDate", "==", selectedDate)) : null),
+    [db, user, selectedDate]
   )
   const { data: trips, isLoading: loadingTrips } = useCollection<Trip>(tripsRef)
 
   const trailsRef = useMemoFirebase(
     () =>
       db && user
-        ? query(collection(db, "vehiclePositionTrails"), where("date", "==", today))
+        ? query(collection(db, "vehiclePositionTrails"), where("date", "==", selectedDate))
         : null,
-    [db, user, today]
+    [db, user, selectedDate]
   )
   const trails = useSafeCollection<VehicleTrailDoc>(trailsRef)
 
   const dailyRef = useMemoFirebase(
     () =>
-      db && user ? query(collection(db, "trackingDaily"), where("date", "==", today)) : null,
-    [db, user, today]
+      db && user ? query(collection(db, "trackingDaily"), where("date", "==", selectedDate)) : null,
+    [db, user, selectedDate]
   )
   const daily = useSafeCollection<TrackingDailyDoc>(dailyRef)
 
@@ -199,7 +201,8 @@ export default function TrackingPage() {
 
     return activeTrips.map((trip) => {
       const deviceId = plateToDevice[trip.vehiclePlate]
-      const position = deviceId ? deviceToPos[deviceId] : undefined
+      // โหมดดูย้อนหลัง: ไม่ใช้ตำแหน่งสด (collection ตำแหน่งเก็บแค่ล่าสุด ไม่ใช่รายวัน)
+      const position = deviceId && isToday ? deviceToPos[deviceId] : undefined
       const trail = deviceId ? deviceToTrail[deviceId] ?? [] : []
 
       const sortedStops = [...(trip.stops ?? [])].sort((a, b) => a.order - b.order)
@@ -230,10 +233,11 @@ export default function TrackingPage() {
             ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
             : null
 
-      const stale = position ? isPositionStale(position.positionTime, now) : true
+      const stale = isToday && (position ? isPositionStale(position.positionTime, now) : true)
 
       let status: TruckStatus
       if (!deviceId) status = "unmapped"
+      else if (!isToday) status = totalStops > 0 && arrivedCount >= totalStops ? "done" : "ok"
       else if (stale) status = "stale"
       else if (totalStops > 0 && arrivedCount >= totalStops) status = "done"
       else status = "ok"
@@ -253,7 +257,7 @@ export default function TrackingPage() {
         daily: deviceId ? deviceToDaily[deviceId] ?? null : null,
       }
     })
-  }, [vehicles, positions, trails, daily, trips, settings, now])
+  }, [vehicles, positions, trails, daily, trips, settings, now, isToday])
 
   // เรียงคันที่ยังวิ่งอยู่ขึ้นก่อน
   const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
@@ -270,6 +274,7 @@ export default function TrackingPage() {
 
   // แจ้งเตือนในแอปเมื่อรถกลับถึงออฟฟิศ (เฉพาะที่เพิ่งถึงใน 5 นาที กันเด้งย้อนหลังตอนเปิดหน้า)
   React.useEffect(() => {
+    if (!isToday) return
     trucks.forEach((t) => {
       const ret = t.daily?.returnedOfficeAt
       if (ret && now - ret < 5 * 60 * 1000 && !shownArrivalsRef.current.has(t.trip.id)) {
@@ -277,7 +282,7 @@ export default function TrackingPage() {
         toast({ title: "🏢 รถกลับถึงออฟฟิศแล้ว", description: `${t.trip.vehiclePlate} · เวลา ${thTime(ret)}` })
       }
     })
-  }, [trucks, now, toast])
+  }, [trucks, now, toast, isToday])
 
   const kpis = React.useMemo(() => {
     const arrived = trucks.reduce((s, t) => s + t.arrivedCount, 0)
@@ -286,6 +291,8 @@ export default function TrackingPage() {
       trucks: trucks.length,
       arrived,
       total,
+      totalKm: Math.round(trucks.reduce((s, t) => s + (t.daily?.totalKm ?? 0), 0) * 10) / 10,
+      returned: trucks.filter((t) => t.daily?.returnedOfficeAt).length,
       moving: trucks.filter((t) => !t.stale && (t.position?.speed ?? 0) > 0).length,
       stale: trucks.filter((t) => t.status === "stale").length,
     }
@@ -293,6 +300,7 @@ export default function TrackingPage() {
 
   // วินิจฉัยว่าทำไมยังไม่เห็นตำแหน่งสด (แสดงเป็นแถบเตือนบอกสาเหตุตรง ๆ)
   const diag: { tone: "bad" | "warn"; msg: string } | null = (() => {
+    if (!isToday) return null // โหมดดูย้อนหลังไม่ต้องวินิจฉัย sync
     if (positions.length > 0) return null // อ่านตำแหน่งได้แล้ว
     if (!syncInfo) return null // กำลัง sync ครั้งแรก
     if (syncInfo.ok) {
@@ -314,19 +322,49 @@ export default function TrackingPage() {
     return { tone: "bad", msg: `ดึงข้อมูลไม่สำเร็จ: ${e ?? "unknown"} ${syncInfo.detail ?? ""}` }
   })()
 
+  const dateChips = React.useMemo(
+    () => Array.from({ length: 7 }, (_, i) => trackingDateKey(now - i * 86400000)),
+    [now]
+  )
+  const chipLabel = (dk: string, i: number) => {
+    if (i === 0) return "วันนี้"
+    if (i === 1) return "เมื่อวาน"
+    return new Date(dk).toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })
+  }
+
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="flex items-center gap-2 text-xl font-bold">
           <Navigation className="h-5 w-5 text-accent" />
-          ติดตามรถวันนี้
+          {isToday ? "ติดตามรถวันนี้" : "ประวัติการเดินรถ"}
         </h1>
-        <span className="text-sm text-muted-foreground">
-          {new Date(now).toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-        </span>
-        <span className="ml-auto rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
-          อัปเดตอัตโนมัติทุก 1–2 นาที
-        </span>
+        {isToday && (
+          <span className="ml-auto rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+            อัปเดตอัตโนมัติทุก 1–2 นาที
+          </span>
+        )}
+      </div>
+
+      {/* เลือกวัน (วันนี้ = สด, ย้อนหลังได้ 7 วัน) */}
+      <div className="flex flex-wrap gap-2">
+        {dateChips.map((dk, i) => (
+          <button
+            key={dk}
+            onClick={() => {
+              setSelectedDate(dk)
+              setSelectedId(null)
+            }}
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs transition-colors",
+              dk === selectedDate
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-muted-foreground hover:bg-muted"
+            )}
+          >
+            {chipLabel(dk, i)}
+          </button>
+        ))}
       </div>
 
       {diag && (
@@ -343,10 +381,19 @@ export default function TrackingPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard n={kpis.trucks} label="รถวิ่งงานวันนี้" />
-        <KpiCard n={`${kpis.arrived}/${kpis.total}`} label="จุดงานที่ผ่านแล้ว" />
-        <KpiCard n={kpis.moving} label="🟢 กำลังวิ่ง" />
-        <KpiCard n={kpis.stale} label="GPS ออฟไลน์" tone={kpis.stale ? "warn" : undefined} />
+        <KpiCard n={kpis.trucks} label={isToday ? "รถวิ่งงานวันนี้" : "รถวิ่งงานวันนั้น"} />
+        <KpiCard n={`${kpis.arrived}/${kpis.total}`} label="จุดงานที่ผ่าน" />
+        {isToday ? (
+          <>
+            <KpiCard n={kpis.moving} label="🟢 กำลังวิ่ง" />
+            <KpiCard n={kpis.stale} label="GPS ออฟไลน์" tone={kpis.stale ? "warn" : undefined} />
+          </>
+        ) : (
+          <>
+            <KpiCard n={kpis.totalKm} label="กม.รวมทั้งวัน" />
+            <KpiCard n={`${kpis.returned}/${kpis.trucks}`} label="🏢 กลับถึงออฟฟิศ" />
+          </>
+        )}
       </div>
 
       {loadingTrips ? (
@@ -356,7 +403,7 @@ export default function TrackingPage() {
       ) : trucks.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
-            ยังไม่มีรถที่มีงานวันนี้ (ทริปของวันที่ {today})
+            {isToday ? "ยังไม่มีรถที่มีงานวันนี้" : "ไม่มีข้อมูลการเดินรถของวันนี้"} (วันที่ {selectedDate})
           </CardContent>
         </Card>
       ) : (
@@ -365,7 +412,7 @@ export default function TrackingPage() {
           <Card className="overflow-hidden">
             <CardHeader className="border-b py-3">
               <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                รถที่มีงานวันนี้ ({trucks.length})
+                {isToday ? "รถที่มีงานวันนี้" : "รถที่วิ่งงานวันนั้น"} ({trucks.length})
               </CardTitle>
             </CardHeader>
             <div className="divide-y divide-border">
@@ -398,7 +445,7 @@ export default function TrackingPage() {
           </Card>
 
           {/* รายละเอียดคันที่เลือก */}
-          {selected && <TruckDetail truck={selected} apiKey={apiKey} thTime={thTime} />}
+          {selected && <TruckDetail truck={selected} apiKey={apiKey} thTime={thTime} isToday={isToday} />}
         </div>
       )}
     </div>
@@ -428,10 +475,12 @@ function TruckDetail({
   truck,
   apiKey,
   thTime,
+  isToday,
 }: {
   truck: TruckView
   apiKey?: string
   thTime: (ms?: number | null) => string
+  isToday: boolean
 }) {
   const meta = STATUS_META[truck.status]
   const pos = truck.position
@@ -441,7 +490,9 @@ function TruckDetail({
         <CardTitle className="text-base">{truck.trip.vehiclePlate}</CardTitle>
         <Badge className={cn("border-none text-[10px]", meta.cls)}>{meta.label}</Badge>
         <span className="ml-auto text-xs text-muted-foreground">
-          {truck.deviceId ? (
+          {!isToday ? (
+            <span>📅 ดูย้อนหลัง</span>
+          ) : truck.deviceId ? (
             truck.stale ? (
               <span className="inline-flex items-center gap-1 text-amber-400">
                 <WifiOff className="h-3.5 w-3.5" /> ข้อมูลล่าสุด {thTime(pos?.positionTime)}
@@ -471,7 +522,7 @@ function TruckDetail({
       <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#5b7cfa" }} /> เส้นทางที่ควรวิ่ง</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#2fb6a0" }} /> เส้นทางที่วิ่งจริง</span>
-        <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>
+        {isToday && <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>}
       </div>
 
       {truck.status === "unmapped" && (
