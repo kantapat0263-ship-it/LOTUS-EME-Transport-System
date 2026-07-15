@@ -23,6 +23,7 @@ import type {
 } from "@/types/models"
 import {
   computeStopStatuses,
+  computeDailySummary,
   isPositionStale,
   trackingDateKey,
   OFFICE_LOCATION,
@@ -51,6 +52,21 @@ interface TruckView {
   arrivedAtByOrder: Record<number, number | null>
   daily: TrackingDailyDoc | null
   longStops: number
+  timeline: TimelineEntry[]
+}
+
+interface TimelineEntry {
+  order: number
+  name: string
+  lat?: number
+  lng?: number
+  arrived: boolean
+  isCurrent: boolean
+  arrivedAt: number | null
+  /** งานนี้ถูกโยกออกไปคันอื่น (คนขับลา/ปฏิเสธ) — ไม่ใช่งานของคันนี้แล้ว */
+  movedTo?: string
+  /** งานนี้ถูกโยกมาให้คันนี้จากคันอื่น */
+  incomingFrom?: { plate: string; refused: boolean }
 }
 
 const STATUS_META: Record<TruckStatus, { label: string; cls: string }> = {
@@ -202,31 +218,101 @@ export default function TrackingPage() {
 
     const activeTrips = (trips ?? []).filter((t) => t.status !== "Cancelled")
 
+    // งานที่ถูกโยก "เข้า" แต่ละทริป (จับด้วย reassignedToTripId) พร้อมพิกัดจาก stop ต้นทาง
+    const wasMovedAway = (s: any) =>
+      !!s.reassignedToVehiclePlate && (s.outcome === "reassigned" || s.outcome === "driver-refused")
+    const incomingByTripId: Record<
+      string,
+      { siteName: string; lat?: number; lng?: number; fromPlate: string; refused: boolean }[]
+    > = {}
+    activeTrips.forEach((src) => {
+      ;(src.stops ?? []).forEach((s: any) => {
+        if (wasMovedAway(s) && s.reassignedToTripId && s.reassignedToTripId !== src.id) {
+          ;(incomingByTripId[s.reassignedToTripId] ??= []).push({
+            siteName: s.siteName,
+            lat: s.lat,
+            lng: s.lng,
+            fromPlate: src.vehiclePlate,
+            refused: s.outcome === "driver-refused",
+          })
+        }
+      })
+    })
+
     return activeTrips.map((trip) => {
       const deviceId = plateToDevice[trip.vehiclePlate]
       // โหมดดูย้อนหลัง: ไม่ใช้ตำแหน่งสด (collection ตำแหน่งเก็บแค่ล่าสุด ไม่ใช่รายวัน)
       const position = deviceId && isToday ? deviceToPos[deviceId] : undefined
       const trail = deviceId ? deviceToTrail[deviceId] ?? [] : []
 
-      const sortedStops = [...(trip.stops ?? [])].sort((a, b) => a.order - b.order)
+      const ownSorted = [...(trip.stops ?? [])].sort((a, b) => a.order - b.order)
+      const incoming = incomingByTripId[trip.id] ?? []
+      const maxOrder = ownSorted.reduce((m, s) => Math.max(m, s.order), 0)
+
+      // จุดที่คันนี้ต้องวิ่งจริง = งานของตัวเองที่ยังไม่ถูกโยกออก + งานที่โยกเข้ามา
+      const activeOwn = ownSorted.filter((s) => !wasMovedAway(s))
+      const routeStops = [
+        ...activeOwn.map((s) => ({ order: s.order, siteName: s.siteName, lat: s.lat, lng: s.lng })),
+        ...incoming.map((inc, i) => ({
+          order: maxOrder + i + 1,
+          siteName: inc.siteName,
+          lat: inc.lat,
+          lng: inc.lng,
+        })),
+      ]
+
       const statuses = computeStopStatuses(
-        sortedStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng })),
+        routeStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng })),
         trail
       )
+      const statusByOrder: Record<number, (typeof statuses)[number]> = {}
+      statuses.forEach((st) => (statusByOrder[st.order] = st))
       const arrivedAtByOrder: Record<number, number | null> = {}
       statuses.forEach((st) => (arrivedAtByOrder[st.order] = st.arrivedAt))
 
-      const stops: TrackingMapStop[] = sortedStops.map((s, i) => ({
+      const stops: TrackingMapStop[] = routeStops.map((s) => ({
         order: s.order,
         name: s.siteName,
         lat: s.lat,
         lng: s.lng,
-        arrived: statuses[i]?.arrived ?? false,
-        isCurrent: statuses[i]?.isCurrent ?? false,
+        arrived: statusByOrder[s.order]?.arrived ?? false,
+        isCurrent: statusByOrder[s.order]?.isCurrent ?? false,
       }))
 
       const arrivedCount = statuses.filter((s) => s.arrived).length
-      const totalStops = sortedStops.length
+      const totalStops = routeStops.length
+
+      // timeline: งานตัวเอง (ที่โยกออกจะมาร์คไว้) + งานที่โยกเข้า
+      const timeline: TimelineEntry[] = [
+        ...ownSorted.map((s: any) => {
+          const moved = wasMovedAway(s)
+          const st = moved ? undefined : statusByOrder[s.order]
+          return {
+            order: s.order,
+            name: s.siteName,
+            lat: s.lat,
+            lng: s.lng,
+            arrived: st?.arrived ?? false,
+            isCurrent: st?.isCurrent ?? false,
+            arrivedAt: st?.arrivedAt ?? null,
+            movedTo: moved ? s.reassignedToVehiclePlate : undefined,
+          }
+        }),
+        ...incoming.map((inc, i) => {
+          const order = maxOrder + i + 1
+          const st = statusByOrder[order]
+          return {
+            order,
+            name: inc.siteName,
+            lat: inc.lat,
+            lng: inc.lng,
+            arrived: st?.arrived ?? false,
+            isCurrent: st?.isCurrent ?? false,
+            arrivedAt: st?.arrivedAt ?? null,
+            incomingFrom: { plate: inc.fromPlate, refused: inc.refused },
+          }
+        }),
+      ]
 
       // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
       const origin =
@@ -234,7 +320,22 @@ export default function TrackingPage() {
           ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
           : OFFICE_LOCATION
 
-      const dailyDoc = deviceId ? deviceToDaily[deviceId] ?? null : null
+      // วันนี้ = คำนวณสรุปสดจาก merged stops (รวมงานที่โยก) ; ย้อนหลัง = ใช้ที่เก็บไว้
+      const stored = deviceId ? deviceToDaily[deviceId] ?? null : null
+      let dailyDoc: TrackingDailyDoc | null = stored
+      if (isToday && deviceId) {
+        const sum = computeDailySummary(trail, routeStops, origin)
+        dailyDoc = {
+          id: "",
+          date: selectedDate,
+          deviceId,
+          licensePlate: trip.vehiclePlate,
+          departedOfficeAt: sum.departedOfficeAt,
+          returnedOfficeAt: sum.returnedOfficeAt,
+          totalKm: sum.totalKm,
+          stops: sum.stops,
+        }
+      }
       const longStops = (dailyDoc?.stops ?? []).filter(
         (s) => s.dwellMin != null && s.dwellMin > LONG_DWELL_MIN
       ).length
@@ -262,9 +363,10 @@ export default function TrackingPage() {
         arrivedAtByOrder,
         daily: dailyDoc,
         longStops,
+        timeline,
       }
     })
-  }, [vehicles, positions, trails, daily, trips, settings, now, isToday])
+  }, [vehicles, positions, trails, daily, trips, settings, now, isToday, selectedDate])
 
   // เรียงคันที่ยังวิ่งอยู่ขึ้นก่อน
   const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
@@ -571,15 +673,20 @@ function TruckDetail({
           </div>
         </div>
 
-        {truck.stops.map((s) => {
-          const tag = s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
-          const tagCls = s.arrived ? "text-emerald-400" : s.isCurrent ? "text-accent" : "text-muted-foreground"
-          const arrivedAt = truck.arrivedAtByOrder[s.order]
+        {truck.timeline.map((s, idx) => {
           const t = truck.daily?.stops?.find((d) => d.order === s.order)
           const longStop = t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
+          const tag = s.movedTo ? "โยกออก" : s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
+          const tagCls = s.movedTo
+            ? "text-muted-foreground"
+            : s.arrived
+              ? "text-emerald-400"
+              : s.isCurrent
+                ? "text-accent"
+                : "text-muted-foreground"
           return (
-            <div key={s.order}>
-              {t?.travelMinFromPrev != null && (
+            <div key={`${s.order}-${idx}`}>
+              {!s.movedTo && t?.travelMinFromPrev != null && (
                 <div className="flex items-center gap-1 py-0.5 pl-8 text-[11px] text-muted-foreground">
                   <Navigation className="h-3 w-3 rotate-90 opacity-60" /> เดินทาง {t.travelMinFromPrev} นาที
                 </div>
@@ -587,27 +694,42 @@ function TruckDetail({
               <div
                 className={cn(
                   "flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none",
-                  longStop && "-mx-2 rounded-md bg-amber-500/10 px-2"
+                  longStop && "-mx-2 rounded-md bg-amber-500/10 px-2",
+                  s.movedTo && "opacity-50"
                 )}
               >
                 <div
                   className={cn(
                     "flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 text-xs font-bold",
-                    s.arrived
-                      ? "border-emerald-500 bg-emerald-500 text-white"
-                      : s.isCurrent
-                        ? "border-accent text-accent"
-                        : "border-border text-muted-foreground"
+                    s.movedTo
+                      ? "border-border text-muted-foreground"
+                      : s.arrived
+                        ? "border-emerald-500 bg-emerald-500 text-white"
+                        : s.isCurrent
+                          ? "border-accent text-accent"
+                          : s.incomingFrom
+                            ? "border-blue-400 text-blue-400"
+                            : "border-border text-muted-foreground"
                   )}
                 >
-                  {s.arrived ? "✓" : s.order}
+                  {s.movedTo ? "↦" : s.arrived ? "✓" : s.order}
                 </div>
                 <div className="flex-1">
-                  <div className="text-sm font-medium">{s.name}</div>
+                  <div className={cn("text-sm font-medium", s.movedTo && "line-through")}>
+                    {s.name}
+                    {s.incomingFrom && (
+                      <span className="ml-2 rounded bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-400">
+                        🔄 รับต่อจาก {s.incomingFrom.plate}
+                        {s.incomingFrom.refused ? " (คนขับเดิมปฏิเสธ)" : ""}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                    {s.arrived ? (
+                    {s.movedTo ? (
+                      <span className="text-blue-400">🔄 โยกให้ {s.movedTo} แล้ว — ไม่ใช่งานคันนี้</span>
+                    ) : s.arrived ? (
                       <>
-                        <Clock className="h-3 w-3" /> ถึง {arrivedAt ? thTime(arrivedAt) : "แล้ว"}
+                        <Clock className="h-3 w-3" /> ถึง {s.arrivedAt ? thTime(s.arrivedAt) : "แล้ว"}
                         {t?.dwellMin != null && (
                           <span className={cn(longStop && "font-semibold text-amber-400")}>
                             {" "}· จอด {t.dwellMin} นาที{longStop && " ⚠ นานผิดสังเกต"}
