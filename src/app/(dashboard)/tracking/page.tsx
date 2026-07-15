@@ -98,6 +98,7 @@ export default function TrackingPage() {
   const today = React.useMemo(() => trackingDateKey(), [])
   const [now, setNow] = React.useState<number>(() => Date.now())
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [syncInfo, setSyncInfo] = React.useState<{ ok: boolean; error?: string; detail?: string; synced?: number; skipped?: boolean } | null>(null)
 
   // อัปเดต "เวลาปัจจุบัน" ทุก 60 วิ (เพื่อคำนวณ GPS ออฟไลน์)
   React.useEffect(() => {
@@ -113,9 +114,11 @@ export default function TrackingPage() {
     const runSync = async () => {
       try {
         const token = await user.getIdToken()
-        await fetch("/api/tracking/sync", { headers: { Authorization: `Bearer ${token}` } })
-      } catch {
-        /* เงียบไว้ — หน้ายังแสดงข้อมูลล่าสุดจาก Firestore ได้ */
+        const res = await fetch("/api/tracking/sync", { headers: { Authorization: `Bearer ${token}` } })
+        const json = await res.json().catch(() => ({ ok: false, error: "bad-response" }))
+        if (!stopped) setSyncInfo({ ...json, ok: res.ok && json?.ok !== false })
+      } catch (e: any) {
+        if (!stopped) setSyncInfo({ ok: false, error: "network", detail: e?.message })
       }
     }
     runSync()
@@ -261,6 +264,29 @@ export default function TrackingPage() {
     }
   }, [trucks])
 
+  // วินิจฉัยว่าทำไมยังไม่เห็นตำแหน่งสด (แสดงเป็นแถบเตือนบอกสาเหตุตรง ๆ)
+  const diag: { tone: "bad" | "warn"; msg: string } | null = (() => {
+    if (positions.length > 0) return null // อ่านตำแหน่งได้แล้ว
+    if (!syncInfo) return null // กำลัง sync ครั้งแรก
+    if (syncInfo.ok) {
+      if ((syncInfo.synced ?? 0) > 0 || syncInfo.skipped)
+        return {
+          tone: "warn",
+          msg: "เซิร์ฟเวอร์ดึงตำแหน่งได้แล้ว แต่หน้าเว็บอ่านไม่ได้ — ต้อง Publish firestore.rules (vehiclePositions / vehiclePositionTrails ให้ allow read) ที่ Firebase Console",
+        }
+      return {
+        tone: "warn",
+        msg: "ยังไม่มีรถคันไหนจับคู่เลข GPS หรือ SinoTrack ไม่มีตำแหน่ง — ไปเมนู “ฟลีทรถและคนขับ” เพื่อจับคู่อุปกรณ์",
+      }
+    }
+    const e = syncInfo.error
+    if (e === "config") return { tone: "bad", msg: "ยังไม่ได้ตั้งค่า SINOTRACK_USER / SINOTRACK_PASSWORD บน Vercel (Environment Variables)" }
+    if (e === "admin-init") return { tone: "bad", msg: "ยังไม่ได้ตั้งค่า FIREBASE_SERVICE_ACCOUNT_BASE64 บน Vercel" }
+    if (e === "unauthorized") return { tone: "bad", msg: "สิทธิ์ไม่ผ่าน — ต้องล็อกอินเป็นแอดมิน/คนจัดรถ" }
+    if (e === "sinotrack") return { tone: "bad", msg: `เข้าสู่ระบบ SinoTrack ไม่สำเร็จ: ${syncInfo.detail ?? "ตรวจ user/รหัสผ่าน"}` }
+    return { tone: "bad", msg: `ดึงข้อมูลไม่สำเร็จ: ${e ?? "unknown"} ${syncInfo.detail ?? ""}` }
+  })()
+
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -275,6 +301,18 @@ export default function TrackingPage() {
           อัปเดตอัตโนมัติทุก 1–2 นาที
         </span>
       </div>
+
+      {diag && (
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm",
+            diag.tone === "bad" ? "bg-red-500/15 text-red-400" : "bg-amber-500/15 text-amber-400"
+          )}
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+          <span>{diag.msg}</span>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
