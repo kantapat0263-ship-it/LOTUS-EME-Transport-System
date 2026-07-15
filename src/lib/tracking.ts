@@ -160,6 +160,50 @@ export const OFFICE_LOCATION: LatLng = { lat: 14.093932911692894, lng: 100.68868
 /** จอด/แวะนานเกินค่านี้ (นาที) = ผิดสังเกต ควรตรวจสอบ */
 export const LONG_DWELL_MIN = 30
 
+/** จุดจอด 1 จุดที่ตรวจจับได้จาก trail (รถอยู่นิ่งในรัศมีแคบนาน ๆ) */
+export interface StopEvent {
+  lat: number
+  lng: number
+  startT: number
+  endT: number
+  durationMin: number
+}
+
+/**
+ * ตรวจจับ "จุดที่รถจอด/แวะ" จาก trail โดยตรง — จับกลุ่มจุดต่อเนื่องที่อยู่ในรัศมีแคบ (radiusM)
+ * ต่อเนื่องกันนานอย่างน้อย minMinutes นาที (ครอบคลุมจุดที่ไม่ใช่จุดงานด้วย เช่นแวะพักนอกเส้นทาง)
+ * คืนตำแหน่ง + เวลาเริ่ม/จบ + ระยะเวลาจอด (นาที)
+ */
+export function detectStops(
+  trail: TrailPoint[],
+  opts: { radiusM?: number; minMinutes?: number } = {}
+): StopEvent[] {
+  const radius = opts.radiusM ?? 120
+  const minMin = opts.minMinutes ?? 10
+  const pts = [...trail].filter((p) => p.t != null).sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+  const events: StopEvent[] = []
+  let i = 0
+  while (i < pts.length) {
+    let j = i
+    // ขยายกลุ่มตราบใดที่จุดถัดไปยังอยู่ในรัศมีของจุดเริ่มกลุ่ม
+    while (j + 1 < pts.length && haversineMeters(pts[i], pts[j + 1]) <= radius) j++
+    const durationMin = Math.round(((pts[j].t ?? 0) - (pts[i].t ?? 0)) / 60000)
+    if (j > i && durationMin >= minMin) {
+      events.push({
+        lat: pts[i].lat,
+        lng: pts[i].lng,
+        startT: pts[i].t!,
+        endT: pts[j].t!,
+        durationMin,
+      })
+      i = j + 1
+    } else {
+      i++
+    }
+  }
+  return events
+}
+
 // ---------------------------------------------------------------------------
 // สรุปรายวันต่อคัน — เวลาจอด/เดินทางแต่ละจุด + เข้า-ออกออฟฟิศ (คำนวณจาก trail)
 // ---------------------------------------------------------------------------

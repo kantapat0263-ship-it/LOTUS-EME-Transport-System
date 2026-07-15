@@ -24,9 +24,12 @@ import type {
 import {
   computeStopStatuses,
   computeDailySummary,
+  detectStops,
+  haversineMeters,
   isPositionStale,
   trackingDateKey,
   OFFICE_LOCATION,
+  OFFICE_RADIUS_M,
   LONG_DWELL_MIN,
   type TrailPoint,
 } from "@/lib/tracking"
@@ -53,6 +56,16 @@ interface TruckView {
   daily: TrackingDailyDoc | null
   longStops: number
   timeline: TimelineEntry[]
+  stopEvents: LongStopEvent[]
+}
+
+interface LongStopEvent {
+  lat: number
+  lng: number
+  durationMin: number
+  startT: number
+  /** จอดในรัศมีจุดงานไหม (true = จอดที่จุดงาน, false = จอดนอกจุดงาน = น่าสงสัยกว่า) */
+  nearJob: boolean
 }
 
 interface TimelineEntry {
@@ -340,6 +353,19 @@ export default function TrackingPage() {
         (s) => s.dwellMin != null && s.dwellMin > LONG_DWELL_MIN
       ).length
 
+      // จุดจอดนานผิดสังเกต (ตรวจจาก trail จริง รวมจุดนอกงาน) — ตัดจุดที่จอดที่ออฟฟิศออก
+      const stopEvents: LongStopEvent[] = detectStops(trail, { minMinutes: LONG_DWELL_MIN })
+        .filter((ev) => haversineMeters(ev, origin) > OFFICE_RADIUS_M)
+        .map((ev) => ({
+          lat: ev.lat,
+          lng: ev.lng,
+          durationMin: ev.durationMin,
+          startT: ev.startT,
+          nearJob: routeStops.some(
+            (s) => s.lat != null && s.lng != null && haversineMeters(ev, { lat: s.lat, lng: s.lng }) <= 250
+          ),
+        }))
+
       const stale = isToday && (position ? isPositionStale(position.positionTime, now) : true)
 
       let status: TruckStatus
@@ -364,6 +390,7 @@ export default function TrackingPage() {
         daily: dailyDoc,
         longStops,
         timeline,
+        stopEvents,
       }
     })
   }, [vehicles, positions, trails, daily, trips, settings, now, isToday, selectedDate])
@@ -628,6 +655,7 @@ function TruckDetail({
           trail={truck.trail}
           truck={pos ? { lat: pos.lat, lng: pos.lng } : null}
           origin={truck.origin}
+          stopEvents={truck.stopEvents}
         />
       </div>
 
@@ -635,8 +663,34 @@ function TruckDetail({
         <span className="inline-flex items-center gap-1.5">🏢 ออฟฟิศ (จุดเริ่มต้น)</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#5b7cfa" }} /> เส้นทางที่ควรวิ่ง</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#2fb6a0" }} /> เส้นทางที่วิ่งจริง</span>
+        {truck.stopEvents.length > 0 && <span className="inline-flex items-center gap-1.5">⏸ จุดจอดนาน</span>}
         {isToday && <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>}
       </div>
+
+      {truck.stopEvents.length > 0 && (
+        <div className="mx-4 mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs">
+          <div className="mb-1 font-semibold text-amber-400">⏸ จุดจอดนานผิดสังเกต ({truck.stopEvents.length})</div>
+          <div className="flex flex-col gap-0.5">
+            {truck.stopEvents.map((ev, i) => (
+              <div key={i} className="flex items-center gap-2 text-muted-foreground">
+                <span className={cn("font-bold tabular-nums", ev.nearJob ? "text-amber-400" : "text-red-400")}>
+                  จอด {ev.durationMin} นาที
+                </span>
+                <span>· เริ่ม {thTime(ev.startT)}</span>
+                <span>· {ev.nearJob ? "ที่จุดงาน" : "🔴 นอกจุดงาน"}</span>
+                <a
+                  className="ml-auto text-primary hover:underline"
+                  href={`https://www.google.com/maps/search/?api=1&query=${ev.lat},${ev.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  ดูตำแหน่ง
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {truck.status === "unmapped" && (
         <div className="mx-4 mt-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">

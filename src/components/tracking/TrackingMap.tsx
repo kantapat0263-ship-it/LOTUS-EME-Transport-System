@@ -12,6 +12,13 @@ export interface TrackingMapStop {
   isCurrent: boolean
 }
 
+export interface TrackingMapStopEvent {
+  lat: number
+  lng: number
+  durationMin: number
+  nearJob: boolean
+}
+
 export interface TrackingMapProps {
   apiKey?: string
   stops: TrackingMapStop[]
@@ -19,6 +26,8 @@ export interface TrackingMapProps {
   trail: { lat: number; lng: number }[]
   /** จุดออกรถ (คลัง/ออฟฟิศ) — ใช้เป็นต้นทางของเส้นทางที่ควรวิ่ง */
   origin?: { lat: number; lng: number } | null
+  /** จุดจอดนานผิดสังเกต — มาร์คด้วยหมุด ⏸ + ระยะเวลา */
+  stopEvents?: TrackingMapStopEvent[]
 }
 
 // โทนแผนที่เข้ม (ชุดเดียวกับ GroupingMap เพื่อความกลมกลืน)
@@ -42,7 +51,7 @@ const validLatLng = (s: { lat?: number; lng?: number }) => s.lat != null && s.ln
  *  - หมุดจุดงาน: เขียว = ถึงแล้ว, ส้ม = เป้าหมายปัจจุบัน, เทา = รอ
  *  - 🚚 = ตำแหน่งรถล่าสุด
  */
-export function TrackingMap({ apiKey, stops, truck, trail, origin }: TrackingMapProps) {
+export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents }: TrackingMapProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const overlaysRef = React.useRef<Array<google.maps.Marker | google.maps.Polyline>>([])
@@ -209,6 +218,29 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin }: TrackingMap
       hasPoint = true
     }
 
+    // จุดจอดนานผิดสังเกต (⏸ + ระยะเวลา) — นอกจุดงาน = แดง, ที่จุดงาน = ส้ม
+    ;(stopEvents ?? []).forEach((ev) => {
+      const pos = { lat: ev.lat, lng: ev.lng }
+      const marker = new google.maps.Marker({
+        position: pos,
+        map,
+        title: `จอด ${ev.durationMin} นาที${ev.nearJob ? " (ที่จุดงาน)" : " (นอกจุดงาน)"}`,
+        label: { text: `⏸${ev.durationMin}′`, color: "#fff", fontSize: "11px", fontWeight: "700" },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 15,
+          fillColor: ev.nearJob ? "#d98a00" : "#d64027",
+          fillOpacity: 0.95,
+          strokeColor: "#fff",
+          strokeWeight: 2,
+        },
+        zIndex: 900,
+      })
+      overlaysRef.current.push(marker)
+      bounds.extend(pos)
+      hasPoint = true
+    })
+
     // ออฟฟิศ (จุดเริ่มต้น)
     if (origin) {
       const officeMarker = new google.maps.Marker({
@@ -237,7 +269,7 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin }: TrackingMap
       })
       overlaysRef.current.push({ setMap: () => google.maps.event.removeListener(listener) } as any)
     }
-  }, [ready, stops, truck, trail, origin])
+  }, [ready, stops, truck, trail, origin, stopEvents])
 
   if (!apiKey) {
     return (
