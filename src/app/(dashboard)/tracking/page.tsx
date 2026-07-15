@@ -22,7 +22,6 @@ import type {
 import {
   computeStopStatuses,
   isPositionStale,
-  isOffRoute,
   trackingDateKey,
   type TrailPoint,
 } from "@/lib/tracking"
@@ -30,9 +29,9 @@ import { TrackingMap, type TrackingMapStop } from "@/components/tracking/Trackin
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { MapPin, AlertTriangle, WifiOff, Navigation, Clock } from "lucide-react"
+import { AlertTriangle, WifiOff, Navigation, Clock } from "lucide-react"
 
-type TruckStatus = "ok" | "offroute" | "stale" | "done" | "unmapped"
+type TruckStatus = "ok" | "stale" | "done" | "unmapped"
 
 interface TruckView {
   trip: Trip
@@ -43,15 +42,14 @@ interface TruckView {
   arrivedCount: number
   totalStops: number
   status: TruckStatus
-  offRoute: boolean
   stale: boolean
+  origin: { lat: number; lng: number } | null
   arrivedAtByOrder: Record<number, number | null>
 }
 
 const STATUS_META: Record<TruckStatus, { label: string; cls: string }> = {
   ok: { label: "ตามแผน", cls: "bg-emerald-500/15 text-emerald-400" },
   done: { label: "จบงานแล้ว", cls: "bg-emerald-500/15 text-emerald-400" },
-  offroute: { label: "⚠ ออกนอกเส้นทาง", cls: "bg-red-500/15 text-red-400" },
   stale: { label: "GPS ออฟไลน์", cls: "bg-amber-500/15 text-amber-400" },
   unmapped: { label: "ยังไม่จับคู่ GPS", cls: "bg-muted text-muted-foreground" },
 }
@@ -207,18 +205,19 @@ export default function TrackingPage() {
 
       const arrivedCount = statuses.filter((s) => s.arrived).length
       const totalStops = sortedStops.length
-      const plannedRoute = sortedStops
-        .filter((s) => s.lat != null && s.lng != null)
-        .map((s) => ({ lat: s.lat!, lng: s.lng! }))
+
+      // ต้นทาง = จุดออกรถของทริป (ถ้ามี) ไม่งั้นใช้คลังจาก settings
+      const origin =
+        trip.originLat != null && trip.originLng != null
+          ? { lat: trip.originLat, lng: trip.originLng }
+          : settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
+            ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
+            : null
 
       const stale = position ? isPositionStale(position.positionTime, now) : true
-      const hasPending = arrivedCount < totalStops
-      const offRoute =
-        !!position && !stale && hasPending && isOffRoute({ lat: position.lat, lng: position.lng }, plannedRoute)
 
       let status: TruckStatus
       if (!deviceId) status = "unmapped"
-      else if (offRoute) status = "offroute"
       else if (stale) status = "stale"
       else if (totalStops > 0 && arrivedCount >= totalStops) status = "done"
       else status = "ok"
@@ -232,15 +231,15 @@ export default function TrackingPage() {
         arrivedCount,
         totalStops,
         status,
-        offRoute,
         stale,
+        origin,
         arrivedAtByOrder,
       }
     })
-  }, [vehicles, positions, trails, trips, now])
+  }, [vehicles, positions, trails, trips, settings, now])
 
-  // เรียงคันมีปัญหาขึ้นก่อน
-  const order: Record<TruckStatus, number> = { offroute: 0, stale: 1, ok: 2, unmapped: 3, done: 4 }
+  // เรียงคันที่ยังวิ่งอยู่ขึ้นก่อน
+  const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
   const sortedTrucks = React.useMemo(
     () => [...trucks].sort((a, b) => order[a.status] - order[b.status]),
     [trucks]
@@ -259,7 +258,7 @@ export default function TrackingPage() {
       trucks: trucks.length,
       arrived,
       total,
-      offroute: trucks.filter((t) => t.status === "offroute").length,
+      moving: trucks.filter((t) => !t.stale && (t.position?.speed ?? 0) > 0).length,
       stale: trucks.filter((t) => t.status === "stale").length,
     }
   }, [trucks])
@@ -318,7 +317,7 @@ export default function TrackingPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard n={kpis.trucks} label="รถวิ่งงานวันนี้" />
         <KpiCard n={`${kpis.arrived}/${kpis.total}`} label="จุดงานที่ผ่านแล้ว" />
-        <KpiCard n={kpis.offroute} label="⚠ ออกนอกเส้นทาง" tone={kpis.offroute ? "bad" : undefined} />
+        <KpiCard n={kpis.moving} label="🟢 กำลังวิ่ง" />
         <KpiCard n={kpis.stale} label="GPS ออฟไลน์" tone={kpis.stale ? "warn" : undefined} />
       </div>
 
@@ -436,15 +435,17 @@ function TruckDetail({
           apiKey={apiKey}
           stops={truck.stops}
           trail={truck.trail}
-          truck={pos ? { lat: pos.lat, lng: pos.lng, offRoute: truck.offRoute } : null}
+          truck={pos ? { lat: pos.lat, lng: pos.lng } : null}
+          origin={truck.origin}
         />
       </div>
 
-      {truck.status === "offroute" && (
-        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-red-500/15 px-3 py-2 text-sm font-semibold text-red-400">
-          <AlertTriangle className="h-4 w-4" /> รถออกนอกเส้นทางที่ควรวิ่ง — ตรวจสอบกับคนขับ
-        </div>
-      )}
+      <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#5b7cfa" }} /> เส้นทางที่ควรวิ่ง</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#2fb6a0" }} /> เส้นทางที่วิ่งจริง</span>
+        <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>
+      </div>
+
       {truck.status === "unmapped" && (
         <div className="mx-4 mt-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
           ทะเบียน {truck.trip.vehiclePlate} ยังไม่ได้จับคู่กับเลข GPS — ไปที่เมนู “ฟลีทรถและคนขับ” เพื่อใส่เลขอุปกรณ์
