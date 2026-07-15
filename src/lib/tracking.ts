@@ -157,8 +157,8 @@ export const OFFICE_RADIUS_M = 250
 /** พิกัดออฟฟิศ (จุดเริ่มต้นเสมอ) — ใช้เมื่อไม่ได้ตั้ง warehouse ใน companySettings */
 export const OFFICE_LOCATION: LatLng = { lat: 14.093932911692894, lng: 100.68868332848953 }
 
-/** จอด/แวะนานเกินค่านี้ (นาที) = ผิดสังเกต ควรตรวจสอบ */
-export const LONG_DWELL_MIN = 30
+/** จอด/แวะนานเกินค่านี้ (นาที) = ผิดสังเกต ควรตรวจสอบ (คุมทั้งหมุดบนแผนที่ + คำเตือน timeline) */
+export const LONG_DWELL_MIN = 15
 
 /** จุดจอด 1 จุดที่ตรวจจับได้จาก trail (รถอยู่นิ่งในรัศมีแคบนาน ๆ) */
 export interface StopEvent {
