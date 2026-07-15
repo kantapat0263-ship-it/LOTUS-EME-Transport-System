@@ -25,6 +25,8 @@ import {
   computeStopStatuses,
   isPositionStale,
   trackingDateKey,
+  OFFICE_LOCATION,
+  LONG_DWELL_MIN,
   type TrailPoint,
 } from "@/lib/tracking"
 import { TrackingMap, type TrackingMapStop } from "@/components/tracking/TrackingMap"
@@ -48,6 +50,7 @@ interface TruckView {
   origin: { lat: number; lng: number } | null
   arrivedAtByOrder: Record<number, number | null>
   daily: TrackingDailyDoc | null
+  longStops: number
 }
 
 const STATUS_META: Record<TruckStatus, { label: string; cls: string }> = {
@@ -225,13 +228,16 @@ export default function TrackingPage() {
       const arrivedCount = statuses.filter((s) => s.arrived).length
       const totalStops = sortedStops.length
 
-      // ต้นทาง = จุดออกรถของทริป (ถ้ามี) ไม่งั้นใช้คลังจาก settings
+      // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
       const origin =
-        trip.originLat != null && trip.originLng != null
-          ? { lat: trip.originLat, lng: trip.originLng }
-          : settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
-            ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
-            : null
+        settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
+          ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
+          : OFFICE_LOCATION
+
+      const dailyDoc = deviceId ? deviceToDaily[deviceId] ?? null : null
+      const longStops = (dailyDoc?.stops ?? []).filter(
+        (s) => s.dwellMin != null && s.dwellMin > LONG_DWELL_MIN
+      ).length
 
       const stale = isToday && (position ? isPositionStale(position.positionTime, now) : true)
 
@@ -254,7 +260,8 @@ export default function TrackingPage() {
         stale,
         origin,
         arrivedAtByOrder,
-        daily: deviceId ? deviceToDaily[deviceId] ?? null : null,
+        daily: dailyDoc,
+        longStops,
       }
     })
   }, [vehicles, positions, trails, daily, trips, settings, now, isToday])
@@ -434,6 +441,9 @@ export default function TrackingPage() {
                     </div>
                     <div className="text-xs text-muted-foreground">
                       คนขับ {t.trip.driverName || "-"} · ผ่าน {t.arrivedCount}/{t.totalStops} จุด
+                      {t.longStops > 0 && (
+                        <span className="text-amber-400"> · ⚠ {t.longStops} จุดแวะนาน</span>
+                      )}
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                       <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
@@ -520,6 +530,7 @@ function TruckDetail({
       </div>
 
       <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">🏢 ออฟฟิศ (จุดเริ่มต้น)</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#5b7cfa" }} /> เส้นทางที่ควรวิ่ง</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#2fb6a0" }} /> เส้นทางที่วิ่งจริง</span>
         {isToday && <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>}
@@ -549,11 +560,23 @@ function TruckDetail({
       </div>
 
       <div className="px-4 pb-4">
+        {/* ออฟฟิศ = จุดเริ่มต้นเสมอ */}
+        <div className="flex items-center gap-3 border-b border-dashed border-border py-2.5">
+          <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-primary bg-primary/20 text-xs">🏢</div>
+          <div className="flex-1">
+            <div className="text-sm font-medium">ออฟฟิศ (จุดเริ่มต้น)</div>
+            <div className="text-xs text-muted-foreground">
+              ออกรถ {thTime(truck.daily?.departedOfficeAt)}
+            </div>
+          </div>
+        </div>
+
         {truck.stops.map((s) => {
           const tag = s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
           const tagCls = s.arrived ? "text-emerald-400" : s.isCurrent ? "text-accent" : "text-muted-foreground"
           const arrivedAt = truck.arrivedAtByOrder[s.order]
           const t = truck.daily?.stops?.find((d) => d.order === s.order)
+          const longStop = t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
           return (
             <div key={s.order}>
               {t?.travelMinFromPrev != null && (
@@ -561,7 +584,12 @@ function TruckDetail({
                   <Navigation className="h-3 w-3 rotate-90 opacity-60" /> เดินทาง {t.travelMinFromPrev} นาที
                 </div>
               )}
-              <div className="flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none">
+              <div
+                className={cn(
+                  "flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none",
+                  longStop && "-mx-2 rounded-md bg-amber-500/10 px-2"
+                )}
+              >
                 <div
                   className={cn(
                     "flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 text-xs font-bold",
@@ -576,11 +604,15 @@ function TruckDetail({
                 </div>
                 <div className="flex-1">
                   <div className="text-sm font-medium">{s.name}</div>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                     {s.arrived ? (
                       <>
                         <Clock className="h-3 w-3" /> ถึง {arrivedAt ? thTime(arrivedAt) : "แล้ว"}
-                        {t?.dwellMin != null && <span> · จอด {t.dwellMin} นาที</span>}
+                        {t?.dwellMin != null && (
+                          <span className={cn(longStop && "font-semibold text-amber-400")}>
+                            {" "}· จอด {t.dwellMin} นาที{longStop && " ⚠ นานผิดสังเกต"}
+                          </span>
+                        )}
                       </>
                     ) : s.isCurrent ? (
                       "รถกำลังมุ่งหน้า"
@@ -596,6 +628,17 @@ function TruckDetail({
             </div>
           )
         })}
+
+        {/* กลับถึงออฟฟิศ */}
+        {truck.daily?.returnedOfficeAt && (
+          <div className="flex items-center gap-3 py-2.5">
+            <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-emerald-500 bg-emerald-500/20 text-xs">🏁</div>
+            <div className="flex-1">
+              <div className="text-sm font-medium">กลับถึงออฟฟิศ</div>
+              <div className="text-xs text-emerald-400">{thTime(truck.daily.returnedOfficeAt)}</div>
+            </div>
+          </div>
+        )}
       </div>
     </Card>
   )

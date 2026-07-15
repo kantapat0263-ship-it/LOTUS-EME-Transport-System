@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey, computeDailySummary } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary, OFFICE_LOCATION } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -89,15 +89,16 @@ export async function GET(req: NextRequest) {
   const dateKey = trackingDateKey()
 
   // 1b) งานของแต่ละคันวันนี้ (plate → จุดงาน + ต้นทาง) สำหรับคำนวณสรุปรายวัน
-  let warehouse: { lat: number; lng: number } | null = null
+  // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
+  let office: { lat: number; lng: number } = OFFICE_LOCATION
   try {
     const cfg = await db.collection('companySettings').doc('default').get()
     const c = cfg.data()
     if (c?.warehouseLatitude != null && c?.warehouseLongitude != null) {
-      warehouse = { lat: Number(c.warehouseLatitude), lng: Number(c.warehouseLongitude) }
+      office = { lat: Number(c.warehouseLatitude), lng: Number(c.warehouseLongitude) }
     }
   } catch {
-    /* ไม่มีคลังก็ข้าม — office time จะเป็น null */
+    /* ใช้พิกัดออฟฟิศคงที่ */
   }
   const plateToJob: Record<string, { stops: any[]; origin: { lat: number; lng: number } | null }> = {}
   try {
@@ -105,10 +106,7 @@ export async function GET(req: NextRequest) {
     tripSnap.forEach((d) => {
       const t = d.data()
       if (t?.status === 'Cancelled' || !t?.vehiclePlate) return
-      const origin =
-        t.originLat != null && t.originLng != null
-          ? { lat: Number(t.originLat), lng: Number(t.originLng) }
-          : warehouse
+      const origin = office
       const stops = (t.stops ?? []).map((s: any) => ({
         order: s.order,
         siteName: s.siteName ?? '',

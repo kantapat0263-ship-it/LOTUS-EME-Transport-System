@@ -209,7 +209,26 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin }: TrackingMap
       hasPoint = true
     }
 
-    if (origin) bounds.extend(origin)
+    // ออฟฟิศ (จุดเริ่มต้น)
+    if (origin) {
+      const officeMarker = new google.maps.Marker({
+        position: origin,
+        map,
+        title: "ออฟฟิศ (จุดเริ่มต้น)",
+        label: { text: "🏢", fontSize: "16px" },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 13,
+          fillColor: "#4f6ef2",
+          fillOpacity: 1,
+          strokeColor: "#fff",
+          strokeWeight: 2,
+        },
+      })
+      overlaysRef.current.push(officeMarker)
+      bounds.extend(origin)
+      hasPoint = true
+    }
 
     if (hasPoint) {
       map.fitBounds(bounds, 60)
