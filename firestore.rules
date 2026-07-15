@@ -63,6 +63,14 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if false;
     }
+    match /trackingDaily/{id} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+    match /trackingMeta/{id} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
 
     // Global fallback
     match /{document=**} {
