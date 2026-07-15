@@ -7,8 +7,9 @@ import { trackingDateKey, computeDailySummary, OFFICE_LOCATION } from '@/lib/tra
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-/** จำนวนจุดสูงสุดที่เก็บใน trail ต่อคันต่อวัน (กัน doc โต — 1 จุด/นาที ~ ครอบคลุมทั้งวัน) */
-const MAX_TRAIL_POINTS = 720
+/** จำนวนจุดสูงสุดที่เก็บใน trail ต่อคันต่อวัน — 1 จุด/นาที × 24 ชม. = 1440 (doc ~43KB ยังเล็ก)
+ *  ต้องครอบคลุมช่วงบันทึกทั้งวัน (เช่น 05:00–20:00 = 900 จุด) ไม่งั้นช่วงเช้าจะถูกตัด */
+const MAX_TRAIL_POINTS = 1440
 
 /** กันยิงถี่เกิน (หลายคนเปิดหน้าติดตามพร้อมกัน) — ถ้าเพิ่ง sync ไปไม่ถึงเวลานี้ ให้ข้าม */
 const MIN_SYNC_INTERVAL_MS = 45_000
@@ -37,6 +38,14 @@ export async function GET(req: NextRequest) {
     const uid = await verifyStaffToken(authHeader)
     if (!uid) {
       return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+    }
+  }
+
+  // --- cron: บันทึกเฉพาะช่วงเวลาทำงาน 05:00–20:00 (เวลาไทย) ; คนเปิดหน้าดูตอนไหนก็ยังได้ ---
+  if (isCron) {
+    const thaiHour = new Date(Date.now() + 7 * 3600 * 1000).getUTCHours()
+    if (thaiHour < 5 || thaiHour >= 20) {
+      return NextResponse.json({ ok: true, skipped: true, reason: 'off-hours', thaiHour })
     }
   }
 
