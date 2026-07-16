@@ -43,7 +43,8 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { useToast } from "@/hooks/use-toast"
-import { Vehicle, Driver, UserProfile } from "@/types/models"
+import { Vehicle, Driver, UserProfile, VehiclePositionDoc } from "@/types/models"
+import { isPositionStale } from "@/lib/tracking"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
@@ -92,6 +93,47 @@ export default function FleetPage() {
   }, [user, isViewer])
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const { data: vehicles, isLoading: loadingVehicles } = useCollection<Vehicle>(vehiclesRef)
+
+  // สถานะ GPS ต่อคัน: ตำแหน่งล่าสุดที่ /api/tracking/sync เขียนไว้ → ใหม่พอ = ออนไลน์
+  const positionsRef = useMemoFirebase(() => collection(db, "vehiclePositions"), [db])
+  const { data: positions } = useCollection<VehiclePositionDoc>(positionsRef)
+  const [now, setNow] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // ไม่มี cron ดึงตำแหน่ง → ต้อง poll เองระหว่างเปิดหน้านี้ ไม่งั้นสถานะจะค้างเป็น "ออฟไลน์" ทั้งที่ GPS ทำงาน
+  React.useEffect(() => {
+    if (!user || isViewer) return
+    let stopped = false
+    const runSync = async () => {
+      try {
+        const token = await user.getIdToken()
+        await fetch("/api/tracking/sync", { headers: { Authorization: `Bearer ${token}` } })
+      } catch {
+        /* ดึงไม่ได้ → คงสถานะเดิมไว้ */
+      }
+    }
+    runSync()
+    const id = setInterval(() => {
+      if (!stopped) runSync()
+    }, 60_000)
+    return () => {
+      stopped = true
+      clearInterval(id)
+    }
+  }, [user, isViewer])
+  const posByDevice = React.useMemo(() => {
+    const m: Record<string, VehiclePositionDoc> = {}
+    ;(positions ?? []).forEach((p) => (m[p.deviceId] = p))
+    return m
+  }, [positions])
+  /** ออนไลน์ = มีตำแหน่งล่าสุดและยังไม่เก่า (ยังไม่เคยส่งตำแหน่งเลย = ออฟไลน์) */
+  const gpsOnline = (deviceId: string) => {
+    const p = posByDevice[deviceId]
+    return !!p && !isPositionStale(p.positionTime, now)
+  }
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
@@ -283,7 +325,16 @@ export default function FleetPage() {
                 <Card key={v.id} className="relative overflow-hidden group hover:border-accent/50 transition-all">
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-start">
-                      <Badge variant="outline" className="mb-2 uppercase tracking-wider text-[10px]">{v.type}</Badge>
+                      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                        <Badge variant="outline" className="uppercase tracking-wider text-[10px]">{v.type}</Badge>
+                        {/* ผูก GPS ไว้เท่านั้นถึงโชว์ — ไม่ได้ผูก = ไม่โชว์อะไร */}
+                        {v.gpsDeviceId &&
+                          (gpsOnline(v.gpsDeviceId) ? (
+                            <Badge className="border-none bg-emerald-500/20 text-[10px] text-emerald-400">🟢 GPS ออนไลน์</Badge>
+                          ) : (
+                            <Badge className="border-none bg-muted text-[10px] text-muted-foreground">⚪ GPS ออฟไลน์</Badge>
+                          ))}
+                      </div>
                       {!isViewer && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
