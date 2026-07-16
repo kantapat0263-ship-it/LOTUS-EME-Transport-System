@@ -26,6 +26,42 @@
 
 ---
 
+## ระบบติดตามรถ GPS (SinoTrack) — subsystem ใหม่ (deploy แล้ว, 2026-07-16)
+
+### ที่มา
+ดึงพิกัดรถจาก **SinoTrack** (บัญชี `lotuseme`, server 101) เข้าระบบเราเอง โดย reverse-engineer เว็บ gpsgo (ไม่มี API ทางการ) — พิสูจน์แล้วดึงพิกัดจริงได้ → ทำเมนู "ติดตามรถวันนี้"
+
+### สถาปัตยกรรม (สำคัญ)
+- **ไม่มี cron ดึงตำแหน่ง!** ตำแหน่งอัปเดตเฉพาะตอนมีคน (staff) เปิดหน้าที่ **poll `/api/tracking/sync` เองทุก 60 วิ** (หน้า `tracking` + `fleet` ทำแบบนี้) → server login SinoTrack + เขียน `vehiclePositions/{deviceId}` ให้ แล้ว subscription ฝั่ง client อัปเดตเอง
+  - **ผลลัพธ์:** ถ้าไม่มีใครเปิดหน้าพวกนี้เลย ข้อมูลจะค้างเก่า → ทุกอย่างขึ้น "ออฟไลน์". หน้าไหนอยากได้สถานะสด **ต้อง poll `/api/tracking/sync` เอง** (ดูตัวอย่างใน `fleet/page.tsx`)
+  - **viewer poll ไม่ได้** (API จำกัด staff ผ่าน `requireStaff`) → เห็นแค่ข้อมูลล่าสุดที่ staff sync ไว้
+- `vehiclePositions/{deviceId}` เก็บ **ตำแหน่งล่าสุดเท่านั้น** (ไม่ใช่รายวัน) → โหมดดูย้อนหลังไม่ใช้ตำแหน่งสด
+- `Vehicle.gpsDeviceId` = ผูกทะเบียนกับ deviceId ของ SinoTrack (ตั้งในหน้า fleet ตอนเพิ่ม/แก้รถ)
+
+### ฟิลด์ที่ ST-902 คืนจริง (ตรวจ 2026-07-16 — สำคัญเวลาจะทำฟีเจอร์เพิ่ม)
+GetLastPosition คืน: พิกัด/ความเร็ว/ทิศ/เวลา + `nMileage` (เมตร) + `nAlarmState` (bitmask) — **มีค่าจริง**
+**=0/ว่างเสมอ** (อย่าเสียเวลาทำฟีเจอร์จากพวกนี้): `nFuel`, `nTemp`, `nGSMSignal`, `nGPSSignal`, `strOther`
+**`nCarState`** เป็น bitmask แต่ **ล็อตนี้ไม่เซ็ตบิตเครื่องติด** (รถวิ่ง 37 กม./ชม. ยัง =0) → **ACC/เครื่องติด-ดับ ดึงไม่ได้**
+บิตที่ถอดจาก gpsgo.js: `nAlarmState` → ตัดไฟ/แบตต่ำ=`32768`, overspeed=(speed>120 || bit `64`), น้ำมันรั่ว=1048576
+
+### 3 ฟีเจอร์ค่าเพิ่มจาก GPS (deploy แล้ว — commit `bde9165`, `7031345`)
+1. **แจ้งเตือน "GPS ถูกถอด/ตัดไฟ"** (จับคนแอบถอด) — บิต 32768 ค้างในรายงานล่าสุด → จับได้แม้ตอนนี้ offline แล้ว. โชว์ toast แดง + banner + badge + ดันคันขึ้นบนสุด. **caveat: ยังไม่เคยเห็นบิตนี้ยิงจริง** (ตอน capture nAlarmState=0) — ฟีเจอร์พร้อม แต่จะยิงก็ต่อเมื่ออุปกรณ์รายงานจริง
+2. **แจ้งเตือน "ความเร็วเกิน"** — เกณฑ์ **ปรับได้ในเมนูตั้งค่าระบบ** (`companySettings.overspeedLimitKmh`, default 90) + honor bit 64 ของอุปกรณ์. via เกณฑ์เราเอง **ทำงานแน่นอน** (มี speed จริง)
+3. **เลขไมล์สะสม** (`nMileage` เมตร→กม.) โชว์ในหัวรายละเอียดหน้า tracking
+
+### ป้ายสถานะ GPS ในหน้า fleet (deploy แล้ว — commit `8542525`)
+การ์ดรถโชว์ 🟢 GPS ออนไลน์ / ⚪ ออฟไลน์ **เฉพาะคันที่ผูก `gpsDeviceId`** (ไม่ผูก = ไม่โชว์อะไร). ออนไลน์ = มี position ล่าสุด + ไม่ stale (ใช้ `isPositionStale` ตัวเดียวกับหน้า tracking)
+
+### ไฟล์สำคัญ (GPS)
+- `src/lib/sinotrack.ts` — login SinoTrack + `toVehiclePositions` (แปลง raw → พร้อม alarmState/mileage) [server-only, มี crypto]
+- `src/lib/tracking.ts` (+`tracking.test.ts`, client-safe pure) — helpers: `isPositionStale`, `isPowerCut(32768)`, `isOverspeed(speed,alarmState,threshold)`, `mileageKm`, `OVERSPEED_KMH`, `computeStopStatuses`, `computeDailySummary`, `detectStops` ฯลฯ
+- `src/app/api/tracking/sync/route.ts` — poll endpoint (staff only) เขียน `vehiclePositions`
+- `src/app/api/tracking/devices/route.ts` — รายชื่อ device จาก SinoTrack (ให้ dropdown ผูกทะเบียน)
+- `src/app/(dashboard)/tracking/page.tsx` — หน้าติดตามรถ (แผนที่ + trail + KPI + แจ้งเตือน)
+- scripts ตรวจ/ดีบัก: `test-sinotrack-live.ts`, `list-gps-devices.ts`, `dump-gps-fields.ts`
+
+---
+
 ## ฟีเจอร์ที่เพิ่งทำ (deploy ขึ้น production แล้ว)
 
 ### ปัญหาราก
