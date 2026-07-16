@@ -45,6 +45,8 @@ export interface CompanySetting {
   googleMapsApiKeyReference?: string;
   dieselPrice?: number;
   defaultFuelRate?: number;
+  /** เกณฑ์ความเร็วเกิน (กม./ชม.) สำหรับเตือนในเมนูติดตามรถ */
+  overspeedLimitKmh?: number;
   fuelSettingsUpdatedAt?: any;
   fuelSettingsUpdatedBy?: string;
   createdAt?: any;

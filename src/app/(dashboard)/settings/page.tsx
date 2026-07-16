@@ -49,6 +49,7 @@ export default function SettingsPage() {
     googleMapsApiKeyReference: "",
     dieselPrice: 32.50,
     defaultFuelRate: 10,
+    overspeedLimitKmh: 90,
     requestOpenTime: "08:00",
     requestCloseTime: "17:00"
   })
@@ -62,6 +63,7 @@ export default function SettingsPage() {
         googleMapsApiKeyReference: settings.googleMapsApiKeyReference || "",
         dieselPrice: settings.dieselPrice || 32.50,
         defaultFuelRate: settings.defaultFuelRate || 10,
+        overspeedLimitKmh: (settings as any).overspeedLimitKmh || 90,
         requestOpenTime: (settings as any).requestOpenTime || "08:00",
         requestCloseTime: (settings as any).requestCloseTime || "17:00"
       })
@@ -292,13 +294,24 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="defaultFuelRate">อัตราสิ้นเปลืองมาตรฐาน (กม./ลิตร)</Label>
-                <Input 
-                  id="defaultFuelRate" 
+                <Input
+                  id="defaultFuelRate"
                   type="number"
                   step="0.1"
                   value={formData.defaultFuelRate}
                   onChange={(e) => setFormData({...formData, defaultFuelRate: parseFloat(e.target.value) || 0})}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="overspeedLimitKmh">เกณฑ์ความเร็วเกิน (กม./ชม.)</Label>
+                <Input
+                  id="overspeedLimitKmh"
+                  type="number"
+                  step="5"
+                  value={formData.overspeedLimitKmh}
+                  onChange={(e) => setFormData({...formData, overspeedLimitKmh: parseFloat(e.target.value) || 0})}
+                />
+                <p className="text-xs text-muted-foreground">รถวิ่งเกินค่านี้จะขึ้นเตือน "ความเร็วเกิน" ในเมนูติดตามรถ</p>
               </div>
             </div>
           </CardContent>

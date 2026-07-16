@@ -31,6 +31,7 @@ import {
   isPowerCut,
   isOverspeed,
   mileageKm,
+  OVERSPEED_KMH,
   trackingDateKey,
   OFFICE_LOCATION,
   OFFICE_RADIUS_M,
@@ -222,6 +223,7 @@ export default function TrackingPage() {
   const { data: settings } = useDoc<CompanySetting>(settingsRef)
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference
+  const overspeedLimit = settings?.overspeedLimitKmh || OVERSPEED_KMH
 
   // ---- ประกอบข้อมูลรถแต่ละคันที่มีงานวันนี้ ----
   const trucks = React.useMemo<TruckView[]>(() => {
@@ -385,7 +387,8 @@ export default function TrackingPage() {
       // - ตัดไฟ/ถอด GPS: บิตค้างในรายงานล่าสุด → จับได้แม้ตอนนี้ offline แล้ว
       // - ความเร็วเกิน: ดูจากค่าสด → เฉพาะตอนยัง online
       const powerCut = isToday && !!position && isPowerCut(position.alarmState ?? 0)
-      const overspeed = isToday && !stale && !!position && isOverspeed(position.speed, position.alarmState ?? 0)
+      const overspeed =
+        isToday && !stale && !!position && isOverspeed(position.speed, position.alarmState ?? 0, overspeedLimit)
       const mKm = position ? mileageKm(position.mileage ?? 0) : 0
 
       let status: TruckStatus
@@ -416,7 +419,7 @@ export default function TrackingPage() {
         mileageKm: mKm,
       }
     })
-  }, [vehicles, positions, trails, daily, trips, settings, now, isToday, selectedDate])
+  }, [vehicles, positions, trails, daily, trips, settings, now, isToday, selectedDate, overspeedLimit])
 
   // เรียง: คันมีปัญหาสำคัญ (ตัดไฟ/ความเร็วเกิน) ขึ้นก่อน แล้วตามสถานะ
   const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
