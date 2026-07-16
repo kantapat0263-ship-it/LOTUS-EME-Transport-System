@@ -157,6 +157,8 @@ export async function GET(req: NextRequest) {
             speed: p.speed,
             direction: p.direction,
             positionTime: p.time, // เวลาที่ GPS รายงาน (ms)
+            alarmState: p.alarmState, // bitmask (32768=ตัดไฟ, 64=ความเร็วเกิน)
+            mileage: p.mileage, // ระยะสะสมจากอุปกรณ์ (เมตร)
             updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }

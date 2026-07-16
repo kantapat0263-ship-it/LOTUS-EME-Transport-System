@@ -28,6 +28,9 @@ import {
   detectStops,
   haversineMeters,
   isPositionStale,
+  isPowerCut,
+  isOverspeed,
+  mileageKm,
   trackingDateKey,
   OFFICE_LOCATION,
   OFFICE_RADIUS_M,
@@ -58,6 +61,9 @@ interface TruckView {
   longStops: number
   timeline: TimelineEntry[]
   stopEvents: LongStopEvent[]
+  powerCut: boolean
+  overspeed: boolean
+  mileageKm: number
 }
 
 interface LongStopEvent {
@@ -137,6 +143,7 @@ export default function TrackingPage() {
   const [syncInfo, setSyncInfo] = React.useState<{ ok: boolean; error?: string; detail?: string; synced?: number; skipped?: boolean } | null>(null)
   const { toast } = useToast()
   const shownArrivalsRef = React.useRef<Set<string>>(new Set())
+  const shownPowerCutRef = React.useRef<Set<string>>(new Set())
 
   // สิทธิ์ผู้ใช้ — viewer ดูได้อย่างเดียว (ไม่ยิง sync ที่ต้องใช้สิทธิ์ staff, ไม่โชว์ diag สิทธิ์)
   const profileRef = useMemoFirebase(() => (db && user ? doc(db, "users", user.uid) : null), [db, user])
@@ -374,6 +381,13 @@ export default function TrackingPage() {
 
       const stale = isToday && (position ? isPositionStale(position.positionTime, now) : true)
 
+      // แจ้งเตือนจากอุปกรณ์ (วันนี้เท่านั้น)
+      // - ตัดไฟ/ถอด GPS: บิตค้างในรายงานล่าสุด → จับได้แม้ตอนนี้ offline แล้ว
+      // - ความเร็วเกิน: ดูจากค่าสด → เฉพาะตอนยัง online
+      const powerCut = isToday && !!position && isPowerCut(position.alarmState ?? 0)
+      const overspeed = isToday && !stale && !!position && isOverspeed(position.speed, position.alarmState ?? 0)
+      const mKm = position ? mileageKm(position.mileage ?? 0) : 0
+
       let status: TruckStatus
       if (!deviceId) status = "unmapped"
       else if (!isToday) status = totalStops > 0 && arrivedCount >= totalStops ? "done" : "ok"
@@ -397,14 +411,18 @@ export default function TrackingPage() {
         longStops,
         timeline,
         stopEvents,
+        powerCut,
+        overspeed,
+        mileageKm: mKm,
       }
     })
   }, [vehicles, positions, trails, daily, trips, settings, now, isToday, selectedDate])
 
-  // เรียงคันที่ยังวิ่งอยู่ขึ้นก่อน
+  // เรียง: คันมีปัญหาสำคัญ (ตัดไฟ/ความเร็วเกิน) ขึ้นก่อน แล้วตามสถานะ
   const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
+  const priority = (t: TruckView) => (t.powerCut ? -2 : t.overspeed ? -1 : order[t.status])
   const sortedTrucks = React.useMemo(
-    () => [...trucks].sort((a, b) => order[a.status] - order[b.status]),
+    () => [...trucks].sort((a, b) => priority(a) - priority(b)),
     [trucks]
   )
 
@@ -422,6 +440,15 @@ export default function TrackingPage() {
       if (ret && now - ret < 5 * 60 * 1000 && !shownArrivalsRef.current.has(t.trip.id)) {
         shownArrivalsRef.current.add(t.trip.id)
         toast({ title: "🏢 รถกลับถึงออฟฟิศแล้ว", description: `${t.trip.vehiclePlate} · เวลา ${thTime(ret)}` })
+      }
+      // แจ้งเตือน GPS ถูกถอด/ตัดไฟ (ครั้งเดียวต่อคันต่อเซสชัน)
+      if (t.powerCut && !shownPowerCutRef.current.has(t.trip.id)) {
+        shownPowerCutRef.current.add(t.trip.id)
+        toast({
+          variant: "destructive",
+          title: "🔌 GPS ถูกถอด/ตัดไฟ!",
+          description: `${t.trip.vehiclePlate} · คนขับ ${t.trip.driverName || "-"} — ตรวจสอบด่วน`,
+        })
       }
     })
   }, [trucks, now, toast, isToday])
@@ -570,8 +597,14 @@ export default function TrackingPage() {
                       selectedId === t.trip.id && "bg-muted/60 shadow-[inset_3px_0_0_hsl(var(--accent))]"
                     )}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-bold">{t.trip.vehiclePlate}</span>
+                      {t.powerCut && (
+                        <Badge className="border-none bg-red-500/20 text-[10px] text-red-400">🔌 ถูกถอด/ตัดไฟ</Badge>
+                      )}
+                      {t.overspeed && (
+                        <Badge className="border-none bg-orange-500/20 text-[10px] text-orange-400">⚡ ความเร็วเกิน</Badge>
+                      )}
                       <Badge className={cn("ml-auto border-none text-[10px]", meta.cls)}>{meta.label}</Badge>
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -643,16 +676,28 @@ function TruckDetail({
                 <WifiOff className="h-3.5 w-3.5" /> ข้อมูลล่าสุด {thTime(pos?.positionTime)}
               </span>
             ) : pos && pos.speed > 0 ? (
-              <span className="text-emerald-400">🟢 วิ่ง {pos.speed} กม./ชม.</span>
+              truck.overspeed ? (
+                <span className="font-semibold text-orange-400">⚡ วิ่ง {pos.speed} กม./ชม. (เกิน)</span>
+              ) : (
+                <span className="text-emerald-400">🟢 วิ่ง {pos.speed} กม./ชม.</span>
+              )
             ) : (
               <span>⚪ จอดอยู่</span>
             )
           ) : (
             "ยังไม่จับคู่ GPS กับทะเบียนนี้"
           )}
+          {truck.mileageKm > 0 ? ` · 📏 ${truck.mileageKm.toLocaleString()} กม.สะสม` : ""}
           {truck.deviceId ? ` · GPS #${truck.deviceId}` : ""}
         </span>
       </CardHeader>
+
+      {truck.powerCut && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-red-500/15 px-3 py-2.5 text-sm font-semibold text-red-400">
+          <AlertTriangle className="h-4 w-4 flex-none" />
+          🔌 GPS ถูกถอด/ตัดไฟ — คนขับอาจแอบถอดเพื่อไม่ให้ติดตาม ตรวจสอบด่วน
+        </div>
+      )}
 
       <div className="h-[340px] w-full bg-muted/20 p-2">
         <TrackingMap

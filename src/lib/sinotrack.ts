@@ -139,6 +139,10 @@ export interface VehiclePosition {
   direction: number // nDirection (องศา)
   /** เวลาตำแหน่งล่าสุด (unix ms) */
   time: number
+  /** สถานะแจ้งเตือน (bitmask) — บิต 32768 = ตัดไฟ/แบตต่ำ, บิต 64 = ความเร็วเกิน */
+  alarmState: number
+  /** ระยะสะสมจากอุปกรณ์ (เมตร) */
+  mileage: number
   carNum?: string // strCarNum (ถ้ามี)
 }
 
@@ -152,6 +156,8 @@ export function toVehiclePositions(res: AppJsonResult): VehiclePosition[] {
       speed: Number(r.nSpeed ?? 0),
       direction: Number(r.nDirection ?? 0),
       time: Number(r.nTime ?? 0) * 1000, // วินาที → ms
+      alarmState: Number(r.nAlarmState ?? 0),
+      mileage: Number(r.nMileage ?? 0),
       carNum: r.strCarNum ? String(r.strCarNum) : undefined,
     }))
 }

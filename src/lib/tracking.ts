@@ -126,6 +126,33 @@ export function isOffRoute(
   return d != null && d > threshold
 }
 
+// ---------------------------------------------------------------------------
+// แจ้งเตือนจากอุปกรณ์ (nAlarmState bitmask) + ความเร็วเกิน + ระยะสะสม
+// ถอดบิตจากแพลตฟอร์ม SinoTrack: isLowPowerAlarm=32768, isOverSpeed=(speed>120 || bit64)
+// ---------------------------------------------------------------------------
+
+/** บิตแจ้งเตือน "ตัดไฟ/แบตต่ำ" (GPS ถูกถอด/ไฟหาย → รันแบตสำรอง) */
+export const ALARM_POWER_CUT = 32768
+/** บิตแจ้งเตือน "ความเร็วเกิน" จากตัวอุปกรณ์ */
+export const ALARM_OVERSPEED = 64
+/** เกณฑ์ความเร็วเกิน (กม./ชม.) ฝั่งเรา — ปรับได้ */
+export const OVERSPEED_KMH = 90
+
+/** GPS ถูกถอด/ตัดไฟไหม (จาก nAlarmState) */
+export function isPowerCut(alarmState: number): boolean {
+  return (alarmState & ALARM_POWER_CUT) !== 0
+}
+
+/** ความเร็วเกินไหม — เกินเกณฑ์เรา หรืออุปกรณ์แจ้งเตือน overspeed */
+export function isOverspeed(speed: number, alarmState = 0, threshold = OVERSPEED_KMH): boolean {
+  return speed > threshold || (alarmState & ALARM_OVERSPEED) !== 0
+}
+
+/** ระยะสะสมจากอุปกรณ์ (เมตร) → กม. (ปัดทศนิยม 0) */
+export function mileageKm(mileageMeters: number): number {
+  return Math.round((mileageMeters || 0) / 1000)
+}
+
 /** GPS ออฟไลน์/ข้อมูลเก่าไหม (positionTime เป็น unix ms) */
 export function isPositionStale(
   positionTimeMs: number,

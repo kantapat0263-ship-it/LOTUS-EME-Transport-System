@@ -134,6 +134,8 @@ export interface VehiclePositionDoc {
   speed: number; // กม./ชม.
   direction: number; // องศา
   positionTime: number; // เวลาที่ GPS รายงาน (unix ms)
+  alarmState?: number; // bitmask แจ้งเตือน (32768=ตัดไฟ, 64=ความเร็วเกิน)
+  mileage?: number; // ระยะสะสมจากอุปกรณ์ (เมตร)
   updatedAt?: any;
 }
 
