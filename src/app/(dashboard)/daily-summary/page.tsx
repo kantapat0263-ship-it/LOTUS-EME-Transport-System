@@ -40,8 +40,8 @@ import {
   DialogFooter
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Trip, Driver, TripStop, StopOutcome } from "@/types/models"
-import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, type DriverStat } from "@/lib/calculations"
+import { Trip, Driver, Vehicle, TripStop, StopOutcome } from "@/types/models"
+import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -68,6 +68,9 @@ export default function DailySummaryPage() {
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: driversData } = useCollection<Driver>(driversRef)
+  // รายชื่อรถ — สำหรับ "เปลี่ยนรถ" ในแผงปิดผลงานจริง (รถเสีย/ใช้ไม่ได้ แต่งาน+คนขับเดิม)
+  const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
+  const { data: vehiclesData } = useCollection<Vehicle>(vehiclesRef)
 
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
@@ -290,7 +293,10 @@ export default function DailySummaryPage() {
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
         const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
         return {
-          driverName: trip.driverName,
+          // คนขับจริง (ขับแทน) มีผลในข้อความ LINE ด้วย — โชว์คนที่ขับจริง
+          driverName: trip.actualDriverName
+            ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
+            : trip.driverName,
           vehiclePlate: trip.vehiclePlate,
           driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`,
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
@@ -347,7 +353,10 @@ export default function DailySummaryPage() {
       const outgoingTo = Array.from(new Set(outgoing.map((s: any) =>
         s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
       ).filter(Boolean)))
-      let line = `🚛 ${trip.driverName} (${trip.vehiclePlate})`
+      const shownDriver = trip.actualDriverName
+        ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
+        : trip.driverName
+      let line = `🚛 ${shownDriver} (${trip.vehiclePlate})`
       // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
       if (incoming.length > 0) {
         const from = incomingFrom.length > 0 ? ` (จาก ${incomingFrom.join(', ')})` : ''
@@ -425,6 +434,101 @@ export default function DailySummaryPage() {
         updatedAt: serverTimestamp(),
       })
     }
+  }
+
+  // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
+  // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
+  const setActualDriver = (tripId: string, driverId: string) => {
+    const name = driverId ? (driversData?.find(d => d.id === driverId)?.name || "") : ""
+    const target = trips.find(t => t.id === tripId)
+    const prevActualDriverId = target?.actualDriverId // อ่านก่อนเขียนทับ (ใช้ตอน revert)
+    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, actualDriverId: driverId, actualDriverName: name } : t)))
+    if (db) {
+      updateDocumentNonBlocking(doc(db, "trips", tripId), {
+        actualDriverId: driverId,
+        actualDriverName: name,
+        updatedAt: serverTimestamp(),
+      })
+    }
+
+    // ---- ลิงก์อัตโนมัติ: คนขับแทนมีทริปของตัวเองวันเดียวกัน = ขับสองคันพร้อมกันไม่ได้ ----
+    if (driverId && target) {
+      // งานของคนขับแทนที่ยัง "ตามแผน" → เสนอโยกมาลงรถคันนี้ทั้งหมดในคลิกเดียว
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === driverId)) {
+        const movable = (own.stops || []).filter(s => !s.outcome || s.outcome === 'delivered')
+        if (movable.length === 0) continue
+        const ok = window.confirm(
+          `${name} มีงานของตัวเอง ${movable.length} จุด บนรถ ${own.vehiclePlate}\n` +
+          `โยกงานทั้งหมดมาลงรถ ${target.vehiclePlate} อัตโนมัติเลยไหม?\n\n` +
+          `(กม./เครดิตจะย้ายตามมาให้ ${name} เอง — กด Cancel ถ้ารถ ${own.vehiclePlate} มีคนอื่นขับ)`
+        )
+        if (!ok) continue
+        const nowIso = new Date().toISOString()
+        applyStops(own.id, (own.stops || []).map(s =>
+          (!s.outcome || s.outcome === 'delivered')
+            ? {
+                ...stripOutcome(s),
+                outcome: 'reassigned' as StopOutcome,
+                reassignedToTripId: target.id,
+                reassignedToVehiclePlate: target.vehiclePlate,
+                reassignedToDriverName: name,
+                outcomeRecordedBy: recordedBy,
+                outcomeAt: nowIso,
+              }
+            : s
+        ))
+        toast({ title: "🔗 โยกงานให้อัตโนมัติแล้ว", description: `${movable.length} จุดของ ${name} ย้ายมาลงรถ ${target.vehiclePlate}` })
+      }
+    }
+
+    // ---- ยกเลิกขับแทน → เสนอเอางานที่เคยโยกมาอัตโนมัติ กลับคืนทริปเดิม ----
+    if (!driverId && prevActualDriverId) {
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === prevActualDriverId)) {
+        const moved = (own.stops || []).filter(s => s.outcome === 'reassigned' && s.reassignedToTripId === tripId)
+        if (moved.length === 0) continue
+        const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
+        if (!ok) continue
+        applyStops(own.id, (own.stops || []).map(s =>
+          (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
+        ))
+        toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
+      }
+    }
+  }
+
+  // เปลี่ยนรถของทริป (รถเสีย/ใช้ไม่ได้ — งาน+คนขับเดิม แค่สลับคันรถ)
+  // ทุกอย่างผูกกับทะเบียน → ใบงาน/ข้อความ LINE/ติดตาม GPS เปลี่ยนตามอัตโนมัติ
+  const changeVehicle = (tripId: string, vehicleId: string) => {
+    if (!vehicleId) return
+    const trip = trips.find(t => t.id === tripId)
+    const v = vehiclesData?.find(x => x.id === vehicleId)
+    if (!trip || !v || v.licensePlate === trip.vehiclePlate) return
+    const ok = window.confirm(
+      `เปลี่ยนรถของทริป ${trip.driverName} จาก ${trip.vehiclePlate} → ${v.licensePlate} ?\n` +
+      `(ใบงาน / ข้อความ LINE / ติดตาม GPS จะเปลี่ยนตามทันที และคิดค่าน้ำมันตามอัตราของรถคันใหม่)`
+    )
+    if (!ok) return
+    // ค่าน้ำมันคิดใหม่ตามอัตราสิ้นเปลืองของรถคันใหม่ (ราคาดีเซลใช้ค่าที่ freeze ไว้กับทริปเดิม)
+    const newRate = v.fuelRate && v.fuelRate > 0 ? v.fuelRate : trip.fuelRateUsed
+    const patch: any = {
+      vehicleId: v.id,
+      vehiclePlate: v.licensePlate,
+      vehicleType: v.type,
+    }
+    if (newRate) patch.fuelRateUsed = newRate
+    if (trip.totalDistanceKm) patch.fuelCost = calculateFuelCost(trip.totalDistanceKm, newRate, trip.dieselPriceUsed)
+    // เก็บทะเบียนเดิมไว้ดูย้อนหลัง (ครั้งแรกครั้งเดียว — เปลี่ยนซ้ำก็ยังรู้ว่าตอนจัดใช้คันไหน)
+    if (!(trip as any).vehicleChangedFromPlate) patch.vehicleChangedFromPlate = trip.vehiclePlate
+    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, ...patch } : t)))
+    if (db) updateDocumentNonBlocking(doc(db, "trips", tripId), { ...patch, updatedAt: serverTimestamp() })
+    // งานของคันอื่นที่ "โยกเข้ามา" ที่ทริปนี้ เก็บทะเบียนเป็น snapshot → อัปเดตให้ตรงคันใหม่
+    for (const other of trips.filter(t => t.id !== tripId)) {
+      if (!(other.stops || []).some(s => s.reassignedToTripId === tripId)) continue
+      applyStops(other.id, (other.stops || []).map(s =>
+        s.reassignedToTripId === tripId ? { ...s, reassignedToVehiclePlate: v.licensePlate } : s
+      ))
+    }
+    toast({ title: "🚚 เปลี่ยนรถแล้ว", description: `${trip.driverName}: ${trip.vehiclePlate} → ${v.licensePlate}` })
   }
 
   // Replace a single stop within a trip, returning the new stops array.
@@ -846,7 +950,9 @@ export default function DailySummaryPage() {
                           const stops = trip.stops || [];
                           if (stops.length === 0) return [];
 
-                          const driverPhone = getDriverPhone(trip.driverId);
+                          // คนขับจริง (ขับแทน) มีผลทั้งชื่อ+เบอร์ในใบสรุป
+                          const actualDriver = (trip as any).actualDriverName as string | undefined;
+                          const driverPhone = getDriverPhone((trip as any).actualDriverId || trip.driverId);
                           // Jobs moved *into* this truck — the destination half, so this
                           // driver/sheet (and the LINE image) actually shows the handover.
                           const incoming = incomingStopsForTrip(trips as any, trip.id);
@@ -949,7 +1055,10 @@ export default function DailySummaryPage() {
                                     <div className="flex justify-between items-start">
                                       <div className="space-y-2">
                                         <div>
-                                          <p className="font-bold">คนขับ: {trip.driverName}</p>
+                                          <p className="font-bold">คนขับ: {actualDriver || trip.driverName}</p>
+                                          {actualDriver && (
+                                            <p className="text-[11px] font-bold text-orange-700">🔁 ขับแทน {trip.driverName}</p>
+                                          )}
                                           {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
                                           <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
                                         </div>
@@ -1108,6 +1217,48 @@ export default function DailySummaryPage() {
                         {actualKm.toFixed(1)} / {plannedKm.toFixed(1)} กม.
                       </div>
                     </div>
+                    {/* คนขับจริง (ขับแทน) — เมื่อคนขับประจำลา ให้เลือกคนที่ขับจริง เครดิต กม./อันดับจะไปหาคนนั้น */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0">ขับแทนโดย:</span>
+                      <select
+                        value={trip.actualDriverId || ""}
+                        onChange={(e) => setActualDriver(trip.id, e.target.value)}
+                        className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      >
+                        <option value="">— คนขับประจำ ({trip.driverName}) —</option>
+                        {(driversData || [])
+                          .filter((d) => d.id !== trip.driverId)
+                          .map((d) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                      </select>
+                    </div>
+                    {trip.actualDriverId && (
+                      <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
+                        🔁 วันนี้ <b>{trip.actualDriverName}</b> ขับแทน {trip.driverName} — เครดิต กม./อันดับ นับให้ {trip.actualDriverName}
+                      </p>
+                    )}
+                    {/* เปลี่ยนรถ (รถเสีย/ใช้ไม่ได้) — งาน+คนขับเดิม แค่สลับคันรถ ทุกหน้าตามอัตโนมัติ */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0">เปลี่ยนรถเป็น:</span>
+                      <select
+                        value=""
+                        onChange={(e) => changeVehicle(trip.id, e.target.value)}
+                        className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      >
+                        <option value="">— ใช้รถเดิม ({trip.vehiclePlate}) —</option>
+                        {(vehiclesData || [])
+                          .filter((veh) => veh.licensePlate !== trip.vehiclePlate)
+                          .map((veh) => (
+                            <option key={veh.id} value={veh.id}>{veh.licensePlate} ({veh.type})</option>
+                          ))}
+                      </select>
+                    </div>
+                    {(trip as any).vehicleChangedFromPlate && (
+                      <p className="rounded-md bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
+                        🚚 เปลี่ยนรถจาก {(trip as any).vehicleChangedFromPlate} → <b>{trip.vehiclePlate}</b>
+                      </p>
+                    )}
                     <div className="space-y-2">
                       {(trip.stops || []).map((stop, sIdx) => renderStopRow(trip, stop, sIdx))}
                     </div>

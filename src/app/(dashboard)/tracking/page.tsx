@@ -450,7 +450,7 @@ export default function TrackingPage() {
         toast({
           variant: "destructive",
           title: "🔌 GPS ถูกถอด/ตัดไฟ!",
-          description: `${t.trip.vehiclePlate} · คนขับ ${t.trip.driverName || "-"} — ตรวจสอบด่วน`,
+          description: `${t.trip.vehiclePlate} · คนขับ ${t.trip.actualDriverName || t.trip.driverName || "-"} — ตรวจสอบด่วน`,
         })
       }
     })
@@ -611,7 +611,9 @@ export default function TrackingPage() {
                       <Badge className={cn("ml-auto border-none text-[10px]", meta.cls)}>{meta.label}</Badge>
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      คนขับ {t.trip.driverName || "-"} · ผ่าน {t.arrivedCount}/{t.totalStops} จุด
+                      คนขับ {t.trip.actualDriverName || t.trip.driverName || "-"}
+                      {t.trip.actualDriverName && <span className="text-amber-400"> (ขับแทน {t.trip.driverName})</span>}
+                      {" "}· ผ่าน {t.arrivedCount}/{t.totalStops} จุด
                       {t.longStops > 0 && (
                         <span className="text-amber-400"> · ⚠ {t.longStops} จุดแวะนาน</span>
                       )}

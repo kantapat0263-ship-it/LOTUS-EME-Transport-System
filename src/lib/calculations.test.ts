@@ -270,6 +270,25 @@ describe('computeDriverLeaderboard', () => {
     expect(b.actualKm).toBe(40)        // d2's own 20 + 20 taken over from d1
     expect(b.completedStops).toBe(2)
   })
+
+  it('เครดิตไปคนขับจริง (ขับแทน) ไม่ใช่คนขับประจำที่ลา', () => {
+    // อ๊อฟ(d1) ลา, พี่เจ(d2) ขับรถอ๊อฟทำภารกิจอ๊อฟ + งานตัวเองที่โยกมาลงรถอ๊อฟ
+    const trips: LeaderboardTripLike[] = [
+      // ทริปรถอ๊อฟ: คนขับประจำ d1(อ๊อฟ) แต่ actualDriver = d2(พี่เจ) — 2 จุด 100km
+      { id: 'OFF', tripDate: '2026-07-17', driverId: 'd1', driverName: 'อ๊อฟ',
+        actualDriverId: 'd2', actualDriverName: 'พี่เจ', totalDistanceKm: 100, stops: [{}, {}] },
+      // ทริปรถพี่เจเอง: งานถูกโยกไปลงรถอ๊อฟ (พี่เจไม่ได้ใช้รถตัวเอง) — 1 จุด 30km โยกไป OFF
+      { id: 'JAY', tripDate: '2026-07-17', driverId: 'd2', driverName: 'พี่เจ',
+        totalDistanceKm: 30, stops: [{ outcome: 'reassigned', reassignedToTripId: 'OFF' }] },
+    ]
+    const board = computeDriverLeaderboard(trips)
+    const off = board.find(b => b.driverId === 'd1')
+    const jay = board.find(b => b.driverId === 'd2')!
+    expect(off).toBeUndefined()        // อ๊อฟลา ไม่ได้ขับ = ไม่มีเครดิต/ไม่นับวันทำงาน
+    expect(jay.actualKm).toBe(130)     // พี่เจได้ทั้งงานอ๊อฟ(100) + งานตัวเองที่โยกมา(30)
+    expect(jay.completedStops).toBe(3)
+    expect(jay.workingDays).toBe(1)
+  })
 })
 
 describe('computeDriverReliability', () => {

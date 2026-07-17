@@ -59,9 +59,10 @@ export default function DriverTripPage() {
           const tripData = { ...docSnap.data(), id: docSnap.id } as Trip
           setTrip(tripData)
           
-          // Fetch driver phone
-          if (tripData.driverId) {
-            const dRef = doc(firestore, "drivers", tripData.driverId)
+          // Fetch driver phone — คนขับจริง (ขับแทน) ถ้ามี ไม่งั้นคนขับประจำ
+          const phoneDriverId = tripData.actualDriverId || tripData.driverId
+          if (phoneDriverId) {
+            const dRef = doc(firestore, "drivers", phoneDriverId)
             const dSnap = await getDoc(dRef)
             if (dSnap.exists()) {
               setDriverPhone(dSnap.data().phoneNumber || "")
@@ -82,7 +83,9 @@ export default function DriverTripPage() {
                 .map(d => ({ ...d.data(), id: d.id }) as any)
                 .filter(t => t.status !== 'Cancelled')
               const board = computeDriverLeaderboard(monthTrips)
-              setMyStat(board.find(b => b.driverId === tripData.driverId) || null)
+              // สถิติของ "คนที่ขับจริง" (ขับแทน) ถ้ามี — คนเปิดลิงก์คือคนขับจริง
+              const statDriverId = tripData.actualDriverId || tripData.driverId
+              setMyStat(board.find(b => b.driverId === statDriverId) || null)
               setBoardSize(board.length)
               setTopKm(board[0]?.actualKm || 0)
               // Surface jobs reassigned *into* this trip (the destination half)
@@ -174,7 +177,10 @@ export default function DriverTripPage() {
                   </div>
                   <div>
                     <p className="text-blue-100 text-[10px] font-bold uppercase">คนขับรถ</p>
-                    <p className="text-sm font-bold">{trip.driverName}</p>
+                    <p className="text-sm font-bold">{trip.actualDriverName || trip.driverName}</p>
+                    {trip.actualDriverName && (
+                      <p className="text-[10px] font-bold text-amber-300">🔁 ขับแทน {trip.driverName}</p>
+                    )}
                     {driverPhone && <a href={`tel:${driverPhone}`} className="text-blue-200 text-[10px] font-bold underline">📞 {driverPhone}</a>}
                   </div>
                 </div>

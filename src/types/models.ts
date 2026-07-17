@@ -106,8 +106,14 @@ export interface Trip {
   tripDate: string;
   driverId: string;
   driverName: string;
+  /** คนขับจริงที่ขับแทนคนขับประจำวันนั้น (เช่น คนขับประจำลา) — ว่าง/undefined = คนเดิม
+   *  ใช้ย้ายเครดิต กม./อันดับ ไปหาคนที่ขับจริง (ดู computeDriverLeaderboard) */
+  actualDriverId?: string;
+  actualDriverName?: string;
   vehicleId: string;
   vehiclePlate: string;
+  /** ทะเบียนรถคันเดิมตอนจัดทริป (ก่อนกด "เปลี่ยนรถ" ในหน้าสรุป — เก็บไว้ดูย้อนหลัง) */
+  vehicleChangedFromPlate?: string;
   departureSiteId: string;
   stops: TripStop[];
   status: TripStatus;

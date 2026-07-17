@@ -240,7 +240,18 @@ export function monthRange(dateStr: string): { start: string; end: string } {
 export interface LeaderboardTripLike extends OutcomeTripLike {
   driverId?: string | null
   driverName?: string | null
+  /** คนขับจริงที่ขับแทนคนขับประจำ (ถ้ามี) — เครดิต กม./วันทำงาน ไปที่คนนี้แทน driverName */
+  actualDriverId?: string | null
+  actualDriverName?: string | null
   tripDate?: string | null
+}
+
+/** ใครควรได้เครดิตของทริปนี้: คนขับจริง (ขับแทน) ถ้ามี ไม่งั้นคนขับประจำ */
+function creditDriverOf(t: LeaderboardTripLike): { driverId: string; driverName: string } {
+  return {
+    driverId: t.actualDriverId || t.driverId || '',
+    driverName: t.actualDriverName || t.driverName || '',
+  }
 }
 
 export interface DriverStat {
@@ -287,12 +298,13 @@ export function computeDriverLeaderboard(trips: LeaderboardTripLike[]): DriverSt
     for (const t of dayTrips) {
       if (t.id) {
         tripIds.add(t.id)
-        driverByTrip.set(t.id, { driverId: t.driverId || '', driverName: t.driverName || '' })
+        driverByTrip.set(t.id, creditDriverOf(t))
       }
     }
 
     for (const t of dayTrips) {
-      if (t.driverId) ensure(t.driverId, t.driverName || '').days.add(date)
+      const cd0 = creditDriverOf(t)
+      if (cd0.driverId) ensure(cd0.driverId, cd0.driverName).days.add(date)
       const share = stopShareKm(t)
       for (const stop of t.stops || []) {
         // Which truck actually performed this stop?
