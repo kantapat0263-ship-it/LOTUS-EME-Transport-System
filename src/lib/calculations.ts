@@ -437,6 +437,11 @@ export function computeDriverReliability(trips: ReliabilityTripLike[]): DriverRe
 export interface IncomingStopLike extends OutcomeStopLike {
   siteName?: string | null
   cargoDetails?: string | null
+  requestTime?: string | null
+  requestedBy?: string | null
+  requestedByPhone?: string | null
+  note?: string | null
+  address?: string | null
 }
 
 export interface IncomingTripLike {
@@ -453,6 +458,12 @@ export interface IncomingJob {
   fromVehiclePlate: string
   siteName: string
   cargoDetails: string
+  /** รายละเอียดครบเท่าจุดปกติ — เพื่อให้แถว "รับโยกงานต่อ" ในใบสรุปแทนที่แถวคันต้นทางได้จริง */
+  requestTime: string
+  requestedBy: string
+  requestedByPhone: string
+  note: string
+  address: string
   /** True if the source stop was a refusal someone picked up — kept for internal
    *  logic only; the destination UI must stay public-safe and never show "ปฏิเสธ". */
   wasRefused: boolean
@@ -480,6 +491,11 @@ export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: strin
           fromVehiclePlate: t.vehiclePlate || '',
           siteName: s.siteName || '',
           cargoDetails: s.cargoDetails || '',
+          requestTime: s.requestTime || '',
+          requestedBy: s.requestedBy || '',
+          requestedByPhone: s.requestedByPhone || '',
+          note: s.note || '',
+          address: s.address || '',
           wasRefused: s.outcome === 'driver-refused',
         })
       }

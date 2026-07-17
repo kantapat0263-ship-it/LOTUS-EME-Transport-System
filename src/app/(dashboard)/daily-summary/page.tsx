@@ -288,7 +288,7 @@ export default function DailySummaryPage() {
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
       // ไม่เคยใช้ imageBase64 เลย การส่ง base64 หลาย MB เสี่ยงชนลิมิต body ของ Vercel (~4.5MB)
       // ทำปุ่มพังทั้งปุ่มในวันที่ทริปเยอะ + ทำให้กดส่งช้าโดยไม่จำเป็น
-      const tripData = trips.map((trip: any) => {
+      const tripData = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
         const incoming = incomingStopsForTrip(trips as any, trip.id)
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
         const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
@@ -343,9 +343,19 @@ export default function DailySummaryPage() {
     })
   }
 
+  // รถที่ "โยกงานออกครบทุกจุด" (มีคันปลายทางรองรับ + ไม่มีงานโยกเข้า) = ไม่ได้ออกวิ่ง
+  // → ไม่ต้องโชว์ในใบสรุป/ข้อความ LINE เลย (งานไปแสดงเป็นแถว "รับโยกงานต่อ" ใต้คันปลายทางแทน)
+  // จุดที่แค่ "เลื่อน" ไม่นับ — การ์ดยังโชว์พร้อมป้าย 🚫 เพื่อคงบันทึกประจำวันไว้
+  const isFullyMovedOut = (trip: Trip): boolean => {
+    const stops = trip.stops || []
+    if (stops.length === 0) return false
+    if (incomingStopsForTrip(trips as any, trip.id).length > 0) return false
+    return stops.every(s => s.outcome && s.outcome !== 'delivered' && (s as any).reassignedToTripId)
+  }
+
   const buildSummaryText = () => {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
-    const driverLinks = trips.map((trip: any) => {
+    const driverLinks = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
       const incoming = incomingStopsForTrip(trips as any, trip.id)
       const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean)))
       // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
@@ -356,7 +366,12 @@ export default function DailySummaryPage() {
       const shownDriver = trip.actualDriverName
         ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
         : trip.driverName
+      // รถจอด (งานโยกออก/เลื่อนหมด ไม่มีงานโยกเข้า) → บอกชัดในข้อความกลุ่มด้วย
+      const notRun = incoming.length === 0 &&
+        (trip.stops || []).length > 0 &&
+        (trip.stops || []).every((s: any) => s.outcome && s.outcome !== 'delivered')
       let line = `🚛 ${shownDriver} (${trip.vehiclePlate})`
+      if (notRun) line += `\n🚫 รถคันนี้ไม่ได้ออกวิ่งวันนี้`
       // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
       if (incoming.length > 0) {
         const from = incomingFrom.length > 0 ? ` (จาก ${incomingFrom.join(', ')})` : ''
@@ -949,6 +964,8 @@ export default function DailySummaryPage() {
                         {trips.flatMap((trip) => {
                           const stops = trip.stops || [];
                           if (stops.length === 0) return [];
+                          // รถที่โยกงานออกครบทุกจุด → ไม่โชว์ทั้งคัน (งานไปอยู่แถว "รับโยกงานต่อ" ของคันปลายทาง)
+                          if (isFullyMovedOut(trip)) return [];
 
                           // คนขับจริง (ขับแทน) มีผลทั้งชื่อ+เบอร์ในใบสรุป
                           const actualDriver = (trip as any).actualDriverName as string | undefined;
@@ -957,6 +974,15 @@ export default function DailySummaryPage() {
                           // driver/sheet (and the LINE image) actually shows the handover.
                           const incoming = incomingStopsForTrip(trips as any, trip.id);
                           const totalRows = stops.length + incoming.length;
+                          // รถคันนี้ "ไม่ได้ออกวิ่ง" = งานทุกจุดถูกโยกออก/เลื่อนหมด และไม่มีงานโยกเข้า
+                          // (เคสคนขับเอารถคันอื่นไปใช้แทน — ต้องบอกชัดในใบสรุปว่าคันนี้จอด)
+                          const notRun =
+                            incoming.length === 0 &&
+                            stops.length > 0 &&
+                            stops.every((s) => s.outcome && s.outcome !== 'delivered');
+                          const movedToPlates = Array.from(new Set(
+                            stops.map((s) => (s as any).reassignedToVehiclePlate).filter(Boolean)
+                          ));
 
                           const stopRows = stops.map((stop, sIdx) => {
                             const locationText = (stop as any).address || (stop as any).zone || "";
@@ -1061,6 +1087,12 @@ export default function DailySummaryPage() {
                                           )}
                                           {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
                                           <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
+                                          {notRun && (
+                                            <p className="text-[11px] font-bold text-red-700">
+                                              🚫 รถคันนี้ไม่ได้ออกวิ่ง
+                                              {movedToPlates.length > 0 && <> — งานย้ายไป {movedToPlates.join(', ')}</>}
+                                            </p>
+                                          )}
                                         </div>
                                       </div>
                                       <Button 
@@ -1080,9 +1112,13 @@ export default function DailySummaryPage() {
                           });
 
                           // Extra rows for jobs reassigned INTO this truck (public-safe: รับงานต่อ)
+                          // รายละเอียดครบเท่าแถวปกติ (เวลา/ผู้ขอ/เบอร์/หมายเหตุ) — เพราะแถวนี้อาจ
+                          // "แทนที่" แถวของคันต้นทางทั้งคัน (เคสรถต้นทางไม่ได้วิ่ง ถูกซ่อนจากใบสรุป)
                           const incomingRows = incoming.map((job, i) => (
                             <tr key={`${trip.id}-inc-${i}`} className="bg-blue-50">
-                              <td className="border border-black p-2 text-center align-top font-bold">—</td>
+                              <td className="border border-black p-2 text-center align-top font-bold whitespace-nowrap">
+                                {job.requestTime ? `${job.requestTime} น.` : "—"}
+                              </td>
                               <td className="border border-black p-2 align-top">
                                 <div className="space-y-1">
                                   <div className="flex gap-1.5 font-bold items-center flex-wrap">
@@ -1102,6 +1138,15 @@ export default function DailySummaryPage() {
                                         <span className="italic" style={{ whiteSpace: 'pre-wrap' }}>{job.cargoDetails}</span>
                                       </div>
                                     )}
+                                    {job.requestedBy && (
+                                      <div className="pl-3 text-[10px] text-gray-700">
+                                        📋 ผู้ขอ: {job.requestedBy}
+                                        {job.requestedByPhone && <> <span className="font-bold text-red-700">📞 {job.requestedByPhone}</span></>}
+                                      </div>
+                                    )}
+                                    {job.note && (
+                                      <div className="pl-3 text-[10px] text-amber-700">📌 หมายเหตุผู้ขอ: {job.note}</div>
+                                    )}
                                     {(job.fromVehiclePlate || job.fromDriverName) && (
                                       <div className="pl-3 text-[10px] text-gray-600">
                                         โยกมาจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}
@@ -1120,7 +1165,7 @@ export default function DailySummaryPage() {
 
                     <div className="mt-8 flex justify-between text-sm">
                       <div className="space-y-1 font-bold">
-                        <p>รวม: {trips.length} เที่ยว</p>
+                        <p>รวม: {trips.filter((t) => !isFullyMovedOut(t)).length} เที่ยว</p>
                         <p>ระยะทางรวม (วิ่งจริง): {totalDistance.toFixed(1)} กม.</p>
                         <p>ค่าน้ำมันโดยประมาณ: {totalFuelCost.toLocaleString('th-TH', { maximumFractionDigits: 0 })} บาท</p>
                       </div>
@@ -1206,12 +1251,19 @@ export default function DailySummaryPage() {
                 const actualKm = outcomeStats.actualKmByTrip[trip.id] || 0
                 const plannedKm = outcomeStats.plannedKmByTrip[trip.id] || 0
                 const kmShifted = Math.abs(actualKm - plannedKm) > 0.05
+                // รถจอด: งานโยกออก/เลื่อนหมด + ไม่มีงานโยกเข้า (เคสเอารถคันอื่นไปใช้แทน)
+                const notRun = incomingStopsForTrip(trips as any, trip.id).length === 0 &&
+                  (trip.stops || []).length > 0 &&
+                  (trip.stops || []).every((s) => s.outcome && s.outcome !== 'delivered')
                 return (
                   <div key={trip.id} className="rounded-lg border border-border/50 bg-background/40 p-3 space-y-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-sm font-bold text-white">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-white">
                         <Truck className="h-4 w-4 text-accent" />
                         {trip.driverName} • {trip.vehiclePlate}
+                        {notRun && (
+                          <span className="rounded-md bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400">🚫 ไม่ได้วิ่ง</span>
+                        )}
                       </div>
                       <div className={cn("text-xs font-bold", kmShifted ? "text-amber-400" : "text-muted-foreground")}>
                         {actualKm.toFixed(1)} / {plannedKm.toFixed(1)} กม.
