@@ -290,7 +290,10 @@ export default function DailySummaryPage() {
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
         const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
         return {
-          driverName: trip.driverName,
+          // คนขับจริง (ขับแทน) มีผลในข้อความ LINE ด้วย — โชว์คนที่ขับจริง
+          driverName: trip.actualDriverName
+            ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
+            : trip.driverName,
           vehiclePlate: trip.vehiclePlate,
           driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`,
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
@@ -347,7 +350,10 @@ export default function DailySummaryPage() {
       const outgoingTo = Array.from(new Set(outgoing.map((s: any) =>
         s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
       ).filter(Boolean)))
-      let line = `🚛 ${trip.driverName} (${trip.vehiclePlate})`
+      const shownDriver = trip.actualDriverName
+        ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
+        : trip.driverName
+      let line = `🚛 ${shownDriver} (${trip.vehiclePlate})`
       // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
       if (incoming.length > 0) {
         const from = incomingFrom.length > 0 ? ` (จาก ${incomingFrom.join(', ')})` : ''
@@ -860,7 +866,9 @@ export default function DailySummaryPage() {
                           const stops = trip.stops || [];
                           if (stops.length === 0) return [];
 
-                          const driverPhone = getDriverPhone(trip.driverId);
+                          // คนขับจริง (ขับแทน) มีผลทั้งชื่อ+เบอร์ในใบสรุป
+                          const actualDriver = (trip as any).actualDriverName as string | undefined;
+                          const driverPhone = getDriverPhone((trip as any).actualDriverId || trip.driverId);
                           // Jobs moved *into* this truck — the destination half, so this
                           // driver/sheet (and the LINE image) actually shows the handover.
                           const incoming = incomingStopsForTrip(trips as any, trip.id);
@@ -963,7 +971,10 @@ export default function DailySummaryPage() {
                                     <div className="flex justify-between items-start">
                                       <div className="space-y-2">
                                         <div>
-                                          <p className="font-bold">คนขับ: {trip.driverName}</p>
+                                          <p className="font-bold">คนขับ: {actualDriver || trip.driverName}</p>
+                                          {actualDriver && (
+                                            <p className="text-[11px] font-bold text-orange-700">🔁 ขับแทน {trip.driverName}</p>
+                                          )}
                                           {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
                                           <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
                                         </div>
