@@ -44,6 +44,12 @@ service cloud.firestore {
       allow write: if isAuthenticated();
     }
 
+    // ประวัติการแก้ไขทริป (หน้า trips/history + ปุ่มเปลี่ยนคนขับใน daily-summary เขียนที่นี่)
+    // ต้องมีกฎชัด — เดิมพึ่ง fallback ซึ่งตอนนี้ปิดเป็น deny แล้ว ไม่งั้นการเขียน log พัง
+    match /trips/{tripId}/editLogs/{logId} {
+      allow read, write: if isAuthenticated();
+    }
+
     match /drivers/{driverId} {
       allow read: if true;
       allow write: if isAuthenticated();
