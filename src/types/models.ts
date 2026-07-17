@@ -112,6 +112,8 @@ export interface Trip {
   actualDriverName?: string;
   vehicleId: string;
   vehiclePlate: string;
+  /** ทะเบียนรถคันเดิมตอนจัดทริป (ก่อนกด "เปลี่ยนรถ" ในหน้าสรุป — เก็บไว้ดูย้อนหลัง) */
+  vehicleChangedFromPlate?: string;
   departureSiteId: string;
   stops: TripStop[];
   status: TripStatus;

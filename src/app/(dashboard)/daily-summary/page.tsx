@@ -40,8 +40,8 @@ import {
   DialogFooter
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Trip, Driver, TripStop, StopOutcome } from "@/types/models"
-import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, type DriverStat } from "@/lib/calculations"
+import { Trip, Driver, Vehicle, TripStop, StopOutcome } from "@/types/models"
+import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -68,6 +68,9 @@ export default function DailySummaryPage() {
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: driversData } = useCollection<Driver>(driversRef)
+  // รายชื่อรถ — สำหรับ "เปลี่ยนรถ" ในแผงปิดผลงานจริง (รถเสีย/ใช้ไม่ได้ แต่งาน+คนขับเดิม)
+  const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
+  const { data: vehiclesData } = useCollection<Vehicle>(vehiclesRef)
 
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
@@ -491,6 +494,41 @@ export default function DailySummaryPage() {
         toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
       }
     }
+  }
+
+  // เปลี่ยนรถของทริป (รถเสีย/ใช้ไม่ได้ — งาน+คนขับเดิม แค่สลับคันรถ)
+  // ทุกอย่างผูกกับทะเบียน → ใบงาน/ข้อความ LINE/ติดตาม GPS เปลี่ยนตามอัตโนมัติ
+  const changeVehicle = (tripId: string, vehicleId: string) => {
+    if (!vehicleId) return
+    const trip = trips.find(t => t.id === tripId)
+    const v = vehiclesData?.find(x => x.id === vehicleId)
+    if (!trip || !v || v.licensePlate === trip.vehiclePlate) return
+    const ok = window.confirm(
+      `เปลี่ยนรถของทริป ${trip.driverName} จาก ${trip.vehiclePlate} → ${v.licensePlate} ?\n` +
+      `(ใบงาน / ข้อความ LINE / ติดตาม GPS จะเปลี่ยนตามทันที และคิดค่าน้ำมันตามอัตราของรถคันใหม่)`
+    )
+    if (!ok) return
+    // ค่าน้ำมันคิดใหม่ตามอัตราสิ้นเปลืองของรถคันใหม่ (ราคาดีเซลใช้ค่าที่ freeze ไว้กับทริปเดิม)
+    const newRate = v.fuelRate && v.fuelRate > 0 ? v.fuelRate : trip.fuelRateUsed
+    const patch: any = {
+      vehicleId: v.id,
+      vehiclePlate: v.licensePlate,
+      vehicleType: v.type,
+    }
+    if (newRate) patch.fuelRateUsed = newRate
+    if (trip.totalDistanceKm) patch.fuelCost = calculateFuelCost(trip.totalDistanceKm, newRate, trip.dieselPriceUsed)
+    // เก็บทะเบียนเดิมไว้ดูย้อนหลัง (ครั้งแรกครั้งเดียว — เปลี่ยนซ้ำก็ยังรู้ว่าตอนจัดใช้คันไหน)
+    if (!(trip as any).vehicleChangedFromPlate) patch.vehicleChangedFromPlate = trip.vehiclePlate
+    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, ...patch } : t)))
+    if (db) updateDocumentNonBlocking(doc(db, "trips", tripId), { ...patch, updatedAt: serverTimestamp() })
+    // งานของคันอื่นที่ "โยกเข้ามา" ที่ทริปนี้ เก็บทะเบียนเป็น snapshot → อัปเดตให้ตรงคันใหม่
+    for (const other of trips.filter(t => t.id !== tripId)) {
+      if (!(other.stops || []).some(s => s.reassignedToTripId === tripId)) continue
+      applyStops(other.id, (other.stops || []).map(s =>
+        s.reassignedToTripId === tripId ? { ...s, reassignedToVehiclePlate: v.licensePlate } : s
+      ))
+    }
+    toast({ title: "🚚 เปลี่ยนรถแล้ว", description: `${trip.driverName}: ${trip.vehiclePlate} → ${v.licensePlate}` })
   }
 
   // Replace a single stop within a trip, returning the new stops array.
@@ -1198,6 +1236,27 @@ export default function DailySummaryPage() {
                     {trip.actualDriverId && (
                       <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
                         🔁 วันนี้ <b>{trip.actualDriverName}</b> ขับแทน {trip.driverName} — เครดิต กม./อันดับ นับให้ {trip.actualDriverName}
+                      </p>
+                    )}
+                    {/* เปลี่ยนรถ (รถเสีย/ใช้ไม่ได้) — งาน+คนขับเดิม แค่สลับคันรถ ทุกหน้าตามอัตโนมัติ */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0">เปลี่ยนรถเป็น:</span>
+                      <select
+                        value=""
+                        onChange={(e) => changeVehicle(trip.id, e.target.value)}
+                        className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      >
+                        <option value="">— ใช้รถเดิม ({trip.vehiclePlate}) —</option>
+                        {(vehiclesData || [])
+                          .filter((veh) => veh.licensePlate !== trip.vehiclePlate)
+                          .map((veh) => (
+                            <option key={veh.id} value={veh.id}>{veh.licensePlate} ({veh.type})</option>
+                          ))}
+                      </select>
+                    </div>
+                    {(trip as any).vehicleChangedFromPlate && (
+                      <p className="rounded-md bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
+                        🚚 เปลี่ยนรถจาก {(trip as any).vehicleChangedFromPlate} → <b>{trip.vehiclePlate}</b>
                       </p>
                     )}
                     <div className="space-y-2">
