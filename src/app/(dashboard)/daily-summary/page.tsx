@@ -427,6 +427,20 @@ export default function DailySummaryPage() {
     }
   }
 
+  // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
+  // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
+  const setActualDriver = (tripId: string, driverId: string) => {
+    const name = driverId ? (driversData?.find(d => d.id === driverId)?.name || "") : ""
+    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, actualDriverId: driverId, actualDriverName: name } : t)))
+    if (db) {
+      updateDocumentNonBlocking(doc(db, "trips", tripId), {
+        actualDriverId: driverId,
+        actualDriverName: name,
+        updatedAt: serverTimestamp(),
+      })
+    }
+  }
+
   // Replace a single stop within a trip, returning the new stops array.
   const buildStops = (trip: Trip, stopIdx: number, mut: (s: TripStop) => TripStop): TripStop[] =>
     (trip.stops || []).map((s, i) => (i === stopIdx ? mut({ ...s }) : s))
@@ -1108,6 +1122,27 @@ export default function DailySummaryPage() {
                         {actualKm.toFixed(1)} / {plannedKm.toFixed(1)} กม.
                       </div>
                     </div>
+                    {/* คนขับจริง (ขับแทน) — เมื่อคนขับประจำลา ให้เลือกคนที่ขับจริง เครดิต กม./อันดับจะไปหาคนนั้น */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0">ขับแทนโดย:</span>
+                      <select
+                        value={trip.actualDriverId || ""}
+                        onChange={(e) => setActualDriver(trip.id, e.target.value)}
+                        className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      >
+                        <option value="">— คนขับประจำ ({trip.driverName}) —</option>
+                        {(driversData || [])
+                          .filter((d) => d.id !== trip.driverId)
+                          .map((d) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                      </select>
+                    </div>
+                    {trip.actualDriverId && (
+                      <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
+                        🔁 วันนี้ <b>{trip.actualDriverName}</b> ขับแทน {trip.driverName} — เครดิต กม./อันดับ นับให้ {trip.actualDriverName}
+                      </p>
+                    )}
                     <div className="space-y-2">
                       {(trip.stops || []).map((stop, sIdx) => renderStopRow(trip, stop, sIdx))}
                     </div>
