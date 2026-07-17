@@ -437,6 +437,8 @@ export default function DailySummaryPage() {
   // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
   const setActualDriver = (tripId: string, driverId: string) => {
     const name = driverId ? (driversData?.find(d => d.id === driverId)?.name || "") : ""
+    const target = trips.find(t => t.id === tripId)
+    const prevActualDriverId = target?.actualDriverId // อ่านก่อนเขียนทับ (ใช้ตอน revert)
     setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, actualDriverId: driverId, actualDriverName: name } : t)))
     if (db) {
       updateDocumentNonBlocking(doc(db, "trips", tripId), {
@@ -444,6 +446,50 @@ export default function DailySummaryPage() {
         actualDriverName: name,
         updatedAt: serverTimestamp(),
       })
+    }
+
+    // ---- ลิงก์อัตโนมัติ: คนขับแทนมีทริปของตัวเองวันเดียวกัน = ขับสองคันพร้อมกันไม่ได้ ----
+    if (driverId && target) {
+      // งานของคนขับแทนที่ยัง "ตามแผน" → เสนอโยกมาลงรถคันนี้ทั้งหมดในคลิกเดียว
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === driverId)) {
+        const movable = (own.stops || []).filter(s => !s.outcome || s.outcome === 'delivered')
+        if (movable.length === 0) continue
+        const ok = window.confirm(
+          `${name} มีงานของตัวเอง ${movable.length} จุด บนรถ ${own.vehiclePlate}\n` +
+          `โยกงานทั้งหมดมาลงรถ ${target.vehiclePlate} อัตโนมัติเลยไหม?\n\n` +
+          `(กม./เครดิตจะย้ายตามมาให้ ${name} เอง — กด Cancel ถ้ารถ ${own.vehiclePlate} มีคนอื่นขับ)`
+        )
+        if (!ok) continue
+        const nowIso = new Date().toISOString()
+        applyStops(own.id, (own.stops || []).map(s =>
+          (!s.outcome || s.outcome === 'delivered')
+            ? {
+                ...stripOutcome(s),
+                outcome: 'reassigned' as StopOutcome,
+                reassignedToTripId: target.id,
+                reassignedToVehiclePlate: target.vehiclePlate,
+                reassignedToDriverName: name,
+                outcomeRecordedBy: recordedBy,
+                outcomeAt: nowIso,
+              }
+            : s
+        ))
+        toast({ title: "🔗 โยกงานให้อัตโนมัติแล้ว", description: `${movable.length} จุดของ ${name} ย้ายมาลงรถ ${target.vehiclePlate}` })
+      }
+    }
+
+    // ---- ยกเลิกขับแทน → เสนอเอางานที่เคยโยกมาอัตโนมัติ กลับคืนทริปเดิม ----
+    if (!driverId && prevActualDriverId) {
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === prevActualDriverId)) {
+        const moved = (own.stops || []).filter(s => s.outcome === 'reassigned' && s.reassignedToTripId === tripId)
+        if (moved.length === 0) continue
+        const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
+        if (!ok) continue
+        applyStops(own.id, (own.stops || []).map(s =>
+          (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
+        ))
+        toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
+      }
     }
   }
 
