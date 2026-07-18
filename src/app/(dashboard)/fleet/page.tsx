@@ -134,6 +134,18 @@ export default function FleetPage() {
     const p = posByDevice[deviceId]
     return !!p && !isPositionStale(p.positionTime, now)
   }
+
+  // ทะเบียนซ้ำ: normalize (ตัดช่องว่าง/พิมพ์เล็ก) แล้วหาคันที่ทะเบียนตรงกันเกิน 1 คัน
+  // ทะเบียนใช้เป็น key ในหลายระบบ (ติดตาม GPS/โยกงาน) → ซ้ำแล้วชนกัน
+  const normPlate = (p?: string) => (p || "").trim().replace(/\s+/g, "").toLowerCase()
+  const duplicatePlates = React.useMemo(() => {
+    const counts: Record<string, number> = {}
+    ;(vehicles ?? []).forEach((v) => {
+      const k = normPlate(v.licensePlate)
+      if (k) counts[k] = (counts[k] || 0) + 1
+    })
+    return new Set(Object.keys(counts).filter((k) => counts[k] > 1))
+  }, [vehicles])
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
@@ -198,8 +210,23 @@ export default function FleetPage() {
 
   function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
     if (isViewer) return
+
+    // กันทะเบียนซ้ำ: มีรถคันอื่นทะเบียนเดียวกันอยู่แล้วหรือไม่ (ไม่นับคันที่กำลังแก้)
+    const norm = normPlate(values.licensePlate)
+    const clash = (vehicles ?? []).some(
+      (v) => v.id !== editingVehicle?.id && normPlate(v.licensePlate) === norm
+    )
+    if (clash) {
+      toast({
+        title: "ทะเบียนซ้ำ",
+        description: `มีรถทะเบียน ${values.licensePlate.trim()} อยู่ในระบบแล้ว — กรุณาตรวจสอบก่อนบันทึก`,
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsSavingVehicle(true)
-    
+
     const data: any = {
       ...values,
       updatedAt: serverTimestamp()
@@ -327,6 +354,10 @@ export default function FleetPage() {
                     <div className="flex justify-between items-start">
                       <div className="mb-2 flex flex-wrap items-center gap-1.5">
                         <Badge variant="outline" className="uppercase tracking-wider text-[10px]">{v.type}</Badge>
+                        {/* ทะเบียนซ้ำกับคันอื่น — เตือนให้แก้ (ทะเบียนใช้เป็น key หลายระบบ) */}
+                        {duplicatePlates.has(normPlate(v.licensePlate)) && (
+                          <Badge className="border-none bg-red-500/20 text-[10px] text-red-400">⚠ ทะเบียนซ้ำ</Badge>
+                        )}
                         {/* ผูก GPS ไว้เท่านั้นถึงโชว์ — ไม่ได้ผูก = ไม่โชว์อะไร */}
                         {v.gpsDeviceId &&
                           (gpsOnline(v.gpsDeviceId) ? (
