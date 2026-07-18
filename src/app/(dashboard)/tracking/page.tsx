@@ -668,6 +668,15 @@ function TruckDetail({
   const meta = STATUS_META[truck.status]
   const pos = truck.position
 
+  // เวลารวมภารกิจ + สัดส่วนเวลา (ขับ/ที่จุดงาน/นอกจุดงาน) — คำนวณจากข้อมูลที่มีอยู่แล้ว
+  const depT = truck.daily?.departedOfficeAt ?? null
+  const retT = truck.daily?.returnedOfficeAt ?? null
+  const missionMin = depT && retT ? Math.max(0, Math.round((retT - depT) / 60_000)) : null
+  const driveMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.travelMinFromPrev ?? 0), 0)
+  const dwellAtJobMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.dwellMin ?? 0), 0)
+  const fmtDur = (m: number) =>
+    m >= 60 ? `${Math.floor(m / 60)} ชม. ${Math.round(m % 60)} นาที` : `${Math.round(m)} นาที`
+
   // แบบ A: ยุบกล่อง "จุดจอดนานผิดสังเกต" — จุดจอด "นอกจุดงาน" แทรกเข้า timeline ตามเวลา
   // (จอด "ที่จุดงาน" เป็นเรื่องปกติ โชว์ใน timeline ที่จุดนั้นอยู่แล้ว ไม่ต้องแยกกล่อง)
   const offJobStops = [...truck.stopEvents].filter((ev) => !ev.nearJob).sort((a, b) => a.startT - b.startT)
@@ -768,7 +777,19 @@ function TruckDetail({
           )}
         </span>
         {truck.daily?.totalKm != null && <span>รวม <b className="text-foreground tabular-nums">{truck.daily.totalKm}</b> กม.</span>}
+        {missionMin != null && <span>⏱ เวลาภารกิจรวม <b className="text-foreground">{fmtDur(missionMin)}</b></span>}
       </div>
+
+      {/* สัดส่วนเวลาของวัน: ขับ / ทำงานที่จุด / นอกจุดงาน (ตัวเลขโดยประมาณจาก GPS) */}
+      {depT != null && (driveMin > 0 || dwellAtJobMin > 0 || offJobStops.length > 0) && (
+        <div className="mx-4 mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
+          <span>🚗 ขับรถ ~<b className="text-foreground">{fmtDur(driveMin)}</b></span>
+          <span>📦 ทำงานที่จุด ~<b className="text-foreground">{fmtDur(dwellAtJobMin)}</b></span>
+          <span className={cn(offJobStops.length > 0 && "font-semibold text-red-400")}>
+            🔴 นอกจุดงาน <b>{fmtDur(offJobStops.reduce((s, e) => s + e.durationMin, 0))}</b>
+          </span>
+        </div>
+      )}
 
       <div className="px-4 pb-1 pt-3 text-xs text-muted-foreground">
         ROOT งานวันนี้ · {truck.arrivedCount}/{truck.totalStops} จุด — “เข้าใกล้จุดงาน ≈300 ม. = ถือว่าทำภารกิจแล้ว ✅”
