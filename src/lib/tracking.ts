@@ -309,8 +309,16 @@ export function computeDailySummary(
   })
 
   // ---- เวลาเดินทางช่วง (ถึงจุดนี้ − ออกจุดก่อน / ออกออฟฟิศ) ----
+  // คิดตาม "ลำดับที่ถึงจริง" ไม่ใช่ลำดับแผน — คนขับวิ่งสลับจุดได้ ถ้าคิดตามแผน
+  // ขาเดินทางจะเพี้ยน (นับเวลาแวะจุดอื่นรวม / ขาที่ติดลบหายไป)
+  const seq = [...timings].sort((a, b) => {
+    if (a.arrivedAt != null && b.arrivedAt != null) return a.arrivedAt - b.arrivedAt
+    if (a.arrivedAt != null) return -1
+    if (b.arrivedAt != null) return 1
+    return a.order - b.order // จุดที่ยังไม่ถึง คงลำดับแผนไว้ท้ายรายการ
+  })
   let prevDepart: number | null = departedOfficeAt
-  for (const t of timings) {
+  for (const t of seq) {
     if (t.arrivedAt != null && prevDepart != null && t.arrivedAt > prevDepart) {
       t.travelMinFromPrev = toMin(t.arrivedAt - prevDepart)
     }

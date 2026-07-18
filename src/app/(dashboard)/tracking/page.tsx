@@ -680,20 +680,35 @@ function TruckDetail({
   // แบบ A: ยุบกล่อง "จุดจอดนานผิดสังเกต" — จุดจอด "นอกจุดงาน" แทรกเข้า timeline ตามเวลา
   // (จอด "ที่จุดงาน" เป็นเรื่องปกติ โชว์ใน timeline ที่จุดนั้นอยู่แล้ว ไม่ต้องแยกกล่อง)
   const offJobStops = [...truck.stopEvents].filter((ev) => !ev.nearJob).sort((a, b) => a.startT - b.startT)
-  type TimelineRow = { kind: "stop"; entry: TimelineEntry } | { kind: "offjob"; ev: LongStopEvent }
+  // เรียงจุดงานตาม "เวลาถึงจริง" (คนขับอาจวิ่งสลับลำดับแผน) — จุดที่ยังไม่ถึงคงลำดับแผนต่อท้าย
+  const sortedTimeline = [...truck.timeline].sort((a, b) => {
+    if (a.arrivedAt != null && b.arrivedAt != null) return a.arrivedAt - b.arrivedAt
+    if (a.arrivedAt != null) return -1
+    if (b.arrivedAt != null) return 1
+    return a.order - b.order
+  })
+  type TimelineRow =
+    | { kind: "stop"; entry: TimelineEntry }
+    | { kind: "offjob"; ev: LongStopEvent }
+    | { kind: "return" }
   const timelineRows: TimelineRow[] = []
   {
     let oi = 0
-    for (const s of truck.timeline) {
-      // เหตุการณ์จอดนอกงานที่เกิด "ก่อนถึงจุดนี้" → แทรกไว้ก่อนแถวจุดงาน
-      if (s.arrivedAt) {
-        while (oi < offJobStops.length && offJobStops[oi].startT < s.arrivedAt) {
-          timelineRows.push({ kind: "offjob", ev: offJobStops[oi++] })
-        }
+    const pushEventsBefore = (t: number) => {
+      while (oi < offJobStops.length && offJobStops[oi].startT < t) {
+        timelineRows.push({ kind: "offjob", ev: offJobStops[oi++] })
       }
+    }
+    for (const s of sortedTimeline) {
+      // เหตุการณ์จอดนอกงานที่เกิด "ก่อนถึงจุดนี้" → แทรกไว้ก่อนแถวจุดงาน
+      if (s.arrivedAt) pushEventsBefore(s.arrivedAt)
       timelineRows.push({ kind: "stop", entry: s })
     }
-    // ที่เหลือ (เกิดหลังจุดสุดท้าย เช่น แวะระหว่างขากลับ) ต่อท้าย
+    // กลับถึงออฟฟิศเป็นแถวใน timeline — เหตุการณ์หลังกลับ (รถออกไปอีกรอบ) จะได้ต่อท้ายถูกตำแหน่ง
+    if (retT != null) {
+      pushEventsBefore(retT)
+      timelineRows.push({ kind: "return" })
+    }
     while (oi < offJobStops.length) timelineRows.push({ kind: "offjob", ev: offJobStops[oi++] })
   }
 
@@ -808,6 +823,18 @@ function TruckDetail({
         </div>
 
         {timelineRows.map((row, idx) => {
+          // กลับถึงออฟฟิศ (แทรกตามเวลา — เหตุการณ์หลังจากนี้คือรถออกไปอีกรอบ)
+          if (row.kind === "return") {
+            return (
+              <div key={`return-${idx}`} className="flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none">
+                <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-emerald-500 bg-emerald-500/20 text-xs">🏁</div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium">กลับถึงออฟฟิศ</div>
+                  <div className="text-xs text-emerald-400">{thTime(truck.daily?.returnedOfficeAt)}</div>
+                </div>
+              </div>
+            )
+          }
           // แถวจอดนอกจุดงาน (แทรกตามเวลา) — สีแดง เห็นทันทีว่าหายไปช่วงไหนของวัน
           if (row.kind === "offjob") {
             const ev = row.ev
@@ -915,16 +942,6 @@ function TruckDetail({
           )
         })}
 
-        {/* กลับถึงออฟฟิศ */}
-        {truck.daily?.returnedOfficeAt && (
-          <div className="flex items-center gap-3 py-2.5">
-            <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-emerald-500 bg-emerald-500/20 text-xs">🏁</div>
-            <div className="flex-1">
-              <div className="text-sm font-medium">กลับถึงออฟฟิศ</div>
-              <div className="text-xs text-emerald-400">{thTime(truck.daily.returnedOfficeAt)}</div>
-            </div>
-          </div>
-        )}
       </div>
     </Card>
   )
