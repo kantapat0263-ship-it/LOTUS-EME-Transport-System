@@ -877,11 +877,21 @@ function TruckDetail({
                 : "text-muted-foreground"
           return (
             <div key={`${s.order}-${idx}`}>
-              {!s.movedTo && t?.travelMinFromPrev != null && (
+              {!s.movedTo && t?.travelMinFromPrev != null && (() => {
+                // ขายาวแต่เฉลี่ยช้า = น่าสงสัยว่าถ่วงเวลา (ไม่จับขาในเมือง/รถติดที่ช้าปกติ)
+                const slowHaul = t.travelKmFromPrev != null && t.travelKmFromPrev >= 30 && t.avgSpeedKmh != null && t.avgSpeedKmh < 50
+                return (
                 <div className="flex items-center gap-1 py-0.5 pl-8 text-[11px] text-muted-foreground">
                   <Navigation className="h-3 w-3 rotate-90 opacity-60" /> เดินทาง {t.travelMinFromPrev} นาที
+                  {t.travelKmFromPrev != null && <span> · {t.travelKmFromPrev} กม.</span>}
+                  {t.avgSpeedKmh != null && (
+                    <span className={cn(slowHaul && "font-semibold text-amber-400")}>
+                      {" "}· เฉลี่ย {t.avgSpeedKmh} กม/ชม{slowHaul && " 🐢 ช้าผิดปกติ"}
+                    </span>
+                  )}
                 </div>
-              )}
+                )
+              })()}
               <div
                 className={cn(
                   "flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none",
@@ -925,6 +935,9 @@ function TruckDetail({
                           <span className={cn(longStop && "font-semibold text-amber-400")}>
                             {" "}· จอด {t.dwellMin} นาที{longStop && " ⚠ นานผิดสังเกต"}
                           </span>
+                        )}
+                        {t?.dwellMin != null && t.departedAt != null && (
+                          <span> · ออก {thTime(t.departedAt)}</span>
                         )}
                       </>
                     ) : s.isCurrent ? (
