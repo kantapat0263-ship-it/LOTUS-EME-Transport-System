@@ -688,7 +688,7 @@ function TruckDetail({
     return a.order - b.order
   })
   type TimelineRow =
-    | { kind: "stop"; entry: TimelineEntry }
+    | { kind: "stop"; entry: TimelineEntry; count: number }
     | { kind: "offjob"; ev: LongStopEvent }
     | { kind: "return" }
   const timelineRows: TimelineRow[] = []
@@ -702,7 +702,22 @@ function TruckDetail({
     for (const s of sortedTimeline) {
       // เหตุการณ์จอดนอกงานที่เกิด "ก่อนถึงจุดนี้" → แทรกไว้ก่อนแถวจุดงาน
       if (s.arrivedAt) pushEventsBefore(s.arrivedAt)
-      timelineRows.push({ kind: "stop", entry: s })
+      // งานหลายใบที่ไซต์เดียวกันติดกัน → ยุบเป็นแถวเดียว (ป้ายจำนวนงาน) — เฉพาะสถานะเหมือนกัน
+      // และไม่ใช่งานโยกออก/โยกเข้า (มีป้ายเฉพาะตัว) ; ไซต์เดิมที่วนกลับมาอีกรอบไม่ติดกัน = ไม่ยุบ
+      const last = timelineRows[timelineRows.length - 1]
+      if (
+        last?.kind === "stop" &&
+        last.entry.name === s.name &&
+        last.entry.lat === s.lat &&
+        last.entry.lng === s.lng &&
+        last.entry.arrived === s.arrived &&
+        !s.movedTo && !last.entry.movedTo &&
+        !s.incomingFrom && !last.entry.incomingFrom
+      ) {
+        last.count++
+        continue
+      }
+      timelineRows.push({ kind: "stop", entry: s, count: 1 })
     }
     // กลับถึงออฟฟิศเป็นแถวใน timeline — เหตุการณ์หลังกลับ (รถออกไปอีกรอบ) จะได้ต่อท้ายถูกตำแหน่ง
     if (retT != null) {
@@ -918,6 +933,11 @@ function TruckDetail({
                 <div className="flex-1">
                   <div className={cn("text-sm font-medium", s.movedTo && "line-through")}>
                     {s.name}
+                    {row.count > 1 && (
+                      <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        {row.count} งาน
+                      </span>
+                    )}
                     {s.incomingFrom && (
                       <span className="ml-2 rounded bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-400">
                         🔄 รับต่อจาก {s.incomingFrom.plate}
