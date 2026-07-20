@@ -174,6 +174,8 @@ export interface TrackingDailyDoc {
     departedAt: number | null;
     dwellMin: number | null;
     travelMinFromPrev: number | null;
+    travelKmFromPrev: number | null;
+    avgSpeedKmh: number | null;
   }[];
   updatedAt?: any;
 }
