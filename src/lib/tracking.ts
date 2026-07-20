@@ -249,6 +249,10 @@ export interface StopTiming {
   dwellMin: number | null
   /** เดินทางจากจุดก่อนหน้า (หรือจากออฟฟิศ) มากี่นาที — null ถ้าคำนวณไม่ได้ */
   travelMinFromPrev: number | null
+  /** ระยะทางขานี้ (กม.) วัดจาก trail ช่วง (ออกจุดก่อน → ถึงจุดนี้) — null ถ้าคำนวณไม่ได้ */
+  travelKmFromPrev: number | null
+  /** ความเร็วเฉลี่ยขานี้ (กม./ชม.) = travelKm ÷ travelMin — null ถ้าคำนวณไม่ได้ (ต่ำผิดปกติ = ถ่วงเวลา) */
+  avgSpeedKmh: number | null
 }
 
 export interface DailySummary {
@@ -320,7 +324,7 @@ export function computeDailySummary(
       }
     }
     const dwellMin = arrivedAt != null && departedAt != null && departedAt > arrivedAt ? toMin(departedAt - arrivedAt) : null
-    return { order: s.order, siteName: s.siteName ?? "", arrivedAt, departedAt, dwellMin, travelMinFromPrev: null }
+    return { order: s.order, siteName: s.siteName ?? "", arrivedAt, departedAt, dwellMin, travelMinFromPrev: null, travelKmFromPrev: null, avgSpeedKmh: null }
   })
 
   // ---- เวลาเดินทางช่วง (ถึงจุดนี้ − ออกจุดก่อน / ออกออฟฟิศ) ----
@@ -335,7 +339,14 @@ export function computeDailySummary(
   let prevDepart: number | null = departedOfficeAt
   for (const t of seq) {
     if (t.arrivedAt != null && prevDepart != null && t.arrivedAt > prevDepart) {
-      t.travelMinFromPrev = toMin(t.arrivedAt - prevDepart)
+      const legMs = t.arrivedAt - prevDepart
+      t.travelMinFromPrev = toMin(legMs)
+      // ระยะทางขานี้ = trail ช่วง (ออกจุดก่อน → ถึงจุดนี้) + ความเร็วเฉลี่ย
+      const legPts = pts.filter((p) => p.t! >= prevDepart! && p.t! <= t.arrivedAt!)
+      const km = Math.round(trailDistanceKm(legPts) * 10) / 10
+      t.travelKmFromPrev = km
+      const hours = legMs / 3_600_000
+      t.avgSpeedKmh = hours > 0 ? Math.round(km / hours) : null
     }
     if (t.departedAt != null) prevDepart = t.departedAt
   }
