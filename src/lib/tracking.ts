@@ -181,6 +181,9 @@ export function trailDistanceKm(trail: LatLng[]): number {
 /** รัศมีออฟฟิศ/คลัง (เมตร) ที่ถือว่า "อยู่ที่ออฟฟิศ" */
 export const OFFICE_RADIUS_M = 250
 
+/** ต้องเคยห่างออฟฟิศเกินระยะนี้ (เมตร) จึงถือว่า "ออกไปทำงานจริง" แล้วค่อยเริ่มนับการกลับ — กัน GPS เด้งรอบออฟฟิศตอนเพิ่งออกตัว ถูกนับเป็นกลับผิด ๆ */
+export const DEPARTED_FAR_M = 1000
+
 /** พิกัดออฟฟิศ (จุดเริ่มต้นเสมอ) — ใช้เมื่อไม่ได้ตั้ง warehouse ใน companySettings */
 export const OFFICE_LOCATION: LatLng = { lat: 14.093932911692894, lng: 100.68868332848953 }
 
@@ -276,16 +279,28 @@ export function computeDailySummary(
   const pts = [...trail].filter((p) => p.t != null).sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
 
   // ---- เข้า-ออกออฟฟิศ ----
+  // นับ "กลับ" ได้ต่อเมื่อรถ "ออกไปจริง" แล้วเท่านั้น — เคยห่างออฟฟิศเกิน DEPARTED_FAR_M
+  // หรือเคยเข้าใกล้จุดงาน (เผื่องานใกล้ออฟฟิศ) — กัน GPS เด้งรอบรัศมีตอนเพิ่งออกตัว
+  // ถูกนับเป็นกลับผิด ๆ (เวลาภารกิจเหลือ ~1 นาที ทั้งที่รถยังวิ่งอยู่)
+  const jobStops = stops.filter((s) => s.lat != null && s.lng != null) as { lat: number; lng: number }[]
+  const atAnyJob = (p: TrailPoint) =>
+    jobStops.some((s) => haversineMeters({ lat: s.lat, lng: s.lng }, p) <= arrivalRadius)
+
   let departedOfficeAt: number | null = null
   let returnedOfficeAt: number | null = null
   if (origin && pts.length) {
+    let leftForReal = false // ออกไปทำงานจริงแล้ว (ไกลพอ/ถึงจุดงาน) — ค่อยเริ่มจับการกลับ
     for (const p of pts) {
-      const inOffice = haversineMeters(origin, p) <= officeRadius
+      const distFromOffice = haversineMeters(origin, p)
+      const inOffice = distFromOffice <= officeRadius
       if (departedOfficeAt == null) {
         if (!inOffice) departedOfficeAt = p.t! // ออกจากออฟฟิศแล้ว
-      } else if (inOffice) {
-        returnedOfficeAt = p.t! // กลับเข้ารัศมีออฟฟิศครั้งแรกหลังออก
-        break
+      } else {
+        if (distFromOffice > DEPARTED_FAR_M || atAnyJob(p)) leftForReal = true
+        if (leftForReal && inOffice) {
+          returnedOfficeAt = p.t! // กลับเข้ารัศมีออฟฟิศครั้งแรก "หลังออกไปจริง"
+          break
+        }
       }
     }
   }
