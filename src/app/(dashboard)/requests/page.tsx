@@ -167,6 +167,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     return requests.find(r => r.id === selectedReqId) || null
   }, [selectedReqId, requests])
 
+  // ใบที่ถูกจัดเข้าเที่ยววิ่งแล้ว (บางส่วน/ทั้งหมด) — ห้ามยกเลิก/เลื่อนที่ขั้น "ใบขอรถ"
+  // เพราะจะเหลือ "จุดผี" ค้างในทริป (การยกเลิกต้องทำก่อนจัดคิว; งานที่จัดแล้วให้ใช้ เลื่อน/โยก ในใบสรุป)
+  const isReqGrouped = ((selectedReq?.assignedDestinations?.length ?? 0) > 0) || !!selectedReq?.tripId
+
   // Look up related trip and driver info
   const relatedTripRef = useMemoFirebase(() => (db && selectedReq?.tripId) ? doc(db, "trips", selectedReq.tripId) : null, [db, selectedReq?.tripId])
   const { data: relatedTrip } = useDoc<any>(relatedTripRef)
@@ -434,6 +438,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const handleReject = async () => {
     if (!selectedReq) return
+    if (isReqGrouped) {
+      toast({ title: "ยกเลิกไม่ได้", description: "ใบนี้ถูกจัดเข้าเที่ยววิ่งแล้ว — ถ้าจะเอางานออก ให้ใช้ 'เลื่อน/โยกงาน' ในใบสรุป หรือถอนจุดออกจากทริปก่อน", variant: "destructive" })
+      return
+    }
     if (!rejectReason.trim()) {
       toast({ title: "ระบุเหตุผล", description: "กรุณาระบุเหตุผลที่ไม่นุมัติ", variant: "destructive" })
       return
@@ -460,6 +468,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const handleReschedule = async () => {
     if (!selectedReq) return
+    if (isReqGrouped) {
+      toast({ title: "เลื่อนที่นี่ไม่ได้", description: "ใบนี้ถูกจัดเข้าเที่ยววิ่งแล้ว — ให้เลื่อน/โยกงานผ่านใบสรุป (จะได้ไม่เหลือจุดค้างในทริป)", variant: "destructive" })
+      return
+    }
     if (!rescheduleDate) {
       toast({ title: "กรุณาเลือกวันที่ใหม่", variant: "destructive" })
       return
@@ -927,38 +939,48 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
               {(selectedReq.status === "pending" || selectedReq.status === "partial" || selectedReq.status === "in_progress" || selectedReq.status === "rescheduled") ? (
                 <div className="pt-6 border-t border-border/50 space-y-5">
-                  <div className="grid grid-cols-1 gap-4">
-                    <div className="space-y-2">
-                      <Label className="text-xs font-bold uppercase tracking-wider text-red-400">เหตุผลกรณีไม่อนุมัติ</Label>
-                      <Textarea 
-                        placeholder="ระบุเหตุผลเพื่อให้ผู้ขอรับทราบ..."
-                        className="bg-secondary/20 min-h-[80px]"
-                        value={rejectReason}
-                        onChange={(e) => setRejectReason(e.target.value)}
-                      />
+                  {isReqGrouped ? (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
+                      🔒 ใบนี้ถูกจัดเข้าเที่ยววิ่งแล้ว — ยกเลิก/เลื่อนที่ขั้นใบขอไม่ได้ ถ้าจะเอางานออกให้ใช้ <b>เลื่อน/โยกงาน</b> ในใบสรุป หรือถอนจุดออกจากทริปก่อน
                     </div>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-xs font-bold uppercase tracking-wider text-red-400">เหตุผลกรณีไม่อนุมัติ</Label>
+                        <Textarea
+                          placeholder="ระบุเหตุผลเพื่อให้ผู้ขอรับทราบ..."
+                          className="bg-secondary/20 min-h-[80px]"
+                          value={rejectReason}
+                          onChange={(e) => setRejectReason(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-col sm:flex-row gap-3">
+                    {!isReqGrouped && (
+                      <>
+                        <Button
+                          variant="outline"
+                          className="flex-1 h-12 border-blue-500/50 text-blue-400 hover:bg-blue-500 hover:text-white"
+                          onClick={() => {
+                            setRescheduleDate(selectedReq?.requestDate || "")
+                            setIsRescheduleOpen(true)
+                          }}
+                          disabled={isProcessing || isRescheduling}
+                        >
+                          📅 เลื่อนวันที่
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="flex-1 h-12 border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white"
+                          onClick={handleReject}
+                          disabled={isProcessing}
+                        >
+                          <XCircle className="mr-2 h-4 w-4" /> ปฏิเสธคำขอ
+                        </Button>
+                      </>
+                    )}
                     <Button
-                      variant="outline"
-                      className="flex-1 h-12 border-blue-500/50 text-blue-400 hover:bg-blue-500 hover:text-white"
-                      onClick={() => {
-                        setRescheduleDate(selectedReq?.requestDate || "")
-                        setIsRescheduleOpen(true)
-                      }}
-                      disabled={isProcessing || isRescheduling}
-                    >
-                      📅 เลื่อนวันที่
-                    </Button>
-                    <Button 
-                      variant="outline"
-                      className="flex-1 h-12 border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white" 
-                      onClick={handleReject}
-                      disabled={isProcessing}
-                    >
-                      <XCircle className="mr-2 h-4 w-4" /> ปฏิเสธคำขอ
-                    </Button>
-                    <Button 
                       className="flex-[2] h-12 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20" 
                       onClick={handleAcknowledge}
                       disabled={isProcessing}

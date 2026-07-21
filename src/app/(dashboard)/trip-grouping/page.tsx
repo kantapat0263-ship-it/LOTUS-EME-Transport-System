@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion, getDocs } from "firebase/firestore"
+import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion, getDocs, getDoc } from "firebase/firestore"
 import { Vehicle, Driver, Site, CompanySetting, Trip } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
@@ -222,9 +222,26 @@ export default function TripGroupingPage() {
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
     try {
+      // ด่าน 2: re-read สถานะใบสดๆ ก่อนเขียน — กันจัดทับ/ฟื้นใบที่เพิ่งถูกยกเลิก (race / un-reject)
+      const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
+      const vrDocIds = Array.from(new Set(selectedDestinations.map(d => d.vrDocId)))
+      const freshStatus: Record<string, string> = {}
+      await Promise.all(vrDocIds.map(async (id) => {
+        const snap = await getDoc(doc(db, "vehicleRequests", id))
+        freshStatus[id] = snap.exists() ? (snap.data().status as string) : "missing"
+      }))
+      const dests = selectedDestinations.filter(d => GROUPABLE.includes(freshStatus[d.vrDocId]))
+      if (dests.length === 0) {
+        toast({ title: "จัดไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+      if (dests.length < selectedDestinations.length) {
+        toast({ title: "ข้ามบางจุด", description: `ข้าม ${selectedDestinations.length - dests.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
+      }
+
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const now = new Date();
-      const tripDateStr = selectedDestinations[0]?.requestDate || now.toISOString().split('T')[0];
+      const tripDateStr = dests[0]?.requestDate || now.toISOString().split('T')[0];
       const tripDateObj = new Date(tripDateStr + 'T00:00:00');
       const d = String(tripDateObj.getDate()).padStart(2, '0');
       const m = String(tripDateObj.getMonth() + 1).padStart(2, '0');
@@ -251,7 +268,7 @@ export default function TripGroupingPage() {
         driverId,
         driverName: selectedDriver?.name || "",
         status: "Planned",
-        sourceVRIds: Array.from(new Set(selectedDestinations.map(d => d.vrId))),
+        sourceVRIds: Array.from(new Set(dests.map(d => d.vrId))),
         totalDistanceKm: lastStats.distance || 0,
         totalEstimatedTimeMinutes: lastStats.duration || 0,
         fuelCost: lastStats.fuelCost || 0,
@@ -262,7 +279,7 @@ export default function TripGroupingPage() {
         departurePoint: settings?.warehouseName || "คลังสินค้า LOTUS EME",
         originLat: warehousePos.lat,
         originLng: warehousePos.lng,
-        stops: selectedDestinations.map((d, index) => ({
+        stops: dests.map((d, index) => ({
           order: index + 1,
           siteId: d.siteId || null,
           siteName: d.siteName || d.customName,
@@ -280,7 +297,7 @@ export default function TripGroupingPage() {
       })
 
       const vrGroups: Record<string, number[]> = {}
-      selectedDestinations.forEach(d => {
+      dests.forEach(d => {
         if (!vrGroups[d.vrDocId]) vrGroups[d.vrDocId] = []
         vrGroups[d.vrDocId].push(d.destIndex)
       })
@@ -318,12 +335,29 @@ export default function TripGroupingPage() {
       const { existingTrip, newStops } = mergeDialog
       if (!existingTrip || !newStops) return
 
+      // ด่าน 2: re-read สถานะใบสดๆ ก่อนรวม — กันยัดจุด/ฟื้นใบที่เพิ่งถูกยกเลิก (dialog ค้างเปิด/race)
+      const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
+      const vrDocIds = Array.from(new Set(newStops.map(d => d.vrDocId)))
+      const freshStatus: Record<string, string> = {}
+      await Promise.all(vrDocIds.map(async (id) => {
+        const snap = await getDoc(doc(db, "vehicleRequests", id))
+        freshStatus[id] = snap.exists() ? (snap.data().status as string) : "missing"
+      }))
+      const validNewStops = newStops.filter(d => GROUPABLE.includes(freshStatus[d.vrDocId]))
+      if (validNewStops.length === 0) {
+        toast({ title: "รวมไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+      if (validNewStops.length < newStops.length) {
+        toast({ title: "ข้ามบางจุด", description: `ข้าม ${newStops.length - validNewStops.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
+      }
+
       const currentStops = existingTrip.stops || []
       const lastOrder = currentStops.length > 0 
         ? Math.max(...currentStops.map((s: any) => s.order || 0))
         : 0
 
-      const addedStops = newStops.map((d, index) => ({
+      const addedStops = validNewStops.map((d, index) => ({
         order: lastOrder + index + 1,
         siteId: d.siteId || null,
         siteName: d.siteName || d.customName,
@@ -342,7 +376,7 @@ export default function TripGroupingPage() {
       const mergedStops = [...currentStops, ...addedStops]
       const sourceVRIds = Array.from(new Set([
         ...(existingTrip.sourceVRIds || []),
-        ...newStops.map(d => d.vrId)
+        ...validNewStops.map(d => d.vrId)
       ]))
 
       await updateDoc(doc(db, "trips", existingTrip.id), {
@@ -352,7 +386,7 @@ export default function TripGroupingPage() {
       })
 
       const vrGroups: Record<string, number[]> = {}
-      newStops.forEach(d => {
+      validNewStops.forEach(d => {
         if (!vrGroups[d.vrDocId]) vrGroups[d.vrDocId] = []
         vrGroups[d.vrDocId].push(d.destIndex)
       })
