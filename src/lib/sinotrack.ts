@@ -177,12 +177,13 @@ async function callProc(
   cmd: string,
   args: string[],
   user: string,
-  cookie: string | null
+  cookie: string | null,
+  server: string = SINOTRACK_SERVER
 ): Promise<{ result: AppJsonResult; cookie: string | null }> {
-  const req = buildRequest({ cmd, args, user, nowMs: Date.now(), random: randomDigits() })
+  const req = buildRequest({ cmd, args, user, server, nowMs: Date.now(), random: randomDigits() })
   const body = new URLSearchParams(req as unknown as Record<string, string>).toString()
 
-  const res = await fetch(SINOTRACK_SERVER + SINOTRACK_ENDPOINT, {
+  const res = await fetch(server + SINOTRACK_ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -205,9 +206,9 @@ async function callProc(
   return { result: parseAppJson(json), cookie: nextCookie }
 }
 
-/** login แล้วคืน cookie session (โยน error ถ้า user/pass ผิด) */
-export async function sinotrackLogin(user: string, password: string): Promise<string> {
-  const { result, cookie } = await callProc(PROC.login, [user, password], user, null)
+/** login แล้วคืน cookie session (โยน error ถ้า user/pass ผิด) — server ระบุได้ (รองรับหลาย server) */
+export async function sinotrackLogin(user: string, password: string, server: string = SINOTRACK_SERVER): Promise<string> {
+  const { result, cookie } = await callProc(PROC.login, [user, password], user, null, server)
   if (!result.ok) throw new Error('SinoTrack login failed (บัญชีหรือรหัสผ่านไม่ถูกต้อง)')
   if (!cookie) throw new Error('SinoTrack login: ไม่ได้ session cookie')
   return cookie
@@ -217,19 +218,21 @@ export async function sinotrackLogin(user: string, password: string): Promise<st
 export async function fetchLastPositions(
   cookie: string,
   user: string,
-  deviceIds: string[]
+  deviceIds: string[],
+  server: string = SINOTRACK_SERVER
 ): Promise<VehiclePosition[]> {
   if (deviceIds.length === 0) return []
-  const { result } = await callProc(PROC.getLastPosition, [deviceIds.join(',')], user, cookie)
+  const { result } = await callProc(PROC.getLastPosition, [deviceIds.join(',')], user, cookie, server)
   return toVehiclePositions(result)
 }
 
 /** ดึงรายชื่ออุปกรณ์ในบัญชี (strTEID + strCarNum) เพื่อช่วยจับคู่ทะเบียน */
 export async function fetchDevices(
   cookie: string,
-  user: string
+  user: string,
+  server: string = SINOTRACK_SERVER
 ): Promise<{ deviceId: string; carNum: string }[]> {
-  const { result } = await callProc(PROC.getUserOwnCar, [user], user, cookie)
+  const { result } = await callProc(PROC.getUserOwnCar, [user], user, cookie, server)
   return result.records
     .filter((r) => r.strTEID)
     .map((r) => ({ deviceId: String(r.strTEID), carNum: String(r.strCarNum ?? '') }))

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStaffToken } from '@/firebase/admin'
-import { sinotrackLogin, fetchDevices, fetchLastPositions } from '@/lib/sinotrack'
+import { sinotrackLogin, fetchDevices, fetchLastPositions, SINOTRACK_SERVER } from '@/lib/sinotrack'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -33,19 +33,40 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  try {
-    const cookie = await sinotrackLogin(user, password)
-    const list = await fetchDevices(cookie, user)
-    // เติมชื่อรถ (strCarNum) จากตำแหน่งล่าสุด เพราะ Proc_GetUserOwnCar ไม่มีชื่อ
-    const positions = await fetchLastPositions(cookie, user, list.map((d) => d.deviceId))
-    const nameById = new Map(positions.map((p) => [p.deviceId, p.carNum || '']))
-    const devices = list.map((d) => ({
-      deviceId: d.deviceId,
-      carNum: nameById.get(d.deviceId) || d.carNum || '',
-    }))
-    cache = { at: Date.now(), devices }
-    return NextResponse.json({ ok: true, devices })
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: 'sinotrack', detail: e?.message }, { status: 502 })
+  // บัญชีหลัก + VIP (ถ้าตั้ง env) — รวมรายชื่ออุปกรณ์จากทุก server
+  const accounts: { user: string; password: string; server: string; label: string }[] = [
+    { user, password, server: SINOTRACK_SERVER, label: 'primary' },
+  ]
+  const vipUser = process.env.SINOTRACK_VIP_USER
+  const vipPassword = process.env.SINOTRACK_VIP_PASSWORD
+  if (vipUser && vipPassword) {
+    accounts.push({
+      user: vipUser,
+      password: vipPassword,
+      server: process.env.SINOTRACK_VIP_SERVER || 'https://242.sinotrack.com', // Server 5 | Vip.SinoTrack
+      label: 'vip',
+    })
   }
+
+  const devices: { deviceId: string; carNum: string }[] = []
+  const errors: string[] = []
+  for (const acct of accounts) {
+    try {
+      const cookie = await sinotrackLogin(acct.user, acct.password, acct.server)
+      const list = await fetchDevices(cookie, acct.user, acct.server)
+      // เติมชื่อรถ (strCarNum) จากตำแหน่งล่าสุด เพราะ Proc_GetUserOwnCar ไม่มีชื่อ
+      const positions = await fetchLastPositions(cookie, acct.user, list.map((d) => d.deviceId), acct.server)
+      const nameById = new Map(positions.map((p) => [p.deviceId, p.carNum || '']))
+      for (const d of list) {
+        devices.push({ deviceId: d.deviceId, carNum: nameById.get(d.deviceId) || d.carNum || '' })
+      }
+    } catch (e: any) {
+      errors.push(`${acct.label}: ${e?.message}`)
+    }
+  }
+  if (devices.length === 0 && errors.length === accounts.length) {
+    return NextResponse.json({ ok: false, error: 'sinotrack', detail: errors.join(' | ') }, { status: 502 })
+  }
+  cache = { at: Date.now(), devices }
+  return NextResponse.json({ ok: true, devices })
 }
