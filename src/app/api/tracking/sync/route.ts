@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
-import { sinotrackLogin, fetchLastPositions, type VehiclePosition } from '@/lib/sinotrack'
+import { sinotrackLogin, fetchLastPositions, SINOTRACK_SERVER, type VehiclePosition } from '@/lib/sinotrack'
 import { trackingDateKey, computeDailySummary, OFFICE_LOCATION } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
@@ -25,7 +25,9 @@ const MIN_SYNC_INTERVAL_MS = 45_000
  *   (ข) จาก external cron (cron-job.org) — แนบ `Authorization: Bearer <CRON_SECRET>` (ทางเลือก)
  *
  * ENV ที่ต้องตั้งบน Vercel:
- *   SINOTRACK_USER, SINOTRACK_PASSWORD  — บัญชี SinoTrack (เก็บเป็น secret เท่านั้น)
+ *   SINOTRACK_USER, SINOTRACK_PASSWORD  — บัญชี SinoTrack หลัก (Server 2, เก็บเป็น secret เท่านั้น)
+ *   SINOTRACK_VIP_USER, SINOTRACK_VIP_PASSWORD — (ทางเลือก) บัญชี Server 5 | Vip.SinoTrack ; ตั้งแล้ว sync จะดึงรวมทั้ง 2 server
+ *   SINOTRACK_VIP_SERVER                — (ทางเลือก) host ของ VIP ; ไม่ตั้ง = https://242.sinotrack.com
  *   FIREBASE_SERVICE_ACCOUNT_BASE64     — เขียน Firestore + verify token ฝั่ง server (มีอยู่แล้วจาก cron ราคาน้ำมัน)
  *   CRON_SECRET                          — (ทางเลือก) สำหรับ external cron
  */
@@ -128,13 +130,37 @@ export async function GET(req: NextRequest) {
     console.error('[tracking-sync] read trips failed:', e?.message)
   }
 
-  // 2) login + ดึงตำแหน่งล่าสุด
-  let positions: VehiclePosition[]
-  try {
-    const cookie = await sinotrackLogin(user, password)
-    positions = await fetchLastPositions(cookie, user, deviceIds)
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: 'sinotrack', detail: e?.message }, { status: 502 })
+  // 2) login + ดึงตำแหน่งล่าสุด — รองรับหลาย server (บัญชีหลัก + VIP ถ้าตั้ง env ไว้)
+  //    แต่ละบัญชี login ที่ server ของตัวเอง แล้วดึงตำแหน่งของ deviceIds ที่บัญชีนั้นเป็นเจ้าของ
+  //    (ส่ง deviceIds ทั้งหมดได้ server จะคืนเฉพาะตัวที่เป็นของบัญชีนั้น) — id คนละ range จึงไม่ชนกัน
+  const accounts: { user: string; password: string; server: string; label: string }[] = [
+    { user, password, server: SINOTRACK_SERVER, label: 'primary' },
+  ]
+  const vipUser = process.env.SINOTRACK_VIP_USER
+  const vipPassword = process.env.SINOTRACK_VIP_PASSWORD
+  if (vipUser && vipPassword) {
+    accounts.push({
+      user: vipUser,
+      password: vipPassword,
+      server: process.env.SINOTRACK_VIP_SERVER || 'https://242.sinotrack.com', // Server 5 | Vip.SinoTrack
+      label: 'vip',
+    })
+  }
+
+  const positions: VehiclePosition[] = []
+  const acctErrors: string[] = []
+  for (const acct of accounts) {
+    try {
+      const cookie = await sinotrackLogin(acct.user, acct.password, acct.server)
+      const pos = await fetchLastPositions(cookie, acct.user, deviceIds, acct.server)
+      positions.push(...pos)
+    } catch (e: any) {
+      acctErrors.push(`${acct.label}: ${e?.message}`)
+    }
+  }
+  // ทุกบัญชีพลาด = ยิง SinoTrack ไม่ได้จริง → 502 ; ถ้าบางบัญชีพลาด ปล่อยผ่าน (เขียนเท่าที่ได้)
+  if (positions.length === 0 && acctErrors.length === accounts.length) {
+    return NextResponse.json({ ok: false, error: 'sinotrack', detail: acctErrors.join(' | ') }, { status: 502 })
   }
 
   const nowMs = Date.now()
@@ -210,6 +236,8 @@ export async function GET(req: NextRequest) {
     synced: written,
     devices: deviceIds.length,
     positions: positions.length,
+    accounts: accounts.length,
+    acctErrors: acctErrors.length ? acctErrors : undefined,
     at: new Date(nowMs).toISOString(),
   })
 }
