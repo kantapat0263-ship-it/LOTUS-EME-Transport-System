@@ -90,6 +90,7 @@ export default function DailySummaryPage() {
   // แทรกงานด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — แทรกตรงเข้าทริปคันนั้น เฉพาะทริปวันนี้
   const [insertDialog, setInsertDialog] = React.useState<{ tripId: string } | null>(null)
   const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
+  const [siteListOpen, setSiteListOpen] = React.useState(false)
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
@@ -534,6 +535,16 @@ export default function DailySummaryPage() {
     setInsertForm({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
   }
   const insertTrip = insertDialog ? trips.find(t => t.id === insertDialog.tripId) : null
+
+  // ไซต์ที่ตรงกับที่พิมพ์ (เฉพาะ Active + มีพิกัด) — โชว์เป็น dropdown ใต้ช่องค้นหา
+  const siteMatches = React.useMemo(() => {
+    const pool = (sitesData || []).filter(s => s.status === "Active" && s.latitude != null && s.longitude != null)
+    const q = insertForm.place.trim().toLowerCase()
+    const hit = q
+      ? pool.filter(s => s.name.toLowerCase().includes(q) || (s.address || "").toLowerCase().includes(q))
+      : pool
+    return hit.slice(0, 30)
+  }, [sitesData, insertForm.place])
 
   // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
   const deleteAdhocStop = (trip: Trip, sIdx: number) => {
@@ -1575,38 +1586,52 @@ export default function DailySummaryPage() {
               </select>
               <p className="text-[11px] text-muted-foreground">คนขับคนเดิม — เลือกคันอื่นถ้ารถเปลี่ยน (งานจะไปอยู่ทริป/GPS ของคันที่เลือก)</p>
             </div>
+            {/* จุด/สถานที่ — พิมพ์ค้นหาแล้วมีรายการไซต์เลื่อนลงมาให้เลือก (เลือก=ได้พิกัด)
+                ถ้าไม่มีในลิสต์ พิมพ์เองได้เลย (ไม่มีพิกัด ไม่ขึ้นแผนที่) */}
             <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">เลือกจากไซต์ที่บันทึกไว้ (มีพิกัด)</label>
-              <select
-                value={insertForm.siteId}
-                onChange={(e) => {
-                  const sid = e.target.value
-                  const s = (sitesData || []).find(x => x.id === sid)
-                  // เลือกไซต์ = ใช้ชื่อไซต์ ; กลับมา "พิมพ์เอง" = ล้างชื่อเดิมของไซต์ออก
-                  setInsertForm(f => ({ ...f, siteId: sid, place: s ? s.name : "" }))
-                }}
-                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                <option value="">— พิมพ์เอง (ไม่มีพิกัด ไม่ขึ้นแผนที่) —</option>
-                {(sitesData || [])
-                  .filter(s => s.status === "Active" && s.latitude != null && s.longitude != null)
-                  .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <p className="text-[11px] text-muted-foreground">เลือกไซต์ = งานขึ้นแผนที่ + คิดระยะทางได้ ; ไม่มีในลิสต์ ให้พิมพ์เองด้านล่าง</p>
-            </div>
-            {/* เลือกไซต์แล้วได้ชื่อ+พิกัดครบ ไม่ต้องพิมพ์ชื่อซ้ำ — ช่องนี้โผล่เฉพาะตอน "พิมพ์เอง" */}
-            {!insertForm.siteId && (
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-foreground">ชื่อจุด/สถานที่ <span className="text-red-400">*</span></label>
+              <label className="text-sm font-medium text-foreground">จุด/สถานที่ <span className="text-red-400">*</span></label>
+              <div className="relative">
                 <input
                   type="text"
                   value={insertForm.place}
-                  placeholder="เช่น คลอง11 รับของกลับที่ยาช"
-                  onChange={(e) => setInsertForm(f => ({ ...f, place: e.target.value }))}
+                  placeholder="พิมพ์ค้นหาไซต์ เช่น การไฟฟ้า / คลอง11"
+                  autoComplete="off"
+                  onChange={(e) => { setInsertForm(f => ({ ...f, place: e.target.value, siteId: "" })); setSiteListOpen(true) }}
+                  onFocus={() => setSiteListOpen(true)}
+                  onBlur={() => setTimeout(() => setSiteListOpen(false), 150)}
                   className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
                 />
+                {siteListOpen && siteMatches.length > 0 && (
+                  <ul className="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-border bg-popover shadow-xl">
+                    {siteMatches.map(s => (
+                      <li key={s.id}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setInsertForm(f => ({ ...f, siteId: s.id, place: s.name }))
+                            setSiteListOpen(false)
+                          }}
+                          className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-secondary/60"
+                        >
+                          <span className="text-sm text-foreground">📍 {s.name}</span>
+                          {s.address && <span className="text-[11px] text-muted-foreground line-clamp-1">{s.address}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-            )}
+              {insertForm.siteId ? (
+                <p className="text-[11px] text-emerald-400">✅ ใช้พิกัดจากไซต์ที่บันทึกไว้ — งานจะขึ้นแผนที่ + คิดระยะทางได้</p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  {insertForm.place.trim()
+                    ? "⚠ พิมพ์เอง (ไม่มีพิกัด ไม่ขึ้นแผนที่) — เลือกจากรายการถ้าต้องการพิกัด"
+                    : "พิมพ์เพื่อค้นหาไซต์ที่บันทึกไว้ หรือพิมพ์ชื่อจุดเองก็ได้"}
+                </p>
+              )}
+            </div>
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">รายละเอียดงาน</label>
               <input
