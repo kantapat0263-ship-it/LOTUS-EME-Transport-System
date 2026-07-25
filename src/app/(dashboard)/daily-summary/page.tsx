@@ -29,7 +29,8 @@ import {
   ArrowRightLeft,
   CalendarClock,
   Ban,
-  ListChecks
+  ListChecks,
+  Trash2
 } from "lucide-react"
 import { 
   Dialog, 
@@ -533,6 +534,15 @@ export default function DailySummaryPage() {
   }
   const insertTrip = insertDialog ? trips.find(t => t.id === insertDialog.tripId) : null
 
+  // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
+  const deleteAdhocStop = (trip: Trip, sIdx: number) => {
+    const stop = trip.stops?.[sIdx]
+    if (!stop || !(stop as any).adhoc) return
+    if (!window.confirm(`ลบงานแทรก "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?`)) return
+    applyStops(trip.id, (trip.stops || []).filter((_, i) => i !== sIdx), true)
+    toast({ title: "ลบงานแทรกแล้ว", description: `เอา "${stop.siteName}" ออกจากทริปเรียบร้อย` })
+  }
+
   // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
   // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
   const setActualDriver = (tripId: string, driverId: string) => {
@@ -841,14 +851,26 @@ export default function DailySummaryPage() {
 
     return (
       <div key={`${trip.id}-${sIdx}`} className="flex flex-col gap-2 rounded-md bg-secondary/20 p-2.5">
-        <span className="text-sm font-medium text-white">
-          {sIdx + 1}. {stop.siteName}
+        <div className="flex items-start gap-2">
+          <span className="flex-1 text-sm font-medium text-white">
+            {sIdx + 1}. {stop.siteName}
+            {(stop as any).adhoc && (
+              <span className="ml-2 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-purple-300">
+                ➕ แทรก{(stop as any).insertedBy ? ` · ${(stop as any).insertedBy}` : ""}
+              </span>
+            )}
+          </span>
           {(stop as any).adhoc && (
-            <span className="ml-2 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-purple-300">
-              ➕ แทรก{(stop as any).insertedBy ? ` · ${(stop as any).insertedBy}` : ""}
-            </span>
+            <button
+              type="button"
+              onClick={() => deleteAdhocStop(trip, sIdx)}
+              title="ลบงานแทรกนี้"
+              className="shrink-0 rounded-md border border-red-500/40 p-1 text-red-400 hover:bg-red-500/15"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
-        </span>
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {btn('delivered', 'ตามแผน', CheckCircle2, 'border-green-500/60 bg-green-500/10 text-green-400')}
           {btn('reassigned', 'โยกงาน', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
@@ -1544,7 +1566,8 @@ export default function DailySummaryPage() {
                 onChange={(e) => {
                   const sid = e.target.value
                   const s = (sitesData || []).find(x => x.id === sid)
-                  setInsertForm(f => ({ ...f, siteId: sid, place: s ? s.name : f.place }))
+                  // เลือกไซต์ = ใช้ชื่อไซต์ ; กลับมา "พิมพ์เอง" = ล้างชื่อเดิมของไซต์ออก
+                  setInsertForm(f => ({ ...f, siteId: sid, place: s ? s.name : "" }))
                 }}
                 className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
               >
@@ -1555,16 +1578,19 @@ export default function DailySummaryPage() {
               </select>
               <p className="text-[11px] text-muted-foreground">เลือกไซต์ = งานขึ้นแผนที่ + คิดระยะทางได้ ; ไม่มีในลิสต์ ให้พิมพ์เองด้านล่าง</p>
             </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">ชื่อจุด/สถานที่ <span className="text-red-400">*</span></label>
-              <input
-                type="text"
-                value={insertForm.place}
-                placeholder="เช่น คลอง11 รับของกลับที่ยาช"
-                onChange={(e) => setInsertForm(f => ({ ...f, place: e.target.value }))}
-                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-            </div>
+            {/* เลือกไซต์แล้วได้ชื่อ+พิกัดครบ ไม่ต้องพิมพ์ชื่อซ้ำ — ช่องนี้โผล่เฉพาะตอน "พิมพ์เอง" */}
+            {!insertForm.siteId && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">ชื่อจุด/สถานที่ <span className="text-red-400">*</span></label>
+                <input
+                  type="text"
+                  value={insertForm.place}
+                  placeholder="เช่น คลอง11 รับของกลับที่ยาช"
+                  onChange={(e) => setInsertForm(f => ({ ...f, place: e.target.value }))}
+                  className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+            )}
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">รายละเอียดงาน</label>
               <input
@@ -1592,7 +1618,7 @@ export default function DailySummaryPage() {
             <Button
               className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
               onClick={handleInsertJob}
-              disabled={!insertForm.place.trim()}
+              disabled={!insertForm.siteId && !insertForm.place.trim()}
             >
               ➕ แทรกงาน
             </Button>
