@@ -40,7 +40,7 @@ import {
   DialogFooter
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Trip, Driver, Vehicle, TripStop, StopOutcome } from "@/types/models"
+import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
@@ -71,6 +71,9 @@ export default function DailySummaryPage() {
   // รายชื่อรถ — สำหรับ "เปลี่ยนรถ" ในแผงปิดผลงานจริง (รถเสีย/ใช้ไม่ได้ แต่งาน+คนขับเดิม)
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const { data: vehiclesData } = useCollection<Vehicle>(vehiclesRef)
+  // ไซต์งานที่บันทึกไว้ (มีพิกัด) — สำหรับเลือกจุดตอน "แทรกงานด่วน" ให้ได้ lat/lng
+  const sitesRef = useMemoFirebase(() => collection(db, "sites"), [db])
+  const { data: sitesData } = useCollection<Site>(sitesRef)
 
   // Share Modal State
   const [selectedTripForShare, setSelectedTripForShare] = React.useState<Trip | null>(null)
@@ -85,7 +88,7 @@ export default function DailySummaryPage() {
   const [isPostponing, setIsPostponing] = React.useState(false)
   // แทรกงานด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — แทรกตรงเข้าทริปคันนั้น เฉพาะทริปวันนี้
   const [insertDialog, setInsertDialog] = React.useState<{ tripId: string } | null>(null)
-  const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "" })
+  const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
@@ -465,14 +468,18 @@ export default function DailySummaryPage() {
       toast({ title: "แทรกได้เฉพาะงานวันนี้", description: "งานย้อนหลังข้ามวันแทรกไม่ได้", variant: "destructive" })
       return
     }
-    const place = insertForm.place.trim()
+    // ถ้าเลือกไซต์ที่บันทึกไว้ → ได้พิกัด (ขึ้นแผนที่+คิดระยะทาง) ; ไม่เลือก → พิมพ์เอง ไม่มีพิกัด
+    const site = insertForm.siteId ? (sitesData || []).find(s => s.id === insertForm.siteId) : null
+    const place = insertForm.place.trim() || site?.name || ""
     if (!place) { toast({ title: "ใส่ชื่อจุด/สถานที่ก่อน", variant: "destructive" }); return }
 
     const chosenVehId = insertForm.vehicleId || trip.vehicleId
     const mkStop = (order: number): TripStop => ({
-      siteId: "",
+      siteId: site?.id || "",
       siteName: place,
       order,
+      lat: site?.latitude,
+      lng: site?.longitude,
       cargoDetails: insertForm.detail.trim(),
       requestedBy: insertForm.requester.trim() || undefined,
       adhoc: true,
@@ -522,7 +529,7 @@ export default function DailySummaryPage() {
       }
     }
     setInsertDialog(null)
-    setInsertForm({ place: "", detail: "", requester: "", vehicleId: "" })
+    setInsertForm({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
   }
   const insertTrip = insertDialog ? trips.find(t => t.id === insertDialog.tripId) : null
 
@@ -1396,7 +1403,7 @@ export default function DailySummaryPage() {
                     {trip.tripDate === todayStr && (
                       <button
                         type="button"
-                        onClick={() => { setInsertForm({ place: "", detail: "", requester: "", vehicleId: trip.vehicleId }); setInsertDialog({ tripId: trip.id }) }}
+                        onClick={() => { setInsertForm({ place: "", detail: "", requester: "", vehicleId: trip.vehicleId, siteId: "" }); setInsertDialog({ tripId: trip.id }) }}
                         className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-purple-500/50 bg-purple-500/5 px-2 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/15"
                       >
                         ➕ แทรกงานด่วน (สั่งเพิ่มระหว่างวัน)
@@ -1531,7 +1538,25 @@ export default function DailySummaryPage() {
               <p className="text-[11px] text-muted-foreground">คนขับคนเดิม — เลือกคันอื่นถ้ารถเปลี่ยน (งานจะไปอยู่ทริป/GPS ของคันที่เลือก)</p>
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">จุด/สถานที่ <span className="text-red-400">*</span></label>
+              <label className="text-sm font-medium text-foreground">เลือกจากไซต์ที่บันทึกไว้ (มีพิกัด)</label>
+              <select
+                value={insertForm.siteId}
+                onChange={(e) => {
+                  const sid = e.target.value
+                  const s = (sitesData || []).find(x => x.id === sid)
+                  setInsertForm(f => ({ ...f, siteId: sid, place: s ? s.name : f.place }))
+                }}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">— พิมพ์เอง (ไม่มีพิกัด ไม่ขึ้นแผนที่) —</option>
+                {(sitesData || [])
+                  .filter(s => s.status === "Active" && s.latitude != null && s.longitude != null)
+                  .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <p className="text-[11px] text-muted-foreground">เลือกไซต์ = งานขึ้นแผนที่ + คิดระยะทางได้ ; ไม่มีในลิสต์ ให้พิมพ์เองด้านล่าง</p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">ชื่อจุด/สถานที่ <span className="text-red-400">*</span></label>
               <input
                 type="text"
                 value={insertForm.place}
