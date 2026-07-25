@@ -119,6 +119,9 @@ export interface Trip {
   vehiclePlate: string;
   /** ทะเบียนรถคันเดิมตอนจัดทริป (ก่อนกด "เปลี่ยนรถ" ในหน้าสรุป — เก็บไว้ดูย้อนหลัง) */
   vehicleChangedFromPlate?: string;
+  /** ทริปที่ระบบสร้างให้ตอน "แทรกงานด่วน" กับรถที่ยังไม่มีทริปวันนั้น
+   *  (ไม่ได้มาจากการจัดคิว) — ลบงานแทรกจนไม่เหลือ = ลบทริปทิ้งได้ กลับไปเหมือนก่อนแทรก */
+  adhocCreated?: boolean;
   departureSiteId: string;
   stops: TripStop[];
   status: TripStatus;
