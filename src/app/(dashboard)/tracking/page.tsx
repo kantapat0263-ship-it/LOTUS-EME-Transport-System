@@ -769,7 +769,7 @@ function TruckDetail({
           apiKey={apiKey}
           stops={truck.stops}
           trail={truck.trail}
-          truck={pos ? { lat: pos.lat, lng: pos.lng } : null}
+          truck={pos ? { lat: pos.lat, lng: pos.lng, direction: pos.direction, speed: pos.speed } : null}
           origin={truck.origin}
           stopEvents={truck.stopEvents}
           live={isToday}

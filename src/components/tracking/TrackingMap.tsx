@@ -22,7 +22,7 @@ export interface TrackingMapStopEvent {
 export interface TrackingMapProps {
   apiKey?: string
   stops: TrackingMapStop[]
-  truck?: { lat: number; lng: number } | null
+  truck?: { lat: number; lng: number; direction?: number | null; speed?: number | null } | null
   trail: { lat: number; lng: number }[]
   /** จุดออกรถ (คลัง/ออฟฟิศ) — ใช้เป็นต้นทางของเส้นทางที่ควรวิ่ง */
   origin?: { lat: number; lng: number } | null
@@ -212,14 +212,17 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       hasPoint = true
     })
 
-    // ตำแหน่งรถ
+    // ตำแหน่งรถ — วงกลมส้ม ; ถ้ากำลังวิ่ง (speed>0 + มีทิศ) เพิ่มลูกศรหัวหมุนตามทิศ
+    // ตอนจอด (speed=0) ไม่หมุน เพราะ heading จาก GPS มักค้าง/มั่ว → โชว์ 🚚 เหมือนเดิม
     if (truck) {
       const t = { lat: truck.lat, lng: truck.lng }
+      const heading = truck.direction
+      const moving = (truck.speed ?? 0) > 0 && heading != null && !Number.isNaN(heading)
       const truckMarker = new google.maps.Marker({
         position: t,
         map,
         title: "ตำแหน่งรถตอนนี้",
-        label: { text: "🚚", fontSize: "18px" },
+        label: moving ? undefined : { text: "🚚", fontSize: "18px" },
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: 16,
@@ -231,6 +234,24 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
         zIndex: 999,
       })
       overlaysRef.current.push(truckMarker)
+      if (moving) {
+        const arrow = new google.maps.Marker({
+          position: t,
+          map,
+          title: "ทิศที่รถมุ่งหน้า",
+          icon: {
+            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+            scale: 5,
+            rotation: heading as number, // องศาตามเข็มนาฬิกา 0=เหนือ ตรงกับ heading GPS
+            fillColor: "#fff",
+            fillOpacity: 1,
+            strokeColor: "#F0890D",
+            strokeWeight: 1,
+          },
+          zIndex: 1000,
+        })
+        overlaysRef.current.push(arrow)
+      }
       bounds.extend(t)
       hasPoint = true
     }
