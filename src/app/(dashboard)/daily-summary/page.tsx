@@ -83,6 +83,9 @@ export default function DailySummaryPage() {
   const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
   const [postponeDateStr, setPostponeDateStr] = React.useState<string>("")
   const [isPostponing, setIsPostponing] = React.useState(false)
+  // แทรกงานด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — แทรกตรงเข้าทริปคันนั้น เฉพาะทริปวันนี้
+  const [insertDialog, setInsertDialog] = React.useState<{ tripId: string } | null>(null)
+  const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
@@ -451,6 +454,37 @@ export default function DailySummaryPage() {
     }
   }
 
+  // แทรกงานด่วน: เพิ่ม stop ตรงเข้าทริปคันนั้น (ไม่ผ่านกองจัดกลุ่ม = ไม่มี race/จุดผี)
+  // ติดป้าย adhoc + ใครแทรก/เมื่อไหร่ ; อนุญาตเฉพาะทริป "วันนี้" (กันบันทึกย้อนหลังข้ามวัน)
+  const todayStr = format(new Date(), "yyyy-MM-dd")
+  const handleInsertJob = () => {
+    if (!insertDialog) return
+    const trip = trips.find(t => t.id === insertDialog.tripId)
+    if (!trip) { setInsertDialog(null); return }
+    if (trip.tripDate !== todayStr) {
+      toast({ title: "แทรกได้เฉพาะงานวันนี้", description: "งานย้อนหลังข้ามวันแทรกไม่ได้", variant: "destructive" })
+      return
+    }
+    const place = insertForm.place.trim()
+    if (!place) { toast({ title: "ใส่ชื่อจุด/สถานที่ก่อน", variant: "destructive" }); return }
+    const stops = trip.stops || []
+    const nextOrder = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
+    const newStop: TripStop = {
+      siteId: "",
+      siteName: place,
+      order: nextOrder,
+      cargoDetails: insertForm.detail.trim(),
+      requestedBy: insertForm.requester.trim() || undefined,
+      adhoc: true,
+      insertedBy: recordedBy || "Dispatcher",
+      insertedAt: new Date().toISOString(),
+    }
+    applyStops(trip.id, [...stops, newStop], true)
+    toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริป ${trip.driverName} (${trip.vehiclePlate})` })
+    setInsertDialog(null)
+    setInsertForm({ place: "", detail: "", requester: "" })
+  }
+
   // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
   // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
   const setActualDriver = (tripId: string, driverId: string) => {
@@ -759,7 +793,14 @@ export default function DailySummaryPage() {
 
     return (
       <div key={`${trip.id}-${sIdx}`} className="flex flex-col gap-2 rounded-md bg-secondary/20 p-2.5">
-        <span className="text-sm font-medium text-white">{sIdx + 1}. {stop.siteName}</span>
+        <span className="text-sm font-medium text-white">
+          {sIdx + 1}. {stop.siteName}
+          {(stop as any).adhoc && (
+            <span className="ml-2 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-purple-300">
+              ➕ แทรก{(stop as any).insertedBy ? ` · ${(stop as any).insertedBy}` : ""}
+            </span>
+          )}
+        </span>
         <div className="flex flex-wrap gap-1.5">
           {btn('delivered', 'ตามแผน', CheckCircle2, 'border-green-500/60 bg-green-500/10 text-green-400')}
           {btn('reassigned', 'โยกงาน', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
@@ -1311,6 +1352,15 @@ export default function DailySummaryPage() {
                         🚚 เปลี่ยนรถจาก {(trip as any).vehicleChangedFromPlate} → <b>{trip.vehiclePlate}</b>
                       </p>
                     )}
+                    {trip.tripDate === todayStr && (
+                      <button
+                        type="button"
+                        onClick={() => { setInsertForm({ place: "", detail: "", requester: "" }); setInsertDialog({ tripId: trip.id }) }}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-purple-500/50 bg-purple-500/5 px-2 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/15"
+                      >
+                        ➕ แทรกงานด่วน (สั่งเพิ่มระหว่างวัน)
+                      </button>
+                    )}
                     <div className="space-y-2">
                       {(trip.stops || []).map((stop, sIdx) => renderStopRow(trip, stop, sIdx))}
                     </div>
@@ -1405,6 +1455,66 @@ export default function DailySummaryPage() {
             >
               {isPostponing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CalendarClock className="mr-2 h-4 w-4" />}
               {isPostponing ? "กำลังเลื่อน..." : "ยืนยันเลื่อน"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* แทรกงานด่วน: เพิ่ม stop ตรงเข้าทริปคันนั้น (วันนี้) ติดป้าย "แทรก" */}
+      <Dialog open={!!insertDialog} onOpenChange={(open) => { if (!open) setInsertDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              ➕ แทรกงานด่วน
+            </DialogTitle>
+            <DialogDescription>
+              {insertDialog
+                ? `เพิ่มงานเข้าทริป ${trips.find(t => t.id === insertDialog.tripId)?.driverName || ""} (${trips.find(t => t.id === insertDialog.tripId)?.vehiclePlate || ""}) — สำหรับงานที่สั่งเพิ่มระหว่างวัน (เช่นทางไลน์) จะติดป้าย "แทรก" ไว้`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">จุด/สถานที่ <span className="text-red-400">*</span></label>
+              <input
+                type="text"
+                value={insertForm.place}
+                placeholder="เช่น คลอง11 รับของกลับที่ยาช"
+                onChange={(e) => setInsertForm(f => ({ ...f, place: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">รายละเอียดงาน</label>
+              <input
+                type="text"
+                value={insertForm.detail}
+                placeholder="เช่น ไปรับของกลับมาเก็บ"
+                onChange={(e) => setInsertForm(f => ({ ...f, detail: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">ผู้สั่ง (ไม่บังคับ)</label>
+              <input
+                type="text"
+                value={insertForm.requester}
+                placeholder="เช่น สั่งทางไลน์ โดย ..."
+                onChange={(e) => setInsertForm(f => ({ ...f, requester: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setInsertDialog(null)}>ยกเลิก</Button>
+            <Button
+              className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
+              onClick={handleInsertJob}
+              disabled={!insertForm.place.trim()}
+            >
+              ➕ แทรกงาน
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -98,6 +98,11 @@ export interface TripStop {
    *  if the dispatcher later changes the outcome away from postponed). */
   postponedToDate?: string;
   postponedRequestId?: string;
+  /** งานแทรกด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — ไม่ได้อยู่ในแผนตั้งแต่ต้น
+   *  แทรกตรงเข้าทริปคันนั้น (ไม่ผ่านกองจัดกลุ่ม) + ติดป้าย ใครแทรก/เมื่อไหร่ ไว้ audit */
+  adhoc?: boolean;
+  insertedBy?: string;
+  insertedAt?: string;
 }
 
 export interface Trip {
