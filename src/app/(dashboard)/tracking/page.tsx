@@ -772,6 +772,7 @@ function TruckDetail({
           truck={pos ? { lat: pos.lat, lng: pos.lng } : null}
           origin={truck.origin}
           stopEvents={truck.stopEvents}
+          live={isToday}
         />
       </div>
 
