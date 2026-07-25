@@ -212,8 +212,8 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       hasPoint = true
     })
 
-    // ตำแหน่งรถ — วงกลมส้ม ; ถ้ากำลังวิ่ง (speed>0 + มีทิศ) เพิ่มลูกศรหัวหมุนตามทิศ
-    // ตอนจอด (speed=0) ไม่หมุน เพราะ heading จาก GPS มักค้าง/มั่ว → โชว์ 🚚 เหมือนเดิม
+    // ตำแหน่งรถ — กำลังวิ่ง (speed>0 + มีทิศ) = ลูกศรหันตามทิศล้วน ๆ (ไม่มีวงกลม)
+    // ตอนจอด (speed=0) heading จาก GPS มักค้าง/มั่ว → โชว์วงกลม 🚚 แทน
     if (truck) {
       const t = { lat: truck.lat, lng: truck.lng }
       const heading = truck.direction
@@ -221,37 +221,29 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       const truckMarker = new google.maps.Marker({
         position: t,
         map,
-        title: "ตำแหน่งรถตอนนี้",
+        title: moving ? "ตำแหน่งรถตอนนี้ (หัวลูกศร = ทิศที่มุ่งหน้า)" : "ตำแหน่งรถตอนนี้",
         label: moving ? undefined : { text: "🚚", fontSize: "18px" },
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 16,
-          fillColor: "#F0890D",
-          fillOpacity: 1,
-          strokeColor: "#fff",
-          strokeWeight: 2,
-        },
+        icon: moving
+          ? {
+              path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+              scale: 9,
+              rotation: heading as number, // องศาตามเข็มนาฬิกา 0=เหนือ ตรงกับ heading GPS
+              fillColor: "#F0890D",
+              fillOpacity: 1,
+              strokeColor: "#fff",
+              strokeWeight: 2,
+            }
+          : {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 16,
+              fillColor: "#F0890D",
+              fillOpacity: 1,
+              strokeColor: "#fff",
+              strokeWeight: 2,
+            },
         zIndex: 999,
       })
       overlaysRef.current.push(truckMarker)
-      if (moving) {
-        const arrow = new google.maps.Marker({
-          position: t,
-          map,
-          title: "ทิศที่รถมุ่งหน้า",
-          icon: {
-            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-            scale: 5,
-            rotation: heading as number, // องศาตามเข็มนาฬิกา 0=เหนือ ตรงกับ heading GPS
-            fillColor: "#fff",
-            fillOpacity: 1,
-            strokeColor: "#F0890D",
-            strokeWeight: 1,
-          },
-          zIndex: 1000,
-        })
-        overlaysRef.current.push(arrow)
-      }
       bounds.extend(t)
       hasPoint = true
     }
