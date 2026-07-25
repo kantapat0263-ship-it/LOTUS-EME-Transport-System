@@ -28,6 +28,8 @@ export interface TrackingMapProps {
   origin?: { lat: number; lng: number } | null
   /** จุดจอดนานผิดสังเกต — มาร์คด้วยหมุด ⏸ + ระยะเวลา */
   stopEvents?: TrackingMapStopEvent[]
+  /** โหมดสด (วันนี้) — เปิดปุ่มชั้นจราจร (จราจรเป็นข้อมูล "ตอนนี้" ไม่ตรงกับการดูย้อนหลัง) */
+  live?: boolean
 }
 
 // โทนแผนที่เข้ม (ชุดเดียวกับ GroupingMap เพื่อความกลมกลืน)
@@ -51,12 +53,14 @@ const validLatLng = (s: { lat?: number; lng?: number }) => s.lat != null && s.ln
  *  - หมุดจุดงาน: เขียว = ถึงแล้ว, ส้ม = เป้าหมายปัจจุบัน, เทา = รอ
  *  - 🚚 = ตำแหน่งรถล่าสุด
  */
-export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents }: TrackingMapProps) {
+export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, live }: TrackingMapProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const overlaysRef = React.useRef<Array<google.maps.Marker | google.maps.Polyline>>([])
   const routeRef = React.useRef<google.maps.Polyline | null>(null)
+  const trafficRef = React.useRef<google.maps.TrafficLayer | null>(null)
   const [ready, setReady] = React.useState(false)
+  const [trafficOn, setTrafficOn] = React.useState(false)
 
   // โหลด map ครั้งเดียว
   React.useEffect(() => {
@@ -84,6 +88,17 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents }:
       cancelled = true
     }
   }, [apiKey])
+
+  // ชั้นจราจรสด (Google TrafficLayer) — เปิด/ปิดได้ ไม่มีค่าใช้จ่ายเพิ่ม (ติดมากับ map load เดิม)
+  React.useEffect(() => {
+    if (!ready || !mapRef.current) return
+    if (trafficOn) {
+      if (!trafficRef.current) trafficRef.current = new google.maps.TrafficLayer()
+      trafficRef.current.setMap(mapRef.current)
+    } else {
+      trafficRef.current?.setMap(null)
+    }
+  }, [trafficOn, ready])
 
   // คีย์ของเส้นทาง (จุดงาน + ต้นทาง) — ใช้กันคำนวณ Directions ซ้ำตอนตำแหน่งรถอัปเดต
   const routeKey = React.useMemo(() => {
@@ -281,5 +296,24 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents }:
     )
   }
 
-  return <div ref={containerRef} className="h-full w-full rounded-lg" />
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full rounded-lg" />
+      {ready && live && (
+        <button
+          type="button"
+          onClick={() => setTrafficOn((v) => !v)}
+          title="แสดง/ซ่อนสภาพจราจรสด"
+          className={
+            "absolute right-2 top-2 z-10 rounded-md border px-2.5 py-1 text-xs font-medium shadow-md backdrop-blur transition " +
+            (trafficOn
+              ? "border-orange-400/60 bg-orange-500/90 text-white"
+              : "border-border bg-background/80 text-foreground hover:bg-background")
+          }
+        >
+          🚦 จราจร{trafficOn ? " เปิด" : ""}
+        </button>
+      )}
+    </div>
+  )
 }
