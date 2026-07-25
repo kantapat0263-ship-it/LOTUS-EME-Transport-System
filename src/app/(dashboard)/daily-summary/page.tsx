@@ -85,7 +85,7 @@ export default function DailySummaryPage() {
   const [isPostponing, setIsPostponing] = React.useState(false)
   // แทรกงานด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — แทรกตรงเข้าทริปคันนั้น เฉพาะทริปวันนี้
   const [insertDialog, setInsertDialog] = React.useState<{ tripId: string } | null>(null)
-  const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "" })
+  const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
@@ -467,23 +467,64 @@ export default function DailySummaryPage() {
     }
     const place = insertForm.place.trim()
     if (!place) { toast({ title: "ใส่ชื่อจุด/สถานที่ก่อน", variant: "destructive" }); return }
-    const stops = trip.stops || []
-    const nextOrder = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
-    const newStop: TripStop = {
+
+    const chosenVehId = insertForm.vehicleId || trip.vehicleId
+    const mkStop = (order: number): TripStop => ({
       siteId: "",
       siteName: place,
-      order: nextOrder,
+      order,
       cargoDetails: insertForm.detail.trim(),
       requestedBy: insertForm.requester.trim() || undefined,
       adhoc: true,
       insertedBy: recordedBy || "Dispatcher",
       insertedAt: new Date().toISOString(),
+    })
+    const appendTo = (target: Trip) => {
+      const stops = target.stops || []
+      const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
+      applyStops(target.id, [...stops, mkStop(order)], true)
     }
-    applyStops(trip.id, [...stops, newStop], true)
-    toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริป ${trip.driverName} (${trip.vehiclePlate})` })
+
+    if (chosenVehId === trip.vehicleId) {
+      // คันเดิม → แทรกเข้าทริปนี้
+      appendTo(trip)
+      toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริป ${trip.driverName} (${trip.vehiclePlate})` })
+    } else {
+      // เปลี่ยนรถ → งานแทรกไปอยู่ทริปของรถคันใหม่ (คนขับคนเดิม) เพื่อ GPS ตรงคัน
+      const veh = vehiclesData?.find(v => v.id === chosenVehId)
+      const targetTrip = trips.find(t => t.vehicleId === chosenVehId && t.tripDate === todayStr && t.status !== "Cancelled")
+      if (targetTrip) {
+        appendTo(targetTrip)
+        toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริปรถ ${veh?.licensePlate || ""} (คนขับ ${trip.driverName})` })
+      } else {
+        // รถคันใหม่ยังไม่มีทริปวันนี้ → สร้างทริปใหม่ให้ (คนขับคนเดิม)
+        const dd = todayStr.slice(8, 10), mm = todayStr.slice(5, 7)
+        const seq = String(trips.filter(t => t.tripDate === todayStr).length + 1).padStart(3, "0")
+        const tripId = `T-${dd}${mm}-${seq}${Math.floor(Math.random() * 10)}`
+        const newTrip: Trip = {
+          id: tripId,
+          tripId,
+          tripDate: todayStr,
+          vehicleId: chosenVehId,
+          vehiclePlate: veh?.licensePlate || "",
+          vehicleType: veh?.type,
+          driverId: trip.driverId,
+          driverName: trip.driverName,
+          departureSiteId: "",
+          stops: [mkStop(1)],
+          status: "Planned",
+        }
+        setTrips(prev => [...prev, newTrip])
+        if (db) {
+          setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
+        }
+        toast({ title: "สร้างทริปใหม่ให้รถคันใหม่ ✅", description: `${veh?.licensePlate || ""} (คนขับ ${trip.driverName}) — งาน "${place}"` })
+      }
+    }
     setInsertDialog(null)
-    setInsertForm({ place: "", detail: "", requester: "" })
+    setInsertForm({ place: "", detail: "", requester: "", vehicleId: "" })
   }
+  const insertTrip = insertDialog ? trips.find(t => t.id === insertDialog.tripId) : null
 
   // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
   // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
@@ -1355,7 +1396,7 @@ export default function DailySummaryPage() {
                     {trip.tripDate === todayStr && (
                       <button
                         type="button"
-                        onClick={() => { setInsertForm({ place: "", detail: "", requester: "" }); setInsertDialog({ tripId: trip.id }) }}
+                        onClick={() => { setInsertForm({ place: "", detail: "", requester: "", vehicleId: trip.vehicleId }); setInsertDialog({ tripId: trip.id }) }}
                         className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-purple-500/50 bg-purple-500/5 px-2 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/15"
                       >
                         ➕ แทรกงานด่วน (สั่งเพิ่มระหว่างวัน)
@@ -1475,6 +1516,20 @@ export default function DailySummaryPage() {
           </DialogHeader>
 
           <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">รถที่ทำงานนี้</label>
+              <select
+                value={insertForm.vehicleId}
+                onChange={(e) => setInsertForm(f => ({ ...f, vehicleId: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {insertTrip && <option value={insertTrip.vehicleId}>{insertTrip.vehiclePlate} (คันเดิม)</option>}
+                {(vehiclesData || [])
+                  .filter(v => v.id !== insertTrip?.vehicleId)
+                  .map(v => <option key={v.id} value={v.id}>{v.licensePlate} ({v.type})</option>)}
+              </select>
+              <p className="text-[11px] text-muted-foreground">คนขับคนเดิม — เลือกคันอื่นถ้ารถเปลี่ยน (งานจะไปอยู่ทริป/GPS ของคันที่เลือก)</p>
+            </div>
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">จุด/สถานที่ <span className="text-red-400">*</span></label>
               <input
