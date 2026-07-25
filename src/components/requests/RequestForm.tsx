@@ -116,8 +116,13 @@ export function RequestForm() {
     const currentHour = bangkokNow.getUTCHours()
     const daysToAdd = !isViewer ? 1 : (currentHour >= closeHour || currentHour < openHour) ? 2 : 1
     bangkokNow.setUTCDate(bangkokNow.getUTCDate() + daysToAdd)
+    // ปิดรับวันอาทิตย์ — ถ้าวันเริ่มต้นตกวันอาทิตย์ ให้เลื่อนเป็นวันจันทร์
+    if (bangkokNow.getUTCDay() === 0) bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
     return `${bangkokNow.getUTCFullYear()}-${String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokNow.getUTCDate()).padStart(2, '0')}`
   }, [settings, isViewer])
+
+  /** ปิดรับคำขอวันอาทิตย์ (ไม่มีรอบวิ่ง) */
+  const isSundayStr = (s: string) => !!s && new Date(s + 'T00:00:00').getDay() === 0
 
   const tomorrowStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
@@ -148,7 +153,7 @@ export function RequestForm() {
 
   React.useEffect(() => {
     if (profile) {
-      if (!selectedDate || selectedDate < tomorrowStr) {
+      if (!selectedDate || selectedDate < tomorrowStr || isSundayStr(selectedDate)) {
         setSelectedDate(minDateStr)
       }
     }
@@ -233,6 +238,10 @@ export function RequestForm() {
     e.preventDefault()
     if (!selectedDate || !user) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุวันที่", variant: "destructive" })
+      return
+    }
+    if (isSundayStr(selectedDate)) {
+      toast({ title: "วันอาทิตย์ปิดรับคำขอ", description: "กรุณาเลือกวันจันทร์–เสาร์", variant: "destructive" })
       return
     }
 
@@ -405,7 +414,7 @@ export function RequestForm() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>วันที่ต้องการรถ</Label>
+                <Label>วันที่ต้องการรถ <span className="text-xs font-normal text-muted-foreground">(ปิดรับวันอาทิตย์)</span></Label>
                 <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
                   <PopoverTrigger asChild>
                     <Button
@@ -426,12 +435,13 @@ export function RequestForm() {
                       fromDate={new Date(tomorrowStr + 'T00:00:00')}
                       disabled={(date) => {
                         const dateStr = format(date, "yyyy-MM-dd")
-                        return dateStr < tomorrowStr
+                        // ปิดรับวันอาทิตย์ (ไม่มีรอบวิ่ง)
+                        return dateStr < tomorrowStr || date.getDay() === 0
                       }}
                       onSelect={(date) => {
                         if (!date) return
                         const dateStr = format(date, "yyyy-MM-dd")
-                        if (dateStr < tomorrowStr) return
+                        if (dateStr < tomorrowStr || date.getDay() === 0) return
                         setSelectedDate(dateStr)
                         setIsCalendarOpen(false)
                       }}
