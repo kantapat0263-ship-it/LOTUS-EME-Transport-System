@@ -521,6 +521,7 @@ export default function DailySummaryPage() {
           departureSiteId: "",
           stops: [mkStop(1)],
           status: "Planned",
+          adhocCreated: true, // ระบบสร้างให้ตอนแทรกงาน — ลบงานหมดแล้วลบทริปทิ้งได้
         }
         setTrips(prev => [...prev, newTrip])
         if (db) {
@@ -538,8 +539,23 @@ export default function DailySummaryPage() {
   const deleteAdhocStop = (trip: Trip, sIdx: number) => {
     const stop = trip.stops?.[sIdx]
     if (!stop || !(stop as any).adhoc) return
+    const remaining = (trip.stops || []).filter((_, i) => i !== sIdx)
+
+    // ลบแล้วไม่เหลืองานในทริป → ลบทริปทิ้งทั้งใบ (กลับไปเหมือนก่อนแทรก ไม่ค้างทริปเปล่า)
+    // ถึงจุดนี้ได้เฉพาะทริปที่มีแต่งานแทรก เพราะงานตามแผนกดลบไม่ได้
+    if (remaining.length === 0) {
+      if (!window.confirm(
+        `ลบงานแทรก "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
+        `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ กลับไปเหมือนก่อนแทรก ใช่หรือไม่?`
+      )) return
+      setTrips(prev => prev.filter(t => t.id !== trip.id))
+      if (db) deleteDoc(doc(db, "trips", trip.id)).catch(() => {})
+      toast({ title: "ลบทริปแล้ว", description: `${trip.vehiclePlate} (${trip.driverName}) — ไม่เหลืองานในทริป` })
+      return
+    }
+
     if (!window.confirm(`ลบงานแทรก "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?`)) return
-    applyStops(trip.id, (trip.stops || []).filter((_, i) => i !== sIdx), true)
+    applyStops(trip.id, remaining, true)
     toast({ title: "ลบงานแทรกแล้ว", description: `เอา "${stop.siteName}" ออกจากทริปเรียบร้อย` })
   }
 
