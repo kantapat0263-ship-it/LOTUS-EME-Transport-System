@@ -267,7 +267,17 @@ export default function TrackingPage() {
       })
     })
 
-    return activeTrips.map((trip) => {
+    // ทริปที่โยกงานออกครบทุกจุด (มีคันปลายทางรองรับ) + ไม่มีงานโยกเข้า = รถคันนี้ไม่ได้วิ่งงาน
+    // → ไม่โชว์ในหน้าติดตาม (งานไปนับ/ติดตามใต้คันปลายทางแล้ว) — เกณฑ์เดียวกับ isFullyMovedOut ของใบสรุป A4
+    // จุดที่แค่ "เลื่อน" ไม่นับ — การ์ดยังโชว์ตามเดิม
+    const isFullyMovedOut = (t: Trip) => {
+      const stops = t.stops ?? []
+      if (stops.length === 0) return false
+      if ((incomingByTripId[t.id] ?? []).length > 0) return false
+      return stops.every((s: any) => wasMovedAway(s) && s.reassignedToTripId)
+    }
+
+    return activeTrips.filter((t) => !isFullyMovedOut(t)).map((trip) => {
       const deviceId = plateToDevice[trip.vehiclePlate]
       // โหมดดูย้อนหลัง: ไม่ใช้ตำแหน่งสด (collection ตำแหน่งเก็บแค่ล่าสุด ไม่ใช่รายวัน)
       const position = deviceId && isToday ? deviceToPos[deviceId] : undefined
@@ -430,7 +440,9 @@ export default function TrackingPage() {
   )
 
   React.useEffect(() => {
-    if (!selectedId && sortedTrucks.length) setSelectedId(sortedTrucks[0].trip.id)
+    // ครอบทั้งกรณียังไม่เคยเลือก และกรณีการ์ดที่เลือกอยู่หายไป (เช่น ทริปถูกโยกงานออกครบแล้วโดนกรอง)
+    if (sortedTrucks.length && !sortedTrucks.some((t) => t.trip.id === selectedId))
+      setSelectedId(sortedTrucks[0].trip.id)
   }, [sortedTrucks, selectedId])
 
   const selected = trucks.find((t) => t.trip.id === selectedId) ?? null
