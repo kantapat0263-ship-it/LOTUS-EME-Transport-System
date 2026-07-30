@@ -384,10 +384,13 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         updatedAt: serverTimestamp()
       })
 
-      // บันทึกลง /sites อัตโนมัติถ้าเป็น custom type
+      // บันทึกลง /sites อัตโนมัติถ้าเป็น custom type — ข้ามถ้ามีชื่อนี้อยู่แล้ว (กันซ้ำ)
       if (newDestinations[destIndex].type === 'other') {
         const siteName = newDestinations[destIndex].siteName || newDestinations[destIndex].customName
-        if (siteName) {
+        const dupSnap = siteName
+          ? await getDocs(query(collection(db, "sites"), where("name", "==", siteName)))
+          : null
+        if (siteName && (!dupSnap || dupSnap.empty)) {
           const newSiteRef = doc(collection(db, "sites"))
           await setDoc(newSiteRef, {
             id: newSiteRef.id,
