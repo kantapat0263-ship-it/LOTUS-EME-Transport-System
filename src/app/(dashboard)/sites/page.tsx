@@ -177,6 +177,20 @@ export default function SitesPage() {
   function onSubmit(values: SiteFormValues) {
     if (!user) return
 
+    // กันชื่อซ้ำ (ไม่สนตัวพิมพ์เล็ก/ใหญ่ + ตัดช่องว่างหัวท้าย) — ตอนแก้ไข ไม่นับตัวเอง
+    const nameKey = values.name.trim().toLowerCase()
+    const dup = (sites || []).find(
+      (s: any) => (s.name || "").trim().toLowerCase() === nameKey && s.id !== editingSite?.id
+    )
+    if (dup) {
+      toast({
+        title: "ชื่อสถานที่ซ้ำ",
+        description: `มี "${dup.name}" อยู่แล้ว — ใช้ชื่อเดิม หรือแก้ให้ต่างจากที่มีอยู่`,
+        variant: "destructive",
+      })
+      return
+    }
+
     let latitude: number | undefined = undefined
     let longitude: number | undefined = undefined
 
