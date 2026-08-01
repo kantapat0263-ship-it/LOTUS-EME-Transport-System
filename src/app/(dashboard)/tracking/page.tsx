@@ -785,6 +785,7 @@ function TruckDetail({
           origin={truck.origin}
           stopEvents={truck.stopEvents}
           live={isToday}
+          fitKey={truck.trip.id}
         />
       </div>
 
