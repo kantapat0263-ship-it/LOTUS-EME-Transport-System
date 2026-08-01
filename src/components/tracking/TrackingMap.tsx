@@ -30,6 +30,9 @@ export interface TrackingMapProps {
   stopEvents?: TrackingMapStopEvent[]
   /** โหมดสด (วันนี้) — เปิดปุ่มชั้นจราจร (จราจรเป็นข้อมูล "ตอนนี้" ไม่ตรงกับการดูย้อนหลัง) */
   live?: boolean
+  /** ตัวระบุ "การเลือก" (เช่น id ทริป/วัน) — เปลี่ยนค่านี้ = zoom ให้พอดีใหม่ครั้งเดียว
+   *  ค่าเดิม = ไม่แตะซูม (กันแผนที่เด้งออกตอน poll ระหว่างผู้ใช้กำลังซูมดู) */
+  fitKey?: string
 }
 
 // โทนแผนที่เข้ม (ชุดเดียวกับ GroupingMap เพื่อความกลมกลืน)
@@ -53,12 +56,13 @@ const validLatLng = (s: { lat?: number; lng?: number }) => s.lat != null && s.ln
  *  - หมุดจุดงาน: เขียว = ถึงแล้ว, ส้ม = เป้าหมายปัจจุบัน, เทา = รอ
  *  - 🚚 = ตำแหน่งรถล่าสุด
  */
-export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, live }: TrackingMapProps) {
+export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, live, fitKey }: TrackingMapProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const overlaysRef = React.useRef<Array<google.maps.Marker | google.maps.Polyline>>([])
   const routeRef = React.useRef<google.maps.Polyline | null>(null)
   const trafficRef = React.useRef<google.maps.TrafficLayer | null>(null)
+  const lastFitKeyRef = React.useRef<string | null>(null) // zoom พอดีครั้งเดียวต่อการเลือก
   const [ready, setReady] = React.useState(false)
   const [trafficOn, setTrafficOn] = React.useState(false)
 
@@ -292,14 +296,18 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       hasPoint = true
     }
 
-    if (hasPoint) {
+    // zoom ให้พอดี "ครั้งเดียวต่อการเลือก" (fitKey เปลี่ยน) — รอบ poll ถัดมาไม่แตะซูม
+    // เพื่อไม่ให้แผนที่เด้งออกตอนผู้ใช้กำลังซูมดูสถานที่อยู่
+    const fitId = fitKey ?? ""
+    if (hasPoint && lastFitKeyRef.current !== fitId) {
+      lastFitKeyRef.current = fitId
       map.fitBounds(bounds, 60)
       const listener = google.maps.event.addListenerOnce(map, "idle", () => {
         if ((map.getZoom() ?? 0) > 15) map.setZoom(15)
       })
       overlaysRef.current.push({ setMap: () => google.maps.event.removeListener(listener) } as any)
     }
-  }, [ready, stops, truck, trail, origin, stopEvents])
+  }, [ready, stops, truck, trail, origin, stopEvents, fitKey])
 
   if (!apiKey) {
     return (
