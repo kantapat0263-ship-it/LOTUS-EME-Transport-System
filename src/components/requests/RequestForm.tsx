@@ -133,6 +133,15 @@ export function RequestForm() {
     return `${y}-${m}-${d}`
   }, [])
 
+  const todayStr = React.useMemo(() => {
+    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+    return `${bangkokNow.getUTCFullYear()}-${String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokNow.getUTCDate()).padStart(2, '0')}`
+  }, [])
+
+  // วันขั้นต่ำที่เลือกได้ในปฏิทิน — staff (คนจัดคิว) เลือก "วันนี้" ได้ (งานเพิ่มด่วนหน้างาน)
+  // ผู้ขอทั่วไป/viewer ยังต้องล่วงหน้าอย่างน้อยพรุ่งนี้เหมือนเดิม
+  const calendarMinStr = isViewer ? tomorrowStr : todayStr
+
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
   const [isSendingUrgent, setIsSendingUrgent] = React.useState(false)
@@ -149,15 +158,18 @@ export function RequestForm() {
                         bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
   
   const isSelectingTomorrow = selectedDate === tomorrowStr
+  const isSelectingToday = !isViewer && selectedDate === todayStr
   const isBlockedByUrgent = isViewer && isOutsideHours && isSelectingTomorrow && urgentStatus !== 'approved'
 
   React.useEffect(() => {
     if (profile) {
-      if (!selectedDate || selectedDate < tomorrowStr || isSundayStr(selectedDate)) {
+      // รีเซ็ตเป็นค่าเริ่มต้น (พรุ่งนี้) ถ้ายังไม่เลือก / เลือกก่อนวันขั้นต่ำ / ตกวันอาทิตย์
+      // ใช้ calendarMinStr → staff ที่ตั้งใจเลือก "วันนี้" จะไม่ถูกเด้งกลับ
+      if (!selectedDate || selectedDate < calendarMinStr || isSundayStr(selectedDate)) {
         setSelectedDate(minDateStr)
       }
     }
-  }, [profile?.role, settings, minDateStr, tomorrowStr, selectedDate])
+  }, [profile?.role, settings, minDateStr, calendarMinStr, selectedDate])
 
   React.useEffect(() => {
     if (profile) {
@@ -242,6 +254,11 @@ export function RequestForm() {
     }
     if (isSundayStr(selectedDate)) {
       toast({ title: "วันอาทิตย์ปิดรับคำขอ", description: "กรุณาเลือกวันจันทร์–เสาร์", variant: "destructive" })
+      return
+    }
+    // กันเลือกวันย้อนหลัง — staff เลือกได้เร็วสุด "วันนี้", viewer เร็วสุด "พรุ่งนี้" (ตรวจซ้ำอีกชั้น)
+    if (selectedDate < calendarMinStr) {
+      toast({ title: "วันที่ไม่ถูกต้อง", description: isViewer ? "ต้องขอล่วงหน้าอย่างน้อย 1 วัน" : "เลือกวันย้อนหลังไม่ได้", variant: "destructive" })
       return
     }
 
@@ -432,16 +449,16 @@ export function RequestForm() {
                     <Calendar
                       mode="single"
                       selected={selectedDate ? new Date(selectedDate + 'T00:00:00') : undefined}
-                      fromDate={new Date(tomorrowStr + 'T00:00:00')}
+                      fromDate={new Date(calendarMinStr + 'T00:00:00')}
                       disabled={(date) => {
                         const dateStr = format(date, "yyyy-MM-dd")
-                        // ปิดรับวันอาทิตย์ (ไม่มีรอบวิ่ง)
-                        return dateStr < tomorrowStr || date.getDay() === 0
+                        // ก่อนวันขั้นต่ำ (staff=วันนี้ / viewer=พรุ่งนี้) หรือวันอาทิตย์ = กดไม่ได้
+                        return dateStr < calendarMinStr || date.getDay() === 0
                       }}
                       onSelect={(date) => {
                         if (!date) return
                         const dateStr = format(date, "yyyy-MM-dd")
-                        if (dateStr < tomorrowStr || date.getDay() === 0) return
+                        if (dateStr < calendarMinStr || date.getDay() === 0) return
                         setSelectedDate(dateStr)
                         setIsCalendarOpen(false)
                       }}
@@ -449,6 +466,15 @@ export function RequestForm() {
                     />
                   </PopoverContent>
                 </Popover>
+                {isSelectingToday && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-orange-500/40 bg-orange-500/10 p-3 text-xs text-orange-300">
+                    <span className="text-base leading-none">⚠️</span>
+                    <span>
+                      กำลังจะขอใช้รถ <b>วันนี้ ({format(new Date(todayStr + 'T00:00:00'), "dd/MM/yyyy")})</b> — สำหรับงานเพิ่มด่วนหน้างานเท่านั้น
+                      <br />โปรดตรวจสอบวันที่ให้แน่ใจก่อนกดส่ง
+                    </span>
+                  </div>
+                )}
                 {isViewer && isOutsideHours && (
                   <div className="mt-2 space-y-2">
                     {isSelectingTomorrow ? (
