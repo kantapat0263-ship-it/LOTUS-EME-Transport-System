@@ -111,6 +111,7 @@ describe('tracking: computeDailySummary (เวลาจอด/เดินท�
     { order: 2, siteName: 'B', lat: 13.8, lng: 100.6 },
   ]
   // ออฟฟิศ(0') → ออก(5') → ถึง A(15') → ออก A(25') → ถึง B(45') → ออก B(50') → กลับออฟฟิศ(70')
+  // จุดท้าย ๆ อยู่ที่ออฟฟิศต่อเนื่อง ≥ RETURN_DWELL_MIN นาที เพื่อยืนยันว่า "กลับจริง" (ไม่ใช่วิ่งผ่าน)
   const trail = [
     { lat: 13.7, lng: 100.5, t: 0 * M },
     { lat: 13.72, lng: 100.52, t: 5 * M },
@@ -120,12 +121,28 @@ describe('tracking: computeDailySummary (เวลาจอด/เดินท�
     { lat: 13.8001, lng: 100.6001, t: 45 * M },
     { lat: 13.8, lng: 100.6, t: 50 * M },
     { lat: 13.7005, lng: 100.5003, t: 70 * M },
+    { lat: 13.7004, lng: 100.5004, t: 76 * M },
   ]
 
-  it('ออก/กลับออฟฟิศตรงเวลา', () => {
+  it('ออก/กลับออฟฟิศตรงเวลา (กลับ = เวลาแรกที่เข้ารัศมีแล้วอยู่จริง)', () => {
     const s = computeDailySummary(trail, stops, office)
     expect(s.departedOfficeAt).toBe(5 * M)
     expect(s.returnedOfficeAt).toBe(70 * M)
+  })
+
+  it('เส้นทางวนผ่านใกล้ออฟฟิศระหว่างทาง → ไม่นับว่ากลับ (เคสไปนครสวรรค์)', () => {
+    // ออก → ไปไกลจริง → เส้นทางตัดผ่านใกล้ออฟฟิศ 1 จุด → วิ่งต่อออกไปไกล
+    const passBy = [
+      { lat: 13.7, lng: 100.5, t: 0 * M }, // ออฟฟิศ
+      { lat: 13.72, lng: 100.52, t: 5 * M }, // ออก
+      { lat: 13.78, lng: 100.58, t: 20 * M }, // ไกลจริง (>1 กม.)
+      { lat: 13.7008, lng: 100.5005, t: 40 * M }, // วิ่งผ่านใกล้ออฟฟิศ (ในรัศมี 250 ม.) แวบเดียว
+      { lat: 13.75, lng: 100.47, t: 45 * M }, // หลุดรัศมี วิ่งต่อ
+      { lat: 13.9, lng: 100.4, t: 80 * M }, // มุ่งหน้าต่อ ยังไม่กลับ
+    ]
+    const s = computeDailySummary(passBy, [], office)
+    expect(s.departedOfficeAt).toBe(5 * M)
+    expect(s.returnedOfficeAt).toBeNull() // แค่ผ่าน — ห้ามนับว่ากลับ
   })
 
   it('เวลาจอดแต่ละจุดถูก (A=10 นาที, B=5 นาที)', () => {
