@@ -547,27 +547,31 @@ export default function DailySummaryPage() {
   }, [sitesData, insertForm.place])
 
   // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
-  const deleteAdhocStop = (trip: Trip, sIdx: number) => {
+  // ยกเลิก/ลบงานออกจากทริป (ลูกค้าแจ้งยกเลิกหลังออกคิว) — งานหายจากใบสรุป
+  // ถ้าจะกลับมาให้ทำใบคิวใหม่ ; ลบจนไม่เหลืองาน = ลบทริปทิ้งทั้งใบ
+  const cancelStop = (trip: Trip, sIdx: number) => {
     const stop = trip.stops?.[sIdx]
-    if (!stop || !(stop as any).adhoc) return
+    if (!stop) return
+    const verb = (stop as any).adhoc ? "ลบงานแทรก" : "ยกเลิกงาน"
     const remaining = (trip.stops || []).filter((_, i) => i !== sIdx)
 
-    // ลบแล้วไม่เหลืองานในทริป → ลบทริปทิ้งทั้งใบ (กลับไปเหมือนก่อนแทรก ไม่ค้างทริปเปล่า)
-    // ถึงจุดนี้ได้เฉพาะทริปที่มีแต่งานแทรก เพราะงานตามแผนกดลบไม่ได้
     if (remaining.length === 0) {
       if (!window.confirm(
-        `ลบงานแทรก "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
-        `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ กลับไปเหมือนก่อนแทรก ใช่หรือไม่?`
+        `${verb} "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
+        `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ ใช่หรือไม่?`
       )) return
       setTrips(prev => prev.filter(t => t.id !== trip.id))
       if (db) deleteDoc(doc(db, "trips", trip.id)).catch(() => {})
-      toast({ title: "ลบทริปแล้ว", description: `${trip.vehiclePlate} (${trip.driverName}) — ไม่เหลืองานในทริป` })
+      toast({ title: `${verb}แล้ว`, description: `${trip.vehiclePlate} (${trip.driverName}) — ไม่เหลืองาน ลบทริปทิ้ง` })
       return
     }
 
-    if (!window.confirm(`ลบงานแทรก "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?`)) return
+    if (!window.confirm(
+      `${verb} "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?\n` +
+      `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่`
+    )) return
     applyStops(trip.id, remaining, true)
-    toast({ title: "ลบงานแทรกแล้ว", description: `เอา "${stop.siteName}" ออกจากทริปเรียบร้อย` })
+    toast({ title: `${verb}แล้ว`, description: `เอา "${stop.siteName}" ออกจากใบสรุปเรียบร้อย` })
   }
 
   // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
@@ -887,16 +891,14 @@ export default function DailySummaryPage() {
               </span>
             )}
           </span>
-          {(stop as any).adhoc && (
-            <button
-              type="button"
-              onClick={() => deleteAdhocStop(trip, sIdx)}
-              title="ลบงานแทรกนี้"
-              className="shrink-0 rounded-md border border-red-500/40 p-1 text-red-400 hover:bg-red-500/15"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => cancelStop(trip, sIdx)}
+            title={(stop as any).adhoc ? "ลบงานแทรกนี้" : "ยกเลิกงานนี้ (ลูกค้าแจ้งยกเลิก — งานหายจากใบสรุป)"}
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-500/40 px-1.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/15"
+          >
+            <Trash2 className="h-3.5 w-3.5" /> {(stop as any).adhoc ? "ลบ" : "ยกเลิก"}
+          </button>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {btn('delivered', 'ตามแผน', CheckCircle2, 'border-green-500/60 bg-green-500/10 text-green-400')}
