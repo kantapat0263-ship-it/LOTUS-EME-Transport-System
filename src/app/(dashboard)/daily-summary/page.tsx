@@ -91,6 +91,9 @@ export default function DailySummaryPage() {
   const [insertDialog, setInsertDialog] = React.useState<{ tripId: string } | null>(null)
   const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
   const [siteListOpen, setSiteListOpen] = React.useState(false)
+  // โยกงานให้คน/รถที่ยังไม่มีทริปวันนั้น — เลือกคนขับ+รถ แล้วระบบสร้างทริปให้
+  const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  const [reassignNewForm, setReassignNewForm] = React.useState({ driverId: "", vehicleId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
@@ -840,6 +843,43 @@ export default function DailySummaryPage() {
     applyStops(trip.id, newStops, true)
   }
 
+  // โยกงานให้คน/รถที่ "ยังไม่มีทริป" วันนั้น — สร้างทริปว่างให้ก่อน แล้วโยกงานไปคันนั้น
+  const createReassignTarget = () => {
+    if (!reassignNewDialog) return
+    const srcTrip = trips.find(t => t.id === reassignNewDialog.tripId)
+    if (!srcTrip) { setReassignNewDialog(null); return }
+    const driver = driversData?.find(d => d.id === reassignNewForm.driverId)
+    const veh = vehiclesData?.find(v => v.id === reassignNewForm.vehicleId)
+    if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
+    if (veh.licensePlate === srcTrip.vehiclePlate) { toast({ title: "เลือกรถคนละคันกับต้นทาง", variant: "destructive" }); return }
+
+    // สร้างทริปใหม่ (วันเดียวกับทริปต้นทาง) ว่าง ๆ ไว้รับงานโยก
+    const dstr = srcTrip.tripDate
+    const dd = dstr.slice(8, 10), mm = dstr.slice(5, 7)
+    const seq = String(trips.filter(t => t.tripDate === dstr).length + 1).padStart(3, "0")
+    const tripId = `T-${dd}${mm}-${seq}${Math.floor(Math.random() * 10)}`
+    const newTrip: Trip = {
+      id: tripId, tripId, tripDate: dstr,
+      vehicleId: veh.id, vehiclePlate: veh.licensePlate, vehicleType: veh.type,
+      driverId: driver.id, driverName: driver.name,
+      departureSiteId: "", stops: [], status: "Planned", adhocCreated: true,
+    }
+    setTrips(prev => [...prev, newTrip])
+    if (db) setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
+
+    // โยกงานต้นทางไปทริปใหม่ (เก็บ outcome เดิม เช่น reassigned/driver-refused ไว้)
+    const newStops = buildStops(srcTrip, reassignNewDialog.stopIdx, (s) => ({
+      ...s,
+      reassignedToTripId: tripId,
+      reassignedToVehiclePlate: veh.licensePlate,
+      reassignedToDriverName: driver.name,
+    }))
+    applyStops(srcTrip.id, newStops, true)
+    toast({ title: "โยกงานให้คนใหม่แล้ว ✅", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
+    setReassignNewDialog(null)
+    setReassignNewForm({ driverId: "", vehicleId: "" })
+  }
+
   // Reason text: update locally on every keystroke, persist on blur.
   const setRefuseReason = (trip: Trip, stopIdx: number, reason: string, persist: boolean) => {
     const newStops = buildStops(trip, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
@@ -925,7 +965,14 @@ export default function DailySummaryPage() {
         {(current === 'reassigned' || current === 'driver-refused') && (
           <select
             value={stop.reassignedToTripId || ''}
-            onChange={(e) => setReassignTarget(trip, sIdx, e.target.value)}
+            onChange={(e) => {
+              if (e.target.value === '__new__') {
+                setReassignNewForm({ driverId: "", vehicleId: "" })
+                setReassignNewDialog({ tripId: trip.id, stopIdx: sIdx })
+              } else {
+                setReassignTarget(trip, sIdx, e.target.value)
+              }
+            }}
             className={cn(inputClass, "cursor-pointer")}
           >
             <option value="">
@@ -936,6 +983,7 @@ export default function DailySummaryPage() {
             {trips.filter(t => t.id !== trip.id).map(t => (
               <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
             ))}
+            <option value="__new__">➕ โยกให้คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>
           </select>
         )}
       </div>
@@ -1670,6 +1718,56 @@ export default function DailySummaryPage() {
               disabled={!insertForm.siteId && !insertForm.place.trim()}
             >
               ➕ แทรกงาน
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* โยกงานให้คน/รถที่ยังไม่มีทริป — เลือกคนขับ+รถ แล้วระบบสร้างทริปให้ */}
+      <Dialog open={!!reassignNewDialog} onOpenChange={(open) => { if (!open) setReassignNewDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <ArrowRightLeft className="h-5 w-5 text-blue-400" /> โยกงานให้คน/รถอื่น
+            </DialogTitle>
+            <DialogDescription>
+              สำหรับคนที่ยังไม่มีทริปวันนั้น — ระบบจะสร้างทริปให้ แล้วงานจะไปโผล่ในใบสรุปเป็นคันของเขาเอง
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">คนขับ <span className="text-red-400">*</span></label>
+              <select
+                value={reassignNewForm.driverId}
+                onChange={(e) => setReassignNewForm(f => ({ ...f, driverId: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">— เลือกคนขับ —</option>
+                {(driversData || []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">รถ <span className="text-red-400">*</span></label>
+              <select
+                value={reassignNewForm.vehicleId}
+                onChange={(e) => setReassignNewForm(f => ({ ...f, vehicleId: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">— เลือกรถ —</option>
+                {(vehiclesData || []).map(v => <option key={v.id} value={v.id}>{v.licensePlate} ({v.type})</option>)}
+              </select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReassignNewDialog(null)}>ยกเลิก</Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+              onClick={createReassignTarget}
+              disabled={!reassignNewForm.driverId || !reassignNewForm.vehicleId}
+            >
+              <ArrowRightLeft className="mr-2 h-4 w-4" /> โยกงาน + สร้างทริป
             </Button>
           </DialogFooter>
         </DialogContent>
