@@ -1172,6 +1172,14 @@ export default function DailySummaryPage() {
                             stops.map((s) => (s as any).reassignedToVehiclePlate).filter(Boolean)
                           ));
 
+                          // คอลัมน์วันที่ (col 1, rowSpan ทั้งคัน) — render บน "แถวแรก" ของคันเช่นกัน
+                          // ต้องแยกออกมาเพราะคันที่มีแต่งานรับโยก (ไม่มีงานตัวเอง) ก็ต้องมีคอลัมน์นี้ ไม่งั้นตารางเหลื่อม
+                          const dateCell = (
+                            <td className="border border-black p-2 text-center align-top" rowSpan={totalRows}>
+                              {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
+                            </td>
+                          );
+
                           // คอลัมน์คนขับ/ทะเบียน (rowSpan ทั้งคัน) — render บน "แถวแรก" ของคัน
                           // ไม่ว่าแถวแรกจะเป็นงานตัวเอง หรือ (กรณีมีแต่งานรับโยก) เป็นแถวรับโยกงาน
                           const driverCell = (
@@ -1223,11 +1231,7 @@ export default function DailySummaryPage() {
 
                             return (
                               <tr key={`${trip.id}-${sIdx}`}>
-                                {sIdx === 0 && (
-                                  <td className="border border-black p-2 text-center align-top" rowSpan={totalRows}>
-                                    {formatThaiDate((trip as any).tripDate || (trip as any).date || "")}
-                                  </td>
-                                )}
+                                {sIdx === 0 && dateCell}
                                 <td className="border border-black p-2 text-center align-top font-bold whitespace-nowrap">
                                   {stopTime || "08:30"} น.
                                 </td>
@@ -1308,6 +1312,8 @@ export default function DailySummaryPage() {
                           // "แทนที่" แถวของคันต้นทางทั้งคัน (เคสรถต้นทางไม่ได้วิ่ง ถูกซ่อนจากใบสรุป)
                           const incomingRows = incoming.map((job, i) => (
                             <tr key={`${trip.id}-inc-${i}`} className="bg-blue-50">
+                              {/* คันที่มีแต่งานรับโยก — คอลัมน์วันที่มาอยู่แถวรับโยกแถวแรก (กัน col เหลื่อม) */}
+                              {stops.length === 0 && i === 0 && dateCell}
                               <td className="border border-black p-2 text-center align-top font-bold whitespace-nowrap">
                                 {job.requestTime ? `${job.requestTime} น.` : "—"}
                               </td>
