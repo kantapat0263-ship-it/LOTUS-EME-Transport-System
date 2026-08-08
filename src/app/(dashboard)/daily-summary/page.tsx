@@ -1103,16 +1103,16 @@ export default function DailySummaryPage() {
                       <tbody>
                         {trips.flatMap((trip) => {
                           const stops = trip.stops || [];
-                          if (stops.length === 0) return [];
+                          const incoming = incomingStopsForTrip(trips as any, trip.id);
+                          // ข้ามเฉพาะทริปที่ไม่มีทั้งงานตัวเองและงานรับโยก (ทริปเปล่าจริง ๆ)
+                          // คันที่มีแต่ "งานรับโยก" (own stops = 0) ต้องโชว์ด้วย เช่นอ๊อฟรับงานมาจากเจ
+                          if (stops.length === 0 && incoming.length === 0) return [];
                           // รถที่โยกงานออกครบทุกจุด → ไม่โชว์ทั้งคัน (งานไปอยู่แถว "รับโยกงานต่อ" ของคันปลายทาง)
                           if (isFullyMovedOut(trip)) return [];
 
                           // คนขับจริง (ขับแทน) มีผลทั้งชื่อ+เบอร์ในใบสรุป
                           const actualDriver = (trip as any).actualDriverName as string | undefined;
                           const driverPhone = getDriverPhone((trip as any).actualDriverId || trip.driverId);
-                          // Jobs moved *into* this truck — the destination half, so this
-                          // driver/sheet (and the LINE image) actually shows the handover.
-                          const incoming = incomingStopsForTrip(trips as any, trip.id);
                           const totalRows = stops.length + incoming.length;
                           // รถคันนี้ "ไม่ได้ออกวิ่ง" = งานทุกจุดถูกโยกออก/เลื่อนหมด และไม่มีงานโยกเข้า
                           // (เคสคนขับเอารถคันอื่นไปใช้แทน — ต้องบอกชัดในใบสรุปว่าคันนี้จอด)
@@ -1123,6 +1123,40 @@ export default function DailySummaryPage() {
                           const movedToPlates = Array.from(new Set(
                             stops.map((s) => (s as any).reassignedToVehiclePlate).filter(Boolean)
                           ));
+
+                          // คอลัมน์คนขับ/ทะเบียน (rowSpan ทั้งคัน) — render บน "แถวแรก" ของคัน
+                          // ไม่ว่าแถวแรกจะเป็นงานตัวเอง หรือ (กรณีมีแต่งานรับโยก) เป็นแถวรับโยกงาน
+                          const driverCell = (
+                            <td className="border border-black p-2 align-top" rowSpan={totalRows}>
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-2">
+                                  <div>
+                                    <p className="font-bold">คนขับ: {actualDriver || trip.driverName}</p>
+                                    {actualDriver && (
+                                      <p className="text-[11px] font-bold text-orange-700">🔁 ขับแทน {trip.driverName}</p>
+                                    )}
+                                    {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
+                                    <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
+                                    {notRun && (
+                                      <p className="text-[11px] font-bold text-red-700">
+                                        🚫 รถคันนี้ไม่ได้ออกวิ่ง
+                                        {movedToPlates.length > 0 && <> — งานย้ายไป {movedToPlates.join(', ')}</>}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="no-print h-8 w-8 shrink-0 border-blue-500 text-blue-600 hover:bg-blue-50"
+                                  onClick={() => handleShareClick(trip)}
+                                  title="ส่งใบงานให้คนขับ"
+                                >
+                                  <Send className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          );
 
                           const stopRows = stops.map((stop, sIdx) => {
                             const locationText = (stop as any).address || (stop as any).zone || "";
@@ -1216,37 +1250,7 @@ export default function DailySummaryPage() {
                                     </div>
                                   </div>
                                 </td>
-                                {sIdx === 0 && (
-                                  <td className="border border-black p-2 align-top" rowSpan={totalRows}>
-                                    <div className="flex justify-between items-start">
-                                      <div className="space-y-2">
-                                        <div>
-                                          <p className="font-bold">คนขับ: {actualDriver || trip.driverName}</p>
-                                          {actualDriver && (
-                                            <p className="text-[11px] font-bold text-orange-700">🔁 ขับแทน {trip.driverName}</p>
-                                          )}
-                                          {driverPhone && <p className="text-[11px] font-bold text-blue-800">📞 {driverPhone}</p>}
-                                          <p className="font-bold">ทะเบียน: {trip.vehiclePlate}</p>
-                                          {notRun && (
-                                            <p className="text-[11px] font-bold text-red-700">
-                                              🚫 รถคันนี้ไม่ได้ออกวิ่ง
-                                              {movedToPlates.length > 0 && <> — งานย้ายไป {movedToPlates.join(', ')}</>}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <Button 
-                                        variant="outline" 
-                                        size="icon" 
-                                        className="no-print h-8 w-8 shrink-0 border-blue-500 text-blue-600 hover:bg-blue-50"
-                                        onClick={() => handleShareClick(trip)}
-                                        title="ส่งใบงานให้คนขับ"
-                                      >
-                                        <Send className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                  </td>
-                                )}
+                                {sIdx === 0 && driverCell}
                               </tr>
                             );
                           });
@@ -1295,6 +1299,8 @@ export default function DailySummaryPage() {
                                   </div>
                                 </div>
                               </td>
+                              {/* คันที่มีแต่งานรับโยก (ไม่มีงานตัวเอง) — คอลัมน์คนขับมาอยู่แถวรับโยกแถวแรก */}
+                              {stops.length === 0 && i === 0 && driverCell}
                             </tr>
                           ));
 
