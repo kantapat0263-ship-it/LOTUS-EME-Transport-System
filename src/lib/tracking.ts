@@ -188,6 +188,10 @@ export const DEPARTED_FAR_M = 1000
  *  — เส้นทางบางสาย (ไปนครสวรรค์ ฯลฯ) วนผ่านใกล้ออฟฟิศ รถแค่วิ่งผ่านจะหลุดรัศมีก่อนครบเวลา ไม่นับ */
 export const RETURN_DWELL_MIN = 5
 
+/** ถ้ายังไม่เคยถึงจุดงานเลย (ขาออก/ยูเทิร์น/รถติดหน้าออฟฟิศ) ต้องจอดยาวกว่านี้ (นาที) ถึงนับว่ากลับ
+ *  — กันขาออกที่อ้อยอิ่งแถวออฟฟิศ ; รถที่กลับมาจอดจริง (เช่นงานยกเลิกกลางทาง) จอดเกินนี้แน่นอน */
+export const RETURN_DWELL_NO_JOB_MIN = 20
+
 /** พิกัดออฟฟิศ (จุดเริ่มต้นเสมอ) — ใช้เมื่อไม่ได้ตั้ง warehouse ใน companySettings */
 export const OFFICE_LOCATION: LatLng = { lat: 14.093932911692894, lng: 100.68868332848953 }
 
@@ -274,8 +278,10 @@ const toMin = (ms: number) => Math.round((ms / 60000) * 10) / 10
  * คำนวณสรุปรายวันจาก trail (จุด {lat,lng,t}) + จุดงาน + พิกัดออฟฟิศ
  * - arrivedAt/departedAt ต่อจุด: จุด trail แรก/สุดท้ายที่อยู่ในรัศมี arrivalRadius
  * - travel = arrivedAt[n] − departedAt[n-1] (จุดแรกวัดจาก departedOfficeAt)
- * - departed/returnedOffice: ออก = จุดแรกที่พ้นรัศมีออฟฟิศ, กลับ = เข้ารัศมีหลัง "ออกไปจริง"
- *   แล้วอยู่ต่อเนื่อง ≥ RETURN_DWELL_MIN นาที (วิ่งผ่านใกล้ออฟฟิศเฉย ๆ ไม่นับ)
+ * - departed/returnedOffice: ออก = จุดแรกที่พ้นรัศมีออฟฟิศ, กลับ = การกลับ "ครั้งล่าสุด" ที่ไม่มี
+ *   การออกไปจริงตามหลัง (รองรับกลับมาพักแล้วออกอีกรอบ) โดยต้องอยู่ในรัศมีต่อเนื่องครบเวลา:
+ *   เคยถึงจุดงานแล้ว ≥ RETURN_DWELL_MIN นาที / ยังไม่เคยถึงจุดงาน ≥ RETURN_DWELL_NO_JOB_MIN นาที
+ *   (วิ่งผ่าน/ยูเทิร์นใกล้ออฟฟิศ ไม่นับ)
  */
 export function computeDailySummary(
   trail: TrailPoint[],
@@ -295,30 +301,50 @@ export function computeDailySummary(
   const atAnyJob = (p: TrailPoint) =>
     jobStops.some((s) => haversineMeters({ lat: s.lat, lng: s.lng }, p) <= arrivalRadius)
 
+  // state machine เดินทั้งวัน (รองรับออกหลายรอบ: งานเช้า → กลับพัก → ออกงานบ่าย → กลับจริง)
+  // "กลับ" = การกลับครั้งล่าสุดที่ไม่มีการออกไปจริงตามหลัง — ถ้าออกไปอีกรอบ การกลับเดิมถูกยกเลิก
+  // (คำนวณใหม่จาก trail ทั้งเส้นทุกรอบ sync จึง self-correct ระหว่างวัน)
   let departedOfficeAt: number | null = null
   let returnedOfficeAt: number | null = null
   if (origin && pts.length) {
-    let leftForReal = false // ออกไปทำงานจริงแล้ว (ไกลพอ/ถึงจุดงาน) — ค่อยเริ่มจับการกลับ
+    let leftForReal = false // รอบปัจจุบัน "ออกไปจริง" แล้ว (ไกลพอ/ถึงจุดงาน) — ค่อยเริ่มจับการกลับ
+    let everAtJob = false // เคยถึงจุดงานอย่างน้อย 1 จุด (ทั้งวัน) — ใช้เลือกความเข้มงวดของ dwell
     let officeEnterAt: number | null = null // เวลาเข้ารัศมีครั้งล่าสุด (รอยืนยันว่า "อยู่จริง")
     for (const p of pts) {
       const distFromOffice = haversineMeters(origin, p)
       const inOffice = distFromOffice <= officeRadius
+      const atJob = atAnyJob(p)
+      if (atJob) everAtJob = true
+
       if (departedOfficeAt == null) {
-        if (!inOffice) departedOfficeAt = p.t! // ออกจากออฟฟิศแล้ว
-      } else {
-        if (distFromOffice > DEPARTED_FAR_M || atAnyJob(p)) leftForReal = true
-        if (!leftForReal) continue
-        // นับ "กลับ" เมื่อเข้ารัศมีแล้ว "อยู่จริง" ต่อเนื่อง ≥ RETURN_DWELL_MIN นาที
-        // — เส้นทางที่วนผ่านใกล้ออฟฟิศ รถแค่วิ่งผ่านจะหลุดรัศมีก่อนครบเวลา ไม่นับเป็นกลับ
-        if (inOffice) {
-          if (officeEnterAt == null) officeEnterAt = p.t!
-          if (p.t! - officeEnterAt >= RETURN_DWELL_MIN * 60_000) {
-            returnedOfficeAt = officeEnterAt // เวลาที่ "ถึง" จริง = จุดแรกของช่วงที่อยู่ยาว
-            break
-          }
-        } else {
-          officeEnterAt = null // หลุดรัศมีก่อนครบเวลา = วิ่งผ่านเฉย ๆ
+        if (!inOffice) departedOfficeAt = p.t! // ออกจากออฟฟิศครั้งแรกของวัน
+        continue
+      }
+
+      if (returnedOfficeAt != null) {
+        // นับกลับไว้แล้ว — ถ้าออกไปจริงอีกรอบ (ไกล/ถึงจุดงาน) = วันยังไม่จบ ยกเลิกการกลับเดิม
+        // (GPS เด้งรอบออฟฟิศตอนจอดไม่เกิน 1 กม. จะไม่หลุดเงื่อนไขนี้)
+        if (distFromOffice > DEPARTED_FAR_M || atJob) {
+          returnedOfficeAt = null
+          officeEnterAt = null
+          leftForReal = true
         }
+        continue
+      }
+
+      if (distFromOffice > DEPARTED_FAR_M || atJob) leftForReal = true
+      if (!leftForReal) continue
+      // นับ "กลับ" เมื่อเข้ารัศมีแล้ว "อยู่จริง" ต่อเนื่องครบเวลา — วิ่งผ่าน/ยูเทิร์นหลุดรัศมีก่อนครบ ไม่นับ
+      // ยังไม่เคยถึงจุดงานเลย (ขาออกอ้อยอิ่งแถวออฟฟิศ) → ใช้เกณฑ์ยาวพิเศษ กันนับผิด
+      if (inOffice) {
+        if (officeEnterAt == null) officeEnterAt = p.t!
+        const needMin = everAtJob ? RETURN_DWELL_MIN : RETURN_DWELL_NO_JOB_MIN
+        if (p.t! - officeEnterAt >= needMin * 60_000) {
+          returnedOfficeAt = officeEnterAt // เวลาที่ "ถึง" จริง = จุดแรกของช่วงที่อยู่ยาว
+          leftForReal = false // เริ่มรอบใหม่ ถ้าออกไปอีก
+        }
+      } else {
+        officeEnterAt = null // หลุดรัศมีก่อนครบเวลา = วิ่งผ่านเฉย ๆ
       }
     }
   }

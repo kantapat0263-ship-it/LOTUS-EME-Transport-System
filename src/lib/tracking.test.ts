@@ -130,6 +130,52 @@ describe('tracking: computeDailySummary (เวลาจอด/เดินท�
     expect(s.returnedOfficeAt).toBe(70 * M)
   })
 
+  it('ไป 2 งาน → กลับมาพักออฟฟิศ → ออกไปงานที่ 3 → การกลับ(พัก)ถูกยกเลิก = ยังไม่กลับ', () => {
+    const threeStops = [...stops, { order: 3, siteName: 'C', lat: 13.9, lng: 100.65 }]
+    const midBreak = [
+      { lat: 13.7, lng: 100.5, t: 0 * M }, // ออฟฟิศ
+      { lat: 13.72, lng: 100.52, t: 5 * M }, // ออก
+      { lat: 13.7501, lng: 100.5501, t: 15 * M }, // ถึง A
+      { lat: 13.8001, lng: 100.6001, t: 30 * M }, // ถึง B
+      { lat: 13.7003, lng: 100.5003, t: 60 * M }, // กลับมาพักออฟฟิศ
+      { lat: 13.7004, lng: 100.5004, t: 66 * M }, // พักต่อ (dwell ครบ → นับกลับชั่วคราว)
+      { lat: 13.9001, lng: 100.6501, t: 80 * M }, // ออกไปงานที่ 3 → การกลับเดิมถูกยกเลิก
+    ]
+    const s = computeDailySummary(midBreak, threeStops, office)
+    expect(s.returnedOfficeAt).toBeNull() // กำลังวิ่งงาน 3 — ยังไม่กลับ
+  })
+
+  it('...แล้วกลับจริงหลังงานที่ 3 → นับการกลับครั้งสุดท้าย', () => {
+    const threeStops = [...stops, { order: 3, siteName: 'C', lat: 13.9, lng: 100.65 }]
+    const fullDay = [
+      { lat: 13.7, lng: 100.5, t: 0 * M },
+      { lat: 13.72, lng: 100.52, t: 5 * M },
+      { lat: 13.7501, lng: 100.5501, t: 15 * M }, // A
+      { lat: 13.8001, lng: 100.6001, t: 30 * M }, // B
+      { lat: 13.7003, lng: 100.5003, t: 60 * M }, // พักออฟฟิศ
+      { lat: 13.7004, lng: 100.5004, t: 66 * M },
+      { lat: 13.9001, lng: 100.6501, t: 80 * M }, // งานที่ 3
+      { lat: 13.7005, lng: 100.5002, t: 100 * M }, // กลับจริง
+      { lat: 13.7003, lng: 100.5004, t: 106 * M }, // จอดยืนยัน
+    ]
+    const s = computeDailySummary(fullDay, threeStops, office)
+    expect(s.departedOfficeAt).toBe(5 * M)
+    expect(s.returnedOfficeAt).toBe(100 * M) // การกลับครั้งสุดท้าย ไม่ใช่ตอนพัก 60
+  })
+
+  it('ยังไม่เคยถึงจุดงาน → ต้องจอดยาวพิเศษ (RETURN_DWELL_NO_JOB_MIN) ถึงนับกลับ', () => {
+    const base = [
+      { lat: 13.7, lng: 100.5, t: 0 * M },
+      { lat: 13.72, lng: 100.52, t: 5 * M }, // ออก
+      { lat: 13.78, lng: 100.58, t: 20 * M }, // ไกลจริง แต่ไม่ถึงจุดงานใด
+      { lat: 13.7003, lng: 100.5003, t: 40 * M }, // กลับเข้ารัศมี
+      { lat: 13.7004, lng: 100.5004, t: 50 * M }, // อยู่ 10 นาที — ยังไม่ครบ 20
+    ]
+    expect(computeDailySummary(base, [], office).returnedOfficeAt).toBeNull()
+    const longer = [...base, { lat: 13.7003, lng: 100.5002, t: 61 * M }] // อยู่ครบ 21 นาที
+    expect(computeDailySummary(longer, [], office).returnedOfficeAt).toBe(40 * M)
+  })
+
   it('เส้นทางวนผ่านใกล้ออฟฟิศระหว่างทาง → ไม่นับว่ากลับ (เคสไปนครสวรรค์)', () => {
     // ออก → ไปไกลจริง → เส้นทางตัดผ่านใกล้ออฟฟิศ 1 จุด → วิ่งต่อออกไปไกล
     const passBy = [
