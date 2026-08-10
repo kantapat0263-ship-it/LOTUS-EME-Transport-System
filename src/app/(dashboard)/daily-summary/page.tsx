@@ -453,10 +453,15 @@ export default function DailySummaryPage() {
 
   // Persist a trip's stops array (optimistic local update + non-blocking write).
   const applyStops = (tripId: string, newStops: TripStop[], persist = true) => {
-    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: newStops } : t)))
+    // กัน field = undefined หลุดเข้า Firestore — updateDoc จะ throw ทันที (sync) ทั้งก้อน
+    // ทำให้ dialog ค้าง + ข้อมูลเข้าแค่ local (เคยเกิดกับแทรกงานที่ไม่กรอกผู้สั่ง)
+    const clean = newStops.map(
+      (s) => Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)) as unknown as TripStop
+    )
+    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: clean } : t)))
     if (persist && db) {
       updateDocumentNonBlocking(doc(db, "trips", tripId), {
-        stops: newStops,
+        stops: clean,
         updatedAt: serverTimestamp(),
       })
     }
@@ -479,24 +484,33 @@ export default function DailySummaryPage() {
     if (!place) { toast({ title: "ใส่ชื่อจุด/สถานที่ก่อน", variant: "destructive" }); return }
 
     const chosenVehId = insertForm.vehicleId || trip.vehicleId
-    const mkStop = (order: number): TripStop => ({
-      siteId: site?.id || "",
-      siteName: place,
-      order,
-      lat: site?.latitude,
-      lng: site?.longitude,
-      cargoDetails: insertForm.detail.trim(),
-      requestedBy: insertForm.requester.trim() || undefined,
-      adhoc: true,
-      insertedBy: recordedBy || "Dispatcher",
-      insertedAt: new Date().toISOString(),
-    })
+    // ห้ามมี field = undefined เด็ดขาด — Firestore ปฏิเสธทั้งก้อนแบบ throw ทันที
+    // (เคยทำ dialog ค้าง + งานเข้าแค่ local ไม่ถึง Firestore → LINE/ใบงานคนขับไม่อัพเดท)
+    const mkStop = (order: number): TripStop => {
+      const s: TripStop = {
+        siteId: site?.id || "",
+        siteName: place,
+        order,
+        cargoDetails: insertForm.detail.trim(),
+        adhoc: true,
+        insertedBy: recordedBy || "Dispatcher",
+        insertedAt: new Date().toISOString(),
+      }
+      if (site?.latitude != null && site?.longitude != null) {
+        s.lat = site.latitude
+        s.lng = site.longitude
+      }
+      const req = insertForm.requester.trim()
+      if (req) s.requestedBy = req
+      return s
+    }
     const appendTo = (target: Trip) => {
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
       applyStops(target.id, [...stops, mkStop(order)], true)
     }
 
+    try {
     if (chosenVehId === trip.vehicleId) {
       // คันเดิม → แทรกเข้าทริปนี้
       appendTo(trip)
@@ -519,7 +533,7 @@ export default function DailySummaryPage() {
           tripDate: todayStr,
           vehicleId: chosenVehId,
           vehiclePlate: veh?.licensePlate || "",
-          vehicleType: veh?.type,
+          ...(veh?.type ? { vehicleType: veh.type } : {}), // ห้าม undefined — Firestore reject ทั้ง doc
           driverId: trip.driverId,
           driverName: trip.driverName,
           departureSiteId: "",
@@ -533,6 +547,12 @@ export default function DailySummaryPage() {
         }
         toast({ title: "สร้างทริปใหม่ให้รถคันใหม่ ✅", description: `${veh?.licensePlate || ""} (คนขับ ${trip.driverName}) — งาน "${place}"` })
       }
+    }
+    } catch (e: any) {
+      // ห้ามเงียบ — error ต้องโชว์ ไม่งั้น dialog ค้างแล้วผู้ใช้กดซ้ำจนงานเบิ้ล
+      console.error("[insert-job]", e)
+      toast({ title: "แทรกงานไม่สำเร็จ", description: e?.message || "ลองใหม่อีกครั้ง", variant: "destructive" })
+      return
     }
     setInsertDialog(null)
     setInsertForm({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
@@ -860,7 +880,7 @@ export default function DailySummaryPage() {
     const tripId = `T-${dd}${mm}-${seq}${Math.floor(Math.random() * 10)}`
     const newTrip: Trip = {
       id: tripId, tripId, tripDate: dstr,
-      vehicleId: veh.id, vehiclePlate: veh.licensePlate, vehicleType: veh.type,
+      vehicleId: veh.id, vehiclePlate: veh.licensePlate, ...(veh.type ? { vehicleType: veh.type } : {}),
       driverId: driver.id, driverName: driver.name,
       departureSiteId: "", stops: [], status: "Planned", adhocCreated: true,
     }
