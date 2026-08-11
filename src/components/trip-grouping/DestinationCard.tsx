@@ -21,9 +21,13 @@ interface DestinationCardProps {
   onToggle: () => void;
   manualIndex?: number;
   onHover?: (id: string | null) => void;
+  /** เพิ่ม "คันคู่" — สำเนาจุดนี้อีกใบในกอง สำหรับงานที่ต้องใช้รถมากกว่า 1 คัน */
+  onDuplicate?: () => void;
+  /** ถอนสำเนาคันคู่ (เฉพาะการ์ดที่เป็นสำเนา และยังไม่ถูกจัด) */
+  onRemoveDup?: () => void;
 }
 
-export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover }: DestinationCardProps) {
+export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover, onDuplicate, onRemoveDup }: DestinationCardProps) {
   return (
     <TooltipProvider delayDuration={150}>
       <Tooltip>
@@ -62,6 +66,11 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-accent">{dest.vrId}</span>
+                {dest.pairedCopy && (
+                  <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-400">
+                    🚛 คันคู่ (คนจัดเพิ่ม)
+                  </span>
+                )}
               </div>
               <p className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5 text-accent shrink-0" /> {dest.siteName}
@@ -101,6 +110,30 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
               </p>
             </div>
           </div>
+
+          {/* งานที่ต้องใช้รถหลายคัน: ต้นฉบับกด "เพิ่มคันคู่" / สำเนาถอนได้ถ้ายังไม่ถูกจัด */}
+          {(onDuplicate || (dest.pairedCopy && onRemoveDup)) && (
+            <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+              {dest.pairedCopy && onRemoveDup ? (
+                <button
+                  type="button"
+                  onClick={onRemoveDup}
+                  className="rounded-md border border-red-500/40 px-2 py-0.5 text-[10px] font-medium text-red-400 hover:bg-red-500/15"
+                >
+                  ✕ ถอนคันคู่
+                </button>
+              ) : onDuplicate ? (
+                <button
+                  type="button"
+                  onClick={onDuplicate}
+                  title="งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาจุดนี้ให้อีกคันหยิบไปจัด"
+                  className="rounded-md border border-blue-500/40 px-2 py-0.5 text-[10px] font-medium text-blue-400 hover:bg-blue-500/15"
+                >
+                  🚛+ เพิ่มคันคู่
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

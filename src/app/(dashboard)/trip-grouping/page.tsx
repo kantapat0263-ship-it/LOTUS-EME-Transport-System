@@ -177,6 +177,55 @@ export default function TripGroupingPage() {
     }
   }, [mode])
 
+  // งานที่ต้องใช้รถมากกว่า 1 คัน: เพิ่ม "คันคู่" = ต่อท้ายสำเนา destination ในใบขอเดิม
+  // (เก็บลงใบขอจริง → refresh ไม่หาย, มี index ของตัวเอง → ไม่แตะกลไก assignment เลย)
+  const duplicateDestination = async (dest: any) => {
+    const req = requests?.find(r => r.id === dest.vrDocId)
+    const orig = req?.destinations?.[dest.destIndex]
+    if (!req || !orig) { toast({ title: "ไม่พบจุดต้นฉบับ", variant: "destructive" }); return }
+    // สำเนา = ข้อมูลเดิมทั้งหมด (ตัด field ที่เป็น undefined — Firestore reject ทั้งก้อน)
+    const copy: Record<string, any> = Object.fromEntries(
+      Object.entries(orig).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
+    )
+    copy.pairedCopy = true
+    copy.pairedFromIndex = dest.destIndex
+    try {
+      await updateDoc(doc(db, "vehicleRequests", dest.vrDocId), {
+        destinations: [...req.destinations, copy],
+        updatedAt: serverTimestamp(),
+      })
+      toast({ title: "เพิ่มคันคู่แล้ว 🚛🚛", description: `"${dest.siteName}" มีสำเนาในกองอีก 1 ใบ — หยิบไปจัดให้อีกคันได้เลย` })
+    } catch (e) {
+      console.error(e)
+      toast({ title: "เพิ่มคันคู่ไม่สำเร็จ", variant: "destructive" })
+    }
+  }
+
+  // ถอนสำเนาคันคู่ — เฉพาะยังไม่ถูกจัด และต้องไม่มีจุดที่ "ถูกจัดแล้ว" อยู่หลังตำแหน่งนี้
+  // (ลบ element กลาง array จะทำให้ index ของ assignedDestinations ที่ตามมาเพี้ยน)
+  const removeDuplicate = async (dest: any) => {
+    const req = requests?.find(r => r.id === dest.vrDocId)
+    if (!req?.destinations?.[dest.destIndex]?.pairedCopy) return
+    const assigned: number[] = req.assignedDestinations || []
+    if (assigned.includes(dest.destIndex)) { toast({ title: "ถอนไม่ได้", description: "สำเนานี้ถูกจัดเข้าทริปแล้ว", variant: "destructive" }); return }
+    if (assigned.some(i => i > dest.destIndex)) {
+      toast({ title: "ถอนไม่ได้", description: "มีจุดที่ถูกจัดแล้วอยู่ถัดจากสำเนานี้ — ลบแล้วลำดับจะเพี้ยน", variant: "destructive" })
+      return
+    }
+    if (!window.confirm(`ถอนคันคู่ "${dest.siteName}" ออกจากกอง?`)) return
+    try {
+      await updateDoc(doc(db, "vehicleRequests", dest.vrDocId), {
+        destinations: req.destinations.filter((_: any, i: number) => i !== dest.destIndex),
+        updatedAt: serverTimestamp(),
+      })
+      setSelectedIds(prev => { const n = new Set(prev); n.delete(dest.id); return n })
+      toast({ title: "ถอนคันคู่แล้ว", description: `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
+    } catch (e) {
+      console.error(e)
+      toast({ title: "ถอนไม่สำเร็จ", variant: "destructive" })
+    }
+  }
+
   const handleCreateTrip = React.useCallback(async () => {
     const count = mode === 'manual' ? manualOrder.length : selectedIds.size
     if (count === 0) {
@@ -187,6 +236,19 @@ export default function TripGroupingPage() {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกคนขับและรถที่จะใช้", variant: "destructive" })
       return
     }
+
+    // งานคันคู่: ต้นฉบับ+สำเนาจุดเดียวกัน ไม่ควรอยู่คันเดียวกัน (ผิดจุดประสงค์ "รถหลายคัน")
+    const pairConflict = selectedDestinations.some((a: any) =>
+      selectedDestinations.some((b: any) =>
+        a !== b && a.vrDocId === b.vrDocId && (
+          (b.pairedCopy && b.pairedFromIndex === a.destIndex) ||
+          (a.pairedCopy && b.pairedCopy && a.pairedFromIndex === b.pairedFromIndex && a.destIndex < b.destIndex)
+        )
+      )
+    )
+    if (pairConflict && !window.confirm(
+      "มีจุด 'คันคู่' (ต้นฉบับ + สำเนา) ถูกเลือกเข้าคันเดียวกัน — ปกติควรแยกคนละคัน\nยืนยันจัดเข้าคันเดียวกัน?"
+    )) return
 
     const uniqueDates = Array.from(new Set(selectedDestinations.map(d => d.requestDate).filter(Boolean)))
     if (uniqueDates.length > 1) {
@@ -493,7 +555,9 @@ export default function TripGroupingPage() {
                   </div>
                   <div className="space-y-3 opacity-80">
                     {filteredDestinations.map(dest => (
-                      <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
+                      <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                        onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
+                        onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                     ))}
                   </div>
                 </div>
@@ -524,11 +588,15 @@ export default function TripGroupingPage() {
               {filteredDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId} />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
+                      onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
+                      onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
                   {filteredDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
                   {filteredDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
+                    <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                      onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
+                      onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
                 </div>
               ) : (
