@@ -103,6 +103,10 @@ export interface TripStop {
   adhoc?: boolean;
   insertedBy?: string;
   insertedAt?: string;
+  /** "คันช่วย" — จุดนี้ถูก copy มาช่วยขนงานของคันอื่น (งานต้นทางยังอยู่คันเดิม)
+   *  เก็บทะเบียน/คนขับต้นทางไว้โชว์ป้าย "🤝 คันช่วย · จาก ..." */
+  assistForPlate?: string;
+  assistForDriver?: string;
 }
 
 export interface Trip {

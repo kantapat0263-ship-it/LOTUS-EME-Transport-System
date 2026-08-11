@@ -94,6 +94,9 @@ export default function DailySummaryPage() {
   // โยกงานให้คน/รถที่ยังไม่มีทริปวันนั้น — เลือกคนขับ+รถ แล้วระบบสร้างทริปให้
   const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
   const [reassignNewForm, setReassignNewForm] = React.useState({ driverId: "", vehicleId: "" })
+  // "คันช่วย" — copy งานไปให้อีกคันไปช่วยขน (งานต้นทางยังอยู่คันเดิม ไม่ใช่โยก)
+  const [assistDialog, setAssistDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  const [assistForm, setAssistForm] = React.useState({ targetTripId: "", driverId: "", vehicleId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // Listen for all work dates to highlight them with orange dots
@@ -900,6 +903,68 @@ export default function DailySummaryPage() {
     setReassignNewForm({ driverId: "", vehicleId: "" })
   }
 
+  // "คันช่วย": copy งานทั้งก้อน (ไซต์/พิกัด/รายละเอียด/ผู้ขอ) ไปต่อท้ายทริปคันช่วย
+  // งานต้นทางไม่ถูกแตะ ; งานฝั่งคันช่วยเป็น adhoc (ลบได้ด้วยปุ่มถังขยะ) + ป้าย "คันช่วย · จาก ..."
+  const addAssistStop = () => {
+    if (!assistDialog) return
+    const src = trips.find(t => t.id === assistDialog.tripId)
+    const stop = src?.stops?.[assistDialog.stopIdx]
+    if (!src || !stop) { setAssistDialog(null); return }
+
+    // copy เฉพาะ field ที่มีค่า — ห้ามมี undefined (Firestore reject ทั้งก้อน)
+    const mkCopy = (order: number): TripStop => {
+      const c: TripStop = {
+        siteId: stop.siteId || "",
+        siteName: stop.siteName,
+        order,
+        cargoDetails: stop.cargoDetails || "",
+        adhoc: true,
+        insertedBy: recordedBy || "Dispatcher",
+        insertedAt: new Date().toISOString(),
+        assistForPlate: src.vehiclePlate,
+        assistForDriver: (src as any).actualDriverName || src.driverName,
+      }
+      if (stop.lat != null && stop.lng != null) { c.lat = stop.lat; c.lng = stop.lng }
+      if (stop.requestedBy) c.requestedBy = stop.requestedBy
+      if (stop.requestedByPhone) c.requestedByPhone = stop.requestedByPhone
+      if (stop.requestTime) c.requestTime = stop.requestTime
+      if (stop.address) c.address = stop.address
+      if (stop.note) c.note = stop.note
+      return c
+    }
+
+    if (assistForm.targetTripId && assistForm.targetTripId !== "__new__") {
+      const target = trips.find(t => t.id === assistForm.targetTripId)
+      if (!target) { toast({ title: "ไม่พบทริปคันช่วย", variant: "destructive" }); return }
+      const stops = target.stops || []
+      const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
+      applyStops(target.id, [...stops, mkCopy(order)], true)
+      toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${target.driverName} (${target.vehiclePlate}) ไปช่วย "${stop.siteName}" ของ ${src.driverName}` })
+    } else if (assistForm.targetTripId === "__new__") {
+      const driver = driversData?.find(d => d.id === assistForm.driverId)
+      const veh = vehiclesData?.find(v => v.id === assistForm.vehicleId)
+      if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
+      const dstr = src.tripDate
+      const dd = dstr.slice(8, 10), mm = dstr.slice(5, 7)
+      const seq = String(trips.filter(t => t.tripDate === dstr).length + 1).padStart(3, "0")
+      const tripId = `T-${dd}${mm}-${seq}${Math.floor(Math.random() * 10)}`
+      const newTrip: Trip = {
+        id: tripId, tripId, tripDate: dstr,
+        vehicleId: veh.id, vehiclePlate: veh.licensePlate, ...(veh.type ? { vehicleType: veh.type } : {}),
+        driverId: driver.id, driverName: driver.name,
+        departureSiteId: "", stops: [mkCopy(1)], status: "Planned", adhocCreated: true,
+      }
+      setTrips(prev => [...prev, newTrip])
+      if (db) setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
+      toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
+    } else {
+      toast({ title: "เลือกคันที่ไปช่วยก่อน", variant: "destructive" })
+      return
+    }
+    setAssistDialog(null)
+    setAssistForm({ targetTripId: "", driverId: "", vehicleId: "" })
+  }
+
   // Reason text: update locally on every keystroke, persist on blur.
   const setRefuseReason = (trip: Trip, stopIdx: number, reason: string, persist: boolean) => {
     const newStops = buildStops(trip, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
@@ -945,11 +1010,15 @@ export default function DailySummaryPage() {
         <div className="flex items-start gap-2">
           <span className="flex-1 text-sm font-medium text-white">
             {sIdx + 1}. {stop.siteName}
-            {(stop as any).adhoc && (
+            {(stop as any).assistForPlate ? (
+              <span className="ml-2 rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-teal-300">
+                🤝 คันช่วย · จาก {(stop as any).assistForPlate}{(stop as any).assistForDriver ? ` (${(stop as any).assistForDriver})` : ""}
+              </span>
+            ) : (stop as any).adhoc ? (
               <span className="ml-2 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-purple-300">
                 ➕ แทรก{(stop as any).insertedBy ? ` · ${(stop as any).insertedBy}` : ""}
               </span>
-            )}
+            ) : null}
           </span>
           <button
             type="button"
@@ -965,6 +1034,14 @@ export default function DailySummaryPage() {
           {btn('reassigned', 'โยกงาน', ArrowRightLeft, 'border-blue-500/60 bg-blue-500/10 text-blue-400')}
           {btn('postponed', 'เลื่อน', CalendarClock, 'border-amber-500/60 bg-amber-500/10 text-amber-400')}
           {btn('driver-refused', 'คนขับปฏิเสธ', Ban, 'border-red-500/60 bg-red-500/10 text-red-400')}
+          {/* คันช่วย: copy งานนี้ให้อีกคันไปช่วยขน (งานคันนี้ยังอยู่ — ไม่ใช่โยก) */}
+          <button
+            type="button"
+            onClick={() => { setAssistForm({ targetTripId: "", driverId: "", vehicleId: "" }); setAssistDialog({ tripId: trip.id, stopIdx: sIdx }) }}
+            className="flex items-center gap-1 rounded-md border border-teal-500/50 px-2 py-1 text-[11px] font-medium text-teal-300 hover:bg-teal-500/10"
+          >
+            🚛+ คันช่วย
+          </button>
         </div>
         {current === 'driver-refused' && (
           <input
@@ -1257,9 +1334,17 @@ export default function DailySummaryPage() {
                                 </td>
                                 <td className="border border-black p-2 align-top">
                                   <div className="space-y-1">
-                                    <div className="flex gap-1.5 font-bold">
+                                    <div className="flex gap-1.5 font-bold items-center flex-wrap">
                                       {trip.stops.length > 1 && <span>{sIdx + 1}.</span>}
                                       <span>{stop.siteName}</span>
+                                      {(stop as any).assistForPlate && (
+                                        <span style={{
+                                          fontSize: '11px', fontWeight: 700, padding: '1px 6px',
+                                          borderRadius: '4px', background: '#ccfbf1', color: '#0f766e',
+                                        }}>
+                                          🤝 คันช่วย · จาก {(stop as any).assistForPlate}
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="pl-5 space-y-0.5">
                                       <div className="flex gap-2">
@@ -1794,6 +1879,78 @@ export default function DailySummaryPage() {
               disabled={!reassignNewForm.driverId || !reassignNewForm.vehicleId}
             >
               <ArrowRightLeft className="mr-2 h-4 w-4" /> โยกงาน + สร้างทริป
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* คันช่วย: copy งานให้อีกคันไปช่วยขน (งานต้นทางยังอยู่คันเดิม) */}
+      <Dialog open={!!assistDialog} onOpenChange={(open) => { if (!open) setAssistDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              🚛+ เพิ่มคันช่วย
+            </DialogTitle>
+            <DialogDescription>
+              {assistDialog ? (() => {
+                const src = trips.find(t => t.id === assistDialog.tripId)
+                const st = src?.stops?.[assistDialog.stopIdx]
+                return `"${st?.siteName || ""}" ของ ${src?.driverName || ""} (${src?.vehiclePlate || ""}) — เลือกคันที่จะไปช่วยขน ระบบ copy รายละเอียดงานให้ครบ งานคันเดิมยังอยู่`
+              })() : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">คันที่ไปช่วย <span className="text-red-400">*</span></label>
+              <select
+                value={assistForm.targetTripId}
+                onChange={(e) => setAssistForm(f => ({ ...f, targetTripId: e.target.value }))}
+                className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">— เลือกคันที่ไปช่วย —</option>
+                {trips.filter(t => t.id !== assistDialog?.tripId).map(t => (
+                  <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
+                ))}
+                <option value="__new__">➕ คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>
+              </select>
+            </div>
+            {assistForm.targetTripId === "__new__" && (
+              <>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">คนขับ <span className="text-red-400">*</span></label>
+                  <select
+                    value={assistForm.driverId}
+                    onChange={(e) => setAssistForm(f => ({ ...f, driverId: e.target.value }))}
+                    className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+                  >
+                    <option value="">— เลือกคนขับ —</option>
+                    {(driversData || []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">รถ <span className="text-red-400">*</span></label>
+                  <select
+                    value={assistForm.vehicleId}
+                    onChange={(e) => setAssistForm(f => ({ ...f, vehicleId: e.target.value }))}
+                    className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+                  >
+                    <option value="">— เลือกรถ —</option>
+                    {(vehiclesData || []).map(v => <option key={v.id} value={v.id}>{v.licensePlate} ({v.type})</option>)}
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAssistDialog(null)}>ยกเลิก</Button>
+            <Button
+              className="bg-teal-600 hover:bg-teal-700 text-white font-bold"
+              onClick={addAssistStop}
+              disabled={!assistForm.targetTripId || (assistForm.targetTripId === "__new__" && (!assistForm.driverId || !assistForm.vehicleId))}
+            >
+              🤝 เพิ่มคันช่วย
             </Button>
           </DialogFooter>
         </DialogContent>
