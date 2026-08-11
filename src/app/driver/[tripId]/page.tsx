@@ -322,6 +322,11 @@ export default function DriverTripPage() {
                             🔄 โยกไปให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate})
                           </span>
                         )}
+                        {(stop as any).assistForPlate && (
+                          <span className="inline-block mt-1 text-[11px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">
+                            🤝 ไปช่วยขนงานของ {(stop as any).assistForDriver ? `${(stop as any).assistForDriver} ` : ""}({(stop as any).assistForPlate})
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
