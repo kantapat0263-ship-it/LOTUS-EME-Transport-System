@@ -65,10 +65,10 @@ export default function ReportPage() {
   const [trips, setTrips] = React.useState<any[]>([])
   const [requests, setRequests] = React.useState<any[]>([])
   // จุดแวะประจำนอกจุดงาน — วิเคราะห์ on-demand (โหลด trail ทั้งช่วง หนัก จึงไม่ทำอัตโนมัติ)
-  const [recurring, setRecurring] = React.useState<{ plate: string; driverName: string; spots: RecurringSpot[] }[] | null>(null)
+  const [recurring, setRecurring] = React.useState<{ driverName: string; plates: string[]; spots: RecurringSpot[] }[] | null>(null)
   const [isAnalyzing, setIsAnalyzing] = React.useState(false)
 
-  // รวมจุดจอดนอกงานของทุก trail ในช่วงวันที่ → จับกลุ่มที่เดิมซ้ำ ๆ ต่อคัน
+  // รวมจุดจอดนอกงานของทุก trail ในช่วงวันที่ → จับกลุ่มที่เดิมซ้ำ ๆ ต่อ "คนขับ" (ไม่ใช่ต่อคัน)
   const analyzeRecurring = async () => {
     setIsAnalyzing(true)
     try {
@@ -86,25 +86,29 @@ export default function ReportPage() {
         if (v?.gpsDeviceId) plateByDevice[String(v.gpsDeviceId)] = String(v.licensePlate ?? "")
       })
 
-      // จุดงานของแต่ละคัน-แต่ละวัน (จาก trips ที่โหลดไว้แล้ว) — ใช้กรอง "จอดที่จุดงาน" ออก
+      // จาก trips: วันนั้นใครขับคันไหน (รองรับคนขับแทน) + จุดงานของคัน-วันนั้น (ใช้กรอง "จอดที่จุดงาน" ออก)
       const jobsByPlateDate: Record<string, { lat: number; lng: number }[]> = {}
-      const driverByPlate: Record<string, string> = {}
+      const driverByPlateDate: Record<string, string> = {}
       for (const t of trips) {
         if (t.status === "Cancelled" || !t.vehiclePlate) continue
-        driverByPlate[t.vehiclePlate] = t.driverName || driverByPlate[t.vehiclePlate] || ""
         const key = `${t.vehiclePlate}__${t.tripDate}`
+        const driver = (t as any).actualDriverName || t.driverName || ""
+        if (driver) driverByPlateDate[key] = driver
         if (!jobsByPlateDate[key]) jobsByPlateDate[key] = []
         for (const s of t.stops || []) {
           if (s.lat != null && s.lng != null) jobsByPlateDate[key].push({ lat: s.lat, lng: s.lng })
         }
       }
 
-      // จัดกลุ่ม events นอกจุดงาน ต่อคัน
-      const dailyByPlate: Record<string, { date: string; events: StopEvent[] }[]> = {}
+      // จัดกลุ่ม events นอกจุดงาน ต่อ "คนขับ" (วันไหนไม่รู้คนขับ = โยงไม่ได้ ข้ามไป)
+      const dailyByDriver: Record<string, { date: string; events: StopEvent[] }[]> = {}
+      const platesByDriver: Record<string, Set<string>> = {}
       trailSnap.forEach((d) => {
         const doc = d.data() as any
         const plate = plateByDevice[String(doc.deviceId)] || doc.licensePlate || ""
         if (!plate || !doc.date) return
+        const driver = driverByPlateDate[`${plate}__${doc.date}`]
+        if (!driver) return // ไม่รู้ว่าวันนั้นใครขับคันนี้ → โยงกับคนขับไม่ได้
         const events = detectStops(doc.points || [])
           .filter((ev) => haversineMeters(office, ev) > OFFICE_RADIUS_M) // จอดที่ออฟฟิศ ไม่นับ
           .filter((ev) => {
@@ -112,14 +116,16 @@ export default function ReportPage() {
             return !jobs.some((j) => haversineMeters(j, ev) <= ARRIVAL_RADIUS_M) // จอดที่จุดงาน ไม่นับ
           })
         if (!events.length) return
-        if (!dailyByPlate[plate]) dailyByPlate[plate] = []
-        dailyByPlate[plate].push({ date: doc.date, events })
+        if (!dailyByDriver[driver]) dailyByDriver[driver] = []
+        dailyByDriver[driver].push({ date: doc.date, events })
+        if (!platesByDriver[driver]) platesByDriver[driver] = new Set()
+        platesByDriver[driver].add(plate)
       })
 
-      const result = Object.entries(dailyByPlate)
-        .map(([plate, daily]) => ({
-          plate,
-          driverName: driverByPlate[plate] || "",
+      const result = Object.entries(dailyByDriver)
+        .map(([driverName, daily]) => ({
+          driverName,
+          plates: Array.from(platesByDriver[driverName] || []),
           spots: computeRecurringStops(daily, office),
         }))
         .filter((r) => r.spots.length > 0)
@@ -716,7 +722,7 @@ export default function ReportPage() {
         <Card className="border-border/50 no-print">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <Repeat className="h-5 w-5 text-red-400" /> จุดแวะประจำนอกจุดงาน (รายคัน)
+              <Repeat className="h-5 w-5 text-red-400" /> จุดแวะประจำนอกจุดงาน (รายคนขับ)
             </CardTitle>
             <CardDescription>
               จับจุดที่รถจอดนอกจุดงาน "ที่เดิมซ้ำ ≥3 วัน" ในช่วงวันที่เลือก — พร้อมเวลารวมและสัดส่วนที่อยู่นอกช่วงพักเที่ยง (12:00–13:00)
@@ -730,9 +736,14 @@ export default function ReportPage() {
             {recurring !== null && recurring.length > 0 && (
               <div className="space-y-5">
                 {recurring.map((r) => (
-                  <div key={r.plate} className="rounded-xl border border-border/50 p-3">
+                  <div key={r.driverName} className="rounded-xl border border-border/50 p-3">
                     <p className="mb-2 text-sm font-bold text-white">
-                      🚚 {r.plate}{r.driverName ? ` • ${r.driverName}` : ""}
+                      👤 {r.driverName}
+                      {r.plates.length > 0 && (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                          (ขับ {r.plates.length > 1 ? `${r.plates.length} คัน` : r.plates[0]} ในช่วงนี้)
+                        </span>
+                      )}
                     </p>
                     <Table>
                       <TableHeader>
