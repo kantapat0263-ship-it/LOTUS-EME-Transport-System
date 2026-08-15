@@ -64,7 +64,8 @@ export default function DailySummaryPage() {
   const datesWithWorkRef = React.useRef<Set<string>>(new Set())
 
   // Top 3 drivers of the selected date's month (by actual km) — shown on the A4
-  const [topDrivers, setTopDrivers] = React.useState<DriverStat[]>([])
+  const [topDrivers, setTopDrivers] = React.useState<DriverStat[]>([]) // อันดับตามระยะทาง
+  const [topByJobs, setTopByJobs] = React.useState<DriverStat[]>([]) // อันดับตามจำนวนงาน (รับงานเยอะ)
 
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -224,6 +225,7 @@ export default function DailySummaryPage() {
   React.useEffect(() => {
     if (!selectedDate || !db) {
       setTopDrivers([])
+      setTopByJobs([])
       return
     }
     let active = true
@@ -239,8 +241,11 @@ export default function DailySummaryPage() {
       const monthTrips = snap.docs
         .map(d => ({ ...d.data(), id: d.id }) as any)
         .filter(t => t.status !== 'Cancelled')
-      setTopDrivers(computeDriverLeaderboard(monthTrips).slice(0, 3))
-    })().catch(() => { if (active) setTopDrivers([]) })
+      const lb = computeDriverLeaderboard(monthTrips)
+      setTopDrivers(lb.slice(0, 3))
+      // อันดับ "รับงานเยอะสุด" — เรียงตามจำนวนงานที่ทำ (คนขับงานสั้นๆ เยอะก็ได้กำลังใจ)
+      setTopByJobs([...lb].filter(d => d.completedStops > 0).sort((a, b) => b.completedStops - a.completedStops).slice(0, 3))
+    })().catch(() => { if (active) { setTopDrivers([]); setTopByJobs([]) } })
     return () => { active = false }
   }, [selectedDate, db])
 
@@ -1483,20 +1488,40 @@ export default function DailySummaryPage() {
                       </div>
                     </div>
 
-                    {topDrivers.length > 0 && (
-                      <div className="mt-6 border-2 border-gray-400 rounded-lg p-3">
-                        <p className="font-bold text-center mb-3 text-[14px]">
-                          🏆 สุดยอดนักขับประจำเดือน{new Date(selectedDate + 'T00:00:00').toLocaleDateString('th-TH', { month: 'long' })}
-                        </p>
-                        <div className="flex justify-center gap-10">
-                          {topDrivers.map((d, i) => (
-                            <div key={d.driverId} className="text-center">
-                              <div className="text-2xl leading-none">{['🥇', '🥈', '🥉'][i]}</div>
-                              <div className="font-bold mt-1">{d.driverName}</div>
-                              <div className="text-gray-600 text-[12px]">{Math.round(d.actualKm).toLocaleString()} กม.</div>
+                    {(topDrivers.length > 0 || topByJobs.length > 0) && (
+                      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {topDrivers.length > 0 && (
+                          <div className="border-2 border-gray-400 rounded-lg p-3">
+                            <p className="font-bold text-center mb-3 text-[14px]">
+                              🏆 นักขับระยะทางไกลสุด เดือน{new Date(selectedDate + 'T00:00:00').toLocaleDateString('th-TH', { month: 'long' })}
+                            </p>
+                            <div className="flex justify-center gap-8">
+                              {topDrivers.map((d, i) => (
+                                <div key={d.driverId} className="text-center">
+                                  <div className="text-2xl leading-none">{['🥇', '🥈', '🥉'][i]}</div>
+                                  <div className="font-bold mt-1">{d.driverName}</div>
+                                  <div className="text-gray-600 text-[12px]">{Math.round(d.actualKm).toLocaleString()} กม.</div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        )}
+                        {topByJobs.length > 0 && (
+                          <div className="border-2 border-gray-400 rounded-lg p-3">
+                            <p className="font-bold text-center mb-3 text-[14px]">
+                              🏅 นักขับรับงานเยอะสุด เดือน{new Date(selectedDate + 'T00:00:00').toLocaleDateString('th-TH', { month: 'long' })}
+                            </p>
+                            <div className="flex justify-center gap-8">
+                              {topByJobs.map((d, i) => (
+                                <div key={d.driverId} className="text-center">
+                                  <div className="text-2xl leading-none">{['🥇', '🥈', '🥉'][i]}</div>
+                                  <div className="font-bold mt-1">{d.driverName}</div>
+                                  <div className="text-gray-600 text-[12px]">{d.completedStops.toLocaleString()} งาน</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
