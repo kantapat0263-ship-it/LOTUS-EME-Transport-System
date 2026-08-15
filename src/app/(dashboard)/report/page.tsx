@@ -35,6 +35,7 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { Trip, CompanySetting } from "@/types/models"
 import { computeOutcomeStats, computeDriverReliability } from "@/lib/calculations"
+import { detectStops, computeRecurringStops, haversineMeters, OFFICE_LOCATION, OFFICE_RADIUS_M, ARRIVAL_RADIUS_M, type RecurringSpot, type StopEvent } from "@/lib/tracking"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
 import { th } from "date-fns/locale"
@@ -63,6 +64,75 @@ export default function ReportPage() {
   
   const [trips, setTrips] = React.useState<any[]>([])
   const [requests, setRequests] = React.useState<any[]>([])
+  // จุดแวะประจำนอกจุดงาน — วิเคราะห์ on-demand (โหลด trail ทั้งช่วง หนัก จึงไม่ทำอัตโนมัติ)
+  const [recurring, setRecurring] = React.useState<{ plate: string; driverName: string; spots: RecurringSpot[] }[] | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = React.useState(false)
+
+  // รวมจุดจอดนอกงานของทุก trail ในช่วงวันที่ → จับกลุ่มที่เดิมซ้ำ ๆ ต่อคัน
+  const analyzeRecurring = async () => {
+    setIsAnalyzing(true)
+    try {
+      const office = settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
+        ? { lat: Number(settings.warehouseLatitude), lng: Number(settings.warehouseLongitude) }
+        : OFFICE_LOCATION
+
+      const [trailSnap, vehSnap] = await Promise.all([
+        getDocs(query(collection(db, "vehiclePositionTrails"), where("date", ">=", startDate), where("date", "<=", endDate))),
+        getDocs(collection(db, "vehicles")),
+      ])
+      const plateByDevice: Record<string, string> = {}
+      vehSnap.forEach((d) => {
+        const v = d.data() as any
+        if (v?.gpsDeviceId) plateByDevice[String(v.gpsDeviceId)] = String(v.licensePlate ?? "")
+      })
+
+      // จุดงานของแต่ละคัน-แต่ละวัน (จาก trips ที่โหลดไว้แล้ว) — ใช้กรอง "จอดที่จุดงาน" ออก
+      const jobsByPlateDate: Record<string, { lat: number; lng: number }[]> = {}
+      const driverByPlate: Record<string, string> = {}
+      for (const t of trips) {
+        if (t.status === "Cancelled" || !t.vehiclePlate) continue
+        driverByPlate[t.vehiclePlate] = t.driverName || driverByPlate[t.vehiclePlate] || ""
+        const key = `${t.vehiclePlate}__${t.tripDate}`
+        if (!jobsByPlateDate[key]) jobsByPlateDate[key] = []
+        for (const s of t.stops || []) {
+          if (s.lat != null && s.lng != null) jobsByPlateDate[key].push({ lat: s.lat, lng: s.lng })
+        }
+      }
+
+      // จัดกลุ่ม events นอกจุดงาน ต่อคัน
+      const dailyByPlate: Record<string, { date: string; events: StopEvent[] }[]> = {}
+      trailSnap.forEach((d) => {
+        const doc = d.data() as any
+        const plate = plateByDevice[String(doc.deviceId)] || doc.licensePlate || ""
+        if (!plate || !doc.date) return
+        const events = detectStops(doc.points || [])
+          .filter((ev) => haversineMeters(office, ev) > OFFICE_RADIUS_M) // จอดที่ออฟฟิศ ไม่นับ
+          .filter((ev) => {
+            const jobs = jobsByPlateDate[`${plate}__${doc.date}`] || []
+            return !jobs.some((j) => haversineMeters(j, ev) <= ARRIVAL_RADIUS_M) // จอดที่จุดงาน ไม่นับ
+          })
+        if (!events.length) return
+        if (!dailyByPlate[plate]) dailyByPlate[plate] = []
+        dailyByPlate[plate].push({ date: doc.date, events })
+      })
+
+      const result = Object.entries(dailyByPlate)
+        .map(([plate, daily]) => ({
+          plate,
+          driverName: driverByPlate[plate] || "",
+          spots: computeRecurringStops(daily, office),
+        }))
+        .filter((r) => r.spots.length > 0)
+        .sort((a, b) => (b.spots[0]?.totalMin || 0) - (a.spots[0]?.totalMin || 0))
+      setRecurring(result)
+      if (result.length === 0) toast({ title: "ไม่พบจุดแวะประจำ", description: "ช่วงวันที่เลือกไม่มีการจอดนอกจุดงานซ้ำที่เดิม ≥3 วัน" })
+    } catch (e) {
+      console.error(e)
+      toast({ title: "วิเคราะห์ไม่สำเร็จ", variant: "destructive" })
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
 
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
   const { data: settings } = useDoc<CompanySetting>(settingsRef)
@@ -641,6 +711,81 @@ export default function ReportPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* จุดแวะประจำนอกจุดงาน — พฤติกรรมจอดที่เดิมซ้ำ ๆ (เช่นแวะบ้าน) ให้คนขับ "เห็นข้อมูล" */}
+        <Card className="border-border/50 no-print">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Repeat className="h-5 w-5 text-red-400" /> จุดแวะประจำนอกจุดงาน (รายคัน)
+            </CardTitle>
+            <CardDescription>
+              จับจุดที่รถจอดนอกจุดงาน "ที่เดิมซ้ำ ≥3 วัน" ในช่วงวันที่เลือก — พร้อมเวลารวมและสัดส่วนที่อยู่นอกช่วงพักเที่ยง (12:00–13:00)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button onClick={analyzeRecurring} disabled={isAnalyzing || trips.length === 0} variant="outline" className="border-red-500/40 text-red-400 hover:bg-red-500/10">
+              {isAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Repeat className="mr-2 h-4 w-4" />}
+              {isAnalyzing ? "กำลังวิเคราะห์..." : "วิเคราะห์จุดแวะประจำ"}
+            </Button>
+            {recurring !== null && recurring.length > 0 && (
+              <div className="space-y-5">
+                {recurring.map((r) => (
+                  <div key={r.plate} className="rounded-xl border border-border/50 p-3">
+                    <p className="mb-2 text-sm font-bold text-white">
+                      🚚 {r.plate}{r.driverName ? ` • ${r.driverName}` : ""}
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-border/50">
+                          <TableHead>จุดแวะ</TableHead>
+                          <TableHead className="text-right">ห่างออฟฟิศ</TableHead>
+                          <TableHead className="text-right">แวะ</TableHead>
+                          <TableHead className="text-right">รวมเวลา</TableHead>
+                          <TableHead className="text-right">เฉลี่ย/นานสุด</TableHead>
+                          <TableHead className="text-right">นอกช่วงพักเที่ยง</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {r.spots.map((s, i) => {
+                          const offPct = s.totalMin ? Math.round((s.offLunchMin / s.totalMin) * 100) : 0
+                          const hot = s.totalMin >= 120
+                          return (
+                            <TableRow key={i} className={cn("border-border/20", hot && "bg-red-500/5")}>
+                              <TableCell>
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`}
+                                  target="_blank" rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 font-medium text-sky-400 hover:underline"
+                                >
+                                  <MapPin className="h-3.5 w-3.5" /> ดูตำแหน่ง
+                                </a>
+                              </TableCell>
+                              <TableCell className="text-right">{s.distFromOfficeKm.toFixed(1)} กม.</TableCell>
+                              <TableCell className="text-right">{s.days} วัน ({s.visits} ครั้ง)</TableCell>
+                              <TableCell className={cn("text-right font-bold", hot && "text-red-400")}>
+                                {s.totalMin >= 60 ? `${Math.floor(s.totalMin / 60)} ชม. ${s.totalMin % 60} นาที` : `${s.totalMin} นาที`}
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground">{s.avgMin} / {s.maxMin} นาที</TableCell>
+                              <TableCell className={cn("text-right", offPct >= 50 ? "font-bold text-amber-400" : "text-muted-foreground")}>
+                                {offPct}%
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ))}
+                <p className="text-[11px] text-muted-foreground">
+                  💡 ใช้เป็นข้อมูลประกอบการพูดคุย — จุดที่แวะซ้ำใกล้บ้าน/นอกเวลาพัก จะเห็นชัดจากคอลัมน์ "นอกช่วงพักเที่ยง"
+                </p>
+              </div>
+            )}
+            {recurring !== null && recurring.length === 0 && (
+              <p className="text-sm text-muted-foreground">ไม่พบจุดแวะประจำในช่วงวันที่เลือก ✅</p>
+            )}
+          </CardContent>
+        </Card>
 
         <div className="text-center pt-10 border-t border-border/50">
           <p className="text-[10px] text-muted-foreground italic">

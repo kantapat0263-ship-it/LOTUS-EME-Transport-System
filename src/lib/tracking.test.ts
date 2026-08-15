@@ -12,6 +12,8 @@ import {
   isOverspeed,
   mileageKm,
   ARRIVAL_RADIUS_M,
+  minutesOutsideLunch,
+  computeRecurringStops,
 } from './tracking'
 
 describe('tracking: haversineMeters', () => {
@@ -326,5 +328,41 @@ describe('tracking: trailDistanceKm', () => {
     ])
     expect(d).toBeGreaterThan(20) // ~22 กม.
     expect(d).toBeLessThan(24)
+  })
+})
+
+describe('tracking: จุดแวะประจำนอกจุดงาน (recurring stops)', () => {
+  const M = 60000
+  const office = { lat: 13.7, lng: 100.5 }
+  // 12:00 เวลาไทย ของ epoch วันหนึ่ง = 05:00 UTC
+  const thaiNoon = Date.UTC(2026, 7, 10, 5, 0, 0) // 10 ส.ค. 2026 12:00 ไทย
+
+  it('minutesOutsideLunch: ช่วงในพักเที่ยงล้วน = 0, นอกล้วน = ทั้งหมด, คร่อม = เฉพาะส่วนเกิน', () => {
+    expect(minutesOutsideLunch(thaiNoon, thaiNoon + 60 * M)).toBe(0) // 12:00–13:00 พอดี
+    expect(minutesOutsideLunch(thaiNoon + 120 * M, thaiNoon + 180 * M)).toBe(60) // 14:00–15:00
+    expect(minutesOutsideLunch(thaiNoon - 30 * M, thaiNoon + 30 * M)).toBe(30) // 11:30–12:30 → เกิน 30
+  })
+
+  it('จอดที่เดิมซ้ำ 3 วัน → เป็นจุดแวะประจำ ; จุดที่มาแค่ 1 วันถูกตัดทิ้ง', () => {
+    const home = { lat: 13.79, lng: 100.55 } // ~10 กม.จากออฟฟิศ
+    const daily = [
+      { date: '2026-08-10', events: [{ ...home, startT: thaiNoon + 120 * M, endT: thaiNoon + 180 * M, durationMin: 60 }] },
+      { date: '2026-08-11', events: [{ lat: home.lat + 0.0005, lng: home.lng, startT: thaiNoon + 60 * M, endT: thaiNoon + 150 * M, durationMin: 90 }] },
+      { date: '2026-08-12', events: [
+        { ...home, startT: thaiNoon - 60 * M, endT: thaiNoon + 60 * M, durationMin: 120 }, // 11:00–13:00 (คร่อมพัก)
+        { lat: 13.95, lng: 100.7, startT: thaiNoon, endT: thaiNoon + 15 * M, durationMin: 15 }, // จุดอื่น มาวันเดียว
+      ] },
+    ]
+    const spots = computeRecurringStops(daily, office)
+    expect(spots).toHaveLength(1) // จุดวันเดียวถูกตัด (minDays=3)
+    const s = spots[0]
+    expect(s.days).toBe(3)
+    expect(s.visits).toBe(3)
+    expect(s.totalMin).toBe(270)
+    expect(s.maxMin).toBe(120)
+    // นอกพักเที่ยง: 60 + 90 + 60 (จาก 120 ที่คร่อม 12:00–13:00) = 210
+    expect(s.offLunchMin).toBe(210)
+    expect(s.distFromOfficeKm).toBeGreaterThan(8)
+    expect(s.distFromOfficeKm).toBeLessThan(13)
   })
 })

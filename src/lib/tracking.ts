@@ -243,6 +243,93 @@ export function detectStops(
 }
 
 // ---------------------------------------------------------------------------
+// จุดแวะประจำนอกจุดงาน — จับพฤติกรรมจอดที่เดิมซ้ำ ๆ ข้ามวัน (ทำรายงานให้คนขับ "เห็นข้อมูล")
+// ---------------------------------------------------------------------------
+
+export interface RecurringSpot {
+  lat: number
+  lng: number
+  /** จำนวนวันที่มาแวะจุดนี้ */
+  days: number
+  /** จำนวนครั้งที่แวะ (วันเดียวแวะหลายรอบได้) */
+  visits: number
+  totalMin: number
+  avgMin: number
+  maxMin: number
+  /** นาทีที่อยู่ "นอกช่วงพักเที่ยง" (12:00–13:00 เวลาไทย) — ชี้เคสพักเกิน/พักไม่ตรงเวลา */
+  offLunchMin: number
+  distFromOfficeKm: number
+  dates: string[]
+}
+
+/** นาทีของช่วง [startT,endT] ที่อยู่นอกหน้าต่างพักเที่ยง (คิดตามเวลาไทย UTC+7, รองรับช่วงคร่อมวัน) */
+export function minutesOutsideLunch(startT: number, endT: number, lunchStartHour = 12, lunchEndHour = 13): number {
+  if (endT <= startT) return 0
+  const totalMin = (endT - startT) / 60000
+  const dayMs = 24 * 3600 * 1000
+  const tzOff = 7 * 3600 * 1000
+  let lunchOverlapMs = 0
+  let dayStart = Math.floor((startT + tzOff) / dayMs) * dayMs - tzOff // เที่ยงคืนไทยของวันแรกที่เกี่ยว
+  for (; dayStart < endT; dayStart += dayMs) {
+    const ls = dayStart + lunchStartHour * 3600 * 1000
+    const le = dayStart + lunchEndHour * 3600 * 1000
+    const overlap = Math.min(endT, le) - Math.max(startT, ls)
+    if (overlap > 0) lunchOverlapMs += overlap
+  }
+  return Math.max(0, totalMin - lunchOverlapMs / 60000)
+}
+
+/**
+ * รวมจุดจอด "นอกจุดงาน" ของหลายวัน แล้วจับกลุ่มตำแหน่งเดิมซ้ำ ๆ (รัศมี clusterRadiusM)
+ * คืนเฉพาะจุดที่แวะ ≥ minDays วัน เรียงตามเวลารวมมาก → น้อย
+ * (events ต้องถูกกรอง "จอดที่จุดงาน/ออฟฟิศ" ออกมาก่อน — ฟังก์ชันนี้ cluster อย่างเดียว)
+ */
+export function computeRecurringStops(
+  daily: { date: string; events: StopEvent[] }[],
+  office: LatLng,
+  opts: { clusterRadiusM?: number; minDays?: number } = {}
+): RecurringSpot[] {
+  const radius = opts.clusterRadiusM ?? 150
+  const minDays = opts.minDays ?? 3
+  interface Acc { lat: number; lng: number; n: number; visits: { date: string; startT: number; endT: number; durationMin: number }[] }
+  const spots: Acc[] = []
+  for (const d of daily) {
+    for (const ev of d.events) {
+      let s = spots.find((x) => haversineMeters(x, ev) <= radius)
+      if (!s) {
+        s = { lat: ev.lat, lng: ev.lng, n: 0, visits: [] }
+        spots.push(s)
+      }
+      // running centroid — ให้ตำแหน่งกลุ่มนิ่ง ไม่เพี้ยนตาม GPS แกว่ง
+      s.lat = (s.lat * s.n + ev.lat) / (s.n + 1)
+      s.lng = (s.lng * s.n + ev.lng) / (s.n + 1)
+      s.n++
+      s.visits.push({ date: d.date, startT: ev.startT, endT: ev.endT, durationMin: ev.durationMin })
+    }
+  }
+  return spots
+    .map((s) => {
+      const dates = Array.from(new Set(s.visits.map((v) => v.date))).sort()
+      const totalMin = s.visits.reduce((t, v) => t + v.durationMin, 0)
+      const offLunchMin = s.visits.reduce((t, v) => t + minutesOutsideLunch(v.startT, v.endT), 0)
+      return {
+        lat: s.lat,
+        lng: s.lng,
+        days: dates.length,
+        visits: s.visits.length,
+        totalMin: Math.round(totalMin),
+        avgMin: Math.round(totalMin / Math.max(1, s.visits.length)),
+        maxMin: Math.round(Math.max(...s.visits.map((v) => v.durationMin))),
+        offLunchMin: Math.round(offLunchMin),
+        distFromOfficeKm: Math.round(haversineMeters(office, s) / 100) / 10,
+        dates,
+      }
+    })
+    .filter((s) => s.days >= minDays)
+    .sort((a, b) => b.totalMin - a.totalMin)
+}
+
+// ---------------------------------------------------------------------------
 // สรุปรายวันต่อคัน — เวลาจอด/เดินทางแต่ละจุด + เข้า-ออกออฟฟิศ (คำนวณจาก trail)
 // ---------------------------------------------------------------------------
 
