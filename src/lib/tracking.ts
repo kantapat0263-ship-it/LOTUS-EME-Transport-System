@@ -351,10 +351,17 @@ export interface StopTiming {
 }
 
 export interface DailySummary {
-  /** ออกจากออฟฟิศเมื่อ (unix ms) — null ถ้ายังไม่ออก/ไม่มีพิกัดออฟฟิศ */
+  /** ออกจากออฟฟิศเมื่อ (unix ms) — null ถ้ายังไม่ออก/ไม่มีพิกัดออฟฟิศ
+   *  วันที่รถตื่นนอกออฟฟิศแล้วไม่แวะออฟฟิศก่อนเริ่มงาน = เวลาที่ออกจากจุดค้างคืน */
   departedOfficeAt: number | null
   /** กลับถึงออฟฟิศเมื่อ (unix ms) — null ถ้ายังไม่กลับ */
   returnedOfficeAt: number | null
+  /** จุดแรกของวันอยู่นอกรัศมีออฟฟิศ = รถค้างคืนข้างนอก */
+  startedAwayFromOffice: boolean
+  /** เวลาที่เอารถเข้าออฟฟิศครั้งแรก (ขา "มาคืนรถ") — เฉพาะวันตื่นนอกพื้นที่ที่เข้าออฟฟิศก่อนแตะงานใด */
+  vehicleReturnedAt: number | null
+  /** จุดสุดท้ายของวันอยู่นอกรัศมีออฟฟิศ — วันที่จบไปแล้ว = ค้างคืนนอกพื้นที่ */
+  endedAwayFromOffice: boolean
   totalKm: number
   stops: StopTiming[]
 }
@@ -393,11 +400,52 @@ export function computeDailySummary(
   // (คำนวณใหม่จาก trail ทั้งเส้นทุกรอบ sync จึง self-correct ระหว่างวัน)
   let departedOfficeAt: number | null = null
   let returnedOfficeAt: number | null = null
+  let vehicleReturnedAt: number | null = null
+  let startedAwayFromOffice = false
+  let endedAwayFromOffice = false
   if (origin && pts.length) {
+    startedAwayFromOffice = haversineMeters(origin, pts[0]) > officeRadius
+    endedAwayFromOffice = haversineMeters(origin, pts[pts.length - 1]) > officeRadius
+
+    let startIdx = 0 // จุดที่เริ่มเดิน state machine (วันปกติ = ตั้งแต่ต้น trail)
     let leftForReal = false // รอบปัจจุบัน "ออกไปจริง" แล้ว (ไกลพอ/ถึงจุดงาน) — ค่อยเริ่มจับการกลับ
     let everAtJob = false // เคยถึงจุดงานอย่างน้อย 1 จุด (ทั้งวัน) — ใช้เลือกความเข้มงวดของ dwell
+
+    if (startedAwayFromOffice) {
+      // รถตื่นนอกออฟฟิศ (ค้างคืนข้างนอก เช่น เอารถกลับบ้านหลังงานไกล) — จุดแรกของวัน
+      // ไม่ใช่ "ออกจากออฟฟิศ" ห้ามนับเป็นเวลาออกงาน (บั๊กเดิม: บันทึกออก 6 โมงตอนขับมาคืนรถ)
+      // หาการเข้าออฟฟิศครั้งแรกที่ "อยู่จริง" (ต่อเนื่อง ≥ RETURN_DWELL_MIN — ขับผ่านเฉย ๆ ไม่นับ)
+      let enterIdx: number | null = null
+      let officeIdx: number | null = null
+      for (let i = 0; i < pts.length; i++) {
+        if (haversineMeters(origin, pts[i]) <= officeRadius) {
+          if (enterIdx == null) enterIdx = i
+          if (pts[i].t! - pts[enterIdx].t! >= RETURN_DWELL_MIN * 60_000) {
+            officeIdx = enterIdx
+            break
+          }
+        } else enterIdx = null
+      }
+      const jobBeforeOffice = pts.slice(0, officeIdx ?? pts.length).some(atAnyJob)
+      if (officeIdx != null && !jobBeforeOffice) {
+        // เข้าออฟฟิศโดยยังไม่แตะงานใด = ขา "เอารถมาคืน" — วันทำงานจริงเริ่มนับจากออฟฟิศจุดนี้
+        vehicleReturnedAt = pts[officeIdx].t!
+        startIdx = officeIdx
+      } else {
+        // ไม่เข้าออฟฟิศเลย (หรือถึงงานก่อนเข้า) = ทำงานต่อจากจุดค้างคืน
+        // → นับเวลาที่ออกจากจุดค้างคืนเป็นการเริ่มงาน (ยังไม่ขยับ = ยังไม่เริ่ม)
+        const startPos = pts[0]
+        const left = pts.find((p) => haversineMeters(startPos, p) > officeRadius)
+        if (left) {
+          departedOfficeAt = left.t!
+          leftForReal = true
+          everAtJob = jobBeforeOffice
+        }
+      }
+    }
+
     let officeEnterAt: number | null = null // เวลาเข้ารัศมีครั้งล่าสุด (รอยืนยันว่า "อยู่จริง")
-    for (const p of pts) {
+    for (const p of pts.slice(startIdx)) {
       const distFromOffice = haversineMeters(origin, p)
       const inOffice = distFromOffice <= officeRadius
       const atJob = atAnyJob(p)
@@ -481,6 +529,9 @@ export function computeDailySummary(
   return {
     departedOfficeAt,
     returnedOfficeAt,
+    startedAwayFromOffice,
+    vehicleReturnedAt,
+    endedAwayFromOffice,
     totalKm: Math.round(trailDistanceKm(pts) * 10) / 10,
     stops: timings,
   }

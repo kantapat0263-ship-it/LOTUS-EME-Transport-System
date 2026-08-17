@@ -178,6 +178,12 @@ export interface TrackingDailyDoc {
   /** ออกจากออฟฟิศ / กลับถึงออฟฟิศ (unix ms) — null ถ้ายังไม่เกิด */
   departedOfficeAt: number | null;
   returnedOfficeAt: number | null;
+  /** รถตื่นนอกออฟฟิศ (ค้างคืนข้างนอก) — optional: doc เก่าไม่มี field นี้ */
+  startedAwayFromOffice?: boolean;
+  /** เวลาเอารถเข้าออฟฟิศครั้งแรก (ขา "มาคืนรถ") — เฉพาะวันตื่นนอกพื้นที่ */
+  vehicleReturnedAt?: number | null;
+  /** จุดสุดท้ายของวันอยู่นอกรัศมีออฟฟิศ (วันจบแล้ว = ค้างคืนนอกพื้นที่) */
+  endedAwayFromOffice?: boolean;
   totalKm: number;
   stops: {
     order: number;
