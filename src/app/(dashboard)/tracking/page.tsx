@@ -370,6 +370,9 @@ export default function TrackingPage() {
           licensePlate: trip.vehiclePlate,
           departedOfficeAt: sum.departedOfficeAt,
           returnedOfficeAt: sum.returnedOfficeAt,
+          startedAwayFromOffice: sum.startedAwayFromOffice,
+          vehicleReturnedAt: sum.vehicleReturnedAt,
+          endedAwayFromOffice: sum.endedAwayFromOffice,
           totalKm: sum.totalKm,
           stops: sum.stops,
         }
@@ -683,6 +686,11 @@ function TruckDetail({
   // เวลารวมภารกิจ + สัดส่วนเวลา (ขับ/ที่จุดงาน/นอกจุดงาน) — คำนวณจากข้อมูลที่มีอยู่แล้ว
   const depT = truck.daily?.departedOfficeAt ?? null
   const retT = truck.daily?.returnedOfficeAt ?? null
+  // วันที่จบแล้วแต่รถไม่กลับออฟฟิศ = ค้างคืนนอกพื้นที่ — doc เก่าไม่มี field ก็ดูจากจุดสุดท้ายของ trail ได้
+  const lastPt = truck.trail.length ? truck.trail[truck.trail.length - 1] : null
+  const endedAway =
+    truck.daily?.endedAwayFromOffice ??
+    (lastPt && truck.origin ? haversineMeters(truck.origin, lastPt) > OFFICE_RADIUS_M : false)
   const missionMin = depT && retT ? Math.max(0, Math.round((retT - depT) / 60_000)) : null
   const driveMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.travelMinFromPrev ?? 0), 0)
   const dwellAtJobMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.dwellMin ?? 0), 0)
@@ -810,12 +818,37 @@ function TruckDetail({
         </div>
       )}
 
+      {/* รถตื่นนอกออฟฟิศ = ค้างคืนข้างนอกเมื่อคืน — โชว์ขา "มาคืนรถ" แยกจากเวลาออกงานจริง */}
+      {truck.daily?.startedAwayFromOffice && (
+        <div className="mx-4 mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-400">
+          🌙 รถเริ่มวันนอกออฟฟิศ (ค้างคืนนอกพื้นที่เมื่อคืน)
+          {truck.daily?.vehicleReturnedAt ? <> · เอารถมาคืนออฟฟิศ {thTime(truck.daily.vehicleReturnedAt)}</> : null}
+        </div>
+      )}
+
       <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
-        <span>🏢 ออกออฟฟิศ <b className="text-foreground">{thTime(truck.daily?.departedOfficeAt)}</b></span>
+        <span>
+          {truck.daily?.startedAwayFromOffice && !truck.daily?.vehicleReturnedAt ? "🌙 ออกจากจุดค้างคืน" : "🏢 ออกออฟฟิศ"}{" "}
+          <b className="text-foreground">{thTime(truck.daily?.departedOfficeAt)}</b>
+        </span>
         <span>
           กลับถึงออฟฟิศ{" "}
           {truck.daily?.returnedOfficeAt ? (
             <b className="text-emerald-400">{thTime(truck.daily.returnedOfficeAt)}</b>
+          ) : !isToday && endedAway ? (
+            <b className="text-amber-400">
+              ไม่กลับออฟฟิศ (ค้างคืนนอกพื้นที่)
+              {lastPt && (
+                <a
+                  className="ml-1.5 inline-flex items-center gap-0.5 rounded-md border border-sky-400/50 bg-sky-400/10 px-1.5 py-0.5 font-semibold text-sky-300 hover:bg-sky-400/20"
+                  href={`https://www.google.com/maps/search/?api=1&query=${lastPt.lat},${lastPt.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  📍 ดูจุดที่รถค้าง
+                </a>
+              )}
+            </b>
           ) : (
             <b className="text-muted-foreground">ยังไม่กลับ</b>
           )}

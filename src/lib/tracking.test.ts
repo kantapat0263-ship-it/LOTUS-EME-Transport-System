@@ -259,6 +259,95 @@ describe('tracking: computeDailySummary (เวลาจอด/เดินท�
     expect(s.departedOfficeAt).toBeNull()
     expect(s.stops[0].dwellMin).toBe(10)
   })
+
+  it('วันปกติ (เริ่มที่ออฟฟิศ) → ไม่ติดธงค้างคืน', () => {
+    const s = computeDailySummary(trail, stops, office)
+    expect(s.startedAwayFromOffice).toBe(false)
+    expect(s.vehicleReturnedAt).toBeNull()
+    expect(s.endedAwayFromOffice).toBe(false)
+  })
+})
+
+describe('tracking: computeDailySummary — รถค้างคืนนอกออฟฟิศ (ตื่นนอกพื้นที่)', () => {
+  const M = 60000
+  const office = { lat: 13.7, lng: 100.5 }
+  const home = { lat: 13.61, lng: 100.5 } // บ้านคนขับ ~10 กม. จากออฟฟิศ
+  const stops = [{ order: 1, siteName: 'A', lat: 13.75, lng: 100.55 }]
+
+  it('เช้าขับจากบ้านมาคืนรถ → เวลาออก = ตอนคนอื่นเอารถออกไปงานจริง ไม่ใช่ 6 โมง', () => {
+    // บ้าน(0') → ถึงออฟฟิศ(30') จอดคืนรถ → คนใหม่เอารถออก(60') → ถึง A(75') → กลับออฟฟิศ(100')
+    const t = [
+      { lat: home.lat, lng: home.lng, t: 0 * M },
+      { lat: 13.65, lng: 100.5, t: 15 * M }, // ระหว่างทางเข้าออฟฟิศ
+      { lat: 13.7001, lng: 100.5001, t: 30 * M }, // ถึงออฟฟิศ (มาคืนรถ)
+      { lat: 13.7002, lng: 100.5002, t: 33 * M },
+      { lat: 13.7001, lng: 100.5003, t: 36 * M }, // จอดครบ dwell = คืนรถจริง
+      { lat: 13.72, lng: 100.52, t: 60 * M }, // คนใหม่เอารถออกไปงาน
+      { lat: 13.7501, lng: 100.5501, t: 75 * M }, // ถึง A
+      { lat: 13.7002, lng: 100.5001, t: 100 * M }, // กลับออฟฟิศ
+      { lat: 13.7003, lng: 100.5002, t: 106 * M }, // จอดยืนยัน
+    ]
+    const s = computeDailySummary(t, stops, office)
+    expect(s.startedAwayFromOffice).toBe(true)
+    expect(s.vehicleReturnedAt).toBe(30 * M) // ขาเอารถมาคืน
+    expect(s.departedOfficeAt).toBe(60 * M) // ออกงานจริง — ไม่ใช่ 0' (ออกจากบ้าน)
+    expect(s.returnedOfficeAt).toBe(100 * M)
+  })
+
+  it('ค้างคืนแล้ววิ่งไปงานต่อเลย (ไม่เข้าออฟฟิศทั้งวัน) → นับออกจากจุดค้างคืนเป็นเวลาเริ่มงาน', () => {
+    const t = [
+      { lat: home.lat, lng: home.lng, t: 0 * M },
+      { lat: 13.6101, lng: 100.5001, t: 10 * M }, // ยังอยู่บ้าน (GPS ขยับเล็กน้อย)
+      { lat: 13.65, lng: 100.53, t: 20 * M }, // ออกจากจุดค้างคืน → เริ่มงาน
+      { lat: 13.9, lng: 100.7, t: 60 * M }, // วิ่งไปงานไกล
+    ]
+    const s = computeDailySummary(t, [], office)
+    expect(s.startedAwayFromOffice).toBe(true)
+    expect(s.vehicleReturnedAt).toBeNull()
+    expect(s.departedOfficeAt).toBe(20 * M)
+    expect(s.returnedOfficeAt).toBeNull()
+    expect(s.endedAwayFromOffice).toBe(true)
+  })
+
+  it('ทำงานจากจุดค้างคืน (ถึงงานก่อนเข้าออฟฟิศ) → ขาเข้าออฟฟิศตอนเย็น = กลับจริง ไม่ใช่มาคืนรถ', () => {
+    const t = [
+      { lat: home.lat, lng: home.lng, t: 0 * M },
+      { lat: 13.63, lng: 100.52, t: 10 * M }, // ออกจากจุดค้างคืน
+      { lat: 13.7501, lng: 100.5501, t: 30 * M }, // ถึงงาน A ก่อนแวะออฟฟิศ
+      { lat: 13.7001, lng: 100.5001, t: 60 * M }, // เย็นกลับออฟฟิศ
+      { lat: 13.7002, lng: 100.5002, t: 66 * M }, // จอดยืนยัน
+    ]
+    const s = computeDailySummary(t, stops, office)
+    expect(s.vehicleReturnedAt).toBeNull() // ไม่ใช่ขามาคืนรถ — ทำงานมาแล้ว
+    expect(s.departedOfficeAt).toBe(10 * M)
+    expect(s.returnedOfficeAt).toBe(60 * M)
+  })
+
+  it('ขับผ่านรัศมีออฟฟิศแวบเดียวตอนเช้า (ทางผ่าน) → ไม่นับว่ามาคืนรถ', () => {
+    const t = [
+      { lat: home.lat, lng: home.lng, t: 0 * M },
+      { lat: 13.65, lng: 100.5, t: 10 * M }, // ออกจากบ้าน
+      { lat: 13.7008, lng: 100.5005, t: 30 * M }, // ผ่านใกล้ออฟฟิศจุดเดียว ไม่จอด
+      { lat: 13.72, lng: 100.53, t: 33 * M }, // หลุดรัศมี วิ่งต่อ
+      { lat: 13.7501, lng: 100.5501, t: 50 * M }, // ถึง A
+    ]
+    const s = computeDailySummary(t, stops, office)
+    expect(s.vehicleReturnedAt).toBeNull() // แค่ผ่าน ไม่ได้จอดคืนรถ
+    expect(s.departedOfficeAt).toBe(10 * M) // เริ่มงานจากจุดค้างคืน
+  })
+
+  it('วันไปงานไกลแล้วไม่กลับออฟฟิศ (จบวันที่บ้าน) → ไม่มีเวลากลับ + ติดธงค้างคืน', () => {
+    const t = [
+      { lat: 13.7, lng: 100.5, t: 0 * M }, // เริ่มที่ออฟฟิศตามปกติ
+      { lat: 13.72, lng: 100.52, t: 5 * M }, // ออกงาน
+      { lat: 15.7, lng: 100.1, t: 300 * M }, // งานไกล (นครสวรรค์)
+      { lat: home.lat, lng: home.lng, t: 800 * M }, // กลับดึก เข้าบ้านเลย
+    ]
+    const s = computeDailySummary(t, stops, office)
+    expect(s.departedOfficeAt).toBe(5 * M)
+    expect(s.returnedOfficeAt).toBeNull() // ไม่ได้กลับออฟฟิศ
+    expect(s.endedAwayFromOffice).toBe(true) // → UI แสดง "ไม่กลับออฟฟิศ (ค้างคืนนอกพื้นที่)"
+  })
 })
 
 describe('tracking: detectStops (ตรวจจับจุดจอดจาก trail)', () => {
