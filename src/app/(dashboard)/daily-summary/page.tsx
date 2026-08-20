@@ -230,11 +230,13 @@ export default function DailySummaryPage() {
     }
     let active = true
     ;(async () => {
-      const { start, end } = monthRange(selectedDate)
+      // สะสม "ต้นเดือน → วันที่ของใบสรุป" (ไม่ใช่ทั้งเดือน) — แต่ละใบเห็นยอดโตขึ้นวันต่อวัน
+      // และเปิดใบเก่าย้อนหลังได้เลขตรงกับที่เคยพิมพ์ไปจริง
+      const { start } = monthRange(selectedDate)
       const snap = await getDocs(query(
         collection(db, "trips"),
         where("tripDate", ">=", start),
-        where("tripDate", "<=", end),
+        where("tripDate", "<=", selectedDate),
       ))
       if (!active) return
       // #3 ไม่นับทริปที่ยกเลิก (Cancelled) เข้าอันดับ — query ตาม tripDate range กรอง status ไม่ได้
