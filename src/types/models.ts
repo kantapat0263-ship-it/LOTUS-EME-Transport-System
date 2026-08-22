@@ -76,6 +76,8 @@ export interface TripStop {
   lng?: number;
   requestedBy?: string;
   requestedByPhone?: string;
+  /** เวลาที่ผู้ขอส่งคำขอ (unix ms) — snapshot จาก vehicleRequest.createdAt ตอนจัดรถ ให้คนจัดคิวเห็นหลังจัดแล้ว */
+  requestedAt?: number;
   requestTime?: string;
   address?: string;
   note?: string;

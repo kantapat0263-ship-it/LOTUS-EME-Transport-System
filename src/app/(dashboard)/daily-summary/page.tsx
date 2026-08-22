@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
+import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
@@ -934,6 +935,7 @@ export default function DailySummaryPage() {
       if (stop.lat != null && stop.lng != null) { c.lat = stop.lat; c.lng = stop.lng }
       if (stop.requestedBy) c.requestedBy = stop.requestedBy
       if (stop.requestedByPhone) c.requestedByPhone = stop.requestedByPhone
+      if (stop.requestedAt != null) c.requestedAt = stop.requestedAt
       if (stop.requestTime) c.requestTime = stop.requestTime
       if (stop.address) c.address = stop.address
       if (stop.note) c.note = stop.note
@@ -1026,6 +1028,8 @@ export default function DailySummaryPage() {
                 ➕ แทรก{(stop as any).insertedBy ? ` · ${(stop as any).insertedBy}` : ""}
               </span>
             ) : null}
+            {/* จังหวะส่งคำขอ — เฉพาะหน้าจัดการฝั่งแอดมิน ไม่อยู่ในใบพิมพ์/LINE */}
+            <RequestTimingBadge requestedAt={(stop as any).requestedAt} requestDate={trip.tripDate} className="mt-0.5 block" />
           </span>
           <button
             type="button"

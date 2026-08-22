@@ -2,6 +2,7 @@
 "use client"
 
 import * as React from "react"
+import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { Search, Filter, Calendar as CalendarIcon, MapPin, Truck, ChevronRight, FileText, Download, Loader2, Printer, Trash2, Phone, Edit, Plus, AlertTriangle, Save, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -822,6 +823,8 @@ export default function TripHistoryPage() {
                     <div className="flex-1">
                       <p className="font-bold text-base md:text-lg">{stop.siteName}</p>
                       <p className="text-xs md:text-sm mt-1 whitespace-pre-wrap">{stop.cargoDetails}</p>
+                      {/* จังหวะส่งคำขอ — ดูบนจอเท่านั้น ไม่ติดไปในใบงานที่พิมพ์ให้คนขับ */}
+                      <RequestTimingBadge requestedAt={stop.requestedAt} requestDate={selectedTrip?.tripDate} className="mt-1 print:hidden" />
                     </div>
                   </div>
                 ))}

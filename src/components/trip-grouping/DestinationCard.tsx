@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { MapPin, User, FileText, Calendar, Phone, Clock, StickyNote } from "lucide-react"
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 
 // แปลง YYYY-MM-DD → DD/MM/YYYY (กันพังถ้าไม่มีค่า)
 const fmtDate = (s?: string) => {
@@ -158,6 +159,8 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
                 <Phone className="h-3 w-3" /> {dest.requestedByPhone}
               </span>
             )}
+            {/* ส่งคำขอมากี่โมง / ล่วงหน้ากี่วัน / นอกเวลาไหม — ให้คนจัดคิวเห็นตอนตัดสินใจ */}
+            <RequestTimingBadge requestedAt={dest.requestedAt} requestDate={dest.requestDate} className="basis-full" />
           </div>
 
           <div className="border-t border-border/50 pt-2">
