@@ -82,6 +82,8 @@ export default function TripGroupingPage() {
             destIndex: idx,
             requestedBy: req.requestedBy,
             requestedByPhone: req.requestedByPhone || "",
+            // เวลาส่งคำขอ (ms) — ติดไปกับ stop ตอนจัดรถ ให้คนจัดคิวดูย้อนหลังได้ว่าส่งมากี่โมง
+            requestedAt: req.createdAt?.toMillis?.() ?? null,
             requestDate: req.requestDate,
             requestTime: dest.requestTime || req.requestTime || "08:30",
             note: req.note || req.notes || "",
@@ -350,6 +352,7 @@ export default function TripGroupingPage() {
           cargoDetails: d.jobDescription || '',
           requestedBy: d.requestedBy || '',
           requestedByPhone: d.requestedByPhone || '',
+          ...(d.requestedAt != null ? { requestedAt: d.requestedAt } : {}), // ห้ามใส่ undefined ลง Firestore
           requestTime: d.requestTime || '',
           address: d.address || '',
           note: d.note || "",
@@ -428,6 +431,7 @@ export default function TripGroupingPage() {
         cargoDetails: d.jobDescription || '',
         requestedBy: d.requestedBy || '',
         requestedByPhone: d.requestedByPhone || '',
+        ...(d.requestedAt != null ? { requestedAt: d.requestedAt } : {}),
         requestTime: d.requestTime || '',
         address: d.address || '',
         note: d.note || "",
