@@ -1582,7 +1582,7 @@ export default function DailySummaryPage() {
             </div>
 
             {/* Per-trip outcome editor */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               {trips.map((trip) => {
                 const actualKm = outcomeStats.actualKmByTrip[trip.id] || 0
                 const plannedKm = outcomeStats.plannedKmByTrip[trip.id] || 0
@@ -1592,19 +1592,23 @@ export default function DailySummaryPage() {
                   (trip.stops || []).length > 0 &&
                   (trip.stops || []).every((s) => s.outcome && s.outcome !== 'delivered')
                 return (
-                  <div key={trip.id} className="rounded-lg border border-border/50 bg-background/40 p-3 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-white">
-                        <Truck className="h-4 w-4 text-accent" />
-                        {trip.driverName} • {trip.vehiclePlate}
+                  <div key={trip.id} className="overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm">
+                    {/* แถบหัวชื่อคนขับ — พื้นทึบ เต็มความกว้าง ทำหน้าที่แยกบล็อกของแต่ละคนให้ชัด */}
+                    <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-accent/10 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Truck className="h-4 w-4 shrink-0 text-accent" />
+                        <span className="text-base font-bold leading-tight text-white">{trip.driverName}</span>
+                        <span className="rounded-md border border-accent/40 bg-accent/15 px-2 py-0.5 text-xs font-bold tracking-wide text-accent">{trip.vehiclePlate}</span>
                         {notRun && (
                           <span className="rounded-md bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400">🚫 ไม่ได้วิ่ง</span>
                         )}
                       </div>
-                      <div className={cn("text-xs font-bold", kmShifted ? "text-amber-400" : "text-muted-foreground")}>
+                      <div className={cn("shrink-0 text-xs font-bold", kmShifted ? "text-amber-400" : "text-muted-foreground")}>
                         {actualKm.toFixed(1)} / {plannedKm.toFixed(1)} กม.
                       </div>
                     </div>
+                    {/* เนื้อการ์ด */}
+                    <div className="space-y-3 p-3">
                     {/* คนขับจริง (ขับแทน) — เมื่อคนขับประจำลา ให้เลือกคนที่ขับจริง เครดิต กม./อันดับจะไปหาคนนั้น */}
                     <div className="flex items-center gap-2 text-xs">
                       <span className="text-muted-foreground shrink-0">ขับแทนโดย:</span>
@@ -1658,6 +1662,7 @@ export default function DailySummaryPage() {
                     )}
                     <div className="space-y-2">
                       {(trip.stops || []).map((stop, sIdx) => renderStopRow(trip, stop, sIdx))}
+                    </div>
                     </div>
                   </div>
                 )
