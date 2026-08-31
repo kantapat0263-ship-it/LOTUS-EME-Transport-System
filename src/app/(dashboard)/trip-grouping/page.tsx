@@ -37,6 +37,10 @@ export default function TripGroupingPage() {
   const [manualOrder, setManualOrder] = React.useState<string[]>([])
   const [optimizedOrder, setOptimizedOrder] = React.useState<string[]>([])
   const [selectedDateFilter, setSelectedDateFilter] = React.useState<string>("all")
+  // ย้ายวันใช้รถของใบขอ (คนจัดเลื่อนงานเองได้ เช่น พรุ่งนี้ → วันนี้ เพราะคนขับว่าง)
+  const [moveDialog, setMoveDialog] = React.useState<{ vrDocId: string; vrId: string; siteName: string; currentDate: string } | null>(null)
+  const [moveDate, setMoveDate] = React.useState("")
+  const [isMovingDate, setIsMovingDate] = React.useState(false)
   const [hoveredDestId, setHoveredDestId] = React.useState<string | null>(null)
   
   const [vehicleId, setVehicleId] = React.useState("")
@@ -181,6 +185,45 @@ export default function TripGroupingPage() {
 
   // งานที่ต้องใช้รถมากกว่า 1 คัน: เพิ่ม "คันคู่" = ต่อท้ายสำเนา destination ในใบขอเดิม
   // (เก็บลงใบขอจริง → refresh ไม่หาย, มี index ของตัวเอง → ไม่แตะกลไก assignment เลย)
+  // วันนี้ตามเวลาไทย (โค้ดหน้านี้เดิมใช้ UTC หลายจุด — ปุ่มย้ายวันยึดเวลาไทยให้ถูกต้อง)
+  const thaiTodayStr = new Date(Date.now() + 7 * 3600 * 1000).toISOString().split('T')[0]
+
+  const openMoveDialog = (dest: any) => {
+    setMoveDate(dest.requestDate || thaiTodayStr)
+    setMoveDialog({ vrDocId: dest.vrDocId, vrId: dest.vrId, siteName: dest.siteName || dest.customName || "", currentDate: dest.requestDate || "" })
+  }
+
+  const confirmMoveDate = async () => {
+    if (!moveDialog || !moveDate) return
+    if (moveDate < thaiTodayStr) { toast({ title: "ย้ายไม่ได้", description: "เลือกวันย้อนหลังไม่ได้ — ได้ตั้งแต่วันนี้เป็นต้นไป", variant: "destructive" }); return }
+    if (new Date(moveDate + 'T00:00:00').getDay() === 0) { toast({ title: "ย้ายไม่ได้", description: "วันอาทิตย์ไม่มีรอบวิ่ง — เลือกวันจันทร์–เสาร์", variant: "destructive" }); return }
+    if (moveDate === moveDialog.currentDate) { setMoveDialog(null); return }
+    setIsMovingDate(true)
+    try {
+      // อ่านสดกันเคสเพิ่งถูกจัดไประหว่างเปิด dialog — ใบที่มีจุดถูกจัดเข้าทริปแล้ว ย้ายไม่ได้ (ทริปอ้าง index อยู่)
+      const snap = await getDoc(doc(db, "vehicleRequests", moveDialog.vrDocId))
+      const fresh = snap.data() as any
+      if (!fresh) throw new Error("request missing")
+      if ((fresh.assignedDestinations || []).length > 0) {
+        toast({ title: "ย้ายไม่ได้", description: "ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน", variant: "destructive" })
+        return
+      }
+      await updateDoc(doc(db, "vehicleRequests", moveDialog.vrDocId), {
+        requestDate: moveDate,
+        movedDateFrom: moveDialog.currentDate, // เก็บวันเดิมไว้ audit
+        movedDateBy: user?.displayName || user?.email || "dispatcher",
+        updatedAt: serverTimestamp(),
+      })
+      toast({ title: "ย้ายวันแล้ว 📅", description: `"${moveDialog.siteName}" ย้ายไปวันที่ ${moveDate.split('-').reverse().join('/')} — ไปโผล่ในกองของวันนั้นแล้ว` })
+      setMoveDialog(null)
+    } catch (e) {
+      console.error(e)
+      toast({ title: "ย้ายวันไม่สำเร็จ", variant: "destructive" })
+    } finally {
+      setIsMovingDate(false)
+    }
+  }
+
   const duplicateDestination = async (dest: any) => {
     const req = requests?.find(r => r.id === dest.vrDocId)
     const orig = req?.destinations?.[dest.destIndex]
@@ -538,14 +581,14 @@ export default function TripGroupingPage() {
               {manualOrder.length > 0 ? (
                 <div className="space-y-3 animate-in fade-in duration-300">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
+                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
                   ))}
                   {filteredDestinations.length > manualOrder.length && (
                     <div className="pt-4 pb-2 border-t border-border/30">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
                       <div className="space-y-3 opacity-60 grayscale-[0.5]">
                         {filteredDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
-                          <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
+                          <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
                         ))}
                       </div>
                     </div>
@@ -559,7 +602,7 @@ export default function TripGroupingPage() {
                   </div>
                   <div className="space-y-3 opacity-80">
                     {filteredDestinations.map(dest => (
-                      <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                      <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
                         onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                         onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                     ))}
@@ -592,13 +635,13 @@ export default function TripGroupingPage() {
               {filteredDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
+                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                       onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
                   {filteredDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
                   {filteredDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
-                    <DestinationCard key={dest.id} dest={dest} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                       onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
@@ -654,6 +697,32 @@ export default function TripGroupingPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ย้ายวันใช้รถ */}
+      <Dialog open={!!moveDialog} onOpenChange={(open) => !open && setMoveDialog(null)}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg flex items-center gap-2">📅 ย้ายวันใช้รถ</DialogTitle>
+            <DialogDescription>
+              "{moveDialog?.siteName}" ({moveDialog?.vrId}) เดิมวันที่ {moveDialog?.currentDate ? moveDialog.currentDate.split('-').reverse().join('/') : '-'}
+              {' '}— เลือกวันใหม่ (วันนี้เป็นต้นไป เว้นวันอาทิตย์) ใบขอจะย้ายไปกองของวันนั้น
+            </DialogDescription>
+          </DialogHeader>
+          <input
+            type="date"
+            value={moveDate}
+            min={thaiTodayStr}
+            onChange={(e) => setMoveDate(e.target.value)}
+            className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
+          />
+          <DialogFooter className="grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={() => setMoveDialog(null)} disabled={isMovingDate}>ยกเลิก</Button>
+            <Button onClick={confirmMoveDate} disabled={isMovingDate || !moveDate} className="bg-amber-600 hover:bg-amber-700 font-bold text-white">
+              {isMovingDate ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} ย้ายวัน
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Merge Dialog */}
       <Dialog open={mergeDialog.show} onOpenChange={(open) => !open && setMergeDialog({ show: false })}>
