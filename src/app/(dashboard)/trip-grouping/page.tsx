@@ -41,6 +41,10 @@ export default function TripGroupingPage() {
   const [moveDialog, setMoveDialog] = React.useState<{ vrDocId: string; vrId: string; siteName: string; currentDate: string } | null>(null)
   const [moveDate, setMoveDate] = React.useState("")
   const [isMovingDate, setIsMovingDate] = React.useState(false)
+  // ยกเลิกใบขอ (ปฏิเสธ) จากในกองจัดคิว
+  const [cancelDialog, setCancelDialog] = React.useState<{ vrDocId: string; vrId: string; siteName: string } | null>(null)
+  const [cancelReason, setCancelReason] = React.useState("")
+  const [isCancelling, setIsCancelling] = React.useState(false)
   const [hoveredDestId, setHoveredDestId] = React.useState<string | null>(null)
   
   const [vehicleId, setVehicleId] = React.useState("")
@@ -221,6 +225,43 @@ export default function TripGroupingPage() {
       toast({ title: "ย้ายวันไม่สำเร็จ", variant: "destructive" })
     } finally {
       setIsMovingDate(false)
+    }
+  }
+
+  const openCancelDialog = (dest: any) => {
+    setCancelReason("")
+    setCancelDialog({ vrDocId: dest.vrDocId, vrId: dest.vrId, siteName: dest.siteName || dest.customName || "" })
+  }
+
+  const confirmCancel = async () => {
+    if (!cancelDialog) return
+    const reason = cancelReason.trim()
+    if (!reason) { toast({ title: "ระบุเหตุผล", description: "ช่วยระบุเหตุผลที่ยกเลิก เพื่อให้ผู้ขอทราบ", variant: "destructive" }); return }
+    setIsCancelling(true)
+    try {
+      // ใบที่มีจุดถูกจัดเข้าทริปแล้ว ยกเลิกจากตรงนี้ไม่ได้ (ทริปยังอ้างอยู่) — อ่านสดกัน race
+      const snap = await getDoc(doc(db, "vehicleRequests", cancelDialog.vrDocId))
+      const fresh = snap.data() as any
+      if (!fresh) throw new Error("request missing")
+      if ((fresh.assignedDestinations || []).length > 0) {
+        toast({ title: "ยกเลิกไม่ได้", description: "ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน", variant: "destructive" })
+        return
+      }
+      await updateDoc(doc(db, "vehicleRequests", cancelDialog.vrDocId), {
+        status: "rejected",
+        rejectReason: reason,
+        rejectedBy: user?.displayName || user?.email || "Dispatcher",
+        rejectedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      toast({ title: "ยกเลิกใบขอแล้ว", description: `"${cancelDialog.siteName}" (${cancelDialog.vrId}) — ผู้ขอจะเห็นสถานะพร้อมเหตุผล` })
+      setSelectedIds(prev => { const n = new Set(prev); [...prev].forEach(id => { if (id.startsWith(cancelDialog.vrDocId + "-")) n.delete(id) }); return n })
+      setCancelDialog(null)
+    } catch (e) {
+      console.error(e)
+      toast({ title: "ยกเลิกไม่สำเร็จ", variant: "destructive" })
+    } finally {
+      setIsCancelling(false)
     }
   }
 
@@ -581,14 +622,14 @@ export default function TripGroupingPage() {
               {manualOrder.length > 0 ? (
                 <div className="space-y-3 animate-in fade-in duration-300">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
+                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
                   ))}
                   {filteredDestinations.length > manualOrder.length && (
                     <div className="pt-4 pb-2 border-t border-border/30">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
                       <div className="space-y-3 opacity-60 grayscale-[0.5]">
                         {filteredDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
-                          <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
+                          <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
                         ))}
                       </div>
                     </div>
@@ -602,7 +643,7 @@ export default function TripGroupingPage() {
                   </div>
                   <div className="space-y-3 opacity-80">
                     {filteredDestinations.map(dest => (
-                      <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                      <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
                         onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                         onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                     ))}
@@ -635,13 +676,13 @@ export default function TripGroupingPage() {
               {filteredDestinations.length > 0 ? (
                 <div className="space-y-3 pb-24">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
+                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                       onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
                   {filteredDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
                   {filteredDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
-                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                       onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
@@ -697,6 +738,31 @@ export default function TripGroupingPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ยกเลิกใบขอ (ปฏิเสธ) */}
+      <Dialog open={!!cancelDialog} onOpenChange={(open) => !open && setCancelDialog(null)}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg flex items-center gap-2 text-red-400"><AlertTriangle className="h-5 w-5" /> ยกเลิกใบขอ</DialogTitle>
+            <DialogDescription>
+              ยกเลิก "{cancelDialog?.siteName}" ({cancelDialog?.vrId})? งานจะออกจากกองจัดคิว และผู้ขอจะเห็นสถานะ "ถูกปฏิเสธ" พร้อมเหตุผล
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder="เหตุผลที่ยกเลิก (เช่น งานซ้ำ / ผู้ขอแจ้งยกเลิก / เลื่อนไปทำวันอื่นแล้ว)"
+            rows={3}
+            className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
+          />
+          <DialogFooter className="grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={() => setCancelDialog(null)} disabled={isCancelling}>ไม่ยกเลิก</Button>
+            <Button onClick={confirmCancel} disabled={isCancelling || !cancelReason.trim()} className="bg-red-600 hover:bg-red-700 font-bold text-white">
+              {isCancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} ยืนยันยกเลิก
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ย้ายวันใช้รถ */}
       <Dialog open={!!moveDialog} onOpenChange={(open) => !open && setMoveDialog(null)}>
