@@ -26,9 +26,11 @@ interface DestinationCardProps {
   onDuplicate?: () => void;
   /** ถอนสำเนาคันคู่ (เฉพาะการ์ดที่เป็นสำเนา และยังไม่ถูกจัด) */
   onRemoveDup?: () => void;
+  /** ย้ายวันใช้รถของใบขอนี้ (เช่น เลื่อนงานพรุ่งนี้มาวิ่งวันนี้ เพราะคนขับว่าง) */
+  onMoveDate?: () => void;
 }
 
-export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover, onDuplicate, onRemoveDup }: DestinationCardProps) {
+export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover, onDuplicate, onRemoveDup, onMoveDate }: DestinationCardProps) {
   return (
     <TooltipProvider delayDuration={150}>
       <Tooltip>
@@ -113,8 +115,18 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
           </div>
 
           {/* งานที่ต้องใช้รถหลายคัน: ต้นฉบับกด "เพิ่มคันคู่" / สำเนาถอนได้ถ้ายังไม่ถูกจัด */}
-          {(onDuplicate || (dest.pairedCopy && onRemoveDup)) && (
-            <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+          {(onDuplicate || (dest.pairedCopy && onRemoveDup) || onMoveDate) && (
+            <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+              {onMoveDate && (
+                <button
+                  type="button"
+                  onClick={onMoveDate}
+                  title="เลื่อนวันใช้รถของใบขอนี้ (เช่น คนขับว่าง เลื่อนงานพรุ่งนี้มาวันนี้)"
+                  className="rounded-md border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium text-amber-400 hover:bg-amber-500/15"
+                >
+                  📅 ย้ายวัน
+                </button>
+              )}
               {dest.pairedCopy && onRemoveDup ? (
                 <button
                   type="button"
