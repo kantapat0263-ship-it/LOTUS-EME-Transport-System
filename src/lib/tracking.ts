@@ -256,14 +256,15 @@ export interface RecurringSpot {
   totalMin: number
   avgMin: number
   maxMin: number
-  /** นาทีที่อยู่ "นอกช่วงพักเที่ยง" (12:00–13:00 เวลาไทย) — ชี้เคสพักเกิน/พักไม่ตรงเวลา */
+  /** นาทีที่อยู่ "นอกช่วงพักเที่ยง" (12:30–13:30 เวลาไทย) — ชี้เคสพักเกิน/พักไม่ตรงเวลา */
   offLunchMin: number
   distFromOfficeKm: number
   dates: string[]
 }
 
-/** นาทีของช่วง [startT,endT] ที่อยู่นอกหน้าต่างพักเที่ยง (คิดตามเวลาไทย UTC+7, รองรับช่วงคร่อมวัน) */
-export function minutesOutsideLunch(startT: number, endT: number, lunchStartHour = 12, lunchEndHour = 13): number {
+/** นาทีของช่วง [startT,endT] ที่อยู่นอกหน้าต่างพักเที่ยง (เวลาไทย UTC+7, รองรับช่วงคร่อมวัน)
+ *  พักเที่ยงบริษัท = 12:30–13:30 ; รับเป็นชั่วโมงทศนิยมได้ (12.5 = 12:30) */
+export function minutesOutsideLunch(startT: number, endT: number, lunchStartHour = 12.5, lunchEndHour = 13.5): number {
   if (endT <= startT) return 0
   const totalMin = (endT - startT) / 60000
   const dayMs = 24 * 3600 * 1000
