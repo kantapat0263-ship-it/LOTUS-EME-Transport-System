@@ -426,10 +426,11 @@ describe('tracking: จุดแวะประจำนอกจุดงาน
   // 12:00 เวลาไทย ของ epoch วันหนึ่ง = 05:00 UTC
   const thaiNoon = Date.UTC(2026, 7, 10, 5, 0, 0) // 10 ส.ค. 2026 12:00 ไทย
 
-  it('minutesOutsideLunch: ช่วงในพักเที่ยงล้วน = 0, นอกล้วน = ทั้งหมด, คร่อม = เฉพาะส่วนเกิน', () => {
-    expect(minutesOutsideLunch(thaiNoon, thaiNoon + 60 * M)).toBe(0) // 12:00–13:00 พอดี
-    expect(minutesOutsideLunch(thaiNoon + 120 * M, thaiNoon + 180 * M)).toBe(60) // 14:00–15:00
-    expect(minutesOutsideLunch(thaiNoon - 30 * M, thaiNoon + 30 * M)).toBe(30) // 11:30–12:30 → เกิน 30
+  it('minutesOutsideLunch: หน้าต่างพัก 12:30–13:30 — ในพักล้วน=0, นอกล้วน=ทั้งหมด, คร่อม=ส่วนเกิน', () => {
+    expect(minutesOutsideLunch(thaiNoon + 30 * M, thaiNoon + 90 * M)).toBe(0) // 12:30–13:30 พอดี
+    expect(minutesOutsideLunch(thaiNoon + 120 * M, thaiNoon + 180 * M)).toBe(60) // 14:00–15:00 นอกล้วน
+    expect(minutesOutsideLunch(thaiNoon, thaiNoon + 60 * M)).toBe(30) // 12:00–13:00 → พักจริงแค่ 12:30–13:00 = ในพัก 30, นอก 30
+    expect(minutesOutsideLunch(thaiNoon + 60 * M, thaiNoon + 120 * M)).toBe(30) // 13:00–14:00 → ในพัก 13:00–13:30 = 30, นอก 30
   })
 
   it('จอดที่เดิมซ้ำ 3 วัน → เป็นจุดแวะประจำ ; จุดที่มาแค่ 1 วันถูกตัดทิ้ง', () => {
