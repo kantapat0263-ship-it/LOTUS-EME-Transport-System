@@ -47,6 +47,7 @@ import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStop
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
+import { Loader } from "@googlemaps/js-api-loader"
 
 export default function DailySummaryPage() {
   const { toast } = useToast()
@@ -478,6 +479,70 @@ export default function DailySummaryPage() {
     }
   }
 
+  // คิดระยะทางทั้งทริปใหม่จาก stops ที่มีพิกัด (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
+  // ใช้ตอนแทรกงานด่วน — ไม่งั้นเลข กม. ในใบสรุป/บอร์ดนักขับจะค้างที่เส้นทางเดิม
+  // จุดที่ไม่มีพิกัด (พิมพ์ชื่อเอง) คิดไม่ได้ → ปล่อยตัวเลขเดิมไว้ ไม่ทำให้แทรกงานล้มเหลว
+  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]) => {
+    try {
+      if (!db) return
+      const coordStops = (stops || []).filter(
+        (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
+      )
+      if (coordStops.length === 0) return
+
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
+      if (!apiKey) return
+      const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
+      await loader.load()
+      const g = (window as any).google
+      const svc = new g.maps.DirectionsService()
+
+      const origin = {
+        lat: (tripDoc as any).originLat ?? 14.0815,
+        lng: (tripDoc as any).originLng ?? 100.7129,
+      }
+      const waypoints = coordStops.map((s: any) => ({
+        location: new g.maps.LatLng(s.lat, s.lng),
+        stopover: true,
+      }))
+
+      const result: any = await new Promise((resolve, reject) => {
+        svc.route(
+          {
+            origin,
+            destination: origin, // round trip กลับคลัง เหมือนตอนสร้างทริป
+            waypoints,
+            optimizeWaypoints: false, // งานแทรกต่อท้าย ไม่จัดลำดับใหม่
+            travelMode: g.maps.TravelMode.DRIVING,
+            region: "TH",
+          },
+          (res: any, status: any) => (status === "OK" && res ? resolve(res) : reject(status))
+        )
+      })
+
+      let meters = 0
+      result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
+      const km = meters / 1000
+      if (!(km > 0)) return
+
+      const fuelRate = (tripDoc as any).fuelRateUsed || 10
+      const diesel = (tripDoc as any).dieselPriceUsed || 32.5
+      const fuelCost = (km / fuelRate) * diesel
+
+      setTrips(prev =>
+        prev.map(t => (t.id === tripDoc.id ? { ...t, totalDistanceKm: km, fuelCost } : t))
+      )
+      updateDocumentNonBlocking(doc(db, "trips", tripDoc.id), {
+        totalDistanceKm: km,
+        fuelCost,
+        updatedAt: serverTimestamp(),
+      })
+    } catch (e) {
+      // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้ (งานแทรกสำเร็จไปแล้ว ห้าม throw ต่อ)
+      console.error("[recalcTripDistance]", e)
+    }
+  }
+
   // แทรกงานด่วน: เพิ่ม stop ตรงเข้าทริปคันนั้น (ไม่ผ่านกองจัดกลุ่ม = ไม่มี race/จุดผี)
   // ติดป้าย adhoc + ใครแทรก/เมื่อไหร่ ; อนุญาตเฉพาะทริป "วันนี้" (กันบันทึกย้อนหลังข้ามวัน)
   const todayStr = format(new Date(), "yyyy-MM-dd")
@@ -518,7 +583,9 @@ export default function DailySummaryPage() {
     const appendTo = (target: Trip) => {
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
-      applyStops(target.id, [...stops, mkStop(order)], true)
+      const newStops = [...stops, mkStop(order)]
+      applyStops(target.id, newStops, true)
+      void recalcTripDistance(target, newStops) // เลข กม. ต้องขยับตามงานที่แทรก
     }
 
     try {
@@ -556,6 +623,7 @@ export default function DailySummaryPage() {
         if (db) {
           setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
         }
+        void recalcTripDistance(newTrip, newTrip.stops || []) // ทริปใหม่ก็ต้องมี กม. ตั้งแต่แรก
         toast({ title: "สร้างทริปใหม่ให้รถคันใหม่ ✅", description: `${veh?.licensePlate || ""} (คนขับ ${trip.driverName}) — งาน "${place}"` })
       }
     }
