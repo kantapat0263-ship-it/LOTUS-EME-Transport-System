@@ -68,6 +68,8 @@ export default function DailySummaryPage() {
   // Top 3 drivers of the selected date's month (by actual km) — shown on the A4
   const [topDrivers, setTopDrivers] = React.useState<DriverStat[]>([]) // อันดับตามระยะทาง
   const [topByJobs, setTopByJobs] = React.useState<DriverStat[]>([]) // อันดับตามจำนวนงาน (รับงานเยอะ)
+  // bump ตัวนี้เพื่อสั่งโหลดบอร์ดนักขับ (สถิติรายเดือน) ใหม่ หลัง กม. ของทริปถูกคิดใหม่
+  const [statsRefreshKey, setStatsRefreshKey] = React.useState(0)
 
   // Drivers data for phone numbers
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
@@ -251,7 +253,7 @@ export default function DailySummaryPage() {
       setTopByJobs([...lb].filter(d => d.completedStops > 0).sort((a, b) => b.completedStops - a.completedStops).slice(0, 3))
     })().catch(() => { if (active) { setTopDrivers([]); setTopByJobs([]) } })
     return () => { active = false }
-  }, [selectedDate, db])
+  }, [selectedDate, db, statsRefreshKey])
 
   const formatThaiDate = (dateStr: string) => {
     if (!dateStr) return ""
@@ -537,6 +539,7 @@ export default function DailySummaryPage() {
         fuelCost,
         updatedAt: serverTimestamp(),
       })
+      setStatsRefreshKey(k => k + 1) // บอร์ดนักขับต้องขยับตามด้วย ไม่ต้องให้ผู้ใช้กดวันที่ใหม่
     } catch (e) {
       // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้ (งานแทรกสำเร็จไปแล้ว ห้าม throw ต่อ)
       console.error("[recalcTripDistance]", e)
