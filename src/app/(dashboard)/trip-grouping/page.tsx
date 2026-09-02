@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { Loader } from "@googlemaps/js-api-loader"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -478,6 +479,62 @@ export default function TripGroupingPage() {
     }
   }
 
+  // คิดระยะทางทั้งทริปใหม่หลังรวมจุดเข้าทริปเดิม (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
+  // กติกาเดียวกับแทรกงานด่วนใน daily-summary — คิดไม่ได้ = ปล่อยตัวเลขเดิม ไม่ทำให้การรวมล้มเหลว
+  const recalcMergedTripDistance = async (trip: any, stops: any[]) => {
+    try {
+      const coordStops = (stops || []).filter(
+        (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
+      )
+      if (coordStops.length === 0) return
+
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference || ""
+      if (!apiKey) return
+      const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
+      await loader.load()
+      const g = (window as any).google
+      const svc = new g.maps.DirectionsService()
+
+      const origin = {
+        lat: trip.originLat ?? settings?.warehouseLatitude ?? 14.0815,
+        lng: trip.originLng ?? settings?.warehouseLongitude ?? 100.7129,
+      }
+      const waypoints = coordStops.map((s: any) => ({
+        location: new g.maps.LatLng(s.lat, s.lng),
+        stopover: true,
+      }))
+
+      const result: any = await new Promise((resolve, reject) => {
+        svc.route(
+          {
+            origin,
+            destination: origin, // round trip กลับคลัง เหมือนตอนสร้างทริป
+            waypoints,
+            optimizeWaypoints: false, // จุดใหม่ต่อท้าย ไม่จัดลำดับใหม่
+            travelMode: g.maps.TravelMode.DRIVING,
+            region: "TH",
+          },
+          (res: any, status: any) => (status === "OK" && res ? resolve(res) : reject(status))
+        )
+      })
+
+      let meters = 0
+      result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
+      const km = meters / 1000
+      if (!(km > 0)) return
+
+      const fuelRate = trip.fuelRateUsed || settings?.defaultFuelRate || 10
+      const diesel = trip.dieselPriceUsed || settings?.dieselPrice || 32.5
+      await updateDoc(doc(db, "trips", trip.id), {
+        totalDistanceKm: km,
+        fuelCost: (km / fuelRate) * diesel,
+        updatedAt: serverTimestamp(),
+      })
+    } catch (e) {
+      console.error("[recalcMergedTripDistance]", e)
+    }
+  }
+
   const handleMergeTrip = async () => {
     setIsProcessing(true)
     try {
@@ -534,6 +591,7 @@ export default function TripGroupingPage() {
         sourceVRIds,
         updatedAt: serverTimestamp()
       })
+      void recalcMergedTripDistance(existingTrip, mergedStops) // เลข กม. ต้องขยับตามจุดที่รวมเข้า
 
       const vrGroups: Record<string, number[]> = {}
       validNewStops.forEach(d => {
