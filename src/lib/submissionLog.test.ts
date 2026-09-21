@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   thaiDayBounds,
+  isValidDayStr,
   thaiClockLabel,
   buildSubmissionLog,
   summarizeSubmissions,
@@ -43,6 +44,27 @@ describe("thaiDayBounds", () => {
   })
 })
 
+describe("isValidDayStr", () => {
+  it("รับเฉพาะ yyyy-MM-dd ที่เป็นวันจริง", () => {
+    expect(isValidDayStr("2026-09-21")).toBe(true)
+    expect(isValidDayStr("2026-02-29")).toBe(false) // 2026 ไม่ใช่ปีอธิกสุรทิน
+    expect(isValidDayStr("2024-02-29")).toBe(true)
+  })
+
+  it("ปฏิเสธค่าระหว่างพิมพ์จากช่อง date ที่จะไปดึงข้อมูลผิดศตวรรษ", () => {
+    // Date.UTC ตีความปี 2 หลักเป็น 1900+y — ถ้าปล่อยผ่านจะ query ปี 1902 เงียบ ๆ
+    expect(isValidDayStr("0002-09-21")).toBe(false)
+    expect(isValidDayStr("0202-09-21")).toBe(false)
+  })
+
+  it("ปฏิเสธรูปแบบที่ผิด", () => {
+    expect(isValidDayStr("")).toBe(false)
+    expect(isValidDayStr("2026-9-21")).toBe(false)
+    expect(isValidDayStr("2026-13-01")).toBe(false)
+    expect(isValidDayStr("2026-09-31")).toBe(false)
+  })
+})
+
 describe("thaiClockLabel", () => {
   it("แสดงเวลาไทยพร้อมวินาที", () => {
     expect(thaiClockLabel(th(8, 14, 32))).toBe("08:14:32")
@@ -77,17 +99,24 @@ describe("buildSubmissionLog", () => {
       doc({ rescheduledFromDate: "2026-09-20", createdByEmail: "dispatcher@example.com", status: "rescheduled" }),
     ])
     expect(row.fromReschedule).toBe(true)
-    expect(row.byProxy).toBe(true)
+    expect(row.fromReschedule).toBe(true)
     expect(row.originLabel).toBe("เลื่อนจาก 2026-09-20")
     // ต้องโชว์บัญชีที่กดส่งจริง ไม่ใช่กลบด้วยชื่อผู้ขอ
     expect(row.submittedByEmail).toBe("dispatcher@example.com")
     expect(row.requestedBy).toBe("สมชาย")
   })
 
-  it("ใบที่ส่งเองปกติไม่ถูกติดธงว่าคนอื่นส่งแทน", () => {
+  it("ใบที่ส่งเองปกติ: ไม่ติดธงเลื่อนงาน และโชว์บัญชีผู้ส่งจาก userEmail", () => {
     const [row] = buildSubmissionLog([doc()])
-    expect(row.byProxy).toBe(false)
+    expect(row.fromReschedule).toBe(false)
     expect(row.originLabel).toBe("ส่งเอง")
+    // เส้นทางปกติไม่มี createdByEmail — ต้องตกมาใช้ userEmail ไม่ใช่ "(ไม่ระบุ)"
+    expect(row.submittedByEmail).toBe("somchai@example.com")
+  })
+
+  it("ไม่มีอีเมลเลย → บอกว่าไม่ระบุ ไม่ใช่ช่องว่าง", () => {
+    const [row] = buildSubmissionLog([doc({ userEmail: "", createdByEmail: null })])
+    expect(row.submittedByEmail).toBe("(ไม่ระบุ)")
   })
 
   describe("ธง 'ส่งใกล้กัน'", () => {
@@ -156,7 +185,7 @@ describe("buildSubmissionLog", () => {
 })
 
 describe("summarizeSubmissions", () => {
-  it("นับรวม ใบที่ส่งใกล้กัน ใบที่คนอื่นส่งแทน และจำนวนใบต่อผู้ขอ", () => {
+  it("นับรวม ใบที่ส่งใกล้กัน ใบที่เกิดจากการเลื่อนงาน และจำนวนใบต่อผู้ขอ", () => {
     const rows = buildSubmissionLog([
       doc({ requestId: "A", createdAt: th(8, 0, 0), requestedBy: "สมชาย" }),
       doc({ requestId: "B", createdAt: th(8, 0, 20), requestedBy: "สมหญิง" }),
@@ -165,7 +194,7 @@ describe("summarizeSubmissions", () => {
     const s = summarizeSubmissions(rows)
     expect(s.total).toBe(3)
     expect(s.closeCalls).toBe(2)
-    expect(s.byProxy).toBe(1)
+    expect(s.fromReschedule).toBe(1)
     expect(s.perRequester).toEqual([
       { name: "สมชาย", count: 2 },
       { name: "สมหญิง", count: 1 },
@@ -182,6 +211,6 @@ describe("summarizeSubmissions", () => {
   })
 
   it("ไม่มีใบเลยก็ไม่พัง", () => {
-    expect(summarizeSubmissions([])).toEqual({ total: 0, closeCalls: 0, byProxy: 0, perRequester: [] })
+    expect(summarizeSubmissions([])).toEqual({ total: 0, closeCalls: 0, fromReschedule: 0, perRequester: [] })
   })
 })

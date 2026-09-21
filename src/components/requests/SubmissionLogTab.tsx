@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { collection, query, where, orderBy, getDocs, Timestamp } from "firebase/firestore"
+import { collection, query, where, orderBy, limit, getDocs, Timestamp } from "firebase/firestore"
 import { useFirestore } from "@/firebase"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -9,10 +9,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, AlertTriangle, RefreshCcw, Users } from "lucide-react"
+import { Loader2, AlertTriangle, RefreshCcw, Users, WifiOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   thaiDayBounds,
+  isValidDayStr,
   buildSubmissionLog,
   summarizeSubmissions,
   type SubmissionRow,
@@ -36,27 +37,38 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 /**
- * บันทึกการส่งใบขอรถรายวัน (เฉพาะคนจัดรถ/แอดมิน)
+ * สามสถานะที่ต้อง "แยกขาดจากกัน"
  *
- * ตั้งใจให้ตอบคำถาม "ใบที่พนักงานบอกว่าส่งแล้ว อยู่ตรงไหน" และ "วันไหนคนส่งชนกันถี่"
- * จึงดึง ทุกสถานะ ตามช่วงเวลาที่ส่ง — ต่างจากลิสต์ในแท็บจัดการคำขอที่กรองบางสถานะทิ้ง
- * (ใบที่จัดรถไปแล้วหรือถูกแทนที่จะหายจากลิสต์นั้น แต่ต้องอยู่ในบันทึกนี้)
+ * สำคัญมาก: "อ่านข้อมูลไม่ได้" ต้องไม่ถูกแสดงเป็น "วันนั้นไม่มีใครส่งใบ"
+ * เพราะหน้านี้มีไว้ตัดสินข้อพิพาทว่าพนักงานส่งใบจริงหรือไม่ ถ้าเน็ตสะดุดแล้วหน้าจอ
+ * บอกว่า "ไม่มีใบ" คนจัดรถจะสรุปผิดและปิดเรื่องไปเลย
+ * ready ผูกวันที่ไว้ด้วย เพื่อให้ตารางบอกได้เสมอว่าข้อมูลนี้เป็นของวันไหนจริง ๆ
  */
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; day: string; rows: SubmissionRow[]; truncated: boolean }
+
+/** เพดานแถวต่อวัน — กันหน้าค้างถ้าวันไหนมีใบเยอะผิดปกติ และต้องบอกผู้ใช้เมื่อถูกตัด */
+const ROW_LIMIT = 500
+
 export function SubmissionLogTab() {
   const db = useFirestore()
   const [dayStr, setDayStr] = React.useState(thaiTodayStr)
-  const [rows, setRows] = React.useState<SubmissionRow[] | null>(null)
-  const [isLoading, setIsLoading] = React.useState(false)
-  const [error, setError] = React.useState("")
+  const [state, setState] = React.useState<LoadState>({ kind: "loading" })
 
-  // กันผลลัพธ์ของวันเก่ามาทับวันใหม่ ถ้าผู้ใช้กดเปลี่ยนวันรัว ๆ (คำขอเก่าอาจตอบกลับทีหลัง)
+  // กันผลลัพธ์ของวันเก่ามาทับวันใหม่ — ช่องวันที่ยิง onChange ทุกครั้งที่แก้ตัวเลข
+  // จึงมีหลายคำขอวิ่งพร้อมกันได้ตามปกติ ตัวที่ตอบช้าห้ามชนะ
   const loadSeq = React.useRef(0)
 
   const load = React.useCallback(async (day: string) => {
     if (!db || !day) return
     const mySeq = ++loadSeq.current
-    setIsLoading(true)
-    setError("")
+    setState({ kind: "loading" }) // ล้างของวันก่อนทิ้งทันที อย่าให้ตารางเก่าค้างใต้วันที่ใหม่
+    if (!isValidDayStr(day)) {
+      setState({ kind: "error", message: "วันที่ไม่ถูกต้อง" })
+      return
+    }
     try {
       const { startMs, endMs } = thaiDayBounds(day)
       // ช่วงเดียวบนฟิลด์เดียว + เรียงด้วยฟิลด์เดิม → ไม่ต้องสร้าง composite index
@@ -65,21 +77,27 @@ export function SubmissionLogTab() {
         where("createdAt", ">=", Timestamp.fromMillis(startMs)),
         where("createdAt", "<", Timestamp.fromMillis(endMs)),
         orderBy("createdAt", "asc"),
+        limit(ROW_LIMIT),
       ))
-      if (mySeq !== loadSeq.current) return // มีคำขอใหม่กว่าแล้ว ทิ้งผลนี้ไป
-      setRows(buildSubmissionLog(snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }))))
+      if (mySeq !== loadSeq.current) return // มีคำขอใหม่กว่าแล้ว ทิ้งผลนี้
+      setState({
+        kind: "ready",
+        day,
+        rows: buildSubmissionLog(snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }))),
+        truncated: snap.size >= ROW_LIMIT,
+      })
     } catch (e) {
       if (mySeq !== loadSeq.current) return
       console.error("[submission-log]", e)
-      setError("โหลดบันทึกไม่สำเร็จ กรุณาลองใหม่")
-      setRows(null)
-    } finally {
-      if (mySeq === loadSeq.current) setIsLoading(false)
+      // แนบรหัสข้อผิดพลาดไว้ด้วย จะได้แยกออกว่าเป็นเรื่องสิทธิ์ ดัชนี หรือเน็ต โดยไม่ต้องเปิด devtools
+      const code = (e as any)?.code
+      setState({ kind: "error", message: code ? `อ่านข้อมูลไม่สำเร็จ (${code})` : "อ่านข้อมูลไม่สำเร็จ" })
     }
   }, [db])
 
   React.useEffect(() => { load(dayStr) }, [load, dayStr])
 
+  const rows = state.kind === "ready" ? state.rows : null
   const summary = React.useMemo(() => (rows ? summarizeSubmissions(rows) : null), [rows])
 
   return (
@@ -103,8 +121,15 @@ export function SubmissionLogTab() {
               className="h-10 w-44"
             />
           </div>
-          <Button variant="outline" className="h-10" onClick={() => load(dayStr)} disabled={isLoading}>
-            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={() => load(dayStr)}
+            disabled={state.kind === "loading"}
+          >
+            {state.kind === "loading"
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <RefreshCcw className="mr-2 h-4 w-4" />}
             โหลดใหม่
           </Button>
         </div>
@@ -119,9 +144,9 @@ export function SubmissionLogTab() {
                 <AlertTriangle className="h-3 w-3" /> ส่งใกล้กัน {summary.closeCalls} ใบ
               </Badge>
             )}
-            {summary.byProxy > 0 && (
+            {summary.fromReschedule > 0 && (
               <Badge variant="outline" className="h-7 gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-400">
-                เกิดจากการเลื่อนงาน {summary.byProxy} ใบ
+                เกิดจากการเลื่อนงาน {summary.fromReschedule} ใบ
               </Badge>
             )}
             {summary.perRequester.slice(0, 3).map((p) => (
@@ -132,15 +157,24 @@ export function SubmissionLogTab() {
           </div>
         )}
 
-        {error && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{error}</div>
-        )}
-
-        {isLoading && !rows ? (
+        {state.kind === "loading" ? (
           <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-accent" /></div>
-        ) : rows && rows.length > 0 ? (
+        ) : state.kind === "error" ? (
+          // ห้ามตกไปที่ข้อความ "ไม่มีใบขอ" เด็ดขาด — อ่านไม่ได้ ไม่เท่ากับ ไม่มี
+          <div className="space-y-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+            <p className="flex items-center gap-2 font-semibold">
+              <WifiOff className="h-4 w-4" /> {state.message}
+            </p>
+            <p className="text-xs text-red-300/80">
+              <b>ยังสรุปไม่ได้ว่าวันนั้นมีใบขอหรือไม่</b> — ข้อมูลอาจมีอยู่แต่โหลดมาไม่ได้ กรุณาลองใหม่ก่อนตัดสินใจ
+            </p>
+            <Button size="sm" variant="outline" className="h-8" onClick={() => load(dayStr)}>
+              <RefreshCcw className="mr-2 h-3 w-3" /> ลองใหม่
+            </Button>
+          </div>
+        ) : state.rows.length > 0 ? (
           <>
-            <div className="overflow-x-auto rounded-lg border border-border/50">
+            <div className="overflow-hidden rounded-lg border border-border/50">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -155,7 +189,7 @@ export function SubmissionLogTab() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r) => (
+                  {state.rows.map((r) => (
                     <TableRow key={r.requestId} className={cn(r.closeCall && "bg-amber-500/10")}>
                       <TableCell className="whitespace-nowrap font-mono text-xs">
                         <span className="inline-flex items-center gap-1.5">
@@ -167,7 +201,7 @@ export function SubmissionLogTab() {
                       <TableCell className="whitespace-nowrap">{r.requestedBy}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {r.submittedByEmail}
-                        {r.byProxy && <span className="ml-1 text-blue-400">(ส่งแทน)</span>}
+                        {r.fromReschedule && <span className="ml-1 text-blue-400">(คนจัดรถสร้างให้)</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{r.requestDate || "-"}</TableCell>
                       <TableCell>{r.destinationCount}</TableCell>
@@ -178,18 +212,33 @@ export function SubmissionLogTab() {
                 </TableBody>
               </Table>
             </div>
-            {summary && summary.closeCalls > 0 && (
-              <p className="text-xs text-amber-400/90">
+            {state.truncated && (
+              <p className="text-xs text-amber-400">
                 <AlertTriangle className="mr-1 inline h-3 w-3" />
-                แถวสีเหลือง = มีใบอื่นของ<b>วันใช้รถเดียวกัน</b>ถูกส่งห่างกันไม่ถึง 1 นาที — เป็นแค่ข้อสังเกตว่าคนส่งพร้อมกัน ไม่ได้แปลว่ามีใบหาย
+                แสดงเพียง {ROW_LIMIT} แถวแรกของวันนี้ — ยังมีมากกว่านี้
               </p>
             )}
+            <p className="text-xs text-muted-foreground">
+              ข้อมูลของวันที่ส่ง <b className="text-foreground">{state.day}</b>
+              {summary && summary.closeCalls > 0 && (
+                <>
+                  {" · "}
+                  <span className="text-amber-400/90">
+                    แถวสีเหลือง = มีใบอื่นของ<b>วันใช้รถเดียวกัน</b>ถูกส่งห่างกันไม่ถึง 1 นาที
+                    เป็นแค่ข้อสังเกตว่าคนส่งพร้อมกัน ไม่ได้แปลว่ามีใบหาย
+                  </span>
+                </>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground/80">
+              บันทึกนี้แสดงเฉพาะใบที่ยังอยู่ในระบบ — ใบที่ถูกลบทิ้ง หรือถูกเขียนทับสมัยก่อนแก้เรื่องรหัสชน จะไม่เหลือร่องรอยให้เห็นเลย
+            </p>
           </>
         ) : (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            ไม่มีใบขอที่ส่งในวันที่เลือก
+            ไม่มีใบขอที่ส่งในวันที่ <b className="text-foreground">{state.day}</b>
             <br />
-            <span className="text-xs">หมายเหตุ: ใบที่ถูกลบทิ้งไปแล้วจะไม่ปรากฏที่นี่</span>
+            <span className="text-xs">หมายเหตุ: ใบที่ถูกลบทิ้ง หรือถูกเขียนทับสมัยก่อนแก้เรื่องรหัสชน จะไม่ปรากฏที่นี่</span>
           </div>
         )}
       </CardContent>

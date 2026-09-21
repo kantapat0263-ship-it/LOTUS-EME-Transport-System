@@ -9,6 +9,18 @@ import { toMillis } from "./requestTiming"
 
 const TH_OFFSET_MS = 7 * 60 * 60 * 1000
 
+/**
+ * รับเฉพาะ yyyy-MM-dd ที่เป็นวันจริง — ช่อง <input type="date"> ยิงค่าระหว่างพิมพ์ด้วย
+ * เช่น "0002-09-21" ซึ่ง Date.UTC จะตีความเป็นปี 1902 แล้วไปดึงข้อมูลผิดศตวรรษเงียบ ๆ
+ */
+export function isValidDayStr(dayStr: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) return false
+  const [y, m, d] = dayStr.split("-").map(Number)
+  if (y < 2000 || y > 2999 || m < 1 || m > 12 || d < 1 || d > 31) return false
+  const probe = new Date(Date.UTC(y, m - 1, d))
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d
+}
+
 /** ช่วงเวลาจริงของ "วันตามปฏิทินไทย" หนึ่งวัน — ใช้เป็นขอบเขต query `createdAt` */
 export function thaiDayBounds(dayStr: string): { startMs: number; endMs: number } {
   const [y, m, d] = dayStr.split("-").map(Number)
@@ -47,12 +59,13 @@ export interface SubmissionRow {
   requestedBy: string
   /** บัญชีที่กดส่งจริง — ต่างจากผู้ขอได้ เช่น ใบที่คนจัดรถสร้างตอนเลื่อนงาน */
   submittedByEmail: string
-  /** ผู้ขอกับบัญชีผู้ส่งเป็นคนละคน — ต้องโชว์ให้เห็น ไม่งั้นอ่านประวัติผิด */
-  byProxy: boolean
   requestDate: string
   status: string
   destinationCount: number
-  /** ใบนี้เกิดจากการเลื่อนงานมา (ไม่ใช่คนกรอกฟอร์มส่งเอง) */
+  /**
+   * ใบนี้เกิดจากการเลื่อนงาน ไม่ใช่คนกรอกฟอร์มส่งเอง
+   * = เคสที่ผู้ขอกับบัญชีที่กดส่งเป็นคนละคนแน่ ๆ (คนจัดรถสร้างให้)
+   */
   fromReschedule: boolean
   originLabel: string
   /**
@@ -87,8 +100,6 @@ export function buildSubmissionLog(
       timeLabel: thaiClockLabel(ms),
       requestedBy: requestedBy || "(ไม่ระบุ)",
       submittedByEmail: submittedByEmail || "(ไม่ระบุ)",
-      // ใบที่เกิดจากการเลื่อนงานคือเคสชัดสุดที่ผู้ขอกับคนกดส่งเป็นคนละคน
-      byProxy: fromReschedule,
       requestDate: doc.requestDate || "",
       status: doc.status || "",
       destinationCount: doc.destinations?.length || 0,
@@ -100,7 +111,8 @@ export function buildSubmissionLog(
 
   rows.sort((a, b) => a.submittedAtMs - b.submittedAtMs)
 
-  // ติดธง "ส่งใกล้กัน" เฉพาะใบที่ขอใช้รถ "วันเดียวกัน" — คนละวันชนรหัสกันไม่ได้
+  // ติดธง "ส่งใกล้กัน" เฉพาะใบที่ขอใช้รถ "วันเดียวกัน" (ใบที่ไม่ระบุวันใช้รถถูกข้าม)
+  // นี่คือกลุ่มที่เคยเสี่ยงรหัสชนกัน เพราะรหัสตั้งจากวัน+เดือนของวันใช้รถ
   const byRequestDate = new Map<string, SubmissionRow[]>()
   for (const r of rows) {
     if (!r.requestDate) continue
@@ -124,8 +136,8 @@ export interface SubmissionSummary {
   total: number
   /** จำนวนใบที่ส่งใกล้กันกับใบอื่นของวันใช้รถเดียวกัน */
   closeCalls: number
-  /** ใบที่คนอื่นส่งแทน (เกิดจากการเลื่อนงาน) */
-  byProxy: number
+  /** ใบที่เกิดจากการเลื่อนงาน (คนจัดรถสร้างให้ ไม่ใช่ผู้ขอกดเอง) */
+  fromReschedule: number
   /** จำนวนใบต่อผู้ขอ เรียงมาก→น้อย */
   perRequester: { name: string; count: number }[]
 }
@@ -136,7 +148,7 @@ export function summarizeSubmissions(rows: SubmissionRow[]): SubmissionSummary {
   return {
     total: rows.length,
     closeCalls: rows.filter((r) => r.closeCall).length,
-    byProxy: rows.filter((r) => r.byProxy).length,
+    fromReschedule: rows.filter((r) => r.fromReschedule).length,
     perRequester: [...per.entries()]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
