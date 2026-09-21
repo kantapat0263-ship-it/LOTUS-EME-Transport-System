@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc } from "firebase/firestore"
+import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc, updateDoc, runTransaction } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -44,6 +44,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
+import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -790,21 +791,9 @@ export default function DailySummaryPage() {
     } catch { return false }
   }
 
-  // #6 กันเลข VR ชน: setDoc เขียนทับ doc เดิมได้ถ้า id ซ้ำ → หา id ที่ยังว่างจริงก่อนเขียน
-  const genUniqueRequestId = async (dateStr: string): Promise<string> => {
-    const [, m, d] = dateStr.split('-')
-    const prefix = `VR-${d}${m}`
-    const snap = await getDocs(query(collection(db, "vehicleRequests"), where("requestDate", "==", dateStr)))
-    let seq = snap.size + 1
-    for (let i = 0; i < 50; i++) {
-      const safety = Math.floor(Math.random() * 10)
-      const id = `${prefix}-${String(seq).padStart(3, '0')}${safety}`
-      const exists = await getDoc(doc(db, "vehicleRequests", id))
-      if (!exists.exists()) return id
-      seq++
-    }
-    return `${prefix}-${String(seq).padStart(3, '0')}${Math.floor(Math.random() * 10)}z`
-  }
+  /** กรอง undefined ออกก่อนเขียน — Firestore ปฏิเสธทั้ง doc ถ้ามี field เป็น undefined */
+  const cleanStops = (stops: TripStop[]): TripStop[] =>
+    stops.map((st) => Object.fromEntries(Object.entries(st).filter(([, v]) => v !== undefined)) as unknown as TripStop)
 
   const chooseOutcome = async (trip: Trip, stopIdx: number, outcome: StopOutcome) => {
     // "เลื่อน" ไม่ได้แค่ติดป้าย — ต้องเลือกวันใหม่ก่อน (เปิด dialog) แล้วสร้างใบขอรถจริง
@@ -815,16 +804,41 @@ export default function DailySummaryPage() {
     // ถ้าจุดนี้เคยถูกเลื่อน (มีใบที่สร้างไว้) แล้วเปลี่ยนเป็นผลอื่น → ลบใบที่เลื่อนทิ้ง กันงานงอกค้างในวันใหม่
     const prev = trip.stops?.[stopIdx] as any
     if (prev?.postponedRequestId && db) {
-      // #2 ถ้าใบถูกจัดเข้าเที่ยววิ่งวันใหม่ไปแล้ว อย่าลบเงียบ ๆ (จะเหลือ "จุดผี" ในทริปวันนั้น)
-      if (await isPostponedReqGrouped(prev.postponedRequestId)) {
-        toast({
-          title: "เปลี่ยนผลไม่ได้",
-          description: `งานนี้ถูกจัดเข้าเที่ยววิ่งวันที่ ${prev.postponedToDate ? formatThaiDate(prev.postponedToDate) : 'ใหม่'} ไปแล้ว — ต้องไปลบจุดออกจากทริปวันนั้นก่อน แล้วค่อยเปลี่ยนผลตรงนี้`,
-          variant: "destructive",
-        })
+      const reqRef = doc(db, "vehicleRequests", prev.postponedRequestId)
+      let reqSnap
+      try {
+        reqSnap = await getDoc(reqRef)
+      } catch (e) {
+        console.error("[chooseOutcome] อ่านใบที่เลื่อนไว้ไม่สำเร็จ", e)
+        toast({ title: "เปลี่ยนผลไม่สำเร็จ", description: "อ่านข้อมูลใบขอของวันที่เลื่อนไปไม่ได้ กรุณาลองใหม่", variant: "destructive" })
         return
       }
-      await deleteDoc(doc(db, "vehicleRequests", prev.postponedRequestId)).catch(() => {})
+      // ใบหายไปแล้ว (โค้ดเก่าลบทิ้ง) = ไม่มีอะไรต้องปลด ข้ามไปทำงานต่อได้เลย
+      if (reqSnap.exists()) {
+        const st = (reqSnap.data() as any).status
+        // #2 ถ้าใบถูกจัดเข้าเที่ยววิ่งวันใหม่ไปแล้ว อย่าปลดเงียบ ๆ (จะเหลือ "จุดผี" ในทริปวันนั้น)
+        if (st === 'approved' || st === 'partial') {
+          toast({
+            title: "เปลี่ยนผลไม่ได้",
+            description: `งานนี้ถูกจัดเข้าเที่ยววิ่งวันที่ ${prev.postponedToDate ? formatThaiDate(prev.postponedToDate) : 'ใหม่'} ไปแล้ว — ต้องไปลบจุดออกจากทริปวันนั้นก่อน แล้วค่อยเปลี่ยนผลตรงนี้`,
+            variant: "destructive",
+          })
+          return
+        }
+        // ติดป้ายแทนการลบ — ใบยังอยู่ให้ตรวจย้อนหลังได้ และไม่หลุดจากประวัติการส่ง
+        // ถ้าปลดไม่สำเร็จต้องหยุด ไม่งั้นใบ "rescheduled" จะลอยค้างในกองของวันนั้นโดยไม่มีจุดงานอ้างถึง
+        try {
+          await updateDoc(reqRef, {
+            status: "superseded",
+            supersededAt: serverTimestamp(),
+            supersededByUser: recordedBy || user?.email || "",
+          })
+        } catch (e) {
+          console.error("[chooseOutcome] ปลดใบที่เลื่อนไว้ไม่สำเร็จ", e)
+          toast({ title: "เปลี่ยนผลไม่สำเร็จ", description: "ยกเลิกใบขอของวันที่เลื่อนไปไม่ได้ — ผลงานยังเป็นเหมือนเดิม กรุณาลองใหม่", variant: "destructive" })
+          return
+        }
+      }
     }
     const newStops = buildStops(trip, stopIdx, (s) => {
       const base = stripOutcome(s)
@@ -863,7 +877,8 @@ export default function DailySummaryPage() {
     }
     setIsPostponing(true)
     try {
-      // ถ้าเคยเลื่อนจุดนี้ไว้แล้ว (เปลี่ยนวัน) → ลบใบเก่าทิ้งก่อน กันใบซ้ำ
+      // ถ้าเคยเลื่อนจุดนี้ไว้แล้ว (เปลี่ยนวัน) ต้องปลดใบเก่า — แต่ทำ "หลัง" สร้างใบใหม่สำเร็จเท่านั้น
+      // เดิมลบก่อนสร้าง: ถ้าพังระหว่างทาง ใบเก่าหายถาวรและงานหลุดจากกองทั้งสองวัน
       const existingReqId = (stop as any).postponedRequestId
       if (existingReqId) {
         // #2 ถ้าใบเดิมถูกจัดเข้าเที่ยววิ่งไปแล้ว เปลี่ยนวันไม่ได้ (จะเหลือจุดผีในทริปนั้น)
@@ -872,58 +887,101 @@ export default function DailySummaryPage() {
           setIsPostponing(false)
           return
         }
-        await deleteDoc(doc(db, "vehicleRequests", existingReqId)).catch(() => {})
       }
 
-      // #6 gen requestId แบบกันชน (setDoc เขียนทับ doc เดิมได้ถ้า id ซ้ำ)
-      const requestId = await genUniqueRequestId(newDate)
+      // เขียนทั้ง 3 อย่างเป็นก้อนเดียว: สร้างใบใหม่ + ปลดใบเก่า + ติดป้ายที่จุดงาน
+      // ถ้าพังตรงไหน Firestore จะไม่เขียนอะไรเลย → ไม่มีใบลอย ไม่มีงานค้างครึ่งทาง
+      const startSnap = await getDocs(query(collection(db, "vehicleRequests"), where("requestDate", "==", newDate)))
+      const startSeq = startSnap.size + 1
+      const tripRef = doc(db, "trips", trip.id)
 
-      await setDoc(doc(db, "vehicleRequests", requestId), {
-        id: requestId,
-        requestId,
-        requestDate: newDate,
-        requestTime: stop.requestTime || "08:30",
-        requestedBy: stop.requestedBy || "",
-        requestedByPhone: stop.requestedByPhone || "",
-        requestedByEmail: "",
-        userId: user?.uid || null,
-        userEmail: user?.email || "",
-        destinations: [{
-          type: stop.siteId ? "site" : "other",
-          siteId: stop.siteId || null,
-          siteName: stop.siteName,
-          customName: stop.siteId ? null : stop.siteName,
-          lat: stop.lat ?? 0,
-          lng: stop.lng ?? 0,
-          jobDescription: stop.cargoDetails || "",
+      const { requestId, nextStops } = await runTransaction(db, async (t) => {
+        // ---- อ่านให้ครบก่อน (ข้อบังคับของ transaction: ห้ามอ่านหลังเขียน) ----
+        const tripSnap = await t.get(tripRef)
+        if (!tripSnap.exists()) throw new Error("ไม่พบทริปนี้แล้ว")
+        const oldReqSnap = existingReqId ? await t.get(doc(db, "vehicleRequests", existingReqId)) : null
+        const id = await findFreeRequestId(
+          { exists: async (candidate: string) => (await t.get(doc(db, "vehicleRequests", candidate))).exists() },
+          requestIdPrefix(newDate),
+          startSeq
+        )
+
+        // ---- จากตรงนี้เป็นการเขียนทั้งหมด ----
+        t.set(doc(db, "vehicleRequests", id), {
+          id,
+          requestId: id,
+          requestDate: newDate,
           requestTime: stop.requestTime || "08:30",
-        }],
-        note: stop.note || "",
-        status: "rescheduled", // ← ต้องเป็น rescheduled ถึงจะโผล่ในกองจัดเที่ยววิ่ง (pending ถูกตัดออก)
-        rescheduledFromDate: trip.tripDate,
-        rescheduledFromTripId: trip.tripId,
-        createdAt: serverTimestamp(),
-      })
+          requestedBy: stop.requestedBy || "",
+          requestedByPhone: stop.requestedByPhone || "",
+          requestedByEmail: "",
+          // เจ้าของใบ = ผู้ขอเดิม เพื่อให้ยังโผล่ในแท็บ "คำขอของฉัน" ของเขา
+          // (ทริปเก่าก่อนมีฟิลด์นี้จะไม่มีค่า → ตกมาเป็นคนจัดรถเหมือนเดิม)
+          userId: (stop as any).requestedByUserId || user?.uid || null,
+          userEmail: user?.email || "",
+          /** คนที่กดเลื่อนจริง — แยกจากเจ้าของใบ เพื่อให้ตรวจย้อนหลังได้ว่าใครเป็นคนสร้าง */
+          createdByUserId: user?.uid || null,
+          createdByEmail: user?.email || "",
+          destinations: [{
+            type: stop.siteId ? "site" : "other",
+            siteId: stop.siteId || null,
+            siteName: stop.siteName,
+            customName: stop.siteId ? null : stop.siteName,
+            lat: stop.lat ?? 0,
+            lng: stop.lng ?? 0,
+            jobDescription: stop.cargoDetails || "",
+            requestTime: stop.requestTime || "08:30",
+          }],
+          note: stop.note || "",
+          status: "rescheduled", // ← ต้องเป็น rescheduled ถึงจะโผล่ในกองจัดเที่ยววิ่ง (pending ถูกตัดออก)
+          rescheduledFromDate: trip.tripDate,
+          rescheduledFromTripId: trip.tripId,
+          createdAt: serverTimestamp(),
+        })
 
-      // ติดป้าย postponed ที่จุดเดิม + เก็บ link ไว้ (audit + ใช้ลบใบถ้าเปลี่ยนใจ)
-      const newStops = buildStops(trip, stopIdx, (s) => {
-        const base = stripOutcome(s)
-        return {
-          ...base,
-          outcome: 'postponed' as StopOutcome,
-          outcomeRecordedBy: recordedBy,
-          outcomeAt: new Date().toISOString(),
-          postponedToDate: newDate,
-          postponedRequestId: requestId,
+        // ปลดใบเก่า — ติดป้ายแทนการลบ เพื่อให้ยังตามรอยย้อนหลังได้ (ข้ามถ้าใบหายไปแล้ว)
+        if (existingReqId && oldReqSnap?.exists()) {
+          t.update(doc(db, "vehicleRequests", existingReqId), {
+            status: "superseded",
+            supersededBy: id,
+            supersededAt: serverTimestamp(),
+            supersededByUser: recordedBy || user?.email || "",
+          })
         }
-      })
-      applyStops(trip.id, newStops, true)
 
-      toast({ title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย` })
+        // ติดป้าย postponed ที่จุดเดิม — คิดจาก stops สดในธุรกรรม กันทับงานที่คนอื่นเพิ่งแก้
+        const freshStops = ((tripSnap.data() as any).stops || []) as TripStop[]
+        const nextStops = cleanStops(
+          freshStops.map((st, i) => (i === stopIdx
+            ? {
+                ...stripOutcome(st),
+                outcome: 'postponed' as StopOutcome,
+                outcomeRecordedBy: recordedBy,
+                outcomeAt: new Date().toISOString(),
+                postponedToDate: newDate,
+                postponedRequestId: id,
+              }
+            : st))
+        )
+        t.update(tripRef, { stops: nextStops, updatedAt: serverTimestamp() })
+        return { requestId: id, nextStops }
+      })
+
+      // อัปเดตหน้าจอหลังธุรกรรมสำเร็จเท่านั้น — ข้างในถูกรันซ้ำได้ตอน retry
+      setTrips(prev => prev.map(tr => (tr.id === trip.id ? { ...tr, stops: nextStops } : tr)))
+
+      toast({ title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย (${requestId})` })
       setPostponeDialog(null)
     } catch (e) {
       console.error(e)
-      toast({ title: "เลื่อนไม่สำเร็จ", description: "ลองใหม่อีกครั้ง (งานยังอยู่ที่เดิม ไม่หาย)", variant: "destructive" })
+      // ใบใหม่ถูกสร้างก่อนเสมอ ใบเก่าจึงยังอยู่ ณ จุดที่ล้มเหลว — ห้ามบอกว่า "ไม่หาย" ลอย ๆ แบบเดิม
+      toast({
+        title: "เลื่อนงานไม่สำเร็จ",
+        description: e instanceof RequestIdExhaustedError
+          ? "ออกรหัสใบขอของวันที่เลือกไม่ได้ (รหัสเต็ม) — เลือกวันอื่นหรือแจ้งผู้ดูแลระบบ"
+          : "ยังไม่ได้เลื่อน งานเดิมยังอยู่ครบ กรุณาลองใหม่",
+        variant: "destructive",
+      })
     } finally {
       setIsPostponing(false)
     }

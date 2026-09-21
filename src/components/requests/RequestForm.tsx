@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, doc, setDoc, serverTimestamp, getDocs, getDoc, query, where } from "firebase/firestore"
+import { collection, doc, setDoc, serverTimestamp, getDocs, query, where, runTransaction } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -33,6 +33,7 @@ import {
   Save
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { requestIdPrefix, createRequestWithUniqueId, RequestIdExhaustedError, type RequestIdTx } from "@/lib/requestId"
 import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -256,9 +257,21 @@ export function RequestForm() {
       toast({ title: "วันอาทิตย์ปิดรับคำขอ", description: "กรุณาเลือกวันจันทร์–เสาร์", variant: "destructive" })
       return
     }
-    // กันเลือกวันย้อนหลัง — staff เลือกได้เร็วสุด "วันนี้", viewer เร็วสุด "พรุ่งนี้" (ตรวจซ้ำอีกชั้น)
-    if (selectedDate < calendarMinStr) {
-      toast({ title: "วันที่ไม่ถูกต้อง", description: isViewer ? "ต้องขอล่วงหน้าอย่างน้อย 1 วัน" : "เลือกวันย้อนหลังไม่ได้", variant: "destructive" })
+    // กันเลือกวันย้อนหลัง — staff เลือกได้เร็วสุด "วันนี้", viewer เร็วสุด "พรุ่งนี้"
+    // คำนวณวันนี้ (เวลาไทย) สดๆ ตอนกดส่ง เพราะ todayStr/tomorrowStr เป็น useMemo ที่ตรึงค่าไว้ตั้งแต่ mount
+    // ถ้าเปิดฟอร์มค้างข้ามเที่ยงคืน ค่าเดิมจะกลายเป็นวันย้อนหลังโดยไม่มีใครรู้
+    const bangkokDateStr = (daysAhead: number) => {
+      const n = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+      n.setUTCDate(n.getUTCDate() + daysAhead)
+      return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, '0')}-${String(n.getUTCDate()).padStart(2, '0')}`
+    }
+    const submitMinStr = bangkokDateStr(isViewer ? 1 : 0)
+    if (selectedDate < submitMinStr) {
+      toast({
+        title: "วันที่ไม่ถูกต้อง",
+        description: isViewer ? "ต้องขอล่วงหน้าอย่างน้อย 1 วัน" : "เลือกวันย้อนหลังไม่ได้",
+        variant: "destructive",
+      })
       return
     }
 
@@ -318,22 +331,12 @@ export function RequestForm() {
 
     setIsSubmitting(true)
     try {
-      const [year, month, day] = selectedDate.split('-');
-      const datePrefix = `VR-${day}${month}`;
+      // ลำดับเริ่มต้นเป็นแค่ "ตัวตั้ง" — ตัวจริงถูกจัดสรรในธุรกรรมอีกที กันสองคนส่งพร้อมกันแล้วทับกัน
+      const datePrefix = requestIdPrefix(selectedDate)
       const qRequests = query(collection(db, "vehicleRequests"), where("requestDate", "==", selectedDate));
       const snapRequests = await getDocs(qRequests);
-      // gen id แบบกันชน: setDoc เขียนทับ doc เดิมได้ถ้า id ซ้ำ (เช่นมีการลบใบทำให้ seq วนกลับมาชน)
-      let seq = snapRequests.size + 1;
-      let requestId = '';
-      for (let i = 0; i < 50; i++) {
-        const safety = Math.floor(Math.random() * 10);
-        requestId = `${datePrefix}-${String(seq).padStart(3, '0')}${safety}`;
-        const existing = await getDoc(doc(db, "vehicleRequests", requestId));
-        if (!existing.exists()) break;
-        seq++;
-      }
+      const startSeq = snapRequests.size + 1;
 
-      const requestRef = doc(db, "vehicleRequests", requestId)
       const parsedDestinations = []
 
       for (const d of validDestinations) {
@@ -380,8 +383,6 @@ export function RequestForm() {
       }
 
       const requestData = {
-        id: requestId,
-        requestId,
         requestDate: selectedDate,
         requestTime: destinations[0]?.requestTime || "08:30",
         requestedBy: requestedBy || profile?.name || user?.displayName || user?.email || "Unknown",
@@ -391,18 +392,42 @@ export function RequestForm() {
         userEmail: user.email,
         destinations: parsedDestinations,
         note,
-        status: "pending",
+        // ผู้ขอทั่วไป → pending รอคนจัดรถกด "รับเรื่อง"
+        // คนจัดรถ/แอดมินสร้างเอง → ถือว่ารับเรื่องแล้วในตัว ใบจึงเข้ากองจัดคิวทันที
+        // (หน้าจัดคิวโหลดเฉพาะ in_progress/partial/rescheduled — ถ้าเป็น pending ใบจะค้างไม่มีใครเห็น)
+        status: isViewer ? "pending" : "in_progress",
+        ...(isViewer ? {} : { acknowledgedBy: profile?.name || user.email || "Dispatcher", acknowledgedAt: new Date().toISOString() }),
         createdAt: serverTimestamp(),
       }
 
-      await setDoc(requestRef, requestData)
+      const runTx = <T,>(fn: (tx: RequestIdTx) => Promise<T>) =>
+        runTransaction(db, (t) =>
+          fn({
+            // อ่านผ่านธุรกรรม เพื่อให้ Firestore จดไว้ว่าเราพึ่งพา "รหัสนี้ยังว่าง"
+            exists: async (id) => (await t.get(doc(db, "vehicleRequests", id))).exists(),
+            create: (id, data) => { t.set(doc(db, "vehicleRequests", id), data as any) },
+          })
+        )
+
+      const requestId = await createRequestWithUniqueId(runTx, {
+        prefix: datePrefix,
+        startSeq,
+        buildData: (id) => ({ ...requestData, id, requestId: id }),
+      })
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
       
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
     } catch (error) {
       console.error("Error saving request:", error)
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถส่งคำขอได้ในขณะนี้", variant: "destructive" })
+      // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
+      toast({
+        title: "ส่งคำขอไม่สำเร็จ ❌",
+        description: error instanceof RequestIdExhaustedError
+          ? "ออกรหัสใบขอของวันนี้ไม่ได้ (รหัสเต็ม) — แจ้งผู้ดูแลระบบ"
+          : "ยังไม่ได้บันทึกคำขอ ข้อมูลที่กรอกไว้ยังอยู่ กรุณากดส่งอีกครั้ง",
+        variant: "destructive",
+      })
     } finally {
       setIsSubmitting(false)
     }
@@ -470,8 +495,8 @@ export function RequestForm() {
                   <div className="mt-2 flex items-start gap-2 rounded-lg border border-orange-500/40 bg-orange-500/10 p-3 text-xs text-orange-300">
                     <span className="text-base leading-none">⚠️</span>
                     <span>
-                      กำลังจะขอใช้รถ <b>วันนี้ ({format(new Date(todayStr + 'T00:00:00'), "dd/MM/yyyy")})</b> — สำหรับงานเพิ่มด่วนหน้างานเท่านั้น
-                      <br />โปรดตรวจสอบวันที่ให้แน่ใจก่อนกดส่ง
+                      กำลังจะขอใช้รถ <b>วันนี้ ({format(new Date(todayStr + 'T00:00:00'), "dd/MM/yyyy")})</b> — กรณีพิเศษสำหรับคนจัดรถ
+                      <br />ใบนี้จะเข้ากองจัดคิวทันที (ไม่ต้องกดรับเรื่อง) ใช้เมื่อต้องเลือกคนขับ/รถคันใหม่ที่แทรกงานด่วนทำไม่ได้
                     </span>
                   </div>
                 )}
