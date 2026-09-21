@@ -57,17 +57,29 @@ export function VersionUpdateBanner() {
 
   if (!hasUpdate) return null
 
+  // ลอยมุมล่าง ไม่ใช่แถบบนสุด — header ของ layout เป็น sticky top-0 อยู่แล้ว
+  // ถ้าวางแถบไว้บนสุดแบบ sticky เหมือนกัน พอเลื่อนหน้าแถบจะไปทับ header จนเมนูหาย
   return (
-    <div className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-2 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-sm text-amber-200 backdrop-blur print:hidden">
-      <RefreshCcw className="h-4 w-4 shrink-0" />
-      <span>มีระบบเวอร์ชันใหม่ — กดอัปเดตเมื่อพร้อม (งานที่กรอกค้างไว้จะหายไป ควรกดส่งให้เสร็จก่อน)</span>
-      <Button
-        size="sm"
-        className="h-7 bg-amber-500 text-black hover:bg-amber-400"
-        onClick={() => window.location.reload()}
-      >
-        อัปเดตเลย
-      </Button>
+    <div className="fixed inset-x-3 bottom-4 z-50 mx-auto max-w-md rounded-xl border border-amber-500/50 bg-amber-500/15 p-3 shadow-xl backdrop-blur print:hidden sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2">
+      <div className="flex items-start gap-2.5 text-sm text-amber-200">
+        <RefreshCcw className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="space-y-2">
+          <p>
+            <b>มีระบบเวอร์ชันใหม่</b> — กดอัปเดตเพื่อโหลดตัวล่าสุด (หรือกด F5)
+            <br />
+            <span className="text-xs text-amber-200/80">
+              ถ้ากำลังกรอกใบขอรถอยู่ ให้กดส่งให้เสร็จก่อน ไม่งั้นข้อมูลที่กรอกจะหาย
+            </span>
+          </p>
+          <Button
+            size="sm"
+            className="h-8 bg-amber-500 text-black hover:bg-amber-400"
+            onClick={() => window.location.reload()}
+          >
+            อัปเดตเลย
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
