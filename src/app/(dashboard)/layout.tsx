@@ -11,6 +11,7 @@ import { UserProfile } from "@/types/models"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
+import { VersionUpdateBanner } from "@/components/layout/version-update-banner"
 
 export default function DashboardLayout({
   children,
@@ -98,6 +99,7 @@ export default function DashboardLayout({
       </div>
 
       <main className="flex-1 relative overflow-y-auto overflow-x-hidden">
+        <VersionUpdateBanner />
         <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b bg-background/95 px-4 md:px-8 backdrop-blur no-print">
           <div className="flex items-center gap-4">
             {/* Mobile Menu Trigger */}
