@@ -92,6 +92,8 @@ const getStatusBadge = (status: string) => {
     'rejected': { label: '❌ ปฏิเสธ', color: 'bg-red-500', textColor: 'text-red-500', dot: false },
     'rescheduled': { label: '📅 เลื่อนวันแล้ว', color: 'bg-blue-500', textColor: 'text-blue-400', dot: false },
     'cancelled': { label: 'ยกเลิกแล้ว', color: 'bg-gray-500', textColor: 'text-gray-400', dot: false },
+    // ใบเก่าที่ถูกแทนด้วยใบใหม่ตอนเลื่อนวันซ้ำ — เก็บไว้ให้ตรวจย้อนหลัง ไม่นับเป็นงานที่ยังอยู่
+    'superseded': { label: '↪️ ถูกแทนด้วยใบใหม่', color: 'bg-gray-500', textColor: 'text-gray-400', dot: false },
   }
 
   const item = config[status] || { label: status, color: 'bg-gray-500', textColor: 'text-gray-400', dot: false }

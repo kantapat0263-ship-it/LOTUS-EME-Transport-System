@@ -76,6 +76,9 @@ export interface TripStop {
   lng?: number;
   requestedBy?: string;
   requestedByPhone?: string;
+  /** uid ของผู้ขอเดิม — snapshot ตอนจัดรถ ใช้ให้ใบที่เกิดจากการเลื่อนงานยังเป็นของเจ้าของงานตัวจริง
+   *  (ไม่งั้นใบไปอยู่ใต้ชื่อคนจัดรถ แล้วพนักงานหาใบตัวเองไม่เจอ) */
+  requestedByUserId?: string;
   /** เวลาที่ผู้ขอส่งคำขอ (unix ms) — snapshot จาก vehicleRequest.createdAt ตอนจัดรถ ให้คนจัดคิวเห็นหลังจัดแล้ว */
   requestedAt?: number;
   requestTime?: string;
