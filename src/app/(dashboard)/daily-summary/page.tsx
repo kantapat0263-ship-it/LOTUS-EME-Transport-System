@@ -326,7 +326,7 @@ export default function DailySummaryPage() {
           driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`,
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
           incomingCount: incoming.length,
-          incomingFrom: Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean))),
+          incomingFrom: Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean))),
           outgoingCount: outgoing.length,
           outgoingTo: Array.from(new Set(outgoing.map((s: any) =>
             s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
@@ -382,7 +382,7 @@ export default function DailySummaryPage() {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
     const driverLinks = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
       const incoming = incomingStopsForTrip(trips as any, trip.id)
-      const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromVehiclePlate).filter(Boolean)))
+      const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean)))
       // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
       const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
       const outgoingTo = Array.from(new Set(outgoing.map((s: any) =>
