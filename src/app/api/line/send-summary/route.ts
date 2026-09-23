@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     }
 
     const driverLinks = trips.map((trip: any) => {
-      let line = `🚛 ${trip.driverName} (${trip.vehiclePlate})`
+      let line = `🚛 ${trip.driverName}`
       // public-safe: แจ้งคนปลายทางว่ามีงาน "รับต่อ" เพิ่ม จะได้ไม่พลาด (ไม่มีคำว่าปฏิเสธ)
       if (trip.incomingCount > 0) {
         const from = Array.isArray(trip.incomingFrom) && trip.incomingFrom.length > 0

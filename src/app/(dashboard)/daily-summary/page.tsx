@@ -323,7 +323,6 @@ export default function DailySummaryPage() {
           driverName: trip.actualDriverName
             ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
             : trip.driverName,
-          vehiclePlate: trip.vehiclePlate,
           driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`,
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
           incomingCount: incoming.length,
@@ -396,7 +395,7 @@ export default function DailySummaryPage() {
       const notRun = incoming.length === 0 &&
         (trip.stops || []).length > 0 &&
         (trip.stops || []).every((s: any) => s.outcome && s.outcome !== 'delivered')
-      let line = `🚛 ${shownDriver} (${trip.vehiclePlate})`
+      let line = `🚛 ${shownDriver}`
       if (notRun) line += `\n🚫 รถคันนี้ไม่ได้ออกวิ่งวันนี้`
       // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
       if (incoming.length > 0) {
