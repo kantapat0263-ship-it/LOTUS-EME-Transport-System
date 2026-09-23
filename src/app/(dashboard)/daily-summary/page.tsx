@@ -329,7 +329,7 @@ export default function DailySummaryPage() {
           incomingFrom: Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean))),
           outgoingCount: outgoing.length,
           outgoingTo: Array.from(new Set(outgoing.map((s: any) =>
-            s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
+            s.reassignedToDriverName || s.reassignedToVehiclePlate
           ).filter(Boolean))),
         }
       })
@@ -386,7 +386,7 @@ export default function DailySummaryPage() {
       // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
       const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
       const outgoingTo = Array.from(new Set(outgoing.map((s: any) =>
-        s.reassignedToDriverName ? `${s.reassignedToDriverName} (${s.reassignedToVehiclePlate})` : s.reassignedToVehiclePlate
+        s.reassignedToDriverName || s.reassignedToVehiclePlate
       ).filter(Boolean)))
       const shownDriver = trip.actualDriverName
         ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
