@@ -72,6 +72,31 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ข้อมูลประจำรถ + พ.ร.บ./ภาษี — อ่านเมื่อ login, แก้เฉพาะ staff
+    // (หมายเหตุ: fallback ด้านล่างยังเปิด write ให้ทุกคนที่ login — กฎนี้จะมีผลเต็มเมื่อรัด fallback)
+    match /vehicleDetails/{vehicleId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /vehicleCompliance/{vehicleId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    // ประวัติ + หลักฐาน: เพิ่มได้อย่างเดียว ห้ามแก้/ลบย้อนหลัง
+    match /vehicleComplianceHistory/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff();
+    }
+    match /vehicleComplianceEvidence/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff();
+    }
+    // log กันแจ้งเตือนซ้ำ — เขียนเฉพาะ cron ฝั่ง server
+    match /complianceAlertLog/{id} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
     // Global fallback
     match /{document=**} {
       allow read, write: if isAuthenticated();

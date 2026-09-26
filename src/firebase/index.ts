@@ -1,9 +1,9 @@
 'use client';
 
-import { firebaseConfig } from '@/firebase/config';
+import { firebaseConfig, useFirebaseEmulator } from '@/firebase/config';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore'
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 
 // IMPORTANT: DO NOT MODIFY THIS FUNCTION
 export function initializeFirebase() {
@@ -32,11 +32,21 @@ export function initializeFirebase() {
   return getSdks(getApp());
 }
 
+let emulatorsConnected = false
+
 export function getSdks(firebaseApp: FirebaseApp) {
+  const auth = getAuth(firebaseApp)
+  const firestore = getFirestore(firebaseApp)
+  // ทดสอบในเครื่องเท่านั้น (env ไม่มีบน Vercel) — ต่อ emulator ได้ครั้งเดียวต่อ app
+  if (useFirebaseEmulator && !emulatorsConnected) {
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
+    connectFirestoreEmulator(firestore, '127.0.0.1', 8080)
+    emulatorsConnected = true
+  }
   return {
     firebaseApp,
-    auth: getAuth(firebaseApp),
-    firestore: getFirestore(firebaseApp)
+    auth,
+    firestore
   };
 }
 

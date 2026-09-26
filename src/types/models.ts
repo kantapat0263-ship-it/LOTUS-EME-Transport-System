@@ -27,6 +27,76 @@ export interface Vehicle {
   updatedAt?: any;
 }
 
+/**
+ * ข้อมูลประจำรถ (จากเล่มทะเบียน) — เก็บแยกที่ `vehicleDetails/{vehicleId}` ไม่ปนกับ `vehicles`
+ * ทุกช่องสมัครใจ: ว่างได้ ไม่กระทบการจัดรถ
+ */
+export interface VehicleDetails {
+  id: string; // = vehicleId
+  province?: string;
+  brand?: string;
+  model?: string;
+  color?: string;
+  chassisNo?: string;
+  engineNo?: string;
+  /** วันที่จดทะเบียน เก็บเป็น ค.ศ. `YYYY-MM-DD` (แสดงผลเป็น พ.ศ.) */
+  registrationDate?: string;
+  /** ปีรุ่น เก็บเป็น ค.ศ. (แยกจากปีจดทะเบียน) */
+  modelYear?: number;
+  curbWeightKg?: number;
+  /** น้ำหนักบรรทุกตามเล่ม (กก.) — คนละค่ากับ `Vehicle.maxLoadCapacityKg` ที่ใช้จัดรถ */
+  payloadKg?: number;
+  grossWeightKg?: number;
+  /** จำนวนที่นั่ง (คน) — แยกจากน้ำหนักบรรทุก */
+  seats?: number;
+  fuelType?: string;
+  bodyType?: string;
+  note?: string;
+  updatedAt?: any;
+  updatedBy?: string;
+}
+
+export type ComplianceKind = 'tax' | 'act';
+
+/** "รับทราบ" / "กำลังดำเนินการ" = แค่สถานะงาน — ไม่หยุดเตือน (ต้องบันทึกต่ออายุถึงหยุด) */
+export type ComplianceWorkStatus = 'none' | 'acknowledged' | 'in_progress';
+
+export interface ComplianceItem {
+  /** วันหมดอายุรอบปัจจุบัน ค.ศ. `YYYY-MM-DD` — ไม่มี = ยังไม่มีข้อมูล */
+  expiry?: string | null;
+  /** เจ้าหน้าที่ยืนยันวันหมดอายุ + ปีแล้ว — ยังไม่ยืนยัน = ไม่เตือน */
+  confirmed?: boolean;
+  confirmedBy?: string;
+  confirmedAt?: string;
+  workStatus?: ComplianceWorkStatus;
+}
+
+/** สถานะ พ.ร.บ. / ภาษี ต่อคัน — `vehicleCompliance/{vehicleId}` */
+export interface VehicleCompliance {
+  id: string; // = vehicleId
+  tax?: ComplianceItem;
+  act?: ComplianceItem;
+  responsibleName?: string;
+  updatedAt?: any;
+}
+
+/** ประวัติ (ยืนยันวัน / ต่ออายุ) — `vehicleComplianceHistory/{autoId}` */
+export interface ComplianceHistoryEntry {
+  id: string;
+  vehicleId: string;
+  licensePlate: string;
+  kind: ComplianceKind;
+  action: 'confirm' | 'renew';
+  prevExpiry: string | null;
+  newExpiry: string;
+  recordedBy: string;
+  /** ISO timestamp */
+  recordedAt: string;
+  evidenceId?: string;
+  evidenceName?: string;
+  note?: string;
+}
+
 export interface Driver {
   id: string;
   name: string;

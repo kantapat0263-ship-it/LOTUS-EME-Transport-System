@@ -4,7 +4,7 @@ import * as React from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel } from "lucide-react"
+import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel, FileText } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
@@ -43,8 +43,12 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { useToast } from "@/hooks/use-toast"
-import { Vehicle, Driver, UserProfile, VehiclePositionDoc } from "@/types/models"
+import { Vehicle, Driver, UserProfile, VehiclePositionDoc, VehicleDetails, VehicleCompliance } from "@/types/models"
 import { isPositionStale } from "@/lib/tracking"
+import { todayBangkok } from "@/lib/vehicle-compliance"
+import { ComplianceBadge } from "@/components/fleet/ComplianceBadge"
+import { ComplianceTab } from "@/components/fleet/ComplianceTab"
+import { VehicleDetailsDialog } from "@/components/fleet/VehicleDetailsDialog"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
@@ -134,6 +138,25 @@ export default function FleetPage() {
     const p = posByDevice[deviceId]
     return !!p && !isPositionStale(p.positionTime, now)
   }
+
+  // ข้อมูลประจำรถ + พ.ร.บ./ภาษี (collection แยก — ไม่แตะ doc ของ vehicles)
+  const detailsRef = useMemoFirebase(() => collection(db, "vehicleDetails"), [db])
+  const { data: detailsList } = useCollection<VehicleDetails>(detailsRef)
+  const complianceRef = useMemoFirebase(() => collection(db, "vehicleCompliance"), [db])
+  const { data: complianceList } = useCollection<VehicleCompliance>(complianceRef)
+  const detailsById = React.useMemo(
+    () => Object.fromEntries((detailsList ?? []).map((d) => [d.id, d])) as Record<string, VehicleDetails>,
+    [detailsList]
+  )
+  const complianceById = React.useMemo(
+    () => Object.fromEntries((complianceList ?? []).map((c) => [c.id, c])) as Record<string, VehicleCompliance>,
+    [complianceList]
+  )
+  // วันนี้ตามเวลาไทย — คำนวณสถานะใหม่ทุกนาทีพร้อม now (ข้ามเที่ยงคืนแล้วเปลี่ยนเอง)
+  const today = todayBangkok(new Date(now))
+  const [detailsVehicleId, setDetailsVehicleId] = React.useState<string | null>(null)
+  const detailsVehicle = (vehicles ?? []).find((v) => v.id === detailsVehicleId) ?? null
+  const userLabel = profile?.name || user?.email || "ไม่ทราบชื่อ"
 
   // ทะเบียนซ้ำ: normalize (ตัดช่องว่าง/พิมพ์เล็ก) แล้วหาคันที่ทะเบียนตรงกันเกิน 1 คัน
   // ทะเบียนใช้เป็น key ในหลายระบบ (ติดตาม GPS/โยกงาน) → ซ้ำแล้วชนกัน
@@ -329,6 +352,7 @@ export default function FleetPage() {
           <TabsTrigger value="vehicles" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ยานพาหนะ</TabsTrigger>
           <TabsTrigger value="drivers" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">คนขับรถ</TabsTrigger>
           <TabsTrigger value="vehicleTypes" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ประเภทรถ</TabsTrigger>
+          <TabsTrigger value="compliance" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">พ.ร.บ. / ภาษี</TabsTrigger>
         </TabsList>
 
         <TabsContent value="vehicles" className="space-y-4">
@@ -407,6 +431,14 @@ export default function FleetPage() {
                       <Fuel className="h-4 w-4 text-accent" />
                       <span>อัตราสิ้นเปลือง: <strong>{v.fuelRate ? `${v.fuelRate} กม./ลิตร` : "ใช้ค่ามาตรฐาน"}</strong></span>
                     </div>
+                    {/* สถานะ พ.ร.บ./ภาษีแบบย่อ — ไม่มีข้อมูลก็แค่แสดง ไม่กระทบการจัดรถ */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ComplianceBadge kind="tax" item={complianceById[v.id]?.tax} today={today} />
+                      <ComplianceBadge kind="act" item={complianceById[v.id]?.act} today={today} />
+                    </div>
+                    <Button variant="outline" size="sm" className="w-full h-9" onClick={() => setDetailsVehicleId(v.id)}>
+                      <FileText className="mr-2 h-4 w-4" /> รายละเอียดรถ
+                    </Button>
                   </CardContent>
                 </Card>
               ))}
@@ -527,7 +559,30 @@ export default function FleetPage() {
             })}
           </div>
         </TabsContent>
+
+        <TabsContent value="compliance" className="space-y-4">
+          <ComplianceTab
+            vehicles={vehicles ?? []}
+            detailsById={detailsById}
+            complianceById={complianceById}
+            today={today}
+            readOnly={isViewer}
+            userLabel={userLabel}
+            onOpenDetails={(v) => setDetailsVehicleId(v.id)}
+          />
+        </TabsContent>
       </Tabs>
+
+      <VehicleDetailsDialog
+        vehicle={detailsVehicle}
+        details={detailsVehicleId ? detailsById[detailsVehicleId] : undefined}
+        compliance={detailsVehicleId ? complianceById[detailsVehicleId] : undefined}
+        open={!!detailsVehicle}
+        onOpenChange={(o) => { if (!o) setDetailsVehicleId(null) }}
+        readOnly={isViewer}
+        userLabel={userLabel}
+        today={today}
+      />
 
       {/* Vehicle Dialog */}
       <Dialog 
