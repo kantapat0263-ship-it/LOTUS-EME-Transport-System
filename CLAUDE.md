@@ -148,6 +148,19 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 
 ---
 
+## ข้อมูลประจำรถ + พ.ร.บ./ภาษี (deploy แล้ว — 2026-09-26)
+
+- **collection แยก ไม่แตะ `vehicles`:** `vehicleDetails/{vehicleId}` (ข้อมูลเล่ม ทุกช่องไม่บังคับ) · `vehicleCompliance/{vehicleId}` (`tax`/`act` = expiry+confirmed+workStatus, `responsibleName`) · `vehicleComplianceHistory` (ยืนยัน/ต่ออายุ ผู้บันทึก เวลา) · `vehicleComplianceEvidence` (รูปหลักฐานย่อเป็น dataUrl ≤900KB — ไม่มี Storage)
+- **กติกา (ผู้ใช้กำหนด ห้ามหลุด):** ไม่มีวัน = "ยังไม่มีข้อมูล" ไม่ใช่ปกติ · ต้อง "ยืนยัน" ก่อนถึงนับสถานะ/เตือน · ห้ามเลื่อนปีเอง · ต่ออายุเสนอรอบเดิม+1ปี (ไม่ใช่วันจ่ายเงิน) ต้องเลือกเองว่าต่ออะไร · "รับทราบ/กำลังดำเนินการ" ไม่หยุดเตือน
+- **แจ้งเตือนในแอปเท่านั้น — ผู้ใช้ไม่เอา LINE:** ตัวเลขบนเมนู "ฟลีทรถและคนขับ" + แท็บ (แดง=เกิน/ครบวันนี้, ส้ม=≤30 วัน) ผ่าน `attentionLevel()` · ผู้ใช้เลือกจุดแดงที่เมนู ไม่เอา pop-up
+- **นำเข้า Excel** (แท็บ พ.ร.บ./ภาษี): วางจาก Excel รวมหัวตาราง → preview → เติมเฉพาะช่องว่าง (transaction อ่านซ้ำก่อนเขียน) · ทะเบียนซ้ำ/ไม่พบ/จังหวัด-เลขตัวรถไม่ตรง = ข้ามแถว · เลขตัวรถ/เครื่องซ้ำหลายแถว, VIN มี O/I/Q, ปีรุ่นเพี้ยน = ข้ามช่อง · "-" = ว่าง · ไม่นำเข้าราคา
+- **ไฟล์ `รายการรถ 2569.xlsx` (37 แถว):** จับคู่ได้ครบ 20 คันในระบบ · ข้อมูลน่าสงสัยในไฟล์: แถว 27↔30 และ 28↔31 เลขตัวรถ+เครื่องซ้ำกัน, แถว 36 VIN "MRO…", แถว 37 ปีรุ่น 2050
+- **ไฟล์:** `src/lib/vehicle-compliance.ts`, `src/lib/vehicle-import.ts` (+test) · `src/components/fleet/*` · badge ใน `app-sidebar.tsx`
+- **ทดสอบในเครื่องแบบแยกจาก prod:** Firebase Emulator (`npm run emulators` + `npm run seed:emulator`, project `demo-lotus-eme`) + `.env.development.local` ที่มี `NEXT_PUBLIC_FIREBASE_EMULATOR=1` และ `FIRESTORE_EMULATOR_HOST` (ห้ามตั้งบน Vercel) · worktree ที่ junction `node_modules` ต้องรัน `next dev` แบบไม่มี `--turbopack`
+- **gotcha สิทธิ์:** `firestore.rules` มีกฎ staff-only ให้ collection ใหม่ แต่ fallback `/{document=**}` ยังเปิด write ให้ทุกคนที่ login → viewer เขียนผ่าน API ได้ (UI ซ่อนปุ่มแล้ว) จะมีผลจริงเมื่อรัด fallback + publish rules
+
+---
+
 ## ราคาน้ำมัน: freeze ต่อทริป + อัปเดตอัตโนมัติ (เฟส 1+2)
 
 ### ปัญหา
