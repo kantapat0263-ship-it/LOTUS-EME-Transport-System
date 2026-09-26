@@ -35,9 +35,6 @@ describe('complianceStatus', () => {
     expect(s('2026-09-26').state).toBe('due-today')
     expect(s('2026-09-20')).toMatchObject({ state: 'overdue', daysLeft: -6 })
   })
-  it('acknowledged / in-progress does not change status', () => {
-    expect(complianceStatus({ expiry: '2026-09-20', confirmed: true, workStatus: 'in_progress' }, TODAY).state).toBe('overdue')
-  })
 })
 
 describe('attentionLevel (in-app notice)', () => {
@@ -53,9 +50,6 @@ describe('attentionLevel (in-app notice)', () => {
     expect(attentionLevel({ id: 'a', tax: conf('2026-12-31') }, TODAY)).toBeNull()
     expect(attentionLevel(undefined, TODAY)).toBeNull()
     expect(attentionLevel({ id: 'a', tax: { expiry: '2026-09-20' } }, TODAY)).toBeNull()
-  })
-  it('in-progress does not silence the notice', () => {
-    expect(attentionLevel({ id: 'a', tax: { ...conf('2026-09-20'), workStatus: 'in_progress' } }, TODAY)).toBe('urgent')
   })
 })
 

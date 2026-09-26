@@ -72,12 +72,12 @@ async function main() {
     ...(act ? { act } : {}),
     ...(responsibleName ? { responsibleName } : {}),
   })
-  const conf = (days: number) => ({ expiry: isoPlus(days), confirmed: true, confirmedBy: 'seed', workStatus: 'none' })
+  const conf = (days: number) => ({ expiry: isoPlus(days), confirmed: true, confirmedBy: 'seed' })
   const seeds: Record<string, object> = {
     'veh-28': C(conf(-3), conf(-3), 'คุณเอ'), // เกินกำหนด
     'veh-29': C(conf(0), conf(40), 'คุณเอ'), // ภาษีครบวันนี้
     'veh-30': C(conf(1), conf(1), 'คุณบี'), // พรุ่งนี้
-    'veh-33': C({ ...conf(6), workStatus: 'in_progress' }, conf(200)), // กำลังดำเนินการ แต่ยังต้องเตือน
+    'veh-33': C(conf(6), conf(200)),
     'veh-34': C(conf(14), conf(29), 'คุณบี'),
     'veh-35': C({ expiry: isoPlus(20), confirmed: false }, undefined), // รอยืนยัน → ไม่เตือน
     'veh-36': C(conf(120), conf(120)), // ปกติ

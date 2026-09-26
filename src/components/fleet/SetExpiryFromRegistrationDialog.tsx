@@ -68,7 +68,7 @@ export function SetExpiryFromRegistrationDialog({
         ready.forEach((r, i) => {
           const cur = snaps[i].data() as VehicleCompliance | undefined
           if (cur?.tax?.expiry || cur?.act?.expiry) return
-          const item = { expiry: r.expiry, confirmed: true, confirmedBy: by, confirmedAt: nowIso, workStatus: "none" }
+          const item = { expiry: r.expiry, confirmed: true, confirmedBy: by, confirmedAt: nowIso }
           tx.set(refs[i], { id: r.vehicle.id, tax: item, act: item, updatedAt: serverTimestamp() }, { merge: true })
           for (const kind of ["tax", "act"] as const) {
             tx.set(doc(collection(db, "vehicleComplianceHistory")), {

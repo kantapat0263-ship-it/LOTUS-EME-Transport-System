@@ -58,9 +58,6 @@ export interface VehicleDetails {
 
 export type ComplianceKind = 'tax' | 'act';
 
-/** "รับทราบ" / "กำลังดำเนินการ" = แค่สถานะงาน — ไม่เปลี่ยนสถานะ (ต้องบันทึกต่ออายุถึงหายเตือน) */
-export type ComplianceWorkStatus = 'none' | 'acknowledged' | 'in_progress';
-
 export interface ComplianceItem {
   /** วันหมดอายุรอบปัจจุบัน ค.ศ. `YYYY-MM-DD` — ไม่มี = ยังไม่มีข้อมูล */
   expiry?: string | null;
@@ -68,7 +65,6 @@ export interface ComplianceItem {
   confirmed?: boolean;
   confirmedBy?: string;
   confirmedAt?: string;
-  workStatus?: ComplianceWorkStatus;
 }
 
 /** สถานะ พ.ร.บ. / ภาษี ต่อคัน — `vehicleCompliance/{vehicleId}` */

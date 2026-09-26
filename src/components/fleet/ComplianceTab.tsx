@@ -20,8 +20,6 @@ const FILTERS: { key: Filter; label: string; match: ComplianceState[] }[] = [
   { key: "no-data", label: "ยังไม่มีข้อมูล", match: ["no-data"] },
 ]
 
-const WORK_TEXT = { acknowledged: "รับทราบแล้ว", in_progress: "กำลังดำเนินการ" } as const
-
 /** เรียงเร่งด่วนก่อน: เกิน → วันนี้ → ใกล้ → รอยืนยัน → ไม่มีข้อมูล → ปกติ */
 function urgency(v: VehicleCompliance | undefined, today: string): number {
   const rank: Record<ComplianceState, number> = { overdue: 0, "due-today": 1, "due-soon": 2, unconfirmed: 3, "no-data": 4, ok: 5 }
@@ -98,9 +96,6 @@ export function ComplianceTab({
         {rows.map((v) => {
           const c = complianceById[v.id]
           const d = detailsById[v.id]
-          const work = (["tax", "act"] as ComplianceKind[])
-            .map((k) => c?.[k]?.workStatus)
-            .find((w): w is "acknowledged" | "in_progress" => w === "acknowledged" || w === "in_progress")
           return (
             <Card key={v.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
               <div className="min-w-[9rem]">
@@ -112,7 +107,6 @@ export function ComplianceTab({
               <div className="flex flex-1 flex-wrap items-center gap-1.5">
                 <ComplianceBadge kind="tax" item={c?.tax} today={today} />
                 <ComplianceBadge kind="act" item={c?.act} today={today} />
-                {work && <span className="text-xs text-sky-500">• {WORK_TEXT[work]}</span>}
               </div>
               <div className="text-xs text-muted-foreground sm:w-40">{c?.responsibleName ? `👤 ${c.responsibleName}` : ""}</div>
               <Button size="sm" variant="outline" className="h-9" onClick={() => onOpenDetails(v)}>

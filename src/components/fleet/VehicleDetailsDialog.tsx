@@ -10,14 +10,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase"
 import type {
   ComplianceHistoryEntry,
   ComplianceItem,
   ComplianceKind,
-  ComplianceWorkStatus,
   Vehicle,
   VehicleCompliance,
   VehicleDetails,
@@ -35,12 +33,6 @@ import { ComplianceBadge } from "./ComplianceBadge"
 const TEXT_FIELDS: DetailField[] = ["province", "brand", "model", "color", "chassisNo", "engineNo", "fuelType", "bodyType"]
 const NUMBER_FIELDS: DetailField[] = ["curbWeightKg", "payloadKg", "grossWeightKg", "seats"]
 const KINDS: ComplianceKind[] = ["tax", "act"]
-const WORK_LABEL: Record<ComplianceWorkStatus, string> = {
-  none: "—",
-  acknowledged: "รับทราบแล้ว",
-  in_progress: "กำลังดำเนินการ",
-}
-
 type DetailFormState = Record<DetailField, string>
 
 function toForm(d?: VehicleDetails): DetailFormState {
@@ -55,11 +47,10 @@ function toForm(d?: VehicleDetails): DetailFormState {
 interface KindForm {
   expiry: string
   confirmed: boolean
-  workStatus: ComplianceWorkStatus
 }
 
 function toKindForm(item?: ComplianceItem): KindForm {
-  return { expiry: item?.expiry ?? "", confirmed: !!item?.confirmed, workStatus: item?.workStatus ?? "none" }
+  return { expiry: item?.expiry ?? "", confirmed: !!item?.confirmed }
 }
 
 /** ย่อรูปหลักฐานให้พอเก็บใน Firestore (1 doc ≤ 1MB) — PDF รับตามจริงถ้าไม่ใหญ่เกิน */
@@ -222,7 +213,7 @@ export function VehicleDetailsDialog({
       for (const kind of KINDS) {
         const f = kindForm[kind]
         const prev = compliance?.[kind]
-        const item: ComplianceItem = { expiry: f.expiry || null, confirmed: f.confirmed && !!f.expiry, workStatus: f.workStatus }
+        const item: ComplianceItem = { expiry: f.expiry || null, confirmed: f.confirmed && !!f.expiry }
         const newlyConfirmed = item.confirmed && (!prev?.confirmed || prev?.expiry !== item.expiry)
         if (newlyConfirmed) {
           item.confirmedBy = userLabel
@@ -302,7 +293,7 @@ export function VehicleDetailsDialog({
                       </label>
                     )}
                     <div className="grid gap-2 sm:grid-cols-2 items-end">
-                      <div className="space-y-1">
+                      <div className="space-y-1 sm:col-span-2">
                         <Label className="text-xs">วันหมดอายุรอบปัจจุบัน</Label>
                         <Input
                           type="date"
@@ -314,21 +305,6 @@ export function VehicleDetailsDialog({
                         <p className="text-xs text-muted-foreground">
                           {f.expiry ? `= ${formatThaiDate(f.expiry)} (พ.ศ.)` : "ยังไม่มีข้อมูล — ระบบจะไม่นับสถานะจนกว่าจะกรอกและยืนยัน"}
                         </p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">สถานะงาน (ยังขึ้นเตือนจนกว่าจะบันทึกต่ออายุ)</Label>
-                        <Select
-                          value={f.workStatus}
-                          disabled={readOnly}
-                          onValueChange={(v) => setKind(kind, { workStatus: v as ComplianceWorkStatus })}
-                        >
-                          <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {(Object.keys(WORK_LABEL) as ComplianceWorkStatus[]).map((w) => (
-                              <SelectItem key={w} value={w}>{w === "none" ? "ยังไม่ดำเนินการ" : WORK_LABEL[w]}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
                       </div>
                     </div>
                     {kind === "tax" && !readOnly && (
@@ -485,7 +461,6 @@ function RenewDialog({
   const { toast } = useToast()
   const [pick, setPick] = React.useState<Record<ComplianceKind, boolean>>({ tax: false, act: false })
   const [newExpiry, setNewExpiry] = React.useState<Record<ComplianceKind, string>>({ tax: "", act: "" })
-  const [checked, setChecked] = React.useState(false)
   const [note, setNote] = React.useState("")
   const [file, setFile] = React.useState<File | null>(null)
   const [saving, setSaving] = React.useState(false)
@@ -493,10 +468,9 @@ function RenewDialog({
   React.useEffect(() => {
     if (!open) return
     const prev = (k: ComplianceKind) => compliance?.[k]?.expiry ?? null
-    // ไม่ติ๊กให้ล่วงหน้า — ให้เลือกเองว่าต่ออะไร (กันต่อผิดรายการโดยไม่ตั้งใจ)
-    setPick({ tax: false, act: false })
+    // ผู้ใช้ต่อภาษี + พ.ร.บ. พร้อมกันเสมอ → ติ๊กทุกรายการที่มีรอบเดิมไว้ให้ (เอาออกได้ถ้าต่ออย่างเดียว)
+    setPick({ tax: !!prev("tax"), act: !!prev("act") })
     setNewExpiry({ tax: suggestRenewedExpiry(prev("tax")) ?? "", act: suggestRenewedExpiry(prev("act")) ?? "" })
-    setChecked(false)
     setNote("")
     setFile(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -511,7 +485,6 @@ function RenewDialog({
       if (!isIsoDate(newExpiry[k]) || newExpiry[k] <= prev)
         return toast({ title: `วันหมดอายุรอบใหม่ของ${KIND_LABEL[k]}ต้องหลังรอบเดิม (${formatThaiDate(prev)})`, variant: "destructive" })
     }
-    if (!checked) return toast({ title: "กรุณาติ๊กยืนยันว่าตรวจวันหมดอายุรอบใหม่แล้ว", variant: "destructive" })
 
     setSaving(true)
     try {
@@ -538,8 +511,8 @@ function RenewDialog({
           ...(evidenceId ? { evidenceId, evidenceName: file?.name } : {}),
           ...(note.trim() ? { note: note.trim() } : {}),
         })
-        // ต่อสำเร็จ = รอบใหม่ยืนยันแล้ว + สถานะงานกลับเป็นปกติ → เตือนของรอบเก่าหายเอง
-        update[k] = { expiry: newExpiry[k], confirmed: true, confirmedBy: userLabel, confirmedAt: nowIso, workStatus: "none" }
+        // ต่อสำเร็จ = รอบใหม่ยืนยันแล้ว → เตือนของรอบเก่าหายเอง
+        update[k] = { expiry: newExpiry[k], confirmed: true, confirmedBy: userLabel, confirmedAt: nowIso }
       }
       b.set(doc(db, "vehicleCompliance", vehicle.id), update, { merge: true })
       await b.commit()
@@ -596,10 +569,6 @@ function RenewDialog({
             <Label className="text-xs">หมายเหตุ</Label>
             <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="เช่น ต่อที่ขนส่ง / เลขใบเสร็จ" />
           </div>
-          <label className="flex items-start gap-2 text-sm">
-            <Checkbox className="mt-0.5" checked={checked} onCheckedChange={(c) => setChecked(c === true)} />
-            ตรวจวันหมดอายุรอบใหม่กับเอกสารจริงแล้ว
-          </label>
         </div>
         <DialogFooter>
           <Button className="w-full bg-accent" onClick={submit} disabled={saving}>
