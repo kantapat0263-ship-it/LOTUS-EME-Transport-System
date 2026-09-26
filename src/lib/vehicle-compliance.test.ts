@@ -5,6 +5,7 @@ import {
   complianceStatus,
   attentionLevel,
   suggestTaxExpiryCandidates,
+  nextRegistrationAnniversary,
   suggestRenewedExpiry,
   formatThaiDate,
 } from './vehicle-compliance'
@@ -65,6 +66,13 @@ describe('suggestions (never auto-advance)', () => {
   })
   it('Feb 29 registration → Feb 28 in non-leap year', () => {
     expect(suggestTaxExpiryCandidates('2016-02-29', '2027-01-01')).toEqual(['2027-02-28', '2028-02-29'])
+  })
+  it('next registration anniversary (today counts; passed → next year)', () => {
+    expect(nextRegistrationAnniversary('2016-10-28', TODAY)).toBe('2026-10-28')
+    expect(nextRegistrationAnniversary('2016-05-12', TODAY)).toBe('2027-05-12')
+    expect(nextRegistrationAnniversary('2016-09-26', TODAY)).toBe('2026-09-26')
+    expect(nextRegistrationAnniversary('2016-02-29', '2027-01-01')).toBe('2027-02-28')
+    expect(nextRegistrationAnniversary(undefined, TODAY)).toBeNull()
   })
   it('renewal = previous expiry + 1 year (not payment date)', () => {
     expect(suggestRenewedExpiry('2026-08-23')).toBe('2027-08-23')

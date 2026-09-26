@@ -4,7 +4,9 @@
  * กติกาหลัก (ห้ามหลุด):
  *  - ไม่มีวันหมดอายุ = "ยังไม่มีข้อมูล" (ไม่ใช่ "ปกติ") และไม่เตือน — ห้ามเดาวัน
  *  - มีวันแต่เจ้าหน้าที่ยังไม่ยืนยัน = "รอยืนยัน" ไม่เตือน
- *  - ห้ามเลื่อนปีเอง: วันหมดอายุเปลี่ยนได้ทางเดียวคือคนบันทึก (ยืนยัน / ต่ออายุ)
+ *  - ห้ามเลื่อนปีเอง: วันหมดอายุเปลี่ยนได้ทางเดียวคือคนบันทึก (ยืนยัน / ต่ออายุ / กดตั้งจากวันจดทะเบียน)
+ *  - ผู้ใช้ยืนยัน: ภาษี = ครบรอบวันจดทะเบียนทุกปี และ พ.ร.บ. ต่อวันเดียวกัน → ตั้งวันเริ่มต้นจากวันจดทะเบียนได้
+ *    (ตั้งครั้งเดียวแล้วเก็บไว้ — เลยวันแล้วยังไม่บันทึกต่อ = เกินกำหนด ไม่ขยับไปปีหน้าเอง)
  *  - รับทราบ / กำลังดำเนินการ ไม่เปลี่ยนสถานะ (ยังขึ้นเตือนจนกว่าจะบันทึกต่ออายุ)
  *
  * วันที่ทั้งหมดเป็นสตริง ค.ศ. `YYYY-MM-DD` ตามปฏิทินไทย (Asia/Bangkok)
@@ -92,7 +94,7 @@ export function statusShortText(s: ComplianceStatus): string {
     case 'unconfirmed':
       return 'รอยืนยันวัน'
     case 'ok':
-      return `ถึง ${formatThaiDate(s.expiry)}`
+      return `อีก ${s.daysLeft} วัน (${formatThaiDate(s.expiry)})`
     case 'due-soon':
       return `อีก ${s.daysLeft} วัน`
     case 'due-today':
@@ -112,6 +114,14 @@ export function suggestTaxExpiryCandidates(registrationDate: string | undefined,
   if (!registrationDate || !isIsoDate(registrationDate)) return []
   const y = Number(today.slice(0, 4))
   return [sameDayMonthInYear(registrationDate, y), sameDayMonthInYear(registrationDate, y + 1)]
+}
+
+/** วันครบรอบจดทะเบียนครั้งถัดไป (นับวันนี้ด้วย) = วันหมดอายุภาษี/พ.ร.บ. รอบปัจจุบัน */
+export function nextRegistrationAnniversary(registrationDate: string | undefined, today: string): string | null {
+  if (!registrationDate || !isIsoDate(registrationDate)) return null
+  const y = Number(today.slice(0, 4))
+  const thisYear = sameDayMonthInYear(registrationDate, y)
+  return thisYear >= today ? thisYear : sameDayMonthInYear(registrationDate, y + 1)
 }
 
 /** เสนอวันหมดอายุรอบใหม่ = รอบเดิม + 1 ปี (วัน-เดือนเดิม) — ไม่ใช้วันที่จ่ายเงิน */

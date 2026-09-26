@@ -139,7 +139,8 @@ export function VehicleDetailsDialog({
   React.useEffect(() => {
     if (!open) return
     setKindForm({ tax: toKindForm(compliance?.tax), act: toKindForm(compliance?.act) })
-    setActSameAsTax(!!compliance?.act?.expiry && compliance?.act?.expiry === compliance?.tax?.expiry)
+    // ผู้ใช้ต่อ พ.ร.บ. วันเดียวกับภาษี → ติ๊ก "ตรงกับภาษี" ไว้ก่อน เว้นแต่คันนั้นตั้งวันแยกกันไว้แล้ว
+    setActSameAsTax(!compliance?.act?.expiry || compliance?.act?.expiry === compliance?.tax?.expiry)
     setResponsible(compliance?.responsibleName ?? "")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, vehicle?.id, complianceKey])

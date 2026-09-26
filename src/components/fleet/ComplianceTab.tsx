@@ -1,13 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { Upload } from "lucide-react"
+import { CalendarCheck, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import type { ComplianceKind, Vehicle, VehicleCompliance, VehicleDetails } from "@/types/models"
 import { complianceStatus, type ComplianceState } from "@/lib/vehicle-compliance"
 import { ComplianceBadge } from "./ComplianceBadge"
 import { VehicleImportDialog } from "./VehicleImportDialog"
+import { SetExpiryFromRegistrationDialog, vehiclesToSetFromRegistration } from "./SetExpiryFromRegistrationDialog"
 
 type Filter = "all" | "due" | "overdue" | "unconfirmed" | "no-data"
 
@@ -49,6 +50,11 @@ export function ComplianceTab({
 }) {
   const [filter, setFilter] = React.useState<Filter>("all")
   const [importOpen, setImportOpen] = React.useState(false)
+  const [setExpiryOpen, setSetExpiryOpen] = React.useState(false)
+  const settableCount = React.useMemo(
+    () => vehiclesToSetFromRegistration(vehicles, detailsById, complianceById, today).ready.length,
+    [vehicles, detailsById, complianceById, today]
+  )
 
   const counts = React.useMemo(() => {
     const c: Record<Filter, number> = { all: vehicles.length, due: 0, overdue: 0, unconfirmed: 0, "no-data": 0 }
@@ -75,6 +81,11 @@ export function ComplianceTab({
           </Button>
         ))}
         <div className="ml-auto flex flex-wrap gap-2">
+          {!readOnly && settableCount > 0 && (
+            <Button size="sm" className="h-9 bg-accent" onClick={() => setSetExpiryOpen(true)}>
+              <CalendarCheck className="mr-1.5 h-4 w-4" /> ตั้งวันหมดอายุจากวันจดทะเบียน ({settableCount} คัน)
+            </Button>
+          )}
           {!readOnly && (
             <Button size="sm" variant="outline" className="h-9" onClick={() => setImportOpen(true)}>
               <Upload className="mr-1.5 h-4 w-4" /> นำเข้าข้อมูลรถจากตาราง
@@ -113,6 +124,17 @@ export function ComplianceTab({
         {rows.length === 0 && <div className="py-10 text-center text-muted-foreground">ไม่มีรถในกลุ่มนี้</div>}
       </div>
 
+      {!readOnly && (
+        <SetExpiryFromRegistrationDialog
+          open={setExpiryOpen}
+          onOpenChange={setSetExpiryOpen}
+          vehicles={vehicles}
+          detailsById={detailsById}
+          complianceById={complianceById}
+          today={today}
+          userLabel={userLabel}
+        />
+      )}
       {!readOnly && (
         <VehicleImportDialog
           open={importOpen}

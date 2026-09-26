@@ -62,6 +62,9 @@ async function main() {
 
   // ข้อมูลเดิมบางส่วน — ไว้ทดสอบว่า "ไม่เขียนทับ" + รายการรอตรวจสอบ
   await db.doc('vehicleDetails/veh-29').set({ id: 'veh-29', color: 'ดำ', brand: 'TOYOTA' })
+  // วันจดทะเบียน (ยังไม่มีวันหมดอายุ) — ไว้ทดสอบปุ่ม "ตั้งวันหมดอายุจากวันจดทะเบียน"
+  await db.doc('vehicleDetails/veh-37').set({ id: 'veh-37', registrationDate: '2025-04-10' })
+  await db.doc('vehicleDetails/veh-new').set({ id: 'veh-new', registrationDate: '2016-10-28' })
 
   // สถานะ พ.ร.บ./ภาษี ครบทุกแบบ (วันอิงวันนี้ตอนรัน seed)
   const C = (tax: object | undefined, act: object | undefined, responsibleName?: string) => ({
