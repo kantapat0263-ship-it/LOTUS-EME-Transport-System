@@ -70,6 +70,14 @@ describe('parseVehicleTable', () => {
     expect(byNo('37').values.modelYear).toBeUndefined()
     expect(byNo('37').issues.some((i) => i.field === 'modelYear')).toBe(true)
   })
+  it('"-" means no value (not an unreadable value)', () => {
+    const t = [HEADER.join('\t'), ['1', 'อว-4018', 'กรุงเทพมหานคร', 'TOYOTA', 'RZH153R', 'ขาว', '', '', ' 31 พ.ค. 44', '2001', '1800 กก.', ' - ', '1800 กก.', 'เบนซิน', '', 'รถตู้', ''].join('\t')].join('\n')
+    const r = parseVehicleTable(t).rows[0]
+    expect(r.issues).toEqual([])
+    expect(r.values.payloadKg).toBeUndefined()
+    expect(r.values.curbWeightKg).toBe(1800)
+    expect(r.values.registrationDate).toBe('2001-05-31')
+  })
   it('no header → error', () => {
     expect(parseVehicleTable('a\tb\n1\t2').error).toBeDefined()
   })

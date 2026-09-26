@@ -91,11 +91,6 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isStaff();
     }
-    // log กันแจ้งเตือนซ้ำ — เขียนเฉพาะ cron ฝั่ง server
-    match /complianceAlertLog/{id} {
-      allow read: if isAuthenticated();
-      allow write: if false;
-    }
 
     // Global fallback
     match /{document=**} {

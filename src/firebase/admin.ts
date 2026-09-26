@@ -1,6 +1,6 @@
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app'
 import { getFirestore, type Firestore } from 'firebase-admin/firestore'
-import { firebaseConfig, EMULATOR_PROJECT_ID } from './config'
+import { firebaseConfig } from './config'
 
 /**
  * Firebase Admin (server-only) — ใช้เขียน Firestore จาก API route / cron
@@ -16,14 +16,6 @@ let cachedDb: Firestore | null = null
 
 export function getAdminDb(): Firestore {
   if (cachedDb) return cachedDb
-
-  // ทดสอบในเครื่องกับ emulator (FIRESTORE_EMULATOR_HOST ตั้งแค่ใน .env.development.local)
-  // firebase-admin เห็น env นี้แล้วต่อ emulator เอง — ไม่ต้องใช้ service account
-  if (process.env.FIRESTORE_EMULATOR_HOST) {
-    const app = getApps().length ? getApps()[0] : initializeApp({ projectId: EMULATOR_PROJECT_ID })
-    cachedDb = getFirestore(app)
-    return cachedDb
-  }
 
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64
   if (!raw) {

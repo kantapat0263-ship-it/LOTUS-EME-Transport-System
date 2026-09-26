@@ -58,7 +58,7 @@ export interface VehicleDetails {
 
 export type ComplianceKind = 'tax' | 'act';
 
-/** "รับทราบ" / "กำลังดำเนินการ" = แค่สถานะงาน — ไม่หยุดเตือน (ต้องบันทึกต่ออายุถึงหยุด) */
+/** "รับทราบ" / "กำลังดำเนินการ" = แค่สถานะงาน — ไม่เปลี่ยนสถานะ (ต้องบันทึกต่ออายุถึงหายเตือน) */
 export type ComplianceWorkStatus = 'none' | 'acknowledged' | 'in_progress';
 
 export interface ComplianceItem {

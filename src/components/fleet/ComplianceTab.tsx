@@ -1,17 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { Upload, MessageSquareText } from "lucide-react"
+import { Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { ComplianceKind, Vehicle, VehicleCompliance, VehicleDetails } from "@/types/models"
-import {
-  buildAlertMessages,
-  collectDueAlerts,
-  complianceStatus,
-  type ComplianceState,
-} from "@/lib/vehicle-compliance"
+import { complianceStatus, type ComplianceState } from "@/lib/vehicle-compliance"
 import { ComplianceBadge } from "./ComplianceBadge"
 import { VehicleImportDialog } from "./VehicleImportDialog"
 
@@ -55,7 +49,6 @@ export function ComplianceTab({
 }) {
   const [filter, setFilter] = React.useState<Filter>("all")
   const [importOpen, setImportOpen] = React.useState(false)
-  const [previewOpen, setPreviewOpen] = React.useState(false)
 
   const counts = React.useMemo(() => {
     const c: Record<Filter, number> = { all: vehicles.length, due: 0, overdue: 0, unconfirmed: 0, "no-data": 0 }
@@ -73,11 +66,6 @@ export function ComplianceTab({
       .sort((a, b) => urgency(complianceById[a.id], today) - urgency(complianceById[b.id], today) || a.licensePlate.localeCompare(b.licensePlate, "th"))
   }, [vehicles, complianceById, filter, today])
 
-  const alertMessages = React.useMemo(
-    () => buildAlertMessages(collectDueAlerts(vehicles, complianceById, today), today),
-    [vehicles, complianceById, today]
-  )
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
@@ -87,9 +75,6 @@ export function ComplianceTab({
           </Button>
         ))}
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" className="h-9" onClick={() => setPreviewOpen(true)}>
-            <MessageSquareText className="mr-1.5 h-4 w-4" /> ตัวอย่างข้อความเตือนวันนี้
-          </Button>
           {!readOnly && (
             <Button size="sm" variant="outline" className="h-9" onClick={() => setImportOpen(true)}>
               <Upload className="mr-1.5 h-4 w-4" /> นำเข้าข้อมูลรถจากตาราง
@@ -127,25 +112,6 @@ export function ComplianceTab({
         })}
         {rows.length === 0 && <div className="py-10 text-center text-muted-foreground">ไม่มีรถในกลุ่มนี้</div>}
       </div>
-
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="w-[95%] max-w-lg rounded-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>ตัวอย่างข้อความแจ้งเตือนวันนี้</DialogTitle>
-            <DialogDescription>
-              แสดงเฉพาะรายการที่ยืนยันวันแล้วและถึงรอบเตือน (30/15/7/1 วัน, วันครบกำหนด, เกินกำหนดทุก 7 วัน) —
-              ตอนส่งจริงระบบจะตัดรอบที่เคยส่งแล้วออก · <b>ยังไม่เปิดส่ง LINE</b>
-            </DialogDescription>
-          </DialogHeader>
-          {alertMessages.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">วันนี้ไม่มีรายการถึงรอบเตือน</p>
-          ) : (
-            alertMessages.map((m, i) => (
-              <pre key={i} className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm font-sans">{m}</pre>
-            ))
-          )}
-        </DialogContent>
-      </Dialog>
 
       {!readOnly && (
         <VehicleImportDialog

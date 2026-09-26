@@ -45,7 +45,7 @@ import * as z from "zod"
 import { useToast } from "@/hooks/use-toast"
 import { Vehicle, Driver, UserProfile, VehiclePositionDoc, VehicleDetails, VehicleCompliance } from "@/types/models"
 import { isPositionStale } from "@/lib/tracking"
-import { todayBangkok } from "@/lib/vehicle-compliance"
+import { attentionLevel, todayBangkok } from "@/lib/vehicle-compliance"
 import { ComplianceBadge } from "@/components/fleet/ComplianceBadge"
 import { ComplianceTab } from "@/components/fleet/ComplianceTab"
 import { VehicleDetailsDialog } from "@/components/fleet/VehicleDetailsDialog"
@@ -157,6 +157,8 @@ export default function FleetPage() {
   const [detailsVehicleId, setDetailsVehicleId] = React.useState<string | null>(null)
   const detailsVehicle = (vehicles ?? []).find((v) => v.id === detailsVehicleId) ?? null
   const userLabel = profile?.name || user?.email || "ไม่ทราบชื่อ"
+  const complianceLevels = (vehicles ?? []).map((v) => attentionLevel(complianceById[v.id], today))
+  const complianceCount = complianceLevels.filter(Boolean).length
 
   // ทะเบียนซ้ำ: normalize (ตัดช่องว่าง/พิมพ์เล็ก) แล้วหาคันที่ทะเบียนตรงกันเกิน 1 คัน
   // ทะเบียนใช้เป็น key ในหลายระบบ (ติดตาม GPS/โยกงาน) → ซ้ำแล้วชนกัน
@@ -352,7 +354,14 @@ export default function FleetPage() {
           <TabsTrigger value="vehicles" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ยานพาหนะ</TabsTrigger>
           <TabsTrigger value="drivers" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">คนขับรถ</TabsTrigger>
           <TabsTrigger value="vehicleTypes" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">ประเภทรถ</TabsTrigger>
-          <TabsTrigger value="compliance" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">พ.ร.บ. / ภาษี</TabsTrigger>
+          <TabsTrigger value="compliance" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">
+            พ.ร.บ. / ภาษี
+            {complianceCount > 0 && (
+              <span className={cn("ml-1.5 rounded-full px-1.5 text-[10px] font-bold text-white", complianceLevels.includes("urgent") ? "bg-red-500" : "bg-orange-500")}>
+                {complianceCount}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="vehicles" className="space-y-4">

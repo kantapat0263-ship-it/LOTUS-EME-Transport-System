@@ -185,7 +185,8 @@ export function parseVehicleTable(text: string): ParseResult {
     let seatsFromPayload: number | null = null
     cols.forEach((col, ci) => {
       const raw = cells[ci] ?? ''
-      if (!col || col === 'ignore' || !raw) return
+      // "-" ในตาราง = ไม่มีค่า (เช่น รถเก๋ง/รถตู้ไม่มีน้ำหนักบรรทุก) → เว้นว่าง ไม่ใช่ค่าที่อ่านไม่ออก
+      if (!col || col === 'ignore' || !raw || /^[-–—]+$/.test(raw)) return
       if (col === 'rowNo') row.rowNo = raw
       else if (col === 'plate') row.plateRaw = raw
       else if (col === 'province') row.values.province = normalizeProvince(raw)

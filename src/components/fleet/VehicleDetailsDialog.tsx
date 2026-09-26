@@ -311,11 +311,11 @@ export function VehicleDetailsDialog({
                           onChange={(e) => setKind(kind, { expiry: e.target.value, confirmed: false })}
                         />
                         <p className="text-xs text-muted-foreground">
-                          {f.expiry ? `= ${formatThaiDate(f.expiry)} (พ.ศ.)` : "ยังไม่มีข้อมูล — ระบบจะไม่เตือนจนกว่าจะกรอกและยืนยัน"}
+                          {f.expiry ? `= ${formatThaiDate(f.expiry)} (พ.ศ.)` : "ยังไม่มีข้อมูล — ระบบจะไม่นับสถานะจนกว่าจะกรอกและยืนยัน"}
                         </p>
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs">สถานะงาน (ไม่หยุดการเตือน)</Label>
+                        <Label className="text-xs">สถานะงาน (ยังขึ้นเตือนจนกว่าจะบันทึกต่ออายุ)</Label>
                         <Select
                           value={f.workStatus}
                           disabled={readOnly}
@@ -355,14 +355,14 @@ export function VehicleDetailsDialog({
                           disabled={readOnly || !f.expiry}
                           onCheckedChange={(c) => setKind(kind, { confirmed: c === true })}
                         />
-                        <span>ยืนยันแล้วว่าเป็นวันหมดอายุรอบปัจจุบัน และตรวจปีที่ต่อถึงแล้ว <span className="text-muted-foreground">(ยืนยันแล้วถึงเริ่มเตือน)</span></span>
+                        <span>ยืนยันแล้วว่าเป็นวันหมดอายุรอบปัจจุบัน และตรวจปีที่ต่อถึงแล้ว <span className="text-muted-foreground">(ยืนยันแล้วถึงเริ่มนับวันและขึ้นเตือน)</span></span>
                       </label>
                     )}
                   </div>
                 )
               })}
               <div className="space-y-1">
-                <Label className="text-xs">ผู้รับผิดชอบ (ใช้จัดกลุ่มข้อความแจ้งเตือน)</Label>
+                <Label className="text-xs">ผู้รับผิดชอบ</Label>
                 <Input className="h-10" value={responsible} disabled={readOnly} placeholder="เช่น ชื่อเจ้าหน้าที่ดูแลรถคันนี้"
                   onChange={(e) => setResponsible(e.target.value)} />
               </div>
@@ -537,7 +537,7 @@ function RenewDialog({
           ...(evidenceId ? { evidenceId, evidenceName: file?.name } : {}),
           ...(note.trim() ? { note: note.trim() } : {}),
         })
-        // ต่อสำเร็จ = รอบใหม่ยืนยันแล้ว + สถานะงานกลับเป็นปกติ → รอบเก่าหยุดเตือนเอง (key ผูกกับวันหมดอายุ)
+        // ต่อสำเร็จ = รอบใหม่ยืนยันแล้ว + สถานะงานกลับเป็นปกติ → เตือนของรอบเก่าหายเอง
         update[k] = { expiry: newExpiry[k], confirmed: true, confirmedBy: userLabel, confirmedAt: nowIso, workStatus: "none" }
       }
       b.set(doc(db, "vehicleCompliance", vehicle.id), update, { merge: true })

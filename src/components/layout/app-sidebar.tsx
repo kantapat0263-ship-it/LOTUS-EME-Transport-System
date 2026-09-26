@@ -26,7 +26,8 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useUser, useAuth, useFirestore, errorEmitter, FirestorePermissionError } from "@/firebase"
 import { Badge } from "@/components/ui/badge"
-import { UserRole } from "@/types/models"
+import { UserRole, VehicleCompliance } from "@/types/models"
+import { attentionLevel, todayBangkok } from "@/lib/vehicle-compliance"
 import { collection, query, where, onSnapshot } from "firebase/firestore"
 
 interface AppSidebarProps {
@@ -48,6 +49,9 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   const [inProgressReqCount, setInProgressReqCount] = React.useState(0)
   const [urgentReqCount, setUrgentReqCount] = React.useState(0)
   const [pendingUsersCount, setPendingUsersCount] = React.useState(0)
+  // พ.ร.บ./ภาษี ใกล้หมด/เกินกำหนด (staff) — เก็บ doc ไว้แล้วนับตอน render ให้ตามวันที่ปัจจุบันเสมอ
+  const [vehicleIds, setVehicleIds] = React.useState<Set<string>>(new Set())
+  const [complianceDocs, setComplianceDocs] = React.useState<VehicleCompliance[]>([])
 
   // Listen for requests and urgent alerts
   React.useEffect(() => {
@@ -105,10 +109,24 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       })
     }
 
+    // 4. พ.ร.บ./ภาษี ที่ต้องดำเนินการ (Staff only) — นับเฉพาะรถที่ยังอยู่ในระบบ
+    let unsubscribeVehicles = () => {}
+    let unsubscribeCompliance = () => {}
+    if (isStaff) {
+      unsubscribeVehicles = onSnapshot(collection(db, "vehicles"), (snapshot) => {
+        setVehicleIds(new Set(snapshot.docs.map((d) => d.id)))
+      })
+      unsubscribeCompliance = onSnapshot(collection(db, "vehicleCompliance"), (snapshot) => {
+        setComplianceDocs(snapshot.docs.map((d) => ({ ...(d.data() as VehicleCompliance), id: d.id })))
+      })
+    }
+
     return () => {
       unsubscribe()
       unsubscribeUrgent()
       unsubscribePendingUsers()
+      unsubscribeVehicles()
+      unsubscribeCompliance()
     }
   }, [db, user, userRole])
 
@@ -116,6 +134,11 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
     await auth.signOut()
     router.push("/login")
   }
+
+  const today = todayBangkok()
+  const complianceLevels = complianceDocs.filter((c) => vehicleIds.has(c.id)).map((c) => attentionLevel(c, today))
+  const complianceCount = complianceLevels.filter(Boolean).length
+  const complianceUrgent = complianceLevels.includes("urgent")
 
   const navItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ['admin', 'dispatcher', 'viewer'] },
@@ -130,7 +153,11 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       badgeColor: urgentReqCount > 0 ? "bg-red-500" : "bg-destructive"
     },
     { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
-    { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'] },
+    { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'],
+      // จำนวนรถที่ พ.ร.บ./ภาษี ใกล้หมด (≤30 วัน) หรือเกินกำหนด — แดง = เกิน/ครบวันนี้
+      badge: complianceCount > 0 ? complianceCount : null,
+      badgeColor: complianceUrgent ? "bg-red-500" : "bg-orange-500"
+    },
     { 
       name: "จัดกลุ่มเที่ยววิ่ง", 
       href: "/trip-grouping", 
