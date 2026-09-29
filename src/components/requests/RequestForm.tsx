@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { requestIdPrefix, createRequestWithUniqueId, RequestIdExhaustedError, type RequestIdTx } from "@/lib/requestId"
+import { editCustomDestination, matchCustomSite, planCustomSites, CustomSiteError } from "@/lib/customSite"
 import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -52,6 +53,7 @@ interface DestinationRequest {
   coordinates: string;
   jobDescription: string;
   saveAsSite: boolean;
+  allowSeparateSite?: boolean;
   locationType: string;
   requestTime: string;
 }
@@ -217,7 +219,9 @@ export function RequestForm() {
   const updateDest = (id: string, updates: Partial<DestinationRequest>) => {
     setDestinations(prev => prev.map(d => {
       if (d.id === id) {
-        let updated = { ...d, ...updates };
+        const isCustomEdit = d.category === 'custom' && updates.category === undefined && updates.siteId === undefined &&
+          (updates.customName !== undefined || updates.coordinates !== undefined)
+        let updated = isCustomEdit ? editCustomDestination(d, updates) : { ...d, ...updates };
         
         if (updates.siteId !== undefined && updated.category !== "custom") {
           const site = sites?.find(s => s.id === updates.siteId);
@@ -321,7 +325,7 @@ export function RequestForm() {
     }
 
     const validDestinations = destinations.filter(d => 
-      (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName)
+      (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName.trim())
     )
 
     if (validDestinations.length === 0) {
@@ -337,9 +341,16 @@ export function RequestForm() {
       const snapRequests = await getDocs(qRequests);
       const startSeq = snapRequests.size + 1;
 
+      // Recheck the current list at submit time, then save new places with the request.
+      const needsSiteLookup = validDestinations.some(d => d.category === 'custom' && d.saveAsSite && !d.siteId && d.coordinates.trim())
+      const knownSites = needsSiteLookup
+        ? (await getDocs(collection(db, 'sites'))).docs.map(s => ({ ...s.data(), id: s.id } as Site))
+        : sites || []
+      const sitePlan = planCustomSites(validDestinations, knownSites, () => doc(collection(db, 'sites')).id)
+
       const parsedDestinations = []
 
-      for (const d of validDestinations) {
+      for (const d of sitePlan.destinations) {
         const [lat, lng] = d.coordinates.split(',').map(s => parseFloat(s.trim()))
         const latVal = isNaN(lat) ? 0 : lat
         const lngVal = isNaN(lng) ? 0 : lng
@@ -355,31 +366,6 @@ export function RequestForm() {
           jobDescription: d.jobDescription,
           requestTime: d.requestTime || "08:30"
         })
-
-        if (d.category === "custom" && d.saveAsSite && d.customName && d.coordinates && !d.siteId) {
-          // กันบันทึกซ้ำ: ข้ามถ้ามีสถานที่ชื่อเดิม หรือพิกัดเดียวกันอยู่แล้ว
-          const nameKey = d.customName.trim().toLowerCase()
-          const dup = (sites || []).some(s =>
-            (s.name || "").trim().toLowerCase() === nameKey ||
-            (s.latitude != null && s.longitude != null && s.latitude === latVal && s.longitude === lngVal)
-          )
-          if (!dup) {
-            const newSiteRef = doc(collection(db, "sites"))
-            await setDoc(newSiteRef, {
-              id: newSiteRef.id,
-              name: d.customName,
-              address: "",
-              latitude: latVal,
-              longitude: lngVal,
-              projectTypeTag: d.locationType,
-              status: "Active",
-              isUserAdded: true,
-              addedBy: user.email,
-              addedByName: profile?.name || user.email,
-              createdAt: serverTimestamp()
-            })
-          }
-        }
       }
 
       const requestData = {
@@ -405,7 +391,16 @@ export function RequestForm() {
           fn({
             // อ่านผ่านธุรกรรม เพื่อให้ Firestore จดไว้ว่าเราพึ่งพา "รหัสนี้ยังว่าง"
             exists: async (id) => (await t.get(doc(db, "vehicleRequests", id))).exists(),
-            create: (id, data) => { t.set(doc(db, "vehicleRequests", id), data as any) },
+            create: (id, data) => {
+              for (const site of sitePlan.newSites) {
+                t.set(doc(db, 'sites', site.id), {
+                  ...site, address: '', status: 'Active', isUserAdded: true,
+                  addedBy: user.email, addedByName: profile?.name || user.email,
+                  createdAt: serverTimestamp(),
+                })
+              }
+              t.set(doc(db, "vehicleRequests", id), data as any)
+            },
           })
         )
 
@@ -414,7 +409,12 @@ export function RequestForm() {
         startSeq,
         buildData: (id) => ({ ...requestData, id, requestId: id }),
       })
-      toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}` })
+      const siteResults = [
+        sitePlan.createdNames.length ? `เพิ่มสถานที่ไว้ใช้ครั้งต่อไป: ${[...new Set(sitePlan.createdNames)].join(', ')}` : '',
+        sitePlan.reusedNames.length ? `ใช้สถานที่เดิม: ${[...new Set(sitePlan.reusedNames)].join(', ')}` : '',
+        sitePlan.unsavedNames.length ? `เก็บเฉพาะในใบขอรถ: ${[...new Set(sitePlan.unsavedNames)].join(', ')}` : '',
+      ].filter(Boolean).join(' · ')
+      toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}${siteResults ? ` · ${siteResults}` : ''}` })
       
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
@@ -423,7 +423,7 @@ export function RequestForm() {
       // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
       toast({
         title: "ส่งคำขอไม่สำเร็จ ❌",
-        description: error instanceof RequestIdExhaustedError
+        description: error instanceof CustomSiteError ? error.message : error instanceof RequestIdExhaustedError
           ? "ออกรหัสใบขอของวันนี้ไม่ได้ (รหัสเต็ม) — แจ้งผู้ดูแลระบบ"
           : "ยังไม่ได้บันทึกคำขอ ข้อมูลที่กรอกไว้ยังอยู่ กรุณากดส่งอีกครั้ง",
         variant: "destructive",
@@ -577,6 +577,8 @@ export function RequestForm() {
               <div className="space-y-0">
                 {destinations.map((dest, index) => {
                   const category = CATEGORIES.find(c => c.id === dest.category);
+                  const siteMatch = dest.category === 'custom' && !dest.siteId && dest.customName.trim() && dest.coordinates.trim()
+                    ? matchCustomSite(dest.customName, dest.coordinates, sites || []) : null
                   const filteredSites = sites?.filter(s => {
                     if (dest.category === 'custom') return false;
                     const matchesType = dest.category === 'all' ? true : (category?.types as readonly string[] | undefined)?.includes(s.projectTypeTag);
@@ -610,7 +612,8 @@ export function RequestForm() {
                                     coordinates: "",
                                     searchTerm: "",
                                     // สถานที่ใหม่ (กำหนดเอง) → เปิด "บันทึกไว้ใช้ครั้งหน้า" ให้เลย กันคนลืมกด
-                                    saveAsSite: cat.id === "custom"
+                                    saveAsSite: cat.id === "custom",
+                                    allowSeparateSite: false
                                   });
                                 }}
                               >
@@ -687,7 +690,7 @@ export function RequestForm() {
                                   className="h-11"
                                   value={dest.customName}
                                   onChange={(e) => {
-                                    updateDest(dest.id, { customName: e.target.value, siteId: "", coordinates: "" })
+                                    updateDest(dest.id, { customName: e.target.value })
                                     setActiveSuggestId(dest.id)
                                   }}
                                   onBlur={() => setTimeout(() => setActiveSuggestId(null), 200)}
@@ -718,7 +721,8 @@ export function RequestForm() {
                                               siteId: s.id,
                                               coordinates: s.latitude && s.longitude ? `${s.latitude}, ${s.longitude}` : "",
                                               // เลือกสถานที่ที่มีอยู่แล้ว → ไม่ต้องบันทึกซ้ำ
-                                              saveAsSite: false
+                                              saveAsSite: false,
+                                              allowSeparateSite: false
                                             })
                                             setActiveSuggestId(null)
                                           }}
@@ -811,7 +815,9 @@ export function RequestForm() {
                                   บันทึก “{dest.customName}” ไว้ใช้ครั้งต่อไป
                                 </Label>
                                 <p className="text-[11px] text-muted-foreground">
-                                  เป็นสถานที่ใหม่ที่ยังไม่เคยบันทึก — เก็บไว้ ครั้งหน้าเลือกจากรายการได้เลย ไม่ต้องวางพิกัดใหม่
+                                  {dest.saveAsSite
+                                    ? 'จะบันทึกพร้อมใบขอรถเมื่อกดส่งสำเร็จ ครั้งหน้าเลือกจากรายการได้เลย'
+                                    : 'ไม่บันทึกในรายการสถานที่ — ใช้เฉพาะใบขอรถนี้'}
                                 </p>
                                 {dest.saveAsSite && (
                                   <div className="space-y-1.5 pt-2 animate-in slide-in-from-top-1">
@@ -833,6 +839,34 @@ export function RequestForm() {
                                 )}
                               </div>
                             </div>
+                          </div>
+                        )}
+
+                        {dest.category === 'custom' && dest.customName.trim() && !dest.coordinates.trim() && !dest.siteId && (
+                          <p className="text-xs text-amber-400" role="status">ยังไม่มีพิกัด — ส่งใบขอรถได้ แต่ยังไม่เพิ่มในรายการสถานที่ไว้ใช้ครั้งต่อไป</p>
+                        )}
+                        {dest.saveAsSite && siteMatch?.kind === 'invalid' && (
+                          <p className="text-xs text-red-400" role="alert">พิกัดไม่ถูกต้อง กรุณาระบุ lat, lng เป็นตัวเลขให้ครบ เช่น 13.709811, 100.523629</p>
+                        )}
+                        {dest.saveAsSite && siteMatch?.kind === 'existing' && (
+                          <p className="text-xs text-emerald-400" role="status">ชื่อและพิกัดตรงกับ “{siteMatch.matches[0].name}” — จะใช้สถานที่เดิม ไม่เพิ่มซ้ำ</p>
+                        )}
+                        {dest.saveAsSite && siteMatch?.kind === 'conflict' && (
+                          <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 space-y-2" role="status">
+                            <p className="text-sm font-medium text-amber-300">พบชื่อหรือพิกัดตรงกับสถานที่ที่มีอยู่</p>
+                            {siteMatch.matches.map(site => (
+                              <div key={site.id} className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-xs">{site.name} · {site.latitude ?? 'ไม่มีพิกัด'}, {site.longitude ?? 'ไม่มีพิกัด'}</span>
+                                <Button type="button" variant="outline" size="sm" onClick={() => updateDest(dest.id, {
+                                  siteId: site.id, siteName: site.name, customName: site.name,
+                                  coordinates: site.latitude != null && site.longitude != null ? `${site.latitude}, ${site.longitude}` : '',
+                                  saveAsSite: false, allowSeparateSite: false,
+                                })}>ใช้สถานที่นี้</Button>
+                              </div>
+                            ))}
+                            <Checkbox id={`separate-site-${dest.id}`} checked={!!dest.allowSeparateSite}
+                              onCheckedChange={checked => updateDest(dest.id, { allowSeparateSite: !!checked })} />
+                            <Label htmlFor={`separate-site-${dest.id}`} className="ml-2 text-xs">ยืนยันว่าเป็นคนละสถานที่ ให้บันทึกแยก</Label>
                           </div>
                         )}
 
