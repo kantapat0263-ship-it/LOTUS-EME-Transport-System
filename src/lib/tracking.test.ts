@@ -15,7 +15,25 @@ import {
   minutesOutsideLunch,
   computeRecurringStops,
   trackingDateKey,
+  isCronSyncWindow,
 } from './tracking'
+
+describe('tracking: isCronSyncWindow (cron 04:50–21:59 ไทย)', () => {
+  const th = (iso: string) => Date.parse(`${iso}+07:00`)
+  it('กลางวันถึง 21:59 ดึง / 22:00 หยุด', () => {
+    expect(isCronSyncWindow(th('2026-10-01T05:00:00'))).toBe(true)
+    expect(isCronSyncWindow(th('2026-10-01T20:13:00'))).toBe(true)
+    expect(isCronSyncWindow(th('2026-10-01T21:59:00'))).toBe(true)
+    expect(isCronSyncWindow(th('2026-10-01T22:00:00'))).toBe(false)
+    expect(isCronSyncWindow(th('2026-10-02T03:00:00'))).toBe(false)
+  })
+  it('รอบเก็บตก 04:50–04:59 ยังเข้าวันเดิม (จุดรถที่กลับหลัง 22:00 ไม่ตกไปวันใหม่)', () => {
+    expect(isCronSyncWindow(th('2026-10-02T04:49:00'))).toBe(false)
+    expect(isCronSyncWindow(th('2026-10-02T04:50:00'))).toBe(true)
+    expect(trackingDateKey(th('2026-10-02T04:50:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-02T04:59:00'))).toBe('2026-10-01')
+  })
+})
 
 describe('tracking: trackingDateKey (วันทำการไทย ตัดวันตอน 05:00)', () => {
   // เวลาไทย = UTC+7 → แปลงเวลาไทยเป็น ms

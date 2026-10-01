@@ -177,6 +177,19 @@ export function trackingDateKey(nowMs = Date.now()): string {
   return new Date(nowMs + (7 - TRACKING_DAY_START_HOUR) * 3600_000).toISOString().slice(0, 10)
 }
 
+/** cron ดึงตำแหน่งช่วง 05:00–21:59 ไทย (ประหยัดโควตา — ผู้ใช้เลือกถึง 4 ทุ่ม) */
+export const CRON_END_HOUR = 22
+/** รอบเก็บตกก่อนตัดวัน: 04:50–04:59 ไทย — รถที่กลับหลัง 22:00 จะได้จุดในออฟฟิศเข้า "วันเดิม" (ครบเกณฑ์จอด 5 นาที)
+ *  ไม่งั้นจุดแรกหลังช่วงว่างจะได้ตอน 05:00 = วันใหม่ → วันเดิมจบนอกออฟฟิศ ขึ้น "ค้างคืนนอกพื้นที่" ผิด */
+export const CRON_CATCHUP_START_MIN = 4 * 60 + 50
+
+/** cron ควรดึงตำแหน่งตอนนี้ไหม (เวลาไทย) */
+export function isCronSyncWindow(nowMs = Date.now()): boolean {
+  const th = new Date(nowMs + 7 * 3600_000)
+  const min = th.getUTCHours() * 60 + th.getUTCMinutes()
+  return min >= CRON_CATCHUP_START_MIN && min < CRON_END_HOUR * 60
+}
+
 /** ระยะรวมของเส้นทางที่วิ่งจริง (กม.) — ผลรวมช่วงต่อช่วง */
 export function trailDistanceKm(trail: LatLng[]): number {
   let m = 0

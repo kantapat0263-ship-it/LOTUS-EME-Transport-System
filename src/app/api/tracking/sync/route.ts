@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, SINOTRACK_SERVER, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey, computeDailySummary, OFFICE_LOCATION } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary, OFFICE_LOCATION, isCronSyncWindow } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -43,13 +43,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // --- cron: บันทึกเฉพาะช่วง 05:00–22:00 (เวลาไทย) ประหยัดโควตา Firestore ; คนเปิดหน้าดูตอนไหนก็ยังได้ ---
+  // --- cron: บันทึกเฉพาะช่วง 05:00–21:59 (เวลาไทย) + รอบเก็บตก 04:50–04:59 ประหยัดโควตา ; คนเปิดหน้าดูตอนไหนก็ยังได้ ---
   // เดิมหยุด 20:00 → รถที่กลับถึงออฟฟิศหลัง 2 ทุ่ม (เคส 1ฒษ-4413 ถึง 20:13) ระบบไม่เห็นจนเช้า เลยขยายถึง 4 ทุ่ม
-  if (isCron) {
-    const thaiHour = new Date(Date.now() + 7 * 3600 * 1000).getUTCHours()
-    if (thaiHour < 5 || thaiHour >= 22) {
-      return NextResponse.json({ ok: true, skipped: true, reason: 'off-hours', thaiHour })
-    }
+  // รอบเก็บตกก่อนตัดวัน 05:00 ดู isCronSyncWindow (กันรถที่กลับหลัง 22:00 ขึ้น "ค้างคืน" ผิด)
+  if (isCron && !isCronSyncWindow()) {
+    return NextResponse.json({ ok: true, skipped: true, reason: 'off-hours' })
   }
 
   const user = process.env.SINOTRACK_USER
@@ -98,6 +96,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, synced: 0, note: 'ยังไม่มีรถที่จับคู่ GPS' })
   }
 
+  // คีย์วันเดียวทั้งรอบ (ทั้ง query ทริปและ doc id) — กัน sync ที่คร่อม 05:00 จับทริปคนละวันกับ trail
   const dateKey = trackingDateKey()
 
   // 1b) งานของแต่ละคันวันนี้ (plate → จุดงาน + ต้นทาง) สำหรับคำนวณสรุปรายวัน
@@ -165,7 +164,7 @@ export async function GET(req: NextRequest) {
   }
 
   const nowMs = Date.now()
-  const date = trackingDateKey(nowMs)
+  const date = dateKey
   let written = 0
 
   // 3) เขียนตำแหน่งล่าสุด + ต่อ trail
