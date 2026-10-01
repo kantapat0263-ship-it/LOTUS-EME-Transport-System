@@ -157,6 +157,16 @@ export default function TrackingPage() {
     return () => clearInterval(id)
   }, [])
 
+  // เปิดหน้าค้างข้ามวัน (05:00) ขณะดู "วันนี้" → เลื่อนไปวันใหม่เอง
+  // ไม่งั้น selectedDate ค้างเป็นเมื่อวาน → isToday = false → หยุด sync เงียบ ๆ
+  const prevTodayKeyRef = React.useRef(todayKey)
+  React.useEffect(() => {
+    const prev = prevTodayKeyRef.current
+    if (prev === todayKey) return
+    prevTodayKeyRef.current = todayKey
+    setSelectedDate((sel) => (sel === prev ? todayKey : sel))
+  }, [todayKey])
+
   // ดึงตำแหน่งสดจาก SinoTrack เอง: poll /api/tracking/sync ทุก 60 วิ ระหว่างเปิดหน้านี้
   // → ฟรี ไม่ต้องพึ่ง cron ภายนอก (server จะ login SinoTrack + เขียน Firestore ให้ แล้ว subscription ข้างล่างอัปเดตเอง)
   React.useEffect(() => {

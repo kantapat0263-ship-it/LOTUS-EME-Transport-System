@@ -14,7 +14,27 @@ import {
   ARRIVAL_RADIUS_M,
   minutesOutsideLunch,
   computeRecurringStops,
+  trackingDateKey,
 } from './tracking'
+
+describe('tracking: trackingDateKey (วันทำการไทย ตัดวันตอน 05:00)', () => {
+  // เวลาไทย = UTC+7 → แปลงเวลาไทยเป็น ms
+  const th = (iso: string) => Date.parse(`${iso}+07:00`)
+  it('กลางวัน/หัวค่ำ = วันที่ไทยวันนั้น (เดิม UTC ก็ตรง)', () => {
+    expect(trackingDateKey(th('2026-09-30T08:00:00'))).toBe('2026-09-30')
+    expect(trackingDateKey(th('2026-09-30T20:13:00'))).toBe('2026-09-30')
+    expect(trackingDateKey(th('2026-09-30T23:59:00'))).toBe('2026-09-30')
+  })
+  it('หลังเที่ยงคืนถึง 04:59 ยังนับเป็นวันก่อน (รถกลับดึกอยู่กับทริปวันนั้น)', () => {
+    expect(trackingDateKey(th('2026-10-01T00:30:00'))).toBe('2026-09-30')
+    expect(trackingDateKey(th('2026-10-01T04:59:00'))).toBe('2026-09-30')
+  })
+  it('05:00 เริ่มวันใหม่ — ช่วง 05:00–06:59 ไม่ตกไปวันก่อนแบบ UTC อีก', () => {
+    expect(trackingDateKey(th('2026-10-01T05:00:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-01T06:30:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-01T07:00:00'))).toBe('2026-10-01')
+  })
+})
 
 describe('tracking: haversineMeters', () => {
   it('ระยะ 0 เมื่อจุดเดียวกัน', () => {

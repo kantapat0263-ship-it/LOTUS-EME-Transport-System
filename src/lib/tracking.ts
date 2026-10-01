@@ -163,12 +163,18 @@ export function isPositionStale(
   return nowMs - positionTimeMs > thresholdMin * 60 * 1000
 }
 
+/** วันทำการของระบบติดตามรถเริ่ม 05:00 เวลาไทย (ตรงกับเวลาที่ cron เริ่มดึงตำแหน่ง) */
+export const TRACKING_DAY_START_HOUR = 5
+
 /**
- * คีย์วันที่สำหรับ trail รายวัน (YYYY-MM-DD) — ใช้ตรงกันทั้งฝั่ง sync (เขียน)
- * และหน้าเมนู (อ่าน) และให้ตรงแบบแผน Trip.tripDate ของแอป (UTC toISOString)
+ * คีย์วันที่สำหรับ trail/สรุปรายวัน (YYYY-MM-DD) — ใช้ตรงกันทั้งฝั่ง sync (เขียน) และหน้าเมนู (อ่าน)
+ * = วันที่ไทย (UTC+7) แต่ตัดวันตอน 05:00 ให้ตรงกับ Trip.tripDate (วันที่ไทยที่ผู้ใช้เลือก)
+ *   - 00:00–04:59 ยังนับเป็นวันก่อน → รถที่กลับดึกอยู่กับทริปของวันนั้น
+ *   - เดิมใช้วันที่ UTC = วันเริ่ม 07:00 ไทย → จุด 05:00–06:59 ตกไปวันก่อน (ลบเวลากลับของเมื่อวาน / วันใหม่ขึ้น "ค้างคืน" ผิด)
+ *   หมายเหตุ: doc ย้อนหลังก่อนแก้ (ต.ค. 2569) ยังตัดวันแบบเดิม
  */
 export function trackingDateKey(nowMs = Date.now()): string {
-  return new Date(nowMs).toISOString().slice(0, 10)
+  return new Date(nowMs + (7 - TRACKING_DAY_START_HOUR) * 3600_000).toISOString().slice(0, 10)
 }
 
 /** ระยะรวมของเส้นทางที่วิ่งจริง (กม.) — ผลรวมช่วงต่อช่วง */
