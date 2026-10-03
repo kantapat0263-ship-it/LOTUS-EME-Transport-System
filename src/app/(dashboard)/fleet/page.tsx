@@ -4,7 +4,7 @@ import * as React from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel, FileText } from "lucide-react"
+import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel, FileText, IdCard } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
@@ -38,7 +38,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc, setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase"
-import { collection, doc, serverTimestamp } from "firebase/firestore"
+import { collection, doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -49,6 +49,7 @@ import { attentionLevel, todayBangkok } from "@/lib/vehicle-compliance"
 import { ComplianceBadge } from "@/components/fleet/ComplianceBadge"
 import { ComplianceTab } from "@/components/fleet/ComplianceTab"
 import { VehicleDetailsDialog } from "@/components/fleet/VehicleDetailsDialog"
+import { EmployeeCodeHint } from "@/components/fleet/EmployeeCodeHint"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
@@ -61,6 +62,7 @@ const vehicleSchema = z.object({
 const driverSchema = z.object({
   name: z.string().min(2, "กรุณาระบุชื่อคนขับ"),
   phoneNumber: z.string().min(9, "กรุณาระบุเบอร์โทรศัพท์"),
+  employeeCode: z.string().trim().regex(/^(\d{4,6})?$/, "รหัสพนักงานเป็นตัวเลข 4–6 หลัก"),
 })
 
 export default function FleetPage() {
@@ -182,10 +184,22 @@ export default function FleetPage() {
   const [editingDriver, setEditingDriver] = React.useState<Driver | null>(null)
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(driversRef)
+  const unmappedDriverCount = (drivers ?? []).filter((d) => !d.employeeCode?.trim()).length
+  // ตรวจรหัสพนักงานกับระบบใบลา — token แบบเดียวกับ /api/tracking/devices
+  const getToken = React.useCallback(async () => {
+    if (!user) throw new Error("not signed in")
+    return user.getIdToken()
+  }, [user])
+  /** ชื่อคนขับคนอื่น (ไม่นับคนที่กำลังแก้) ที่ผูกรหัสนี้ไว้แล้ว */
+  const otherOwnersOfCode = (code: string) => {
+    const c = (code ?? "").trim()
+    if (!c) return []
+    return (drivers ?? []).filter((d) => d.id !== editingDriver?.id && d.employeeCode?.trim() === c).map((d) => d.name)
+  }
 
   const driverForm = useForm<z.infer<typeof driverSchema>>({
     resolver: zodResolver(driverSchema),
-    defaultValues: { name: "", phoneNumber: "" }
+    defaultValues: { name: "", phoneNumber: "", employeeCode: "" }
   })
 
   // Vehicle Types management
@@ -292,8 +306,10 @@ export default function FleetPage() {
     }
   }
 
-  function onDriverSubmit(values: z.infer<typeof driverSchema>) {
-    if (isViewer) return
+  // รอ Firestore ยืนยันก่อนค่อยแจ้งสำเร็จ — รหัสพนักงานผิด/หายแล้วป้ายวันลาทั้งแอปผิดตาม จึงห้ามแจ้งสำเร็จทั้งที่ยังไม่ถูกบันทึก
+  // (employeeCode "" = ตั้งใจล้างรหัส)
+  async function onDriverSubmit(values: z.infer<typeof driverSchema>) {
+    if (isViewer || isSavingDriver) return
     setIsSavingDriver(true)
     
     const data = {
@@ -304,11 +320,11 @@ export default function FleetPage() {
     try {
       if (editingDriver) {
         const dRef = doc(db, "drivers", editingDriver.id)
-        updateDocumentNonBlocking(dRef, data)
+        await updateDoc(dRef, data)
         toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลคนขับเรียบร้อยแล้ว" })
       } else {
         const newRef = doc(collection(db, "drivers"))
-        setDocumentNonBlocking(newRef, { 
+        await setDoc(newRef, { 
           ...data, 
           id: newRef.id,
           createdAt: serverTimestamp(), 
@@ -457,18 +473,23 @@ export default function FleetPage() {
         </TabsContent>
 
         <TabsContent value="drivers" className="space-y-4">
-          {!isViewer && (
-            <div className="flex justify-end">
-              <Button 
-                className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
-                onClick={() => { 
-                  setEditingDriver(null); 
-                  driverForm.reset({ name: "", phoneNumber: "" }); 
-                  setIsDriverDialogOpen(true); 
-                }}
-              >
-                <Plus className="mr-2 h-4 w-4" /> เพิ่มคนขับใหม่
-              </Button>
+          {(!isViewer || unmappedDriverCount > 0) && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              {unmappedDriverCount > 0 && (
+                <p className="text-sm text-amber-500">{`ยังไม่ผูกรหัสพนักงาน ${unmappedDriverCount} คน`}</p>
+              )}
+              {!isViewer && (
+                <Button 
+                  className="bg-primary hover:bg-primary/90 w-full sm:w-auto sm:ml-auto h-11 md:h-10" 
+                  onClick={() => { 
+                    setEditingDriver(null); 
+                    driverForm.reset({ name: "", phoneNumber: "", employeeCode: "" }); 
+                    setIsDriverDialogOpen(true); 
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" /> เพิ่มคนขับใหม่
+                </Button>
+              )}
             </div>
           )}
           {loadingDrivers ? <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-accent" /></div> : (
@@ -491,7 +512,7 @@ export default function FleetPage() {
                             <DropdownMenuItem onSelect={() => { 
                               setTimeout(() => {
                                 setEditingDriver(d); 
-                                driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber }); 
+                                driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber, employeeCode: d.employeeCode ?? "" }); 
                                 setIsDriverDialogOpen(true); 
                               }, 0);
                             }}>
@@ -510,6 +531,14 @@ export default function FleetPage() {
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Phone className="h-4 w-4 text-accent" />
                       <span>เบอร์โทรศัพท์: <strong>{d.phoneNumber}</strong></span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <IdCard className="h-4 w-4 text-accent" />
+                      {d.employeeCode?.trim() ? (
+                        <span>รหัสพนักงาน: <strong>{d.employeeCode.trim()}</strong></span>
+                      ) : (
+                        <span>❔ ยังไม่ผูกรหัส</span>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -696,6 +725,14 @@ export default function FleetPage() {
               )} />
               <FormField control={driverForm.control} name="phoneNumber" render={({ field }) => (
                 <FormItem><FormLabel>เบอร์โทรศัพท์</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
+              )} />
+              <FormField control={driverForm.control} name="employeeCode" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>รหัสพนักงาน (ระบบใบลา)</FormLabel>
+                  <FormControl><Input className="h-11" inputMode="numeric" placeholder="ตัวเลข 4–6 หลัก (ไม่บังคับ)" {...field} /></FormControl>
+                  <EmployeeCodeHint value={field.value} enabled={!isViewer} getToken={getToken} duplicateOf={otherOwnersOfCode(field.value)} />
+                  <FormMessage />
+                </FormItem>
               )} />
               <Button type="submit" className="w-full bg-accent h-12" disabled={isSavingDriver}>
                 {isSavingDriver ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} บันทึก
