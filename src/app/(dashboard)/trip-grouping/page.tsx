@@ -385,6 +385,15 @@ export default function TripGroupingPage() {
   const confirmCreateTrip = async () => {
     setIsProcessing(true)
     try {
+      // ด่านวันลา: ทำก่อนด่าน 2 (อ่านสถานะใบ) เสมอ — ตรงนี้ผู้ใช้อาจรอดึงข้อมูล ≤8 วิ + กล่อง confirm ได้นาน
+      // ถ้าคั่นอยู่ระหว่างด่าน 2 กับการเขียน จะเปิดช่อง race ที่ด่าน 2 ปิดไว้ (ใบที่เพิ่งถูกยกเลิกถูกฟื้นกลับ)
+      // เก็บ driverId + สถิติเส้นทางไว้ก่อน await (GroupingMap เขียน __lastTripStats ใหม่ได้ทุกครั้งที่เปลี่ยนการเลือก)
+      // ยกเลิก = return (finally ปลด isProcessing) · วันของจุดเป็นวันเดียวกันหมดอยู่แล้ว (handleCreateTrip บังคับ)
+      const gateDriverId = driverId
+      const gateDate = selectedDestinations[0]?.requestDate
+      const lastStats = (window as any).__lastTripStats || { distance: 0, duration: 0, fuelCost: 0 }
+      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: gateDate }], drivers ?? []))) return
+
       // ด่าน 2: re-read สถานะใบสดๆ ก่อนเขียน — กันจัดทับ/ฟื้นใบที่เพิ่งถูกยกเลิก (race / un-reject)
       const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
       const vrDocIds = Array.from(new Set(selectedDestinations.map(d => d.vrDocId)))
@@ -402,10 +411,7 @@ export default function TripGroupingPage() {
         toast({ title: "ข้ามบางจุด", description: `ข้าม ${selectedDestinations.length - dests.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
       }
 
-      // ด่านวันลา: ตรวจสดก่อนเขียนอะไรทั้งสิ้น (ป้ายใน dropdown เป็นแค่ตัวช่วย) — ยกเลิก = return (finally ปลด isProcessing)
-      const gateDriverId = driverId
-      const gateDate = dests[0].requestDate
-      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: gateDate }], drivers ?? []))) return
+      // กันเปลี่ยนคนขับระหว่างรอด่านวันลา — เทียบกับค่าล่าสุดของหน้า (ไม่มี await คั่นระหว่างตรงนี้กับการเขียน)
       if (driverIdRef.current !== gateDriverId) {
         toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "คนขับที่เลือกเปลี่ยนไประหว่างตรวจวันลา — เลือกใหม่แล้วกดสร้างอีกครั้ง", variant: "destructive" })
         return
@@ -424,7 +430,6 @@ export default function TripGroupingPage() {
       const safety = Math.floor(Math.random() * 10);
       const tripId = `${datePrefix}-${sequence}${safety}`;
       
-      const lastStats = (window as any).__lastTripStats || { distance: 0, duration: 0, fuelCost: 0 }
       const warehousePos = { 
         lat: settings?.warehouseLatitude || 14.0815, 
         lng: settings?.warehouseLongitude || 100.7129 
@@ -565,6 +570,18 @@ export default function TripGroupingPage() {
       const { existingTrip, newStops } = mergeDialog
       if (!existingTrip || !newStops) return
 
+      // ด่านวันลา: ทำก่อนด่าน 2 (อ่านสถานะใบ) เสมอ — ผู้ใช้อาจรอดึงข้อมูล ≤8 วิ + กล่อง confirm ได้นาน
+      // ถ้าคั่นอยู่ระหว่างด่าน 2 กับการเขียน จะเปิดช่อง race ที่ด่าน 2 ปิดไว้ (ใบที่เพิ่งถูกยกเลิกถูกฟื้นกลับ)
+      // ตรวจ "คนขับจริงของทริปปลายทาง" จากเอกสารสด — คนขับแทน (actualDriverId) ชนะคนขับประจำ · ยกเลิก = return ก่อนเขียน
+      const freshTripSnap = await getDoc(doc(db, "trips", existingTrip.id))
+      if (!freshTripSnap.exists()) {
+        toast({ title: "รวมไม่ได้", description: "ไม่พบ Trip ปลายทางแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+      const freshTrip = freshTripSnap.data() as any
+      const gateDriverId: string = freshTrip.actualDriverId || freshTrip.driverId
+      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: freshTrip.tripDate }], drivers ?? []))) return
+
       // ด่าน 2: re-read สถานะใบสดๆ ก่อนรวม — กันยัดจุด/ฟื้นใบที่เพิ่งถูกยกเลิก (dialog ค้างเปิด/race)
       const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
       const vrDocIds = Array.from(new Set(newStops.map(d => d.vrDocId)))
@@ -581,16 +598,6 @@ export default function TripGroupingPage() {
       if (validNewStops.length < newStops.length) {
         toast({ title: "ข้ามบางจุด", description: `ข้าม ${newStops.length - validNewStops.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
       }
-
-      // ด่านวันลา: ตรวจ "คนขับจริงของทริปปลายทาง" จากเอกสารสด — คนขับแทน (actualDriverId) ชนะคนขับประจำ · ยกเลิก = return ก่อนเขียน
-      const freshTripSnap = await getDoc(doc(db, "trips", existingTrip.id))
-      if (!freshTripSnap.exists()) {
-        toast({ title: "รวมไม่ได้", description: "ไม่พบ Trip ปลายทางแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
-        return
-      }
-      const freshTrip = freshTripSnap.data() as any
-      const gateDriverId: string = freshTrip.actualDriverId || freshTrip.driverId
-      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: freshTrip.tripDate }], drivers ?? []))) return
 
       const currentStops = existingTrip.stops || []
       const lastOrder = currentStops.length > 0 
