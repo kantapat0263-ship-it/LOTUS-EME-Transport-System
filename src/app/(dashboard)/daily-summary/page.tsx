@@ -46,6 +46,11 @@ import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
+import { useDriverLeaves } from "@/hooks/use-driver-leaves"
+import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
+import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
+import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
+import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -105,6 +110,42 @@ export default function DailySummaryPage() {
   const [assistDialog, setAssistDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
   const [assistForm, setAssistForm] = React.useState({ targetTripId: "", driverId: "", vehicleId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
+
+  // ---- วันลาคนขับ (ระบบใบลา): ป้ายในแผงแอดมิน + ด่านยืนยันก่อนส่งออก/มอบงาน ----
+  // ทริปในหน้านี้เป็นวันเดียว (selectedDate) แต่ป้าย/ด่านแต่ละทริปใช้ trip.tripDate ของตัวเอง (นอกช่วง = unknown = ไม่มีป้าย)
+  // ส่ง `driversData ?? undefined`: useCollection คืน null ก่อน snapshot แรก — ห้ามส่ง [] (จะกลายเป็น driver_missing ทุกคน)
+  const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
+    useDriverLeaves(driversData ?? undefined, selectedDate, selectedDate)
+
+  // ด่านวันลาของหน้านี้ — ทุกจุดผ่าน confirmLeaveBeforeAssign ที่นี่ที่เดียว (สเปก 5.5)
+  // · ระหว่างรอ (ดึงสด ≤8 วิ + กล่อง confirm) กดด่านซ้ำ/ด่านอื่นไม่ได้ = ถือว่ายกเลิก (ยังไม่ตั้ง state loading จนกว่าจะผ่านด่าน)
+  // · handler ใช้ค่าตอนกด → ถ้าทริป/วันที่/dialog เปลี่ยนระหว่างรอ = ยกเลิก ไม่เอาข้อมูลก่อนรอไปเขียนทับของใหม่
+  const leaveGateBusyRef = React.useRef(false)
+  const pageVersionRef = React.useRef(0)
+  React.useEffect(() => {
+    pageVersionRef.current++
+  }, [trips, selectedDate, insertDialog, insertForm, reassignNewDialog, reassignNewForm, assistDialog, assistForm])
+  const passLeaveGate = async (targets: { driverId: string; date: string }[]): Promise<boolean> => {
+    if (leaveGateBusyRef.current) return false
+    leaveGateBusyRef.current = true
+    const version = pageVersionRef.current
+    try {
+      if (!(await confirmLeaveBeforeAssign(checkLeave, targets, driversData ?? []))) return false
+    } finally {
+      leaveGateBusyRef.current = false
+    }
+    if (pageVersionRef.current !== version) {
+      toast({ title: "ยังไม่ได้ทำรายการ", description: "ข้อมูลบนหน้าเปลี่ยนระหว่างตรวจวันลา — กดใหม่อีกครั้ง", variant: "destructive" })
+      return false
+    }
+    return true
+  }
+
+  // <option> ใส่ element ไม่ได้ → ต่อป้ายวันลาเป็นข้อความ · ใช้เฉพาะ select ในแผง/dialog แอดมิน (ห้ามใช้กับ driverName / ข้อความที่ส่งออก)
+  const driverOptionLabel = (d: Driver, date: string | undefined) => {
+    const t = date ? leaveBadgeText(leaveForDriver(d.id, date)) : ""
+    return `${d.name}${t ? "  " + t : ""}`
+  }
 
   // Listen for all work dates to highlight them with orange dots
   React.useEffect(() => {
@@ -287,6 +328,8 @@ export default function DailySummaryPage() {
 
   const handleSaveImage = async () => {
     if (trips.length === 0) return
+    // ด่านวันลา — ก่อนตั้ง state loading / แคปรูป · ยกเลิก = ไม่ทำอะไรเลย
+    if (!(await confirmLeaveBeforeExport())) return
     setIsSavingImage(true)
     try {
       const html2canvas = (await import('html2canvas')).default
@@ -317,6 +360,8 @@ export default function DailySummaryPage() {
 
   const handleSendLine = async () => {
     if (trips.length === 0) return
+    // ด่านวันลา — ก่อนตั้ง state loading / สร้าง payload / ส่งบอท · ยกเลิก = ไม่ส่งอะไรเลย
+    if (!(await confirmLeaveBeforeExport())) return
     setIsSendingLine(true)
     try {
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
@@ -386,6 +431,10 @@ export default function DailySummaryPage() {
     return stops.every(s => s.outcome && s.outcome !== 'delivered' && (s as any).reassignedToTripId)
   }
 
+  // ด่านวันลาก่อนส่งออก (ส่ง LINE / คัดลอก / บันทึกรูป): ทุกทริปที่จะออกจริง — คนขับจริง + วันของทริปเอง
+  const confirmLeaveBeforeExport = () =>
+    passLeaveGate(trips.filter(t => !isFullyMovedOut(t)).map(t => ({ driverId: t.actualDriverId || t.driverId, date: t.tripDate })))
+
   const buildSummaryText = () => {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
     const driverLinks = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
@@ -422,6 +471,8 @@ export default function DailySummaryPage() {
   // คัดลอกข้อความเข้า clipboard → คนจัดรถไปวางในกลุ่ม LINE เอง (ไม่กินโควตา OA)
   const handleCopyMessage = async () => {
     if (trips.length === 0) return
+    // ด่านวันลา — ก่อนแตะ clipboard · หลังรอด่าน บางเบราว์เซอร์ (เช่น Safari) อาจปฏิเสธการคัดลอก → ตก catch เดิม ไม่ขึ้น toast สำเร็จ
+    if (!(await confirmLeaveBeforeExport())) return
     try {
       await navigator.clipboard.writeText(buildSummaryText())
       setCopiedMsg(true)
@@ -557,7 +608,7 @@ export default function DailySummaryPage() {
   // แทรกงานด่วน: เพิ่ม stop ตรงเข้าทริปคันนั้น (ไม่ผ่านกองจัดกลุ่ม = ไม่มี race/จุดผี)
   // ติดป้าย adhoc + ใครแทรก/เมื่อไหร่ ; อนุญาตเฉพาะทริป "วันนี้" (กันบันทึกย้อนหลังข้ามวัน)
   const todayStr = format(new Date(), "yyyy-MM-dd")
-  const handleInsertJob = () => {
+  const handleInsertJob = async () => {
     if (!insertDialog) return
     const trip = trips.find(t => t.id === insertDialog.tripId)
     if (!trip) { setInsertDialog(null); return }
@@ -608,6 +659,10 @@ export default function DailySummaryPage() {
       // เปลี่ยนรถ → งานแทรกไปอยู่ทริปของรถคันใหม่ (คนขับคนเดิม) เพื่อ GPS ตรงคัน
       const veh = vehiclesData?.find(v => v.id === chosenVehId)
       const targetTrip = trips.find(t => t.vehicleId === chosenVehId && t.tripDate === todayStr && t.status !== "Cancelled")
+      // ด่านวันลา (เฉพาะงานที่ไปลงทริปอื่น): คนขับจริงของทริปที่รับ หรือคนขับที่จะลงทริปใหม่ · ยกเลิก = dialog ค้างไว้ ไม่เขียนอะไร
+      if (!(await passLeaveGate([targetTrip
+        ? { driverId: targetTrip.actualDriverId || targetTrip.driverId, date: targetTrip.tripDate }
+        : { driverId: trip.driverId, date: todayStr }]))) return
       if (targetTrip) {
         appendTo(targetTrip)
         toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริปรถ ${veh?.licensePlate || ""} (คนขับ ${trip.driverName})` })
@@ -690,10 +745,12 @@ export default function DailySummaryPage() {
 
   // ระบุ "คนขับจริง (ขับแทน)" ของทริป — driverId ว่าง = กลับไปใช้คนขับประจำ
   // เก็บเป็น "" (ไม่ใช่ลบ field) เพราะ credit logic ใช้ actualDriverId || driverId อยู่แล้ว
-  const setActualDriver = (tripId: string, driverId: string) => {
+  const setActualDriver = async (tripId: string, driverId: string) => {
     const name = driverId ? (driversData?.find(d => d.id === driverId)?.name || "") : ""
     const target = trips.find(t => t.id === tripId)
     const prevActualDriverId = target?.actualDriverId // อ่านก่อนเขียนทับ (ใช้ตอน revert)
+    // ด่านวันลา: เฉพาะตอนเลือกคนใหม่ (ล้างกลับเป็นคนขับประจำไม่ถาม) · ยกเลิก = ไม่เขียนอะไร select เด้งกลับค่าเดิมเอง
+    if (driverId && target && !(await passLeaveGate([{ driverId, date: target.tripDate }]))) return
     setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, actualDriverId: driverId, actualDriverName: name } : t)))
     if (db) {
       updateDocumentNonBlocking(doc(db, "trips", tripId), {
@@ -994,8 +1051,10 @@ export default function DailySummaryPage() {
     }
   }
 
-  const setReassignTarget = (trip: Trip, stopIdx: number, targetTripId: string) => {
+  const setReassignTarget = async (trip: Trip, stopIdx: number, targetTripId: string) => {
     const target = trips.find(t => t.id === targetTripId)
+    // ด่านวันลา: คนขับจริงของทริปปลายทาง ตามวันของทริปนั้น · ล้างคันปลายทางไม่ถาม · ยกเลิก = select เด้งกลับค่าเดิม
+    if (target && !(await passLeaveGate([{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
     const newStops = buildStops(trip, stopIdx, (s) => {
       if (!target) {
         const { reassignedToTripId, reassignedToVehiclePlate, reassignedToDriverName, ...rest } = s as any
@@ -1012,7 +1071,7 @@ export default function DailySummaryPage() {
   }
 
   // โยกงานให้คน/รถที่ "ยังไม่มีทริป" วันนั้น — สร้างทริปว่างให้ก่อน แล้วโยกงานไปคันนั้น
-  const createReassignTarget = () => {
+  const createReassignTarget = async () => {
     if (!reassignNewDialog) return
     const srcTrip = trips.find(t => t.id === reassignNewDialog.tripId)
     if (!srcTrip) { setReassignNewDialog(null); return }
@@ -1020,6 +1079,8 @@ export default function DailySummaryPage() {
     const veh = vehiclesData?.find(v => v.id === reassignNewForm.vehicleId)
     if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
     if (veh.licensePlate === srcTrip.vehiclePlate) { toast({ title: "เลือกรถคนละคันกับต้นทาง", variant: "destructive" }); return }
+    // ด่านวันลา: คนที่เลือก ตามวันของทริปใหม่ (= วันทริปต้นทาง) · ยกเลิก = dialog ค้างไว้ ไม่สร้างทริป
+    if (!(await passLeaveGate([{ driverId: driver.id, date: srcTrip.tripDate }]))) return
 
     // สร้างทริปใหม่ (วันเดียวกับทริปต้นทาง) ว่าง ๆ ไว้รับงานโยก
     const dstr = srcTrip.tripDate
@@ -1050,7 +1111,7 @@ export default function DailySummaryPage() {
 
   // "คันช่วย": copy งานทั้งก้อน (ไซต์/พิกัด/รายละเอียด/ผู้ขอ) ไปต่อท้ายทริปคันช่วย
   // งานต้นทางไม่ถูกแตะ ; งานฝั่งคันช่วยเป็น adhoc (ลบได้ด้วยปุ่มถังขยะ) + ป้าย "คันช่วย · จาก ..."
-  const addAssistStop = () => {
+  const addAssistStop = async () => {
     if (!assistDialog) return
     const src = trips.find(t => t.id === assistDialog.tripId)
     const stop = src?.stops?.[assistDialog.stopIdx]
@@ -1082,6 +1143,8 @@ export default function DailySummaryPage() {
     if (assistForm.targetTripId && assistForm.targetTripId !== "__new__") {
       const target = trips.find(t => t.id === assistForm.targetTripId)
       if (!target) { toast({ title: "ไม่พบทริปคันช่วย", variant: "destructive" }); return }
+      // ด่านวันลา: คนขับจริงของคันช่วย ตามวันของทริปนั้น · ยกเลิก = dialog ค้างไว้
+      if (!(await passLeaveGate([{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
       applyStops(target.id, [...stops, mkCopy(order)], true)
@@ -1090,6 +1153,8 @@ export default function DailySummaryPage() {
       const driver = driversData?.find(d => d.id === assistForm.driverId)
       const veh = vehiclesData?.find(v => v.id === assistForm.vehicleId)
       if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
+      // ด่านวันลา: คนที่เลือก ตามวันของทริปใหม่ (= วันทริปต้นทาง) · ยกเลิก = dialog ค้างไว้ ไม่สร้างทริป
+      if (!(await passLeaveGate([{ driverId: driver.id, date: src.tripDate }]))) return
       const dstr = src.tripDate
       const dd = dstr.slice(8, 10), mm = dstr.slice(5, 7)
       const seq = String(trips.filter(t => t.tripDate === dstr).length + 1).padStart(3, "0")
@@ -1235,6 +1300,10 @@ export default function DailySummaryPage() {
     )
   }
 
+  // วันของทริปต้นทางใน dialog โยกงานให้คนใหม่ / คันช่วย (ทริปใหม่ใช้วันเดียวกัน) → ป้ายวันลาใน select คนขับ
+  const reassignNewSrcDate = reassignNewDialog ? trips.find(t => t.id === reassignNewDialog.tripId)?.tripDate : undefined
+  const assistSrcDate = assistDialog ? trips.find(t => t.id === assistDialog.tripId)?.tripDate : undefined
+
   const shareUrl = selectedTripForShare
     ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`
     : '';
@@ -1306,6 +1375,9 @@ export default function DailySummaryPage() {
                 </div>
               )}
               
+              {/* แถบสถานะตรวจวันลา — เหนือปุ่มส่งออก (คอลัมน์ซ้าย นอก #summary-report ไม่ติดรูป) */}
+              <LeaveCheckBanner status={leaveStatus} lastOkAt={leaveLastOkAt} />
+
               <div className="grid grid-cols-2 gap-3">
                 <Button 
                   variant="outline"
@@ -1736,6 +1808,8 @@ export default function DailySummaryPage() {
                         <Truck className="h-4 w-4 shrink-0 text-accent" />
                         <span className="text-base font-bold leading-tight text-white">{trip.driverName}</span>
                         <span className="rounded-md border border-accent/40 bg-accent/15 px-2 py-0.5 text-xs font-bold tracking-wide text-accent">{trip.vehiclePlate}</span>
+                        {/* ป้ายวันลาของคนขับจริง (ขับแทน = คนขับแทน) ตามวันของทริปเอง — แผงนี้อยู่นอก #summary-report ไม่ติดรูป/LINE */}
+                        <LeaveBadge status={leaveForDriver(trip.actualDriverId || trip.driverId, trip.tripDate)} />
                         {notRun && (
                           <span className="rounded-md bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400">🚫 ไม่ได้วิ่ง</span>
                         )}
@@ -1758,7 +1832,7 @@ export default function DailySummaryPage() {
                         {(driversData || [])
                           .filter((d) => d.id !== trip.driverId)
                           .map((d) => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
+                            <option key={d.id} value={d.id}>{driverOptionLabel(d, trip.tripDate)}</option>
                           ))}
                       </select>
                     </div>
@@ -2028,7 +2102,7 @@ export default function DailySummaryPage() {
                 className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">— เลือกคนขับ —</option>
-                {(driversData || []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {(driversData || []).map(d => <option key={d.id} value={d.id}>{driverOptionLabel(d, reassignNewSrcDate)}</option>)}
               </select>
             </div>
             <div className="space-y-1">
@@ -2098,7 +2172,7 @@ export default function DailySummaryPage() {
                     className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
                   >
                     <option value="">— เลือกคนขับ —</option>
-                    {(driversData || []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    {(driversData || []).map(d => <option key={d.id} value={d.id}>{driverOptionLabel(d, assistSrcDate)}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1">
