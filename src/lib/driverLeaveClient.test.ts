@@ -393,6 +393,33 @@ describe('confirmLeaveBeforeAssign', () => {
     expect(a.asked).toEqual([])
   })
 
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+  ])('รายชื่อคนขับยังไม่โหลด (%s) → ถามแบบตรวจไม่ได้ ไม่เรียก check แล้วคืนคำตอบของผู้ใช้', async (_name, notLoaded) => {
+    // ห้ามถือเป็น "รายชื่อว่าง" — ไม่งั้นทุกคนกลายเป็น driver_missing ไม่มีรหัสให้ตรวจ แล้วด่านผ่านเงียบ ๆ
+    const check = checkWith([leave({ code: '10001' })])
+    const target = [{ driverId: 'd1', date: '2026-10-05' }]
+
+    const no = asker(false)
+    expect(await confirmLeaveBeforeAssign(check, target, notLoaded, no.fn)).toBe(false)
+    expect(no.asked).toEqual(['⚠️ ตรวจวันลาไม่ได้ตอนนี้ — ยืนยันทำต่อ?'])
+
+    const yes = asker(true)
+    expect(await confirmLeaveBeforeAssign(check, target, notLoaded, yes.fn)).toBe(true)
+    expect(yes.asked).toEqual(['⚠️ ตรวจวันลาไม่ได้ตอนนี้ — ยืนยันทำต่อ?'])
+
+    expect(check).not.toHaveBeenCalled()
+  })
+
+  it('รายชื่อคนขับยังไม่โหลด แต่ไม่มี target → true ไม่ถาม ไม่เรียก check', async () => {
+    const a = asker(false)
+    const check = checkWith([])
+    expect(await confirmLeaveBeforeAssign(check, [], undefined, a.fn)).toBe(true)
+    expect(check).not.toHaveBeenCalled()
+    expect(a.asked).toEqual([])
+  })
+
   it('check fails → asks unknown prompt', async () => {
     const asked: string[] = []
     const r = await confirmLeaveBeforeAssign(

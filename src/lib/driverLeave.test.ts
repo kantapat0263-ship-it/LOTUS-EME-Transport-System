@@ -117,6 +117,17 @@ describe('leaveStatusOn', () => {
     expect(leaveStatusOn('10001', '2026-10-31', r, cov).kind).toBe('free')
   })
 
+  it('unknown เมื่อไม่มีวันที่ ("" / undefined — ทริปเก่ามีแค่ date ไม่มี tripDate) ห้ามกลายเป็น free', () => {
+    const r = res([])
+    expect(leaveStatusOn('10001', '', r, cov)).toEqual({ kind: 'unknown' })
+    expect(leaveStatusOn('10001', undefined as unknown as string, r, cov)).toEqual({ kind: 'unknown' })
+  })
+
+  it('ไม่ผูกรหัส + ไม่มีวันที่ → ยัง unmapped (ตัดสิน unmapped ก่อนเช็กวันที่)', () => {
+    expect(leaveStatusOn(undefined, '', res([]), cov)).toEqual({ kind: 'unmapped' })
+    expect(leaveStatusOn('', undefined as unknown as string, res([]), cov)).toEqual({ kind: 'unmapped' })
+  })
+
   it('unknown เมื่อ code ไม่มี key ใน employees (ไม่ใช่ free) · key ที่สืบทอดจาก Object ไม่นับ', () => {
     expect(leaveStatusOn('99999', '2026-10-05', res([]), cov)).toEqual({ kind: 'unknown' })
     expect(leaveStatusOn('constructor', '2026-10-05', res([]), cov)).toEqual({ kind: 'unknown' })

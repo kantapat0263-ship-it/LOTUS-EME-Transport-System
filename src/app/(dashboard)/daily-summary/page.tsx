@@ -148,7 +148,8 @@ export default function DailySummaryPage() {
     const version = pageVersionRef.current
     let ok: boolean
     try {
-      ok = await confirmLeaveBeforeAssign(checkLeave, targets, driversData ?? [], (m) => pageVersionRef.current === version && window.confirm(m))
+      // ส่ง driversData ตรง ๆ: ยังไม่โหลด (null) = ด่านถามแบบตรวจไม่ได้ — `?? []` จะทำให้ทุกคนเป็น driver_missing แล้วผ่านเงียบ
+      ok = await confirmLeaveBeforeAssign(checkLeave, targets, driversData, (m) => pageVersionRef.current === version && window.confirm(m))
     } finally {
       leaveGateIntentRef.current = null
     }

@@ -14,6 +14,10 @@ const WORKER_BODY = '{"employees":{"12345":{"name":"นายสมศักด�
 
 const verifyMock = vi.mocked(verifyStaffToken)
 const fetchMock = vi.fn()
+// route ต้อง log ฝั่ง server ทุกทางที่พัง — spy ไว้ตรวจ + กันไม่ให้รก output ของเทสต์
+let errorSpy: ReturnType<typeof vi.spyOn>
+/** ทุกอย่างที่ถูก console.error รวมเป็นข้อความเดียว (ไว้ตรวจว่าไม่มี key/body หลุด) */
+const logged = () => errorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
 
 function call(init: { authorization?: string | null; body?: string } = {}) {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -39,6 +43,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
   vi.stubEnv('LEAVE_API_URL', WORKER_URL)
   vi.stubEnv('LEAVE_API_KEY', WORKER_KEY)
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -85,6 +90,7 @@ describe('POST /api/driver-leaves', () => {
       ['ไม่มี LEAVE_API_KEY', { LEAVE_API_URL: WORKER_URL, LEAVE_API_KEY: undefined }],
       ['ไม่มีทั้งคู่', { LEAVE_API_URL: undefined, LEAVE_API_KEY: undefined }],
       ['ค่าว่าง', { LEAVE_API_URL: '', LEAVE_API_KEY: '' }],
+      ['มีแต่ช่องว่าง/ขึ้นบรรทัด', { LEAVE_API_URL: '  ', LEAVE_API_KEY: ' \n' }],
     ])('%s', async (_name, env) => {
       vi.stubEnv('LEAVE_API_URL', env.LEAVE_API_URL)
       vi.stubEnv('LEAVE_API_KEY', env.LEAVE_API_KEY)
@@ -94,6 +100,8 @@ describe('POST /api/driver-leaves', () => {
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual({ error: 'not_configured' })
       expect(fetchMock).not.toHaveBeenCalled()
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(logged()).toContain('not_configured')
     })
 
     it('คนที่ไม่ใช่ staff ได้ 401 ก่อน (ไม่รั่วว่าตั้งค่าไว้หรือไม่)', async () => {
@@ -126,6 +134,23 @@ describe('POST /api/driver-leaves', () => {
 
       const [, init] = fetchMock.mock.calls[0]
       expect(JSON.stringify(init.headers)).not.toContain('firebase-id-token')
+    })
+
+    it('ตัดช่องว่าง/ขึ้นบรรทัดรอบ LEAVE_API_KEY และ LEAVE_API_URL ก่อนใช้ (env ที่วางมาติด newline ทำให้ undici throw ทุกคำขอ)', async () => {
+      vi.stubEnv('LEAVE_API_KEY', `  ${WORKER_KEY}\r\n`)
+      vi.stubEnv('LEAVE_API_URL', `\t${WORKER_URL}/ \n`)
+
+      const res = await call()
+
+      expect(res.status).toBe(200)
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(url).toBe(`${WORKER_URL}/api/integration/driver-leaves`)
+      expect(init.headers.Authorization).toBe(`Bearer ${WORKER_KEY}`)
+    })
+
+    it('worker ตอบ 200 → ไม่ log อะไร', async () => {
+      await call()
+      expect(errorSpy).not.toHaveBeenCalled()
     })
 
     it('ตัด "/" ท้าย LEAVE_API_URL ก่อนต่อ path', async () => {
@@ -162,24 +187,45 @@ describe('POST /api/driver-leaves', () => {
 
       expect(res.status).toBe(502)
       expect(await res.json()).toEqual({ error: 'upstream' })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(logged()).toContain(String(status))
     })
 
-    it('fetch throw (ต่อไม่ติด) → 502 unreachable', async () => {
+    it('fetch throw (ต่อไม่ติด) → 502 unreachable + log ชื่อ/ข้อความ error', async () => {
       fetchMock.mockRejectedValue(new TypeError('fetch failed'))
 
       const res = await call()
 
       expect(res.status).toBe(502)
       expect(await res.json()).toEqual({ error: 'unreachable' })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(logged()).toContain('TypeError')
+      expect(logged()).toContain('fetch failed')
     })
 
-    it('timeout (TimeoutError) → 502 unreachable', async () => {
+    it('timeout (TimeoutError) → 502 unreachable + log ชื่อ error', async () => {
       fetchMock.mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'))
 
       const res = await call()
 
       expect(res.status).toBe(502)
       expect(await res.json()).toEqual({ error: 'unreachable' })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(logged()).toContain('TimeoutError')
+    })
+
+    it('ข้อความ error มี key ติดมา (undici ฟ้อง header ผิดรูป) → log ไม่มี key และไม่มี body', async () => {
+      fetchMock.mockRejectedValue(
+        new TypeError(`Headers.append: "Bearer ${WORKER_KEY}" is an invalid header value.`),
+      )
+
+      const res = await call()
+
+      expect(res.status).toBe(502)
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(logged()).toContain('TypeError')
+      expect(logged()).not.toContain(WORKER_KEY)
+      expect(logged()).not.toContain(RAW_BODY)
     })
 
     it('อ่าน body ของ worker พังกลางทาง → 502 unreachable', async () => {
@@ -210,6 +256,9 @@ describe('POST /api/driver-leaves', () => {
 
       expect(res.status).toBe(expectedStatus)
       expect(res.headers.get('cache-control')).toBe('no-store')
+      // ไม่ว่าทางไหน log ต้องไม่มี key ของ worker หรือ body ของคำขอ
+      expect(logged()).not.toContain(WORKER_KEY)
+      expect(logged()).not.toContain(RAW_BODY)
     })
   })
 })

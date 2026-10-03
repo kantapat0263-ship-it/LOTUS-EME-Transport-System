@@ -190,7 +190,8 @@ export function leaveStatusOn(
 ): DriverLeaveStatus {
   const key = code?.trim()
   if (!key) return { kind: 'unmapped' }
-  if (!res || !coverage || date < coverage.from || date > coverage.to) return { kind: 'unknown' }
+  // ไม่มีวันที่ (ทริปเก่ามีแค่ `date` ไม่มี `tripDate`) = ไม่รู้ว่าถามวันไหน → unknown · `undefined < from` เป็น false จึงต้องเช็กแยก
+  if (!res || !coverage || !date || date < coverage.from || date > coverage.to) return { kind: 'unknown' }
   if (!Object.prototype.hasOwnProperty.call(res.employees, key)) return { kind: 'unknown' }
 
   const emp = res.employees[key]

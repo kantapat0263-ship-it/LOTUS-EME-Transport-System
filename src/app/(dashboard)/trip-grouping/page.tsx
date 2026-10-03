@@ -180,9 +180,22 @@ export default function TripGroupingPage() {
   const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
     useDriverLeaves(drivers ?? undefined, badgeDate, badgeDate)
 
-  // ค่า driverId ล่าสุดของหน้า — ด่านวันลาใน confirmCreateTrip ใช้เทียบหลัง await ว่าผู้ใช้ไม่ได้เปลี่ยนคนขับระหว่างรอ
-  const driverIdRef = React.useRef(driverId)
-  React.useEffect(() => { driverIdRef.current = driverId }, [driverId])
+  // ด่านวันลาตอนสร้าง/รวมทริป (สเปก 5.5) — ระหว่างรอตรวจ (ดึงสด ≤8 วิ + กล่อง confirm) หน้ายังกดได้ (AlertDialogAction ปิด dialog ทันที)
+  // · selectionSigRef: ลายเซ็นการเลือกล่าสุดของหน้า (จุด + รถ + คนขับ + วัน) — เปลี่ยนระหว่างรอ = ยกเลิกการสร้าง (ห้ามเขียนชุดที่เลือกไว้ก่อน)
+  // · mergeDialogRef: dialog รวมทริปตัวล่าสุด — ปิด/เปิดใหม่ระหว่างรอ = ยกเลิกการรวม
+  // · pageVersionRef: เปลี่ยนเมื่อออกจากหน้า — ด่านที่ค้างอยู่ไม่เด้ง confirm / ไม่เขียน / ไม่ขึ้น toast บนหน้าอื่น
+  const selectionSig = [
+    mode === 'manual' ? manualOrder.join(',') : [...selectedIds].sort().join(','),
+    vehicleId,
+    driverId,
+    Array.from(new Set(selectedDestinations.map((d: any) => d.requestDate))).sort().join(','),
+  ].join('|')
+  const selectionSigRef = React.useRef(selectionSig)
+  React.useEffect(() => { selectionSigRef.current = selectionSig }, [selectionSig])
+  const mergeDialogRef = React.useRef(mergeDialog)
+  React.useEffect(() => { mergeDialogRef.current = mergeDialog }, [mergeDialog])
+  const pageVersionRef = React.useRef(0)
+  React.useEffect(() => () => { pageVersionRef.current++ }, [])
 
   const handleToggleSelect = React.useCallback((id: string) => {
     if (mode === 'manual') {
@@ -387,12 +400,29 @@ export default function TripGroupingPage() {
     try {
       // ด่านวันลา: ทำก่อนด่าน 2 (อ่านสถานะใบ) เสมอ — ตรงนี้ผู้ใช้อาจรอดึงข้อมูล ≤8 วิ + กล่อง confirm ได้นาน
       // ถ้าคั่นอยู่ระหว่างด่าน 2 กับการเขียน จะเปิดช่อง race ที่ด่าน 2 ปิดไว้ (ใบที่เพิ่งถูกยกเลิกถูกฟื้นกลับ)
-      // เก็บ driverId + สถิติเส้นทางไว้ก่อน await (GroupingMap เขียน __lastTripStats ใหม่ได้ทุกครั้งที่เปลี่ยนการเลือก)
+      // เก็บลายเซ็นการเลือก + สถิติเส้นทางไว้ก่อน await (GroupingMap เขียน __lastTripStats ใหม่ได้ทุกครั้งที่เปลี่ยนการเลือก)
       // ยกเลิก = return (finally ปลด isProcessing) · วันของจุดเป็นวันเดียวกันหมดอยู่แล้ว (handleCreateTrip บังคับ)
       const gateDriverId = driverId
       const gateDate = selectedDestinations[0]?.requestDate
+      const gateSig = selectionSig // ลายเซ็นของ render เดียวกับ selectedDestinations/driverId/vehicleId ที่จะเขียน
+      const gateVersion = pageVersionRef.current
       const lastStats = (window as any).__lastTripStats || { distance: 0, duration: 0, fuelCost: 0 }
-      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: gateDate }], drivers ?? []))) return
+      // เช็กหลังทุก await ก่อนทำอะไรต่อ: true = หยุด ไม่เขียน — ออกจากหน้าแล้ว (เงียบ) / การเลือกเปลี่ยนระหว่างรอ (บอกผู้ใช้)
+      const cancelled = () => {
+        if (pageVersionRef.current !== gateVersion) return true
+        if (selectionSigRef.current === gateSig) return false
+        toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "เลือกงาน/คนขับ/รถเปลี่ยนระหว่างตรวจวันลา — เลือกใหม่แล้วกดสร้างอีกครั้ง", variant: "destructive" })
+        return true
+      }
+      // drivers ส่งตรง ๆ: ยังไม่โหลด (null) = ด่านถามแบบตรวจไม่ได้ — `?? []` จะทำให้ผ่านเงียบ
+      // confirmFn ไม่เด้งกล่องถ้าการเลือกเปลี่ยน/ออกจากหน้าไปแล้ว (ไม่ถามยืนยันของชุดเก่า)
+      const ok = await confirmLeaveBeforeAssign(
+        checkLeave,
+        [{ driverId: gateDriverId, date: gateDate }],
+        drivers,
+        (m) => pageVersionRef.current === gateVersion && selectionSigRef.current === gateSig && window.confirm(m),
+      )
+      if (cancelled() || !ok) return
 
       // ด่าน 2: re-read สถานะใบสดๆ ก่อนเขียน — กันจัดทับ/ฟื้นใบที่เพิ่งถูกยกเลิก (race / un-reject)
       const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
@@ -402,6 +432,7 @@ export default function TripGroupingPage() {
         const snap = await getDoc(doc(db, "vehicleRequests", id))
         freshStatus[id] = snap.exists() ? (snap.data().status as string) : "missing"
       }))
+      if (cancelled()) return
       const dests = selectedDestinations.filter(d => GROUPABLE.includes(freshStatus[d.vrDocId]))
       if (dests.length === 0) {
         toast({ title: "จัดไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
@@ -409,12 +440,6 @@ export default function TripGroupingPage() {
       }
       if (dests.length < selectedDestinations.length) {
         toast({ title: "ข้ามบางจุด", description: `ข้าม ${selectedDestinations.length - dests.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
-      }
-
-      // กันเปลี่ยนคนขับระหว่างรอด่านวันลา — เทียบกับค่าล่าสุดของหน้า (ไม่มี await คั่นระหว่างตรงนี้กับการเขียน)
-      if (driverIdRef.current !== gateDriverId) {
-        toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "คนขับที่เลือกเปลี่ยนไประหว่างตรวจวันลา — เลือกใหม่แล้วกดสร้างอีกครั้ง", variant: "destructive" })
-        return
       }
 
       const selectedDriver = drivers?.find(d => d.id === driverId)
@@ -426,6 +451,8 @@ export default function TripGroupingPage() {
       const datePrefix = `T-${d}${m}`;
       const qTrips = query(collection(db, "trips"), where("tripDate", "==", tripDateStr));
       const snapTrips = await getDocs(qTrips);
+      // เช็กครั้งสุดท้าย — ไม่มี await คั่นระหว่างตรงนี้กับการเขียนครั้งแรก (setDoc)
+      if (cancelled()) return
       const sequence = String(snapTrips.size + 1).padStart(3, '0');
       const safety = Math.floor(Math.random() * 10);
       const tripId = `${datePrefix}-${sequence}${safety}`;
@@ -570,17 +597,31 @@ export default function TripGroupingPage() {
       const { existingTrip, newStops } = mergeDialog
       if (!existingTrip || !newStops) return
 
+      // ผูกกับ dialog ตัวที่กดรวม + เวอร์ชันหน้า ณ ตอนกด — เช็กหลังทุก await: ปิด/เปิด dialog ใหม่ หรือออกจากหน้า = หยุดเงียบ ๆ ไม่เขียน
+      // (ปิด dialog = ผู้ใช้ตั้งใจยกเลิก จึงไม่ขึ้น toast · dialog เป็น modal เปลี่ยนการเลือกข้างหลังไม่ได้ถ้าไม่ปิดก่อน)
+      const gateDialog = mergeDialog
+      const gateVersion = pageVersionRef.current
+      const cancelled = () => pageVersionRef.current !== gateVersion || mergeDialogRef.current !== gateDialog
+
       // ด่านวันลา: ทำก่อนด่าน 2 (อ่านสถานะใบ) เสมอ — ผู้ใช้อาจรอดึงข้อมูล ≤8 วิ + กล่อง confirm ได้นาน
       // ถ้าคั่นอยู่ระหว่างด่าน 2 กับการเขียน จะเปิดช่อง race ที่ด่าน 2 ปิดไว้ (ใบที่เพิ่งถูกยกเลิกถูกฟื้นกลับ)
       // ตรวจ "คนขับจริงของทริปปลายทาง" จากเอกสารสด — คนขับแทน (actualDriverId) ชนะคนขับประจำ · ยกเลิก = return ก่อนเขียน
       const freshTripSnap = await getDoc(doc(db, "trips", existingTrip.id))
+      if (cancelled()) return
       if (!freshTripSnap.exists()) {
         toast({ title: "รวมไม่ได้", description: "ไม่พบ Trip ปลายทางแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
         return
       }
       const freshTrip = freshTripSnap.data() as any
       const gateDriverId: string = freshTrip.actualDriverId || freshTrip.driverId
-      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: freshTrip.tripDate }], drivers ?? []))) return
+      // drivers ส่งตรง ๆ (ยังไม่โหลด = ถามแบบตรวจไม่ได้) · confirmFn ไม่เด้งกล่องถ้า dialog ถูกปิด/ออกจากหน้าไปแล้ว
+      const ok = await confirmLeaveBeforeAssign(
+        checkLeave,
+        [{ driverId: gateDriverId, date: freshTrip.tripDate }],
+        drivers,
+        (m) => !cancelled() && window.confirm(m),
+      )
+      if (cancelled() || !ok) return
 
       // ด่าน 2: re-read สถานะใบสดๆ ก่อนรวม — กันยัดจุด/ฟื้นใบที่เพิ่งถูกยกเลิก (dialog ค้างเปิด/race)
       const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
@@ -590,6 +631,7 @@ export default function TripGroupingPage() {
         const snap = await getDoc(doc(db, "vehicleRequests", id))
         freshStatus[id] = snap.exists() ? (snap.data().status as string) : "missing"
       }))
+      if (cancelled()) return // ไม่มี await คั่นระหว่างตรงนี้กับการเขียนครั้งแรก (updateDoc trips)
       const validNewStops = newStops.filter(d => GROUPABLE.includes(freshStatus[d.vrDocId]))
       if (validNewStops.length === 0) {
         toast({ title: "รวมไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })

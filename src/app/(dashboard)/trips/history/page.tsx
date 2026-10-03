@@ -250,7 +250,7 @@ export default function TripHistoryPage() {
         const ok = await confirmLeaveBeforeAssign(
           checkLeave,
           [{ driverId: gateDriverId, date: gateDate }],
-          drivers ?? [],
+          drivers, // ยังไม่โหลด (null) = ถามแบบตรวจไม่ได้ — ห้าม `?? []` (ผ่านเงียบ)
           (m) => editVersionRef.current === version && window.confirm(m),
         )
         if (editVersionRef.current !== version) {

@@ -118,14 +118,18 @@ const CONFIRM_TAIL = 'ยืนยันทำต่อ?'
  *
  * สถานะคิดจาก `CheckResult` ที่เพิ่งได้ในครั้งนี้เท่านั้น · unmapped / not_found / driver_missing / free ไม่ถาม
  * (มีป้ายอยู่แล้ว กันเตือนจนชิน)
+ *
+ * `drivers` เป็น null/undefined = รายชื่อคนขับยังไม่โหลด → ถามแบบตรวจไม่ได้ทันที (ไม่เรียก check)
+ * ส่งค่าจาก useCollection มาตรง ๆ ห้าม `?? []` — รายชื่อว่างทำให้ทุกคนเป็น driver_missing แล้วด่านผ่านเงียบ ๆ
  */
 export async function confirmLeaveBeforeAssign(
   check: CheckFn,
   targets: { driverId: string; date: string }[],
-  drivers: Driver[],
+  drivers: Driver[] | null | undefined,
   confirmFn: (msg: string) => boolean = (m) => window.confirm(m),
 ): Promise<boolean> {
   if (targets.length === 0) return true
+  if (!drivers) return confirmFn(UNKNOWN_PROMPT)
 
   const byId = new Map(drivers.map((d) => [d.id, d]))
   const codes = normalizeCodes(targets.map((t) => byId.get(t.driverId)?.employeeCode))
