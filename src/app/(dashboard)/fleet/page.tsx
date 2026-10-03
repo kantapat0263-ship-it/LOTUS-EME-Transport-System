@@ -182,6 +182,16 @@ export default function FleetPage() {
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
   const [isSavingDriver, setIsSavingDriver] = React.useState(false)
   const [editingDriver, setEditingDriver] = React.useState<Driver | null>(null)
+  // ไม่บล็อกการปิด dialog ระหว่างบันทึก → นับ "รอบ" ของ dialog (เปิด/ปิดครั้งใหม่ = รอบใหม่) ให้งานบันทึกที่เสร็จช้า
+  // รู้ว่า dialog ที่ตัวเองเปิดไว้ยังอยู่หรือไม่ — ไม่ปิด/ล้าง dialog ใหม่ที่ผู้ใช้เปิดทับระหว่างรอ
+  const driverDialogSession = React.useRef(0)
+  // กันกดบันทึกซ้ำแบบซิงก์ (state รอ render ไม่ทัน) — คู่กับ isSavingDriver ที่ใช้โชว์ spinner
+  const savingDriverRef = React.useRef(false)
+  const beginDriverDialogSession = () => {
+    driverDialogSession.current += 1
+    savingDriverRef.current = false
+    setIsSavingDriver(false) // dialog รอบใหม่ใช้งานได้ทันที แม้งานบันทึกของรอบเก่ายังค้าง
+  }
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(driversRef)
   const unmappedDriverCount = (drivers ?? []).filter((d) => !d.employeeCode?.trim()).length
@@ -309,7 +319,9 @@ export default function FleetPage() {
   // รอ Firestore ยืนยันก่อนค่อยแจ้งสำเร็จ — รหัสพนักงานผิด/หายแล้วป้ายวันลาทั้งแอปผิดตาม จึงห้ามแจ้งสำเร็จทั้งที่ยังไม่ถูกบันทึก
   // (employeeCode "" = ตั้งใจล้างรหัส)
   async function onDriverSubmit(values: z.infer<typeof driverSchema>) {
-    if (isViewer || isSavingDriver) return
+    if (isViewer || savingDriverRef.current) return
+    savingDriverRef.current = true
+    const session = driverDialogSession.current
     setIsSavingDriver(true)
     
     const data = {
@@ -331,14 +343,20 @@ export default function FleetPage() {
         }, { merge: true })
         toast({ title: "สำเร็จ", description: "เพิ่มคนขับใหม่เรียบร้อยแล้ว" })
       }
-      setIsDriverDialogOpen(false)
-      setEditingDriver(null)
-      driverForm.reset()
+      // ปิด/ล้างเฉพาะเมื่อยังเป็น dialog รอบเดิมที่กดบันทึก (toast ด้านบนแจ้งผลจริงของข้อมูล จึงออกเสมอ)
+      if (session === driverDialogSession.current) {
+        setIsDriverDialogOpen(false)
+        setEditingDriver(null)
+        driverForm.reset()
+      }
     } catch (error) {
       console.error(error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกข้อมูลได้", variant: "destructive" })
     } finally {
-      setIsSavingDriver(false)
+      if (session === driverDialogSession.current) {
+        savingDriverRef.current = false
+        setIsSavingDriver(false)
+      }
     }
   }
 
@@ -482,6 +500,7 @@ export default function FleetPage() {
                 <Button 
                   className="bg-primary hover:bg-primary/90 w-full sm:w-auto sm:ml-auto h-11 md:h-10" 
                   onClick={() => { 
+                    beginDriverDialogSession();
                     setEditingDriver(null); 
                     driverForm.reset({ name: "", phoneNumber: "", employeeCode: "" }); 
                     setIsDriverDialogOpen(true); 
@@ -511,6 +530,7 @@ export default function FleetPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onSelect={() => { 
                               setTimeout(() => {
+                                beginDriverDialogSession();
                                 setEditingDriver(d); 
                                 driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber, employeeCode: d.employeeCode ?? "" }); 
                                 setIsDriverDialogOpen(true); 
@@ -706,6 +726,7 @@ export default function FleetPage() {
       <Dialog 
         open={isDriverDialogOpen} 
         onOpenChange={(open) => {
+          beginDriverDialogSession();
           setIsDriverDialogOpen(open);
           if (!open) {
             setEditingDriver(null);
