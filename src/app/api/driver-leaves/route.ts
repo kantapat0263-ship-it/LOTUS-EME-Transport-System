@@ -28,7 +28,15 @@ export async function POST(req: NextRequest) {
     return json({ error: 'not_configured' }, 503)
   }
 
-  const body = await req.text()
+  // อ่าน body ใน try ของตัวเอง: stream ของคำขอพัง/ถูกตัด = 400 ผ่าน json() (มี no-store) ไม่ใช่ throw หลุดออกจาก route
+  // log แค่ชื่อ error — ไม่ใส่ข้อความ/body/header/key
+  let body: string
+  try {
+    body = await req.text()
+  } catch (e) {
+    console.error(`[driver-leaves] bad_request: could not read request body (${e instanceof Error ? e.name : typeof e})`)
+    return json({ error: 'bad_request' }, 400)
+  }
 
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/integration/driver-leaves`, {

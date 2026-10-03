@@ -631,17 +631,37 @@ export default function TripGroupingPage() {
         const snap = await getDoc(doc(db, "vehicleRequests", id))
         freshStatus[id] = snap.exists() ? (snap.data().status as string) : "missing"
       }))
-      if (cancelled()) return // ไม่มี await คั่นระหว่างตรงนี้กับการเขียนครั้งแรก (updateDoc trips)
+      if (cancelled()) return
       const validNewStops = newStops.filter(d => GROUPABLE.includes(freshStatus[d.vrDocId]))
       if (validNewStops.length === 0) {
         toast({ title: "รวมไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
         return
       }
+
+      // อ่านทริปปลายทางสดอีกครั้งหลังด่าน 2 แล้วใช้ snapshot นี้เป็นฐานของ stops/sourceVRIds (ไม่ใช่ existingTrip ใน state ตอนเปิด dialog)
+      // — กันจุดที่ session อื่นเพิ่มเข้าทริประหว่างเปิด dialog/รอด่านหายไป · ไม่มี await คั่นระหว่างการอ่านนี้กับการเขียนครั้งแรก (updateDoc trips)
+      // ทริปหาย / ถูกยกเลิก / คนขับจริงหรือวันของทริปไม่ตรงกับที่ด่านวันลาเพิ่งตรวจ = ไม่เขียนอะไรเลย ให้เลือกใหม่
+      const latestTripSnap = await getDoc(doc(db, "trips", existingTrip.id))
+      if (cancelled()) return
+      if (!latestTripSnap.exists()) {
+        toast({ title: "รวมไม่ได้", description: "ไม่พบ Trip ปลายทางแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+      const latestTrip = { ...(latestTripSnap.data() as any), id: existingTrip.id }
+      if (latestTrip.status === "Cancelled") {
+        toast({ title: "รวมไม่ได้", description: "Trip ปลายทางถูกยกเลิกไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+      if ((latestTrip.actualDriverId || latestTrip.driverId) !== gateDriverId || latestTrip.tripDate !== freshTrip.tripDate) {
+        toast({ title: "รวมไม่ได้", description: "คนขับหรือวันที่ของ Trip ปลายทางเปลี่ยนระหว่างตรวจวันลา — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+
       if (validNewStops.length < newStops.length) {
         toast({ title: "ข้ามบางจุด", description: `ข้าม ${newStops.length - validNewStops.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
       }
 
-      const currentStops = existingTrip.stops || []
+      const currentStops = latestTrip.stops || []
       const lastOrder = currentStops.length > 0 
         ? Math.max(...currentStops.map((s: any) => s.order || 0))
         : 0
@@ -666,7 +686,7 @@ export default function TripGroupingPage() {
 
       const mergedStops = [...currentStops, ...addedStops]
       const sourceVRIds = Array.from(new Set([
-        ...(existingTrip.sourceVRIds || []),
+        ...(latestTrip.sourceVRIds || []),
         ...validNewStops.map(d => d.vrId)
       ]))
 
@@ -675,7 +695,7 @@ export default function TripGroupingPage() {
         sourceVRIds,
         updatedAt: serverTimestamp()
       })
-      void recalcMergedTripDistance(existingTrip, mergedStops) // เลข กม. ต้องขยับตามจุดที่รวมเข้า
+      void recalcMergedTripDistance(latestTrip, mergedStops) // เลข กม. ต้องขยับตามจุดที่รวมเข้า
 
       const vrGroups: Record<string, number[]> = {}
       validNewStops.forEach(d => {
@@ -697,7 +717,7 @@ export default function TripGroupingPage() {
         }
       }
 
-      toast({ title: "สำเร็จ", description: `รวมจุดใหม่เข้า Trip ${existingTrip.tripId} ของ ${existingTrip.driverName} แล้ว` })
+      toast({ title: "สำเร็จ", description: `รวมจุดใหม่เข้า Trip ${latestTrip.tripId} ของ ${latestTrip.driverName} แล้ว` })
       resetAll()
     } catch (e) {
       console.error(e)

@@ -40,6 +40,7 @@ export function normalizeCodes(codes: (string | undefined)[]): string[] {
  * - แบ่งยิงทีละ 50 รหัส (ตามลำดับที่เรียงแล้ว) แล้วรวมผล · batch ใดพัง = throw ทั้งรอบ (ไม่คืนผลครึ่ง ๆ)
  * - timeout (`timeoutMs`, ปกติ 8 วิ) ครอบทั้งรอบ: ขอ token + ทุก batch · `opts.signal` ยกเลิกได้
  * - response ทุกก้อนผ่าน `validateLeaveResponse` — ไม่ใช่ JSON / ผิดสัญญา = throw
+ * - ทุกรหัสใน batch ต้องเป็น own key ของ `employees` — ขาด = throw (response ไม่ครบ = ตรวจไม่ได้ ไม่ใช่ "ไม่ลา")
  */
 export async function fetchDriverLeaves(opts: {
   codes: string[]
@@ -74,15 +75,20 @@ export async function fetchDriverLeaves(opts: {
     const merged: LeaveApiResponse = { employees: {}, leaves: [] }
     for (let i = 0; i < codes.length; i += BATCH_SIZE) {
       if (ctrl.signal.aborted) throw new Error(ABORTED_MSG)
+      const batch = codes.slice(i, i + BATCH_SIZE)
       const res = await doFetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ codes: codes.slice(i, i + BATCH_SIZE), from, to }),
+        body: JSON.stringify({ codes: batch, from, to }),
         cache: 'no-store',
         signal: ctrl.signal,
       })
       if (!res.ok) throw new Error(`driver-leaves request failed: HTTP ${res.status}`)
       const part = validateLeaveResponse(await res.json())
+      // ทุกรหัสที่ถามต้องมี key ของตัวเองใน employees (null = ไม่พบรหัส ยังนับว่ามี) — ขาดแม้รหัสเดียว = ตรวจไม่ได้ทั้งรอบ
+      // ปล่อยผ่านจะได้ unknown รายคน (ไม่มีป้าย) ขณะที่ hook เป็น ready (ไม่มีแถบเตือน) → หน้าดูเหมือนคนนั้นว่าง
+      const missing = batch.filter((c) => !Object.prototype.hasOwnProperty.call(part.employees, c))
+      if (missing.length > 0) throw new Error(`driver-leaves response missing ${missing.length} requested code(s)`)
       Object.assign(merged.employees, part.employees)
       merged.leaves.push(...part.leaves)
     }

@@ -126,6 +126,9 @@ export default function DailySummaryPage() {
   React.useEffect(() => {
     pageVersionRef.current++
   }, [trips, selectedDate, insertDialog, insertForm, reassignNewDialog, reassignNewForm, assistDialog, assistForm])
+  // วันที่ที่เลือกล่าสุด — handler ที่มี await หลังด่าน (บันทึกรูป) ใช้เช็กว่าวันยังตรงกับตอนกด
+  const selectedDateRef = React.useRef(selectedDate)
+  React.useEffect(() => { selectedDateRef.current = selectedDate }, [selectedDate])
   // ออกจากหน้าระหว่างรอ = ยกเลิกด่านที่ค้าง (ไม่เขียน/ไม่ส่ง/ไม่เด้ง confirm หรือ toast บนหน้าอื่น)
   const leaveGateMountedRef = React.useRef(false)
   React.useEffect(() => {
@@ -294,6 +297,9 @@ export default function DailySummaryPage() {
       setTrips(results)
     } catch (error) {
       if (!isLatest()) return
+      // โหลดไม่สำเร็จ = ไม่รู้ว่าวันนี้มีทริปอะไร → ล้างทริปที่ค้างจากรอบก่อน (อาจเป็นอีกวัน)
+      // ไม่งั้นทริปวันเก่าโผล่ใต้วันที่ใหม่ และปุ่มส่งออก/แผงแอดมิน (ต้องการ trips.length > 0) กลับมาใช้ได้หลัง loading=false
+      setTrips([])
       errorEmitter.emit('permission-error', new FirestorePermissionError({
         path: 'trips',
         operation: 'list'
@@ -364,11 +370,23 @@ export default function DailySummaryPage() {
 
   const handleSaveImage = exportOnce(saveImageBusyRef, async () => {
     if (trips.length === 0) return
+    // ผูกรูปกับชุดที่ผ่านด่าน: จับเวอร์ชันหน้า + วันที่ไว้ก่อนด่าน แล้วเช็กซ้ำหลังโหลด html2canvas และก่อนดาวน์โหลด
+    // (ระหว่าง await ผู้ใช้เปลี่ยนวันได้ → DOM เป็นอีกวันแต่ชื่อไฟล์/ด่านเป็นวันเดิม) · เปลี่ยน = ไม่แคป/ไม่ดาวน์โหลด
+    const gateVersion = pageVersionRef.current
+    const gateDate = selectedDate
+    const changedSinceGate = () => {
+      if (pageVersionRef.current === gateVersion && selectedDateRef.current === gateDate) return false
+      if (leaveGateMountedRef.current) {
+        toast({ title: "ยังไม่ได้ทำรายการ", description: "ข้อมูลบนหน้าเปลี่ยนระหว่างเตรียมรูปภาพ — กดใหม่อีกครั้ง", variant: "destructive" })
+      }
+      return true
+    }
     // ด่านวันลา — ก่อนตั้ง state loading / แคปรูป · ยกเลิก = ไม่ทำอะไรเลย
     if (!(await confirmLeaveBeforeExport("export:image"))) return
     setIsSavingImage(true)
     try {
       const html2canvas = (await import('html2canvas')).default
+      if (changedSinceGate()) return
       const element = document.getElementById('summary-report')
       if (!element) return
 
@@ -378,6 +396,7 @@ export default function DailySummaryPage() {
         backgroundColor: '#ffffff',
         logging: false
       })
+      if (changedSinceGate()) return // ไม่มี await คั่นจากตรงนี้ถึง link.click()
 
       const image = canvas.toDataURL('image/jpeg', 0.95)
       const link = document.createElement('a')

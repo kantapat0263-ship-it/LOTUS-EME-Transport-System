@@ -21,6 +21,12 @@ const jsonRes = (body: unknown, status = 200) =>
 
 const emptyRes: LeaveApiResponse = { employees: {}, leaves: [] }
 
+/** response ที่มี key ครบทุกรหัสในคำขอ (ทุกคนมีตัวตน ไม่มีใบลา) — สัญญา: รหัสที่ถามต้องมี key ใน employees ครบ */
+const allFoundRes = (init?: RequestInit) => {
+  const batch = (JSON.parse(String(init?.body)) as { codes: string[] }).codes
+  return jsonRes({ employees: Object.fromEntries(batch.map((c) => [c, { name: `n${c}`, active: true }])), leaves: [] })
+}
+
 const getToken = async () => 'tok-123'
 
 const leave = (o: Partial<ApiLeave> = {}): ApiLeave => ({
@@ -114,15 +120,48 @@ describe('fetchDriverLeaves', () => {
 
   it('50 รหัสพอดี → คำขอเดียว', async () => {
     const codes = Array.from({ length: 50 }, (_, i) => String(i + 1).padStart(3, '0'))
-    const fetchImpl = vi.fn<typeof fetch>(async () => jsonRes(emptyRes))
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => allFoundRes(init))
     await fetchDriverLeaves({ codes, from: '2026-10-01', to: '2026-10-31', getToken, fetchImpl })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  describe('response ต้องมี key ครบทุกรหัสที่ถาม — ขาด = ตรวจไม่ได้ทั้งรอบ (ไม่ใช่ ready ที่ดูเหมือนว่าง)', () => {
+    it('200 + employees ว่าง ทั้งที่ถามรหัส 10001 → throw', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonRes(emptyRes))
+      await expect(
+        fetchDriverLeaves({ codes: ['10001'], from: '2026-10-05', to: '2026-10-05', getToken, fetchImpl }),
+      ).rejects.toThrow(/missing/)
+    })
+
+    it('key มีอยู่แต่เป็น null (ไม่พบรหัสในระบบใบลา) → ยอมรับ คืน null ตามเดิม', async () => {
+      const body: LeaveApiResponse = { employees: { '10001': null }, leaves: [] }
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonRes(body))
+      const out = await fetchDriverLeaves({ codes: ['10001'], from: '2026-10-05', to: '2026-10-05', getToken, fetchImpl })
+      expect(out).toEqual(body)
+    })
+
+    it('51 รหัส: batch 2 ไม่มี key ของรหัสที่ถาม → throw ทั้งรอบ (ไม่คืนผล batch 1)', async () => {
+      const codes = Array.from({ length: 51 }, (_, i) => String(i + 1).padStart(3, '0'))
+      let n = 0
+      const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => (++n === 2 ? jsonRes(emptyRes) : allFoundRes(init)))
+      await expect(
+        fetchDriverLeaves({ codes, from: '2026-10-01', to: '2026-10-31', getToken, fetchImpl }),
+      ).rejects.toThrow(/missing/)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+
+    it('นับเฉพาะ own key — key ที่ได้จาก prototype (เช่นรหัส "toString") ไม่ถือว่ามี', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonRes(emptyRes))
+      await expect(
+        fetchDriverLeaves({ codes: ['toString'], from: '2026-10-05', to: '2026-10-05', getToken, fetchImpl }),
+      ).rejects.toThrow(/missing/)
+    })
   })
 
   it('batch ใดพัง → throw ทั้งรอบ (ไม่คืนผลครึ่ง ๆ)', async () => {
     const codes = Array.from({ length: 51 }, (_, i) => String(i + 1).padStart(3, '0'))
     let n = 0
-    const fetchImpl = vi.fn<typeof fetch>(async () => (++n === 2 ? jsonRes({ error: 'bad gateway' }, 502) : jsonRes(emptyRes)))
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => (++n === 2 ? jsonRes({ error: 'bad gateway' }, 502) : allFoundRes(init)))
     await expect(
       fetchDriverLeaves({ codes, from: '2026-10-01', to: '2026-10-31', getToken, fetchImpl }),
     ).rejects.toThrow()
@@ -181,9 +220,9 @@ describe('fetchDriverLeaves', () => {
     vi.useFakeTimers()
     const codes = Array.from({ length: 51 }, (_, i) => String(i + 1).padStart(3, '0'))
     const fetchImpl = vi.fn<typeof fetch>(
-      () =>
+      (_url, init) =>
         new Promise<Response>((resolve) => {
-          setTimeout(() => resolve(jsonRes(emptyRes)), 60)
+          setTimeout(() => resolve(allFoundRes(init)), 60)
         }),
     )
     const p = fetchDriverLeaves({ codes, from: '2026-10-01', to: '2026-10-31', getToken, fetchImpl, timeoutMs: 100 })
@@ -248,7 +287,7 @@ describe('fetchDriverLeaves', () => {
 
   it('เคลียร์ timer ทุกกรณี (สำเร็จ / พัง) ไม่ค้าง', async () => {
     vi.useFakeTimers()
-    const ok = vi.fn<typeof fetch>(async () => jsonRes(emptyRes))
+    const ok = vi.fn<typeof fetch>(async (_url, init) => allFoundRes(init))
     await fetchDriverLeaves({ codes: ['1'], from: '2026-10-01', to: '2026-10-31', getToken, fetchImpl: ok })
     expect(vi.getTimerCount()).toBe(0)
 

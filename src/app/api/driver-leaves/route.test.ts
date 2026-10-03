@@ -240,6 +240,32 @@ describe('POST /api/driver-leaves', () => {
     })
   })
 
+  describe('อ่าน body ของคำขอไม่สำเร็จ → 400', () => {
+    it('body stream พังกลางทาง → 400 bad_request + no-store, ไม่ยิง worker, log 1 บรรทัดไม่มี key/token', async () => {
+      const body = new ReadableStream({
+        start(c) {
+          c.error(new Error('body interrupted'))
+        },
+      })
+      const init = {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer firebase-id-token' },
+        body,
+        duplex: 'half', // Node ต้องมีเมื่อ body เป็น stream
+      }
+      const res = await POST(new NextRequest('http://localhost/api/driver-leaves', init as ConstructorParameters<typeof NextRequest>[1]))
+
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'bad_request' })
+      expect(res.headers.get('cache-control')).toBe('no-store')
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(logged()).toContain('bad_request')
+      expect(logged()).not.toContain(WORKER_KEY)
+      expect(logged()).not.toContain('firebase-id-token')
+    })
+  })
+
   describe('ทุกคำตอบมี cache-control: no-store', () => {
     const scenarios: [string, () => void, number][] = [
       ['401', () => verifyMock.mockResolvedValue(null), 401],
