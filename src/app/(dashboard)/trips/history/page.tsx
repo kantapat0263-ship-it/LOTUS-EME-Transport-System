@@ -41,6 +41,10 @@ import { useToast } from "@/hooks/use-toast"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
+import { useDriverLeaves } from "@/hooks/use-driver-leaves"
+import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
+import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
+import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -103,6 +107,29 @@ export default function TripHistoryPage() {
 
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: drivers } = useCollection<Driver>(driversRef)
+
+  // ป้ายวันลาใน dropdown คนขับของหน้าต่างแก้ไขทริป — ตรวจตาม tripDate ของทริปที่กำลังแก้
+  // ยังไม่เปิดแก้/ปิด dialog แล้ว = ส่งวันที่ว่าง → hook ไม่ยิง (editingTrip ไม่ถูกล้างตอนปิด จึงต้องดู isEditOpen ด้วย ไม่งั้น poll ค้างทุก 60 วิ)
+  // ส่ง `drivers ?? undefined`: useCollection คืน null ก่อน snapshot แรก — ห้ามส่ง [] (จะกลายเป็น "โหลดแล้วว่าง" → driver_missing ทุกคน)
+  const leaveDate = isEditOpen ? (editingTrip?.tripDate ?? "") : ""
+  const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
+    useDriverLeaves(drivers ?? undefined, leaveDate, leaveDate)
+
+  // ด่านวันลาตอนบันทึกการแก้ไข (handleSaveEdit)
+  // · saveEditBusyRef: กันกดบันทึกซ้ำ — ตั้งทันทีตอนกด (ก่อนรอตรวจ ≤8 วิ) ปลดเมื่อ handler จบ
+  // · editVersionRef: เลขเวอร์ชันของ dialog แก้ไข (เปิด/ปิด/เปลี่ยนทริป/แก้ฟอร์ม/ออกจากหน้า = เลขเปลี่ยน) → เปลี่ยนระหว่างรอ = ยกเลิก ไม่เขียน
+  // · editOpenRef: dialog ยังเปิดอยู่ไหม (ใช้ตัดสินว่าจะขึ้น toast ไหม — ออกจากหน้า/ปิดเองไม่ขึ้น)
+  const saveEditBusyRef = React.useRef(false)
+  const editVersionRef = React.useRef(0)
+  const editOpenRef = React.useRef(false)
+  React.useEffect(() => {
+    editVersionRef.current++
+    editOpenRef.current = isEditOpen
+    return () => {
+      editVersionRef.current++
+      editOpenRef.current = false
+    }
+  }, [isEditOpen, editingTrip, editFormData])
 
   const vehiclesRef = useMemoFirebase(() => collection(db, "vehicles"), [db])
   const { data: vehicles } = useCollection<Vehicle>(vehiclesRef)
@@ -209,7 +236,32 @@ export default function TripHistoryPage() {
       return
     }
 
+    if (saveEditBusyRef.current) return
+    saveEditBusyRef.current = true
+
     try {
+      // ด่านวันลา: เฉพาะตอนเปลี่ยนคนขับ (แก้แค่หมายเหตุ/รถ/จุดส่งไม่ถาม) — ก่อนเขียน Firestore ทุกอย่าง
+      // editingTrip/editFormData ในฟังก์ชันนี้คือค่าของ render ตอนกดบันทึก (ไม่เปลี่ยนตามระหว่าง await) — โค้ดเขียนด้านล่างใช้ชุดเดียวกับที่ถามยืนยัน
+      // ระหว่างรอ (ดึงสด ≤8 วิ + กล่อง confirm) ถ้า dialog ปิด/เปลี่ยนทริป/แก้ฟอร์ม = ยกเลิก ไม่เขียนอะไร (ไม่เด้ง confirm ของค่าเก่า)
+      if (editFormData.driverId !== editingTrip.driverId) {
+        const gateDriverId = editFormData.driverId
+        const gateDate = editingTrip.tripDate
+        const version = editVersionRef.current
+        const ok = await confirmLeaveBeforeAssign(
+          checkLeave,
+          [{ driverId: gateDriverId, date: gateDate }],
+          drivers ?? [],
+          (m) => editVersionRef.current === version && window.confirm(m),
+        )
+        if (editVersionRef.current !== version) {
+          if (editOpenRef.current) {
+            toast({ title: "ยังไม่ได้บันทึก", description: "ข้อมูลในหน้าต่างแก้ไขเปลี่ยนระหว่างตรวจวันลา — ตรวจแล้วกดบันทึกอีกครั้ง", variant: "destructive" })
+          }
+          return
+        }
+        if (!ok) return
+      }
+
       const tripRef = doc(db, "trips", editingTrip.id)
       const selectedVehicle = vehicles?.find(v => v.id === editFormData.vehicleId)
       const selectedDriver = drivers?.find(d => d.id === editFormData.driverId)
@@ -257,6 +309,8 @@ export default function TripHistoryPage() {
       setIsEditOpen(false)
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })
+    } finally {
+      saveEditBusyRef.current = false
     }
   }
 
@@ -660,11 +714,21 @@ export default function TripHistoryPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {drivers?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                    {drivers?.map(d => (
+                      <SelectItem key={d.id} value={d.id}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span>{d.name}</span>
+                          <LeaveBadge status={leaveForDriver(d.id, editingTrip?.tripDate ?? "")} />
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            {/* แถบสถานะตรวจวันลา — ใต้ช่องเลือกคนขับ (ready = ไม่แสดงอะไร) */}
+            <LeaveCheckBanner status={leaveStatus} lastOkAt={leaveLastOkAt} />
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
