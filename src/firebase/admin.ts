@@ -45,7 +45,7 @@ export function getAdminDb(): Firestore {
 }
 
 /**
- * ตรวจว่า request มาจาก staff (admin/dispatcher) ที่ login จริง
+ * ตรวจว่า request มาจาก staff (admin/dispatcher) ที่ login จริงและบัญชียัง active
  * รับ header `Authorization: Bearer <Firebase ID token>` → verify → เช็ค role ใน users/{uid}
  * คืน uid ถ้าเป็น staff, คืน null ถ้าไม่ผ่าน (ให้ route ตอบ 401/403 เอง)
  *
@@ -69,8 +69,10 @@ export async function verifyStaffToken(authHeader: string | null): Promise<strin
     const uid: string | undefined = data?.users?.[0]?.localId
     if (!uid) return null
     const snap = await getAdminDb().collection('users').doc(uid).get()
-    const role = snap.exists ? (snap.data()?.role as string | undefined) : undefined
-    return role === 'admin' || role === 'dispatcher' ? uid : null
+    const profile = snap.exists ? snap.data() : undefined
+    const role = profile?.role as string | undefined
+    // ต้องตรงกับ isStaff() ใน firestore.rules: role staff + บัญชียังเปิดใช้งาน (ถูกระงับ = ไม่ผ่าน)
+    return (role === 'admin' || role === 'dispatcher') && profile?.active === true ? uid : null
   } catch {
     return null
   }

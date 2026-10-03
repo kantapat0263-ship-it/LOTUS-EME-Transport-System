@@ -80,15 +80,25 @@ export default function LoginPage() {
         }
         
         if (!userDoc.exists()) {
+          // ไม่มีโปรไฟล์ (เช่น admin ลบออก / สร้างบัญชีนอกหน้าสมัคร) → สร้างเป็นบัญชีรออนุมัติเหมือนตอนสมัคร
+          // (firestore.rules ไม่ให้สร้างโปรไฟล์ตัวเองแบบ active: true แล้ว)
           await setDoc(userRef, {
             id: loggedUser.uid,
             email: loggedUser.email,
             name: loggedUser.displayName || "User",
             role: "viewer",
-            active: true,
+            active: false,
+            pending: true,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           })
+          await auth.signOut()
+          toast({
+            title: "บัญชีรอการอนุมัติ",
+            description: "กรุณารอ Admin อนุมัติก่อนเข้าใช้งาน"
+          })
+          setIsLoading(false)
+          return
         }
       }
 

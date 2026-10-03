@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:rules": "firebase emulators:exec --config tests/rules/firebase.json --only firestore --project demo-lotus-eme \"vitest run --config vitest.rules.config.ts\"",
     "emulators": "firebase emulators:start --only firestore,auth --project demo-lotus-eme",
     "seed:emulator": "tsx scripts/seed-emulator.ts"
   },
@@ -63,6 +64,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "@types/google.maps": "^3.65.0",
     "@types/node": "^20",
     "@types/react": "^19.2.1",

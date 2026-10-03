@@ -1,100 +1,181 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check if user is authenticated
-    function isAuthenticated() {
+    // หลักการ (2026-10-03):
+    // - อ่าน: เท่าเดิม (login แล้วอ่านได้; trips/drivers อ่านได้แบบ public) ยกเว้น users = ตัวเองหรือ staff
+    //   ยังไม่รัดอ่านด้วย active เพราะ listener ที่โดนปฏิเสธจะทำ FirebaseErrorListener throw ทั้งแอป
+    //   และ layout render หน้าลูกให้บัญชีรออนุมัติชั่วครู่ก่อนเด้งกลับ login
+    // - เขียน: ต้องเป็นบัญชีที่ admin อนุมัติแล้ว (active == true) และ role ถึง
+    //   staff = admin/dispatcher; viewer ทำได้เฉพาะงานของตัวเอง (ขอรถ/ยกเลิกใบตัวเอง/ขออนุมัติเร่งด่วน/เพิ่มสถานที่)
+    // - role/active/pending ใน users แก้ได้เฉพาะ admin (เดิม user แก้ role ตัวเองเป็น admin ได้)
+    // - collection ที่ไม่ระบุ = ปฏิเสธ (เดิม fallback เปิดอ่าน/เขียนทุกอย่างให้ทุกคนที่ login)
+
+    function signedIn() {
       return request.auth != null;
     }
 
-    // Helper to check if user has a specific role
-    function hasRole(role) {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    // users/{uid} ของคนที่เรียก — {} ถ้ายังไม่มี doc
+    function me() {
+      let p = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return p == null ? {} : p.data;
     }
 
-    // Helper to check if user is staff (Admin or Dispatcher)
+    // บัญชีที่ admin อนุมัติแล้ว — ด่านเดียวกับที่ (dashboard)/layout.tsx เด้งคน !active กลับหน้า login
+    function isActiveUser() {
+      return signedIn() && me().get('active', false) == true;
+    }
+
     function isStaff() {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'dispatcher'];
+      return isActiveUser() && me().get('role', '') in ['admin', 'dispatcher'];
     }
 
-    // Vehicle Requests Rules
-    match /vehicleRequests/{requestId} {
-      allow create: if isAuthenticated();
-      allow read, update, delete: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid || 
-        isStaff()
-      );
+    function isAdmin() {
+      return isActiveUser() && me().get('role', '') == 'admin';
     }
-    
-    // Users collection
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // ADMIN_EMAIL ที่ hardcode ใน src/app/login/page.tsx — แอปตั้ง users doc ของอีเมลนี้เป็น admin เองตอนสมัคร/ล็อกอิน
+    function isBootstrapAdmin(userId) {
+      return isSelf(userId) && request.auth.token.email == 'ownchang@hotmail.com';
+    }
+
+    function changesOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && (request.auth.uid == userId || hasRole('admin'));
+      // ตัวเองอ่านได้เสมอ (หน้า login ต้องอ่านเพื่อเช็ก active) / list ทั้งหมดใช้แค่หน้า admin
+      allow read: if isSelf(userId) || isStaff();
+      // สมัครเอง = viewer ที่ยังไม่ active เท่านั้น (รอ admin เปิดสวิตช์ที่หน้าจัดการผู้ใช้)
+      allow create: if isAdmin() || isBootstrapAdmin(userId) || (
+        isSelf(userId)
+        && request.resource.data.role == 'viewer'
+        && request.resource.data.active == false
+      );
+      // แก้ของตัวเองได้แค่ชื่อ/เบอร์ (หน้า profile)
+      allow update: if isAdmin() || isBootstrapAdmin(userId) || (
+        isSelf(userId) && changesOnly(['name', 'phone', 'updatedAt'])
+      );
+      allow delete: if isAdmin();
     }
-    
-    // Publicly readable collections for Driver Job Sheets
+
+    match /vehicleRequests/{requestId} {
+      // ฟอร์มขอรถฝั่ง viewer นับใบทั้งวัน (where requestDate ==) เพื่อออกเลข VR + t.get() เช็กเลขซ้ำ
+      // → รัดอ่านเป็นเจ้าของ/staff ไม่ได้จนกว่าจะย้ายการออกเลขไปฝั่ง server
+      allow read: if signedIn();
+      allow create: if isStaff() || (
+        isActiveUser()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+      );
+      // เจ้าของทำได้อย่างเดียวคือยกเลิกใบตัวเอง (requests/page.tsx handleCancelRequest)
+      allow update: if isStaff() || (
+        isActiveUser()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'cancelled'
+        && changesOnly(['status', 'cancelledAt', 'updatedAt'])
+      );
+      allow delete: if isStaff();
+    }
+
+    match /urgentRequests/{urgentId} {
+      allow read: if signedIn();
+      allow create: if isStaff() || (
+        isActiveUser()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+      );
+      // อนุมัติ/ปฏิเสธ = คนจัดรถ
+      allow update, delete: if isStaff();
+    }
+
+    // ใบงานคนขับ /driver/[tripId] เปิดได้โดยไม่ login → trips/drivers อ่านแบบ public
     match /trips/{tripId} {
       allow read: if true;
-      allow write: if isAuthenticated();
-    }
-    
-    match /trips/{tripId}/stops/{stopId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
+      allow write: if isStaff();
+
+      match /stops/{stopId} {
+        allow read: if true;
+        allow write: if isStaff();
+      }
+      match /editLogs/{logId} {
+        allow read: if signedIn();
+        allow write: if isStaff();
+      }
     }
 
     match /drivers/{driverId} {
       allow read: if true;
-      allow write: if isAuthenticated();
-    }
-    
-    // Core collections - restricted to authenticated users
-    match /sites/{siteId} { allow read, write: if isAuthenticated(); }
-    match /vehicles/{vehicleId} { allow read, write: if isAuthenticated(); }
-    match /companySettings/{id} { allow read, write: if isAuthenticated(); }
-
-    // GPS tracking — อ่านได้เมื่อ login, เขียนเฉพาะฝั่ง server (firebase-admin bypass rules)
-    match /vehiclePositions/{deviceId} {
-      allow read: if isAuthenticated();
-      allow write: if false;
-    }
-    match /vehiclePositionTrails/{id} {
-      allow read: if isAuthenticated();
-      allow write: if false;
-    }
-    match /trackingDaily/{id} {
-      allow read: if isAuthenticated();
-      allow write: if false;
-    }
-    match /trackingMeta/{id} {
-      allow read: if isAuthenticated();
-      allow write: if false;
+      allow write: if isStaff();
     }
 
-    // ข้อมูลประจำรถ + พ.ร.บ./ภาษี — อ่านเมื่อ login, แก้เฉพาะ staff
-    // (หมายเหตุ: fallback ด้านล่างยังเปิด write ให้ทุกคนที่ login — กฎนี้จะมีผลเต็มเมื่อรัด fallback)
+    match /sites/{siteId} {
+      allow read: if signedIn();
+      // viewer เพิ่มสถานที่ใหม่ได้ผ่านฟอร์มขอรถ (RequestForm ติด isUserAdded: true) แต่แก้/ลบไม่ได้
+      allow create: if isStaff() || (isActiveUser() && request.resource.data.isUserAdded == true);
+      allow update, delete: if isStaff();
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+    match /vehicleTypes/{typeId} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+    match /companySettings/{id} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    // ข้อมูลประจำรถ + พ.ร.บ./ภาษี — แก้เฉพาะ staff
     match /vehicleDetails/{vehicleId} {
-      allow read: if isAuthenticated();
+      allow read: if signedIn();
       allow write: if isStaff();
     }
     match /vehicleCompliance/{vehicleId} {
-      allow read: if isAuthenticated();
+      allow read: if signedIn();
       allow write: if isStaff();
     }
-    // ประวัติ + หลักฐาน: เพิ่มได้อย่างเดียว ห้ามแก้/ลบย้อนหลัง
+    // ตั้งใจให้เป็น "เพิ่มได้อย่างเดียว" แต่ยังไม่ได้ยืนยันว่า VehicleDetailsDialog ไม่แก้/ลบ → เปิด write ให้ staff ไว้ก่อน
     match /vehicleComplianceHistory/{id} {
-      allow read: if isAuthenticated();
-      allow create: if isStaff();
+      allow read: if signedIn();
+      allow write: if isStaff();
     }
     match /vehicleComplianceEvidence/{id} {
-      allow read: if isAuthenticated();
-      allow create: if isStaff();
+      allow read: if signedIn();
+      allow write: if isStaff();
     }
 
-    // Global fallback
+    // เขียนเฉพาะฝั่ง server (firebase-admin bypass rules): GPS tracking + ประวัติราคาน้ำมันจาก cron
+    match /vehiclePositions/{deviceId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /vehiclePositionTrails/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /trackingDaily/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /trackingMeta/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /dieselPriceHistory/{dateId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // collection อื่นที่ไม่ได้ระบุ — ปฏิเสธ
     match /{document=**} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if false;
     }
   }
 }
