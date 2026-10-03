@@ -45,6 +45,16 @@ export function getAdminDb(): Firestore {
 }
 
 /**
+ * URL ของ identitytoolkit `accounts:lookup` — ตั้ง `emulatorHost` (เช่น "127.0.0.1:9099" จาก
+ * env FIREBASE_AUTH_EMULATOR_HOST) แล้วจะชี้ไป Firebase Auth emulator แทน production
+ * ใช้ทดสอบในเครื่องโดยไม่แตะ Auth จริง · ไม่ตั้ง = URL production เหมือนเดิม (**ห้ามตั้งบน Vercel**)
+ */
+export function identityToolkitLookupUrl(apiKey: string, emulatorHost?: string): string {
+  const path = `identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`
+  return emulatorHost ? `http://${emulatorHost}/${path}` : `https://${path}`
+}
+
+/**
  * ตรวจว่า request มาจาก staff (admin/dispatcher) ที่ login จริงและบัญชียัง active
  * รับ header `Authorization: Bearer <Firebase ID token>` → verify → เช็ค role ใน users/{uid}
  * คืน uid ถ้าเป็น staff, คืน null ถ้าไม่ผ่าน (ให้ route ตอบ 401/403 เอง)
@@ -57,7 +67,7 @@ export async function verifyStaffToken(authHeader: string | null): Promise<strin
   const idToken = authHeader.slice(7)
   try {
     const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
+      identityToolkitLookupUrl(firebaseConfig.apiKey, process.env.FIREBASE_AUTH_EMULATOR_HOST),
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
