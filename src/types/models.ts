@@ -97,6 +97,8 @@ export interface Driver {
   id: string;
   name: string;
   phoneNumber: string;
+  /** รหัสพนักงานในระบบใบลา (ใช้ตรวจวันลา) */
+  employeeCode?: string;
   createdAt?: any;
   updatedAt?: any;
 }
