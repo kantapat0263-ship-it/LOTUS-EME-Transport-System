@@ -13,7 +13,6 @@ import {
   leaveStatusOn,
   validateLeaveResponse,
   type Coverage,
-  type DriverLeaveStatus,
   type LeaveApiResponse,
 } from './driverLeave'
 
@@ -24,6 +23,7 @@ export type CheckFn = (codes: string[], from: string, to: string) => Promise<Che
 const ENDPOINT = '/api/driver-leaves'
 const BATCH_SIZE = 50
 const DEFAULT_TIMEOUT_MS = 8000
+const ABORTED_MSG = 'driver-leaves request aborted or timed out'
 
 /** trim, ตัดว่าง, ตัดซ้ำ, เรียง — ใช้เป็นทั้ง key ของแคชและลำดับ batch */
 export function normalizeCodes(codes: (string | undefined)[]): string[] {
@@ -56,24 +56,24 @@ export async function fetchDriverLeaves(opts: {
   const { from, to, getToken, signal: outer } = opts
   const doFetch = opts.fetchImpl ?? fetch
 
+  // ผู้เรียกยกเลิกไว้แล้ว → throw เลย (ก่อนตั้ง timer / ขอ token / แข่ง race) — abort ซ้ำไม่ยิง event ถ้าปล่อยเข้า race จะค้าง
+  if (outer?.aborted) throw new Error(ABORTED_MSG)
+
   const ctrl = new AbortController()
   const abortNow = () => ctrl.abort()
-  if (outer?.aborted) ctrl.abort()
-  else outer?.addEventListener('abort', abortNow, { once: true })
+  outer?.addEventListener('abort', abortNow, { once: true })
   const timer = setTimeout(abortNow, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
   // getToken / fetchImpl อาจไม่สนใจ signal → แข่งกับสัญญาณ abort เพื่อให้ throw ตามเวลาแน่ ๆ
   const aborted = new Promise<never>((_, reject) => {
-    ctrl.signal.addEventListener('abort', () => reject(new Error('driver-leaves request aborted or timed out')), {
-      once: true,
-    })
+    ctrl.signal.addEventListener('abort', () => reject(new Error(ABORTED_MSG)), { once: true })
   })
 
   const run = async (): Promise<LeaveApiResponse> => {
     const token = await getToken()
     const merged: LeaveApiResponse = { employees: {}, leaves: [] }
     for (let i = 0; i < codes.length; i += BATCH_SIZE) {
-      if (ctrl.signal.aborted) throw new Error('driver-leaves request aborted or timed out')
+      if (ctrl.signal.aborted) throw new Error(ABORTED_MSG)
       const res = await doFetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -113,7 +113,7 @@ const UNKNOWN_PROMPT = '⚠️ ตรวจวันลาไม่ได้ต�
 const CONFIRM_TAIL = 'ยืนยันทำต่อ?'
 
 /**
- * ด่านกลาง: ก่อนมอบงานให้คนขับ/ส่งใบสรุปออก — ตรวจสดแล้วถามเฉพาะเมื่อมีคนลา/พ้นสภาพ หรือตรวจไม่ได้
+ * ด่านกลาง: ก่อนมอบงานให้คนขับ/ส่งใบสรุปออก — ตรวจสดแล้วถามเฉพาะเมื่อมีคนลา/พ้นสภาพ หรือตรวจไม่ได้ (ทั้งรอบ หรือเฉพาะบางคน = unknown)
  * คืน true = ทำต่อได้ · false = ผู้ใช้ยกเลิก
  *
  * สถานะคิดจาก `CheckResult` ที่เพิ่งได้ในครั้งนี้เท่านั้น · unmapped / not_found / driver_missing / free ไม่ถาม
@@ -144,11 +144,16 @@ export async function confirmLeaveBeforeAssign(
     seen.add(key)
 
     const driver = byId.get(driverId)
-    const status: DriverLeaveStatus = driver
-      ? leaveStatusOn(driver.employeeCode, date, result.res, result.coverage)
-      : { kind: 'driver_missing' }
-    const lines = leaveConfirmLines(driver?.name ?? '', date, status)
-    if (lines.length > 0) blocks.push(lines.join('\n'))
+    if (!driver) continue // driver_missing — มีป้ายอยู่แล้ว ไม่ถาม
+    const status = leaveStatusOn(driver.employeeCode, date, result.res, result.coverage)
+    // unknown (ผูกรหัสแล้วแต่ response ไม่มีรหัสนี้) = ไม่ได้ตรวจ — ห้ามถือเป็น "ไม่ลา" จึงต้องถาม
+    const lines =
+      status.kind === 'unknown'
+        ? [`⚠️ ตรวจวันลาของ ${driver.name} ไม่ได้ตอนนี้`]
+        : leaveConfirmLines(driver.name, date, status)
+    const block = lines.join('\n')
+    // บล็อก unknown ไม่มีวันที่ — คนเดิมหลายวันได้ข้อความเดียวกัน ตัดซ้ำ
+    if (lines.length > 0 && !blocks.includes(block)) blocks.push(block)
   }
 
   if (blocks.length === 0) return true

@@ -223,6 +223,29 @@ describe('fetchDriverLeaves', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('opts.signal ที่ abort ไว้แล้ว + getToken ค้าง → throw ทันที ไม่เรียก getToken ไม่ทิ้ง timer', async () => {
+    vi.useFakeTimers()
+    const ac = new AbortController()
+    ac.abort()
+    const tokenFn = vi.fn((): Promise<string> => new Promise<string>(() => {}))
+    const fetchImpl = vi.fn<typeof fetch>()
+    // ไม่เดินเวลาเลย — ต้อง reject เองจาก signal ที่ abort ไว้ ไม่ต้องรอ timeout
+    await expect(
+      fetchDriverLeaves({
+        codes: ['1'],
+        from: '2026-10-01',
+        to: '2026-10-31',
+        getToken: tokenFn,
+        fetchImpl,
+        signal: ac.signal,
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrow()
+    expect(tokenFn).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('เคลียร์ timer ทุกกรณี (สำเร็จ / พัง) ไม่ค้าง', async () => {
     vi.useFakeTimers()
     const ok = vi.fn<typeof fetch>(async () => jsonRes(emptyRes))
@@ -308,6 +331,58 @@ describe('confirmLeaveBeforeAssign', () => {
     const r = await confirmLeaveBeforeAssign(check, [{ driverId: 'd1', date: '2026-10-05' }, { driverId: 'd2', date: '2026-10-05' }], drivers, a.fn)
     expect(r).toBe(true)
     expect(a.asked).toEqual([])
+  })
+
+  it('ok:true แต่คนขับที่ผูกรหัสไม่มีใน employees (unknown) → ถามด้วยบรรทัดตรวจไม่ได้ของคนนั้น', async () => {
+    // d2 ผูกรหัส '10002' แต่ response ไม่มี key นี้ = ไม่ได้ตรวจ ห้ามถือเป็น "ไม่ลา"
+    const { '10002': _omit, ...withoutD2 } = EMPLOYEES
+    const check = checkWith([], withoutD2)
+    const expected = ['⚠️ ตรวจวันลาของ สมหญิง ไม่ได้ตอนนี้', '', 'ยืนยันทำต่อ?'].join('\n')
+
+    const no = asker(false)
+    expect(await confirmLeaveBeforeAssign(check, [{ driverId: 'd2', date: '2026-10-05' }], drivers, no.fn)).toBe(false)
+    expect(no.asked).toEqual([expected])
+
+    const yes = asker(true)
+    expect(await confirmLeaveBeforeAssign(check, [{ driverId: 'd2', date: '2026-10-05' }], drivers, yes.fn)).toBe(true)
+    expect(yes.asked).toEqual([expected])
+  })
+
+  it('คนลา + คน unknown → ข้อความเดียวมีทั้งสองบล็อก เรียงตามลำดับ target', async () => {
+    const { '10002': _omit, ...withoutD2 } = EMPLOYEES
+    const check = checkWith([leave({ code: '10001' })], withoutD2)
+    const leaveBlock = ['⚠️ สมศักดิ์ ลาวันที่ 5 ต.ค.', '• ลากิจ · อนุมัติแล้ว'].join('\n')
+    const unknownBlock = '⚠️ ตรวจวันลาของ สมหญิง ไม่ได้ตอนนี้'
+
+    const a = asker(true)
+    await confirmLeaveBeforeAssign(
+      check,
+      [{ driverId: 'd1', date: '2026-10-05' }, { driverId: 'd2', date: '2026-10-05' }],
+      drivers,
+      a.fn,
+    )
+    expect(a.asked).toEqual([`${leaveBlock}\n\n${unknownBlock}\n\nยืนยันทำต่อ?`])
+
+    const b = asker(true)
+    await confirmLeaveBeforeAssign(
+      check,
+      [{ driverId: 'd2', date: '2026-10-05' }, { driverId: 'd1', date: '2026-10-05' }],
+      drivers,
+      b.fn,
+    )
+    expect(b.asked).toEqual([`${unknownBlock}\n\n${leaveBlock}\n\nยืนยันทำต่อ?`])
+  })
+
+  it('คน unknown คนเดียวกันหลายวัน → บรรทัดตรวจไม่ได้โผล่ครั้งเดียว', async () => {
+    const { '10002': _omit, ...withoutD2 } = EMPLOYEES
+    const a = asker(true)
+    await confirmLeaveBeforeAssign(
+      checkWith([], withoutD2),
+      [{ driverId: 'd2', date: '2026-10-05' }, { driverId: 'd2', date: '2026-10-06' }],
+      drivers,
+      a.fn,
+    )
+    expect(a.asked).toEqual(['⚠️ ตรวจวันลาของ สมหญิง ไม่ได้ตอนนี้\n\nยืนยันทำต่อ?'])
   })
 
   it('ไม่มี target เลย → true ไม่ถาม ไม่เรียก check', async () => {
