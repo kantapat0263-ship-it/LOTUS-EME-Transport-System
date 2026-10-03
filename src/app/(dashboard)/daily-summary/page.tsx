@@ -45,6 +45,7 @@ import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/mode
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
+import { createLatestRequestGuard } from "@/lib/latestRequest"
 import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
@@ -182,16 +183,22 @@ export default function DailySummaryPage() {
     }
   }, [db])
 
+  // เปลี่ยนวันเร็ว ๆ แล้ว query วันเก่าตอบกลับทีหลัง → ห้ามเขียนทับทริปของวันที่เลือกล่าสุด
+  // (ไม่งั้นปุ่มส่ง LINE/คัดลอก/บันทึกรูปทำงานกับทริปผิดวัน)
+  const beginFetchTripsRef = React.useRef(createLatestRequestGuard())
+
   const fetchTrips = async (dateStr?: string) => {
     const targetDate = dateStr || selectedDate
     if (!targetDate) return
 
+    const isLatest = beginFetchTripsRef.current()
     setIsLoading(true)
     try {
       const q1 = query(collection(db, "trips"), where("tripDate", "==", targetDate))
       const q2 = query(collection(db, "trips"), where("date", "==", targetDate))
 
       const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)])
+      if (!isLatest()) return
 
       const seen = new Set<string>()
       const results = [...snap1.docs, ...snap2.docs]
@@ -209,13 +216,14 @@ export default function DailySummaryPage() {
 
       setTrips(results)
     } catch (error) {
+      if (!isLatest()) return
       errorEmitter.emit('permission-error', new FirestorePermissionError({
         path: 'trips',
         operation: 'list'
       }))
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถโหลดข้อมูลได้", variant: "destructive" })
     } finally {
-      setIsLoading(false)
+      if (isLatest()) setIsLoading(false)
     }
   }
 
