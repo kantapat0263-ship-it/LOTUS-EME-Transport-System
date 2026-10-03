@@ -162,7 +162,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **ไฟล์ `รายการรถ 2569.xlsx` (37 แถว):** จับคู่ได้ครบ 20 คันในระบบ · ข้อมูลน่าสงสัยในไฟล์: แถว 27↔30 และ 28↔31 เลขตัวรถ+เครื่องซ้ำกัน, แถว 36 VIN "MRO…", แถว 37 ปีรุ่น 2050
 - **ไฟล์:** `src/lib/vehicle-compliance.ts`, `src/lib/vehicle-import.ts` (+test) · `src/components/fleet/*` · badge ใน `app-sidebar.tsx`
 - **ทดสอบในเครื่องแบบแยกจาก prod:** Firebase Emulator (`npm run emulators` + `npm run seed:emulator`, project `demo-lotus-eme`) + `.env.development.local` ที่มี `NEXT_PUBLIC_FIREBASE_EMULATOR=1` และ `FIRESTORE_EMULATOR_HOST` (ห้ามตั้งบน Vercel) · worktree ที่ junction `node_modules` ต้องรัน `next dev` แบบไม่มี `--turbopack`
-- **gotcha สิทธิ์:** `firestore.rules` มีกฎ staff-only ให้ collection ใหม่ แต่ fallback `/{document=**}` ยังเปิด write ให้ทุกคนที่ login → viewer เขียนผ่าน API ได้ (UI ซ่อนปุ่มแล้ว) จะมีผลจริงเมื่อรัด fallback + publish rules
+- **gotcha สิทธิ์:** กฎ staff-only ของ collection เหล่านี้มีผลจริงเมื่อ publish rules ชุด `cc7c069` แล้วเท่านั้น (ดู section "สิทธิ์ Firestore")
 
 ---
 
@@ -232,13 +232,13 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - [ ] (อาจมี) ปุ่ม "ปิดผลทริปนี้" เพื่อรู้ว่า reconcile ครบหรือยัง
 - [ ] **ปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป** — เคสแอดมินแก้หมุด `sites` หลังออกใบ/ส่ง LINE แล้ว งานเดิมไม่ตาม (พิกัดเป็น snapshot ดู gotcha) → ให้กดอัปเดต `stop.lat/lng` จาก `sites` ล่าสุดเฉพาะจุดที่เลือก
 - [ ] **ตั้ง ENV เฟส 2 บน Vercel ถ้ายังไม่ได้ตั้ง** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — cron ราคาดีเซล + ยาม auth API ส่ง LINE ถึงจะทำงาน
-- [ ] **publish Firestore rules ใหม่ที่ Firebase Console** (commit อยู่บน branch — ทดสอบใน Rules Playground ก่อน publish)
+- [ ] **publish Firestore rules ชุด `cc7c069` (อยู่บน main แล้ว)** — ก่อน publish: เช็กใน Console ว่า users ที่เป็น admin/dispatcher เป็นตัวจริงทุกคน + staff ทุกคนมี `active: true` (ดู section "สิทธิ์ Firestore")
 - [ ] **merge ยาม auth API ส่ง LINE** (`a5fce13` บน branch) — รอตั้ง env ก่อน ไม่งั้นปุ่มส่งบอท 401
 
 ## งานความปลอดภัย/ค่าใช้จ่าย (2026-06-22)
 - **ปัญหา LINE ส่งไม่ได้ปลายเดือน = โควตาเต็ม** — LINE นับ push เข้ากลุ่ม = `1 ข้อความ × จำนวนสมาชิกกลุ่ม` (กลุ่ม ~17 คน → ส่งวันละครั้งกิน 17/วัน) แผนฟรี 300/เดือน เลยตันราววันที่ ~20 ทุกเดือน → แก้ด้วย **ปุ่ม "คัดลอกข้อความ"** (`6c931ff`, deploy แล้ว): คนจัดรถก๊อปข้อความสรุปไปวางในกลุ่มเอง = ข้อความจากคน ไม่กินโควตา OA = ฟรีถาวร (ทางเลือกแทนจ่ายแผนเบสิค ฿1,280/ด.)
 - **ยาม auth API ส่ง LINE** (`a5fce13`, **ยังอยู่บน branch**) — เดิม `/api/line/send-summary` ไม่มี auth ใครก็ยิงสั่งบอทส่งกลุ่มได้ แก้: client แนบ Firebase ID token, server verify + เช็ก role staff (`requireStaff` ใน `admin.ts`) **ต้องตั้ง env `FIREBASE_SERVICE_ACCOUNT_BASE64` ก่อน merge** ไม่งั้นปุ่มส่งบอทตอบ 401
-- **รัด Firestore rules** (`firestore.rules` ใหม่บน branch) — ปิด fallback `allow if isAuthenticated()` → `if false` (deny by default) + เพิ่มกฎ collection ที่เคยพึ่ง fallback (`vehicleTypes`/`urgentRequests`/`dieselPriceHistory`) คงสิทธิ์เท่าเดิม **zero-impact** แต่ **กฎไม่ deploy ผ่าน git** — ต้อง publish ที่ Firebase Console (Rules Playground เทสก่อน). ⚠️ Firebase project เดียวกัน prod+preview → publish = มีผล prod ทันที, rollback ได้ใน Console
+- ~~**รัด Firestore rules** (`4e974ce` บน branch)~~ — **ถูกแทนด้วย `cc7c069` บน main แล้ว (รวมงานนี้ไว้ ไม่ต้อง cherry-pick)** — เดิม: ปิด fallback `allow if isAuthenticated()` → `if false` (deny by default) + เพิ่มกฎ collection ที่เคยพึ่ง fallback (`vehicleTypes`/`urgentRequests`/`dieselPriceHistory`) คงสิทธิ์เท่าเดิม **zero-impact** แต่ **กฎไม่ deploy ผ่าน git** — ต้อง publish ที่ Firebase Console (Rules Playground เทสก่อน). ⚠️ Firebase project เดียวกัน prod+preview → publish = มีผล prod ทันที, rollback ได้ใน Console
 
 ## สถานะ ณ handoff (2026-06-22, อัปเดตหลังรอบแก้บั๊ก)
 - main tip = `3311f54` — deploy production แล้ว, typecheck ✅ + test 48/48 ✅
@@ -246,3 +246,13 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - หมายเหตุ: main มี commit จาก session อื่นแทรก (โยกงานไปให้ฝั่งต้นทางในใบงาน/LINE, ชื่อคนจัดรถต่อจุด, ค่าน้ำมันโดยประมาณในรูป ฯลฯ `72a1574`..`233d2ce`) — งานเหล่านั้นอยู่บน main ครบ
 - **ค้างบน branch `claude/transport-system-review-QvCtP`** (ยังไม่ขึ้น main, ต้องทำเงื่อนไขก่อน): ยาม auth API (รอ env `FIREBASE_SERVICE_ACCOUNT_BASE64`) + Firestore rules (รอ publish ที่ Console)
 - ⚠️ **branch ตามหลัง main อยู่เยอะ** (main มี fix บั๊ก + งาน session อื่นที่ branch ยังไม่มี) — ตอนจะเอา auth/rules ขึ้น main ให้ **cherry-pick ทีละ commit** (`a5fce13` auth, `4e974ce` rules) ไม่ใช่ merge ทั้ง branch (จะตีกับ main) หรือ rebase branch ใหม่บน main ก่อน
+- (อัปเดต 2026-10-03) ส่วน rules ไม่ต้อง cherry-pick `4e974ce` แล้ว — `cc7c069` บน main รวมไว้แล้ว เหลือแค่ publish
+
+## สิทธิ์ Firestore (rules) — รัดแล้วบน main 2026-10-03 (`cc7c069`), **ยังไม่ publish**
+- **ที่มา (Codex audit):** rules ที่ live = ruleset `86aa1529…` publish 2026-05-15 (เก่ากว่า repo — กฎ GPS/พ.ร.บ. + `4e974ce` ไม่เคย publish) → user แก้ `users/{ตัวเอง}.role` เป็น admin ได้ + fallback เปิดอ่าน/เขียนทุก collection + หน้าสมัครเปิดให้ทุกคน = **ใครบนเน็ตก็สมัครแล้วตั้งตัวเองเป็น admin ได้** (server เชื่อ role ผ่าน `verifyStaffToken`)
+- **กติกาใหม่:** สมัครเองได้แค่ viewer `active:false` · แก้ users ตัวเองได้แค่ name/phone (role/active/pending = admin เท่านั้น) · เขียนต้อง active: staff เขียนข้อมูลหลัก, viewer แค่งานตัวเอง (ใบขอรถ pending / ยกเลิกใบตัวเอง / urgent pending / เพิ่ม site `isUserAdded`) · GPS+ราคาน้ำมัน = server เท่านั้น · fallback ปฏิเสธ · อีเมล `ADMIN_EMAIL` ใน login/page.tsx ตั้งตัวเองเป็น admin ได้ (bootstrap)
+- **ตั้งใจไม่รัดสิทธิ์อ่าน** (ยัง login แล้วอ่านได้ ยกเว้น users = ตัวเอง/staff): listener ที่โดนปฏิเสธ → `FirebaseErrorListener` throw ทั้งแอป + layout render หน้าลูกให้บัญชีรออนุมัติชั่วครู่ · `vehicleRequests` ต้องอ่านได้ทั้งวันเพราะ RequestForm นับใบเพื่อออกเลข VR (รัดได้เมื่อย้ายออกเลขไป server)
+- **โค้ดคู่กัน:** login สร้างโปรไฟล์ที่หายไปเป็น "รออนุมัติ" (เดิม active:true เอง) · `verifyStaffToken` เช็ก active
+- **เทสต์:** `npm run test:rules` (emulator `demo-lotus-eme`, 27 เคส) — ใช้ `tests/rules/firebase.json` เพราะ emulator (Java) อ่านไฟล์ rules จาก path ภาษาไทยไม่ได้; test ส่ง rules ให้ emulator เอง
+- **rollback:** Console → Firestore → Rules → เลือก ruleset 2026-05-15 (`86aa1529…`)
+- **ค้าง/ต่อยอด:** `/trips/history/[id]` โชว์เมนูเปลี่ยนสถานะทริปให้ viewer (rules ปฏิเสธแล้ว แต่ UI ยังโชว์) · `vehicleComplianceHistory/Evidence` ตั้งใจ append-only แต่ยังเปิด update/delete ให้ staff (ยังไม่ได้ยืนยันว่า VehicleDetailsDialog ไม่ลบ)
