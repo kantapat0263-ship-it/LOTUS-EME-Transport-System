@@ -24,6 +24,9 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Loader } from "@googlemaps/js-api-loader"
+import { useDriverLeaves } from "@/hooks/use-driver-leaves"
+import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
+import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -170,6 +173,16 @@ export default function TripGroupingPage() {
     vehicles?.find(v => v.id === vehicleId), 
     [vehicles, vehicleId]
   )
+
+  // ป้ายวันลาใน dropdown คนขับ — ใช้วันของจุดที่เลือก (ไม่มี = วันของกองที่เปิดอยู่)
+  // ส่ง `drivers ?? undefined`: useCollection คืน null ก่อน snapshot แรก — ห้ามส่ง [] (จะกลายเป็น "โหลดแล้วว่าง" → driver_missing ทุกคน)
+  const badgeDate = selectedDestinations[0]?.requestDate ?? targetDateStr
+  const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
+    useDriverLeaves(drivers ?? undefined, badgeDate, badgeDate)
+
+  // ค่า driverId ล่าสุดของหน้า — ด่านวันลาใน confirmCreateTrip ใช้เทียบหลัง await ว่าผู้ใช้ไม่ได้เปลี่ยนคนขับระหว่างรอ
+  const driverIdRef = React.useRef(driverId)
+  React.useEffect(() => { driverIdRef.current = driverId }, [driverId])
 
   const handleToggleSelect = React.useCallback((id: string) => {
     if (mode === 'manual') {
@@ -389,6 +402,15 @@ export default function TripGroupingPage() {
         toast({ title: "ข้ามบางจุด", description: `ข้าม ${selectedDestinations.length - dests.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
       }
 
+      // ด่านวันลา: ตรวจสดก่อนเขียนอะไรทั้งสิ้น (ป้ายใน dropdown เป็นแค่ตัวช่วย) — ยกเลิก = return (finally ปลด isProcessing)
+      const gateDriverId = driverId
+      const gateDate = dests[0].requestDate
+      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: gateDate }], drivers ?? []))) return
+      if (driverIdRef.current !== gateDriverId) {
+        toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "คนขับที่เลือกเปลี่ยนไประหว่างตรวจวันลา — เลือกใหม่แล้วกดสร้างอีกครั้ง", variant: "destructive" })
+        return
+      }
+
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const now = new Date();
       const tripDateStr = dests[0]?.requestDate || now.toISOString().split('T')[0];
@@ -560,6 +582,16 @@ export default function TripGroupingPage() {
         toast({ title: "ข้ามบางจุด", description: `ข้าม ${newStops.length - validNewStops.length} จุด เพราะใบถูกยกเลิกระหว่างจัด` })
       }
 
+      // ด่านวันลา: ตรวจ "คนขับจริงของทริปปลายทาง" จากเอกสารสด — คนขับแทน (actualDriverId) ชนะคนขับประจำ · ยกเลิก = return ก่อนเขียน
+      const freshTripSnap = await getDoc(doc(db, "trips", existingTrip.id))
+      if (!freshTripSnap.exists()) {
+        toast({ title: "รวมไม่ได้", description: "ไม่พบ Trip ปลายทางแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
+        return
+      }
+      const freshTrip = freshTripSnap.data() as any
+      const gateDriverId: string = freshTrip.actualDriverId || freshTrip.driverId
+      if (!(await confirmLeaveBeforeAssign(checkLeave, [{ driverId: gateDriverId, date: freshTrip.tripDate }], drivers ?? []))) return
+
       const currentStops = existingTrip.stops || []
       const lastOrder = currentStops.length > 0 
         ? Math.max(...currentStops.map((s: any) => s.order || 0))
@@ -664,6 +696,9 @@ export default function TripGroupingPage() {
         <h2 className="text-2xl font-bold tracking-tight text-white">จัดกลุ่มเที่ยววิ่ง</h2>
         <p className="text-sm text-muted-foreground">รวมจุดส่งจากใบขอใช้รถที่ค้างอยู่เป็นเที่ยววิ่งเดียว</p>
       </div>
+
+      {/* แถบสถานะตรวจวันลา — อยู่เหนือพื้นที่จัดคิว (ไม่วางหน้า panel เพราะ panel เป็น fixed ทับด้านล่าง จะบังแถบ) */}
+      <LeaveCheckBanner status={leaveStatus} lastOkAt={leaveLastOkAt} />
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-hidden min-h-0">
         <div className="lg:col-span-5 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar">
@@ -773,6 +808,7 @@ export default function TripGroupingPage() {
         vehicles={vehicles || []} drivers={drivers || []} tripsToday={tripsToday || []}
         vehicleId={vehicleId} driverId={driverId} setVehicleId={setVehicleId} setDriverId={setDriverId}
         onCreate={handleCreateTrip} isProcessing={isProcessing} mode={mode}
+        leaveFor={(id) => leaveForDriver(id, badgeDate)}
       />
 
       {/* Confirmation Dialog */}

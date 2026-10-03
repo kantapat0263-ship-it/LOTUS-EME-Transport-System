@@ -12,6 +12,8 @@ import {
   SelectValue 
 } from "@/components/ui/select"
 import { Truck, User, Navigation, Loader2, AlertCircle } from "lucide-react"
+import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
+import type { DriverLeaveStatus } from "@/lib/driverLeave"
 
 interface TripControlPanelProps {
   selectedCount: number;
@@ -25,6 +27,7 @@ interface TripControlPanelProps {
   onCreate: () => void;
   isProcessing: boolean;
   mode: 'auto' | 'manual';
+  leaveFor: (driverId: string) => DriverLeaveStatus;
 }
 
 export function TripControlPanel({
@@ -38,7 +41,8 @@ export function TripControlPanel({
   setDriverId,
   onCreate,
   isProcessing,
-  mode
+  mode,
+  leaveFor
 }: TripControlPanelProps) {
   return (
     <Card className="fixed bottom-4 left-4 right-4 lg:left-[17rem] lg:right-8 z-30 shadow-xl border-accent/20 bg-card/95 backdrop-blur-md">
@@ -89,7 +93,10 @@ export function TripControlPanel({
                     return (
                       <SelectItem key={d.id} value={d.id} className="text-sm">
                         <div className="flex items-center justify-between w-full">
-                          <span>{hasTrip ? '✅ ' : '○ '}{d.name}</span>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span>{hasTrip ? '✅ ' : '○ '}{d.name}</span>
+                            <LeaveBadge status={leaveFor(d.id)} />
+                          </span>
                           {hasTrip && <span className="ml-2 text-[10px] opacity-60">(มีงานแล้ว)</span>}
                         </div>
                       </SelectItem>
