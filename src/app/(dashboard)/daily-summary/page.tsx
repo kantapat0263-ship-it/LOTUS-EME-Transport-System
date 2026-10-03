@@ -117,28 +117,63 @@ export default function DailySummaryPage() {
   const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
     useDriverLeaves(driversData ?? undefined, selectedDate, selectedDate)
 
-  // ด่านวันลาของหน้านี้ — ทุกจุดผ่าน confirmLeaveBeforeAssign ที่นี่ที่เดียว (สเปก 5.5)
-  // · ระหว่างรอ (ดึงสด ≤8 วิ + กล่อง confirm) กดด่านซ้ำ/ด่านอื่นไม่ได้ = ถือว่ายกเลิก (ยังไม่ตั้ง state loading จนกว่าจะผ่านด่าน)
-  // · handler ใช้ค่าตอนกด → ถ้าทริป/วันที่/dialog เปลี่ยนระหว่างรอ = ยกเลิก ไม่เอาข้อมูลก่อนรอไปเขียนทับของใหม่
-  const leaveGateBusyRef = React.useRef(false)
+  // ด่านวันลาของหน้านี้ — ทุกจุดผ่าน confirmLeaveBeforeAssign ที่นี่ที่เดียว (สเปก 5.5) · intent = "handler:ทริป:ค่าที่เลือก"
+  // · ระหว่างรอ (ดึงสด ≤8 วิ + กล่อง confirm) กดซ้ำของเดิม = เงียบ · ของใหม่ (เลือกค่าอื่น/กดด่านอื่น) = ยกเลิกด่านที่รออยู่ + บอกให้รอ
+  //   (select ที่ผูกค่ากับทริปเด้งกลับค่าเดิมทันทีตอนรอ ผู้ใช้จึงมักเลือกใหม่ — ห้ามเอาค่าที่เลือกก่อนหน้าไปเขียน)
+  // · handler ใช้ค่าตอนกด → ถ้าทริป/วันที่/dialog เปลี่ยนระหว่างรอ หรือออกจากหน้า = ยกเลิก (ด่านที่ถูกยกเลิกไม่เด้ง confirm)
+  const leaveGateIntentRef = React.useRef<string | null>(null)
   const pageVersionRef = React.useRef(0)
   React.useEffect(() => {
     pageVersionRef.current++
   }, [trips, selectedDate, insertDialog, insertForm, reassignNewDialog, reassignNewForm, assistDialog, assistForm])
-  const passLeaveGate = async (targets: { driverId: string; date: string }[]): Promise<boolean> => {
-    if (leaveGateBusyRef.current) return false
-    leaveGateBusyRef.current = true
-    const version = pageVersionRef.current
-    try {
-      if (!(await confirmLeaveBeforeAssign(checkLeave, targets, driversData ?? []))) return false
-    } finally {
-      leaveGateBusyRef.current = false
+  // ออกจากหน้าระหว่างรอ = ยกเลิกด่านที่ค้าง (ไม่เขียน/ไม่ส่ง/ไม่เด้ง confirm หรือ toast บนหน้าอื่น)
+  const leaveGateMountedRef = React.useRef(false)
+  React.useEffect(() => {
+    leaveGateMountedRef.current = true
+    return () => {
+      leaveGateMountedRef.current = false
+      pageVersionRef.current++
     }
-    if (pageVersionRef.current !== version) {
-      toast({ title: "ยังไม่ได้ทำรายการ", description: "ข้อมูลบนหน้าเปลี่ยนระหว่างตรวจวันลา — กดใหม่อีกครั้ง", variant: "destructive" })
+  }, [])
+  const passLeaveGate = async (intent: string, targets: { driverId: string; date: string }[]): Promise<boolean> => {
+    const inflight = leaveGateIntentRef.current
+    if (inflight !== null) {
+      if (inflight !== intent) {
+        pageVersionRef.current++ // ยกเลิกด่านที่รออยู่ — มันจะขึ้น toast "ยังไม่ได้ทำรายการ" เองตอนตรวจเสร็จ
+        toast({ title: "⏳ กำลังตรวจวันลา — รอสักครู่" })
+      }
       return false
     }
-    return true
+    leaveGateIntentRef.current = intent
+    const version = pageVersionRef.current
+    let ok: boolean
+    try {
+      ok = await confirmLeaveBeforeAssign(checkLeave, targets, driversData ?? [], (m) => pageVersionRef.current === version && window.confirm(m))
+    } finally {
+      leaveGateIntentRef.current = null
+    }
+    if (pageVersionRef.current !== version) {
+      if (leaveGateMountedRef.current) {
+        toast({ title: "ยังไม่ได้ทำรายการ", description: "ข้อมูลบนหน้าเปลี่ยนระหว่างตรวจวันลา — กดใหม่อีกครั้ง", variant: "destructive" })
+      }
+      return false
+    }
+    return ok
+  }
+
+  // กันกดปุ่มส่งออกซ้ำ: ตั้งธงทันทีตอนกด (ก่อนด่านวันลา) ปลดเมื่อ handler จบ — state loading ถูกตั้งหลัง await ของด่าน
+  // ปุ่มจึงยังไม่ disabled ทันคลิกถัดไป (ส่ง LINE ซ้ำ = ข้อความเบิ้ลในกลุ่มจริง)
+  const saveImageBusyRef = React.useRef(false)
+  const sendLineBusyRef = React.useRef(false)
+  const copyMessageBusyRef = React.useRef(false)
+  const exportOnce = (busy: { current: boolean }, run: () => Promise<void>) => async () => {
+    if (busy.current) return
+    busy.current = true
+    try {
+      await run()
+    } finally {
+      busy.current = false
+    }
   }
 
   // <option> ใส่ element ไม่ได้ → ต่อป้ายวันลาเป็นข้อความ · ใช้เฉพาะ select ในแผง/dialog แอดมิน (ห้ามใช้กับ driverName / ข้อความที่ส่งออก)
@@ -326,10 +361,10 @@ export default function DailySummaryPage() {
     window.print()
   }
 
-  const handleSaveImage = async () => {
+  const handleSaveImage = exportOnce(saveImageBusyRef, async () => {
     if (trips.length === 0) return
     // ด่านวันลา — ก่อนตั้ง state loading / แคปรูป · ยกเลิก = ไม่ทำอะไรเลย
-    if (!(await confirmLeaveBeforeExport())) return
+    if (!(await confirmLeaveBeforeExport("export:image"))) return
     setIsSavingImage(true)
     try {
       const html2canvas = (await import('html2canvas')).default
@@ -356,12 +391,12 @@ export default function DailySummaryPage() {
     } finally {
       setIsSavingImage(false)
     }
-  }
+  })
 
-  const handleSendLine = async () => {
+  const handleSendLine = exportOnce(sendLineBusyRef, async () => {
     if (trips.length === 0) return
     // ด่านวันลา — ก่อนตั้ง state loading / สร้าง payload / ส่งบอท · ยกเลิก = ไม่ส่งอะไรเลย
-    if (!(await confirmLeaveBeforeExport())) return
+    if (!(await confirmLeaveBeforeExport("export:line"))) return
     setIsSendingLine(true)
     try {
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
@@ -408,7 +443,7 @@ export default function DailySummaryPage() {
     } finally {
       setIsSendingLine(false)
     }
-  }
+  })
 
   // สร้างข้อความสรุปแบบเดียวกับที่บอทส่ง (ใช้สำหรับปุ่ม "คัดลอกข้อความ")
   // ต้องให้ตรงกับ format ใน src/app/api/line/send-summary/route.ts
@@ -432,8 +467,8 @@ export default function DailySummaryPage() {
   }
 
   // ด่านวันลาก่อนส่งออก (ส่ง LINE / คัดลอก / บันทึกรูป): ทุกทริปที่จะออกจริง — คนขับจริง + วันของทริปเอง
-  const confirmLeaveBeforeExport = () =>
-    passLeaveGate(trips.filter(t => !isFullyMovedOut(t)).map(t => ({ driverId: t.actualDriverId || t.driverId, date: t.tripDate })))
+  const confirmLeaveBeforeExport = (intent: string) =>
+    passLeaveGate(intent, trips.filter(t => !isFullyMovedOut(t)).map(t => ({ driverId: t.actualDriverId || t.driverId, date: t.tripDate })))
 
   const buildSummaryText = () => {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
@@ -469,10 +504,10 @@ export default function DailySummaryPage() {
   }
 
   // คัดลอกข้อความเข้า clipboard → คนจัดรถไปวางในกลุ่ม LINE เอง (ไม่กินโควตา OA)
-  const handleCopyMessage = async () => {
+  const handleCopyMessage = exportOnce(copyMessageBusyRef, async () => {
     if (trips.length === 0) return
     // ด่านวันลา — ก่อนแตะ clipboard · หลังรอด่าน บางเบราว์เซอร์ (เช่น Safari) อาจปฏิเสธการคัดลอก → ตก catch เดิม ไม่ขึ้น toast สำเร็จ
-    if (!(await confirmLeaveBeforeExport())) return
+    if (!(await confirmLeaveBeforeExport("export:copy"))) return
     try {
       await navigator.clipboard.writeText(buildSummaryText())
       setCopiedMsg(true)
@@ -481,7 +516,7 @@ export default function DailySummaryPage() {
     } catch (e) {
       toast({ title: "คัดลอกไม่สำเร็จ", description: "เบราว์เซอร์ไม่อนุญาตให้คัดลอก ลองกดใหม่อีกครั้ง", variant: "destructive" })
     }
-  }
+  })
 
   const handleShareClick = (trip: Trip) => {
     setSelectedTripForShare(trip)
@@ -660,7 +695,7 @@ export default function DailySummaryPage() {
       const veh = vehiclesData?.find(v => v.id === chosenVehId)
       const targetTrip = trips.find(t => t.vehicleId === chosenVehId && t.tripDate === todayStr && t.status !== "Cancelled")
       // ด่านวันลา (เฉพาะงานที่ไปลงทริปอื่น): คนขับจริงของทริปที่รับ หรือคนขับที่จะลงทริปใหม่ · ยกเลิก = dialog ค้างไว้ ไม่เขียนอะไร
-      if (!(await passLeaveGate([targetTrip
+      if (!(await passLeaveGate(`insert:${trip.id}:${chosenVehId}:${place}`, [targetTrip
         ? { driverId: targetTrip.actualDriverId || targetTrip.driverId, date: targetTrip.tripDate }
         : { driverId: trip.driverId, date: todayStr }]))) return
       if (targetTrip) {
@@ -750,7 +785,7 @@ export default function DailySummaryPage() {
     const target = trips.find(t => t.id === tripId)
     const prevActualDriverId = target?.actualDriverId // อ่านก่อนเขียนทับ (ใช้ตอน revert)
     // ด่านวันลา: เฉพาะตอนเลือกคนใหม่ (ล้างกลับเป็นคนขับประจำไม่ถาม) · ยกเลิก = ไม่เขียนอะไร select เด้งกลับค่าเดิมเอง
-    if (driverId && target && !(await passLeaveGate([{ driverId, date: target.tripDate }]))) return
+    if (driverId && target && !(await passLeaveGate(`actual:${tripId}:${driverId}`, [{ driverId, date: target.tripDate }]))) return
     setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, actualDriverId: driverId, actualDriverName: name } : t)))
     if (db) {
       updateDocumentNonBlocking(doc(db, "trips", tripId), {
@@ -1054,7 +1089,7 @@ export default function DailySummaryPage() {
   const setReassignTarget = async (trip: Trip, stopIdx: number, targetTripId: string) => {
     const target = trips.find(t => t.id === targetTripId)
     // ด่านวันลา: คนขับจริงของทริปปลายทาง ตามวันของทริปนั้น · ล้างคันปลายทางไม่ถาม · ยกเลิก = select เด้งกลับค่าเดิม
-    if (target && !(await passLeaveGate([{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
+    if (target && !(await passLeaveGate(`reassign:${trip.id}:${stopIdx}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
     const newStops = buildStops(trip, stopIdx, (s) => {
       if (!target) {
         const { reassignedToTripId, reassignedToVehiclePlate, reassignedToDriverName, ...rest } = s as any
@@ -1080,7 +1115,7 @@ export default function DailySummaryPage() {
     if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
     if (veh.licensePlate === srcTrip.vehiclePlate) { toast({ title: "เลือกรถคนละคันกับต้นทาง", variant: "destructive" }); return }
     // ด่านวันลา: คนที่เลือก ตามวันของทริปใหม่ (= วันทริปต้นทาง) · ยกเลิก = dialog ค้างไว้ ไม่สร้างทริป
-    if (!(await passLeaveGate([{ driverId: driver.id, date: srcTrip.tripDate }]))) return
+    if (!(await passLeaveGate(`reassign-new:${srcTrip.id}:${reassignNewDialog.stopIdx}:${driver.id}:${veh.id}`, [{ driverId: driver.id, date: srcTrip.tripDate }]))) return
 
     // สร้างทริปใหม่ (วันเดียวกับทริปต้นทาง) ว่าง ๆ ไว้รับงานโยก
     const dstr = srcTrip.tripDate
@@ -1144,7 +1179,7 @@ export default function DailySummaryPage() {
       const target = trips.find(t => t.id === assistForm.targetTripId)
       if (!target) { toast({ title: "ไม่พบทริปคันช่วย", variant: "destructive" }); return }
       // ด่านวันลา: คนขับจริงของคันช่วย ตามวันของทริปนั้น · ยกเลิก = dialog ค้างไว้
-      if (!(await passLeaveGate([{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
+      if (!(await passLeaveGate(`assist:${src.id}:${assistDialog.stopIdx}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
       applyStops(target.id, [...stops, mkCopy(order)], true)
@@ -1154,7 +1189,7 @@ export default function DailySummaryPage() {
       const veh = vehiclesData?.find(v => v.id === assistForm.vehicleId)
       if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
       // ด่านวันลา: คนที่เลือก ตามวันของทริปใหม่ (= วันทริปต้นทาง) · ยกเลิก = dialog ค้างไว้ ไม่สร้างทริป
-      if (!(await passLeaveGate([{ driverId: driver.id, date: src.tripDate }]))) return
+      if (!(await passLeaveGate(`assist:${src.id}:${assistDialog.stopIdx}:new:${driver.id}:${veh.id}`, [{ driverId: driver.id, date: src.tripDate }]))) return
       const dstr = src.tripDate
       const dd = dstr.slice(8, 10), mm = dstr.slice(5, 7)
       const seq = String(trips.filter(t => t.tripDate === dstr).length + 1).padStart(3, "0")
