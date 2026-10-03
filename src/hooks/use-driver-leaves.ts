@@ -135,10 +135,12 @@ export function useDriverLeaves(
 
   const forDriver = useCallback(
     (driverId: string, date: string): DriverLeaveStatus => {
-      const driver = drivers?.find((d) => d.id === driverId)
+      // ลำดับตามสเปก 5.3: ยังโหลดรายชื่อไม่เสร็จ = unknown · หาคนขับไม่เจอในรายชื่อที่มีอยู่ = driver_missing
+      if (!drivers) return { kind: 'unknown' }
+      const driver = drivers.find((d) => d.id === driverId)
       if (!driver) return { kind: 'driver_missing' }
-      if (!res) return { kind: 'unknown' }
-      return leaveStatusOn(driver.employeeCode, date, res, { from, to })
+      // ไม่มีผลที่ผูกกับ key นี้ → ส่ง null เข้า leaveStatusOn: ไม่มีรหัส = unmapped (ไม่ต้องพึ่งเครือข่าย) · นอกนั้น unknown
+      return leaveStatusOn(driver.employeeCode, date, res, res ? { from, to } : null)
     },
     [drivers, res, from, to],
   )
