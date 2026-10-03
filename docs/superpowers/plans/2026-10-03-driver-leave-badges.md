@@ -14,6 +14,12 @@
 - ระบบจัดคิว: worktree `C:\Users\kantapat\Desktop\COWORK SPACE\ระบบจัดคิวรถ\driver-leave` branch `feat/driver-leave-badges`
 - ระบบใบลา: `C:\Users\kantapat\Desktop\COWORK SPACE\HR\ใบลาออนไลน์\leave-system` (**ไม่มี git** — ใช้สำรองโฟลเดอร์ + ไฟล์ HANDOFF แทน commit)
 
+**ฐานโค้ด:** branch rebase บน `origin/main` @ `6c4bc2f` แล้ว — ซึ่งมีงานแยก 2 ชิ้นที่ merge ไปก่อน: `872e710` (ใบสรุปกันผล query วันเก่าทับ — มี `src/lib/latestRequest.ts`) และ `cc7c069` (รัด Firestore rules: `drivers` เขียนได้เฉพาะ staff ที่ active, `verifyStaffToken` เช็ก `active === true` — **rules ยังต้อง publish ที่ Firebase Console เอง**)
+
+**สภาพแวดล้อมทดสอบในเครื่อง (ไม่แตะ production):**
+- ระบบจัดคิว: Firebase Emulator ตาม CLAUDE.md — `npm run emulators` + `npm run seed:emulator` + `.env.development.local` (`NEXT_PUBLIC_FIREBASE_EMULATOR=1`, `FIRESTORE_EMULATOR_HOST`, และเพิ่ม `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` ให้ route ตรวจ token กับ emulator — Task 4) + `LEAVE_API_URL=http://127.0.0.1:8787`, `LEAVE_API_KEY=<ค่าเดียวกับ .dev.vars>` · worktree ที่ junction `node_modules` รัน `next dev` แบบไม่มี `--turbopack`
+- ระบบใบลา: `npx wrangler dev` (D1 local) + `TRANSPORT_API_KEY` ใน `.dev.vars` · ข้อมูลใบลาทดสอบใส่ด้วย `npx wrangler d1 execute lotus-leave --local --command "..."` (**ห้าม `--remote`**)
+
 ## Global Constraints
 
 - วันที่ทุกตัวเป็นสตริง `YYYY-MM-DD` เวลาไทย เทียบด้วยสตริง — **ห้ามได้วันที่จาก `toISOString()`** · "วันนี้" ใช้ `thaiToday()` เท่านั้น
@@ -277,9 +283,16 @@
 **Files:**
 - Create: `src/app/api/driver-leaves/route.ts`, `src/app/api/driver-leaves/route.test.ts`
 
+- Modify: `src/firebase/admin.ts` — `verifyStaffToken` (URL ของ `accounts:lookup`)
+- Test: `src/firebase/admin.test.ts` (สร้างใหม่)
+
 **Interfaces:**
 - Consumes: `verifyStaffToken` (`src/firebase/admin.ts`) · env `LEAVE_API_URL`, `LEAVE_API_KEY`
-- Produces: `export async function POST(req: NextRequest): Promise<NextResponse>` · `export const dynamic = 'force-dynamic'` (แบบ `tracking/devices/route.ts`)
+- Produces: `export async function POST(req: NextRequest): Promise<NextResponse>` · `export const dynamic = 'force-dynamic'` (แบบ `tracking/devices/route.ts`) · `export function identityToolkitLookupUrl(apiKey: string, emulatorHost?: string): string` ใน `admin.ts`
+
+- [ ] **Step 0: ให้ `verifyStaffToken` ตรวจ token กับ Auth emulator ได้ (เพื่อทดสอบในเครื่องโดยไม่แตะ production)**
+  - เทสต์ใน `admin.test.ts`: `identityToolkitLookupUrl("k")` → `"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=k"` · `identityToolkitLookupUrl("k", "127.0.0.1:9099")` → `"http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:lookup?key=k"`
+  - รัน → FAIL · แยก URL ออกเป็น `identityToolkitLookupUrl` แล้ว `verifyStaffToken` เรียกด้วย `process.env.FIREBASE_AUTH_EMULATOR_HOST` · รัน → PASS · `npx vitest run` ทั้งหมดผ่าน (route อื่นที่ใช้ helper นี้ไม่เปลี่ยนพฤติกรรมเมื่อไม่ตั้ง env — **ห้ามตั้ง env นี้บน Vercel**)
 
 - [ ] **Step 1: เขียนเทสต์ที่ยังไม่ผ่าน** (`vi.mock('@/firebase/admin', () => ({ verifyStaffToken: vi.fn() }))`, `vi.stubGlobal('fetch', ...)`, `vi.stubEnv`)
   ```ts
@@ -310,7 +323,7 @@
   export function LeaveBadge(props: { status: DriverLeaveStatus }): JSX.Element | null   // span สั้น ใช้ leaveBadgeText; '' = null
   ```
 
-- [ ] **Step 1: เขียน hook** ตามสัญญา spec 5.4 ทุกข้อ — รอ `user && drivers !== undefined` · key = `from|to|normalizeCodes(...).join(",")` · `useRef` เลขลำดับครอบ data/error/status/lastOkAt · poll `setInterval(60_000)` เฉพาะ `document.visibilityState === "visible"` + ฟัง `visibilitychange`/`focus` · คำขอค้างอยู่ให้ใช้ promise เดิม · `forDriver`: หา driver ไม่เจอ → `driver_missing`, ข้อมูลไม่ผูก key ปัจจุบัน → `unknown`
+- [ ] **Step 1: เขียน hook** ตามสัญญา spec 5.4 ทุกข้อ — รอ `user && drivers !== undefined` · key = `from|to|normalizeCodes(...).join(",")` · กันผลเก่าทับด้วย `createLatestRequestGuard()` จาก `src/lib/latestRequest.ts` (มีอยู่แล้วจาก `872e710` — เก็บใน `useRef`) ครอบ data/error/status/lastOkAt · poll `setInterval(60_000)` เฉพาะ `document.visibilityState === "visible"` + ฟัง `visibilitychange`/`focus` · คำขอค้างอยู่ให้ใช้ promise เดิม · `forDriver`: หา driver ไม่เจอ → `driver_missing`, ข้อมูลไม่ผูก key ปัจจุบัน → `unknown`
 - [ ] **Step 2: เขียน `LeaveCheckBanner`** — `loading` → `⏳ กำลังตรวจวันลา…` · `error` → `⚠️ ตรวจวันลาจากระบบใบลาไม่ได้ตอนนี้ — ป้ายวันลาอาจไม่ครบ` + ` (ข้อมูลล่าสุดเมื่อ HH:MM)` ถ้ามี `lastOkAt` · `ready` → null · สไตล์แถบเตือนแบบเดียวกับแถบเหลือง/แดงในหน้าใกล้เคียง
 - [ ] **Step 3: Typecheck** — Run: `npx tsc --noEmit` → Expected: ไม่มี error
 - [ ] **Step 4: ตรวจมือ (ทำหลัง Task 7 ต่อเข้าหน้าจัดคิวแล้ว — จดผลไว้ในรายงาน Task 7)** — `npm run dev` + `.env.local` ชี้ `LEAVE_API_URL` ไปที่ `wrangler dev` ของระบบใบลา: (ก) hard refresh → ป้ายขึ้นภายในไม่กี่วินาที (ข) สลับวันเร็ว 3 ครั้ง → ป้ายตรงวันสุดท้าย (ค) ปิด `wrangler dev` → แถบ ⚠️ ขึ้นใน ≤ 70 วิ ป้ายเดิมคงพร้อมเวลา (ง) เปลี่ยนแท็บแล้วกลับ → ยิงใหม่ทันที
@@ -345,7 +358,7 @@
 - [ ] **Step 2: ด่านใน `confirmCreateTrip`** — หลังคำนวณ `dests` (ก่อนเขียนอะไร): `if (!(await confirmLeaveBeforeAssign(check, [{ driverId, date: dests[0].requestDate }], drivers ?? []))) return` (อยู่ใน try ที่ `finally` ปลด `isProcessing` อยู่แล้ว) · เก็บ `driverId` ไว้ในตัวแปรก่อน await แล้วเทียบหลัง await ถ้าเปลี่ยน → return
 - [ ] **Step 3: ด่านใน `handleMergeTrip`** — หลัง `validNewStops`: `getDoc(doc(db, "trips", existingTrip.id))` → `fresh.actualDriverId || fresh.driverId` + `fresh.tripDate` → `confirmLeaveBeforeAssign` · ยกเลิก = return
 - [ ] **Step 4: Typecheck + เทสต์** — `npx tsc --noEmit` · `npx vitest run` → ผ่าน
-- [ ] **Step 5: ตรวจมือบน local** (ข้อมูลทดสอบใน D1 local ของ `wrangler dev`) — dropdown แสดงป้ายตามตาราง spec · สร้างทริปให้คนลา → confirm ขึ้น ยกเลิกได้/ยืนยันได้ · รวมเข้าทริปที่มีคนขับแทนซึ่งลา → confirm ชื่อคนขับแทน · ทำ Task 5 Step 4 (ก)–(ง) ที่หน้านี้
+- [ ] **Step 5: ตรวจมือบน local** (Firebase Emulator + ข้อมูลใบลาใน D1 local ของ `wrangler dev` — ดู "สภาพแวดล้อมทดสอบ") — dropdown แสดงป้ายตามตาราง spec · สร้างทริปให้คนลา → confirm ขึ้น ยกเลิกได้/ยืนยันได้ · รวมเข้าทริปที่มีคนขับแทนซึ่งลา → confirm ชื่อคนขับแทน · ทำ Task 5 Step 4 (ก)–(ง) ที่หน้านี้
 - [ ] **Step 6: Commit** — `git commit -m "feat(driver-leave): หน้าจัดคิว — ป้ายใน dropdown + ด่านก่อนสร้าง/รวมทริป"`
 
 ### Task 8: หน้าใบสรุป
@@ -356,7 +369,7 @@
 **Interfaces:**
 - Consumes: `useDriverLeaves`, `LeaveCheckBanner`, `LeaveBadge`, `confirmLeaveBeforeAssign`, `leaveBadgeText`
 
-> หมายเหตุ: มีงานแยก (session อื่น) แก้ `fetchTrips` (`:185`) ในไฟล์นี้อยู่ — ถ้า merge เข้า main ก่อน ให้ rebase branch นี้ก่อนเริ่ม Task 8
+> หมายเหตุ: `fetchTrips` มียามกันผลวันเก่าทับแล้ว (`872e710`) — เลขบรรทัดในไฟล์นี้อาจเลื่อนจากที่ระบุไว้ 5–10 บรรทัด ให้หาจากชื่อฟังก์ชัน
 
 - [ ] **Step 1: ป้ายบนการ์ด** — `useDriverLeaves(driversData, selectedDate, selectedDate)` (ทริปในหน้าเป็นวันเดียว) · แต่ `forDriver(trip.actualDriverId || trip.driverId, trip.tripDate)` ใช้วันของทริปเอง (ถ้าไม่ตรง coverage จะได้ `unknown` = ไม่มีป้าย ไม่ใช่ว่าง) · วาง `<LeaveBadge>` ในแถบหัวการ์ด "ปิดผลงานจริง" ข้างทะเบียนรถ (`:1724-1730`, นอก `#summary-report`) · `<LeaveCheckBanner>` เหนือแผงปุ่มส่ง
 - [ ] **Step 2: ป้ายใน `<option>`** — select "ขับแทนโดย" (`:1744-1754`), โยกงานให้คนใหม่ (`:2019`), คันช่วย (`:2089`): ข้อความ option = `` `${d.name}${t ? "  " + t : ""}` `` โดย `t = leaveBadgeText(forDriver(d.id, trip.tripDate))`

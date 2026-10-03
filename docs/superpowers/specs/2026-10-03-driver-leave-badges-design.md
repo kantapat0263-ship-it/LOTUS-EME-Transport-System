@@ -275,9 +275,9 @@ confirmLeaveBeforeAssign(check, targets: { driverId: string; date: string }[]): 
 - ใบลากระดาษที่ HR นำเข้าทีหลัง ไม่ขึ้นจนกว่าจะนำเข้า → กติกา: คนขับยื่นลาในแอป
 - ไม่ push แจ้งเตือน · "ประมาณ 1 นาที" เป็นค่าโดยประมาณ (เบราว์เซอร์อาจหน่วงแท็บพื้นหลัง) — ด่านยืนยันสดเสมอ
 - `/trips/plan` (หน้าต้นแบบเก่า ไม่อยู่ในเมนู ไม่มีลิงก์ชี้มา) ยังพิมพ์ URL เข้าไปสร้างทริปได้ — **ไม่ใส่ด่าน (ผู้ใช้ยืนยัน 2026-10-03)**
-- **แยกเป็นงานอื่น (บั๊กเดิม ไม่ได้เกิดจากฟีเจอร์นี้):**
-  - `firestore.rules` ใน repo: ผู้ล็อกอินทุกคนแก้ `users/{ตัวเอง}` รวม `role` ได้ (`:31`) + fallback เขียนได้ทุก collection (`:95`) + `drivers` เขียนได้ทุกคน (`:47`) → viewer ยกตัวเองเป็น admin ได้ และแก้ `employeeCode` ได้ — ฟีเจอร์นี้ใช้ `verifyStaffToken` ตามเดิม ความเชื่อถือ "staff-only" ขึ้นกับการแก้ rules ชุดนี้ (CLAUDE.md TODO มี rules ใหม่รอ publish อยู่)
-  - `daily-summary fetchTrips` (`:185`) ไม่มี seq guard → สลับวันเร็ว ๆ ผลวันเก่าทับได้ (กระทบการส่ง LINE เดิมด้วย)
+- **แยกเป็นงานอื่น (บั๊กเดิม ไม่ได้เกิดจากฟีเจอร์นี้) — แก้บน main แล้ว 2026-10-03:**
+  - `firestore.rules` เดิมให้ viewer ยกตัวเองเป็น admin และเขียน `drivers` ได้ → `cc7c069` รัดแล้ว (`drivers` เขียนได้เฉพาะ staff ที่ active, `verifyStaffToken` เช็ก active) — **มีผลจริงเมื่อ publish rules ที่ Firebase Console**
+  - `daily-summary fetchTrips` ไม่มียามกันผลวันเก่าทับ → `872e710` แก้แล้ว (`src/lib/latestRequest.ts`) — ป้าย/ด่านยังใช้ `trip.tripDate` ตามเดิม
 
 ## 8. การทดสอบ
 
