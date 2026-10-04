@@ -190,6 +190,17 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - `DIESEL_PRICE_SOURCE_URL` *(optional)* — default `https://gas.itorbenz.com`; ถ้า shape ไม่ตรง ปรับ regex ใน `extractB7Price` หรือเปลี่ยน URL
 - **ทดสอบ:** Vercel → Functions log; หรือ `curl -H "Authorization: Bearer <CRON_SECRET>" <url>/api/cron/update-diesel-price` → ดู JSON `{ ok, status, price, changed }`
 
+## ป้ายวันลาคนขับ (ดึงสดจากระบบใบลาออนไลน์) — branch `feat/driver-leave-badges` (2026-10-04)
+
+- **ที่มา:** คนจัดรถ = ผู้อนุมัติใบลาคนขับ แต่ลืม → จัดงานให้คนที่ลา · spec `docs/superpowers/specs/2026-10-03-driver-leave-badges-design.md` · plan `docs/superpowers/plans/2026-10-03-driver-leave-badges.md`
+- **สาย:** browser → `POST /api/driver-leaves` (`verifyStaffToken` = admin/dispatcher ที่ active) → Worker ระบบใบลา `POST /api/integration/driver-leaves` (Bearer secret) — อ่านอย่างเดียว ไม่ sync สำเนา
+- **ไฟล์:** `src/lib/driverLeave.ts` (ตรรกะล้วน+ข้อความป้าย) · `src/lib/driverLeaveClient.ts` (เรียก API แบ่ง 50 รหัส/timeout 8 วิ/ตรวจ key ครบ + ด่านกลาง `confirmLeaveBeforeAssign`) · `src/hooks/use-driver-leaves.ts` (poll 60 วิ) · `src/components/driver-leave/*` · `src/components/fleet/EmployeeCodeHint.tsx` · ฝั่งระบบใบลา `HR/ใบลาออนไลน์/leave-system/worker/integration.ts`
+- **ข้อมูล:** `Driver.employeeCode` (คนจัดรถกรอกในหน้าฟลีท — ห้ามจับคู่ด้วยชื่อ) · ยังไม่ผูก = ป้าย ❔ ไม่บล็อก
+- **ENV Vercel:** `LEAVE_API_URL`, `LEAVE_API_KEY` (= secret `TRANSPORT_API_KEY` ของ Worker `lotus-leave`) — **ห้ามตั้ง `FIREBASE_AUTH_EMULATOR_HOST` บน Vercel** (ใช้ทดสอบกับ Auth emulator ในเครื่องเท่านั้น)
+- **หลักห้ามหลุด:** "ตรวจไม่ได้/ยังไม่รู้" (`unknown`) ห้ามแสดง/ตัดสินเหมือน "ไม่ได้ลา" · เตือนไม่บล็อก · ทุกจุดมอบงาน/ส่งออก (LINE/คัดลอก/รูป) ต้องผ่าน `confirmLeaveBeforeAssign` · ป้ายเป็น element แยก **นอก `#summary-report`** ห้ามต่อเข้า `driverName`/ข้อความ LINE · ใช้ `trip.tripDate` + `actualDriverId || driverId` ของแต่ละทริป · `useDriverLeaves` ต้องได้ `drivers ?? undefined` (ไม่ใช่ `?? []`)
+- **ปิดฉุกเฉิน:** `npx wrangler secret delete TRANSPORT_API_KEY` ในโฟลเดอร์ระบบใบลา → แอปขึ้น ⚠️ ตรวจวันลาไม่ได้ และถามก่อนทำรายการ ใช้งานต่อได้
+- **ทดสอบในเครื่อง:** emulator + `wrangler dev` ระบบใบลา (D1 แยก `--persist-to`) + `.env.development.local` (`FIREBASE_AUTH_EMULATOR_HOST`, `LEAVE_API_URL=http://127.0.0.1:8787`, `LEAVE_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_BASE64` ปลอมที่ project `demo-lotus-eme`) · `/trips/plan` ตั้งใจไม่ใส่ด่าน (หน้าเก่าไม่อยู่ในเมนู)
+
 ## ไฟล์สำคัญ
 - `src/firebase/admin.ts` — firebase-admin (server write) · `src/lib/diesel-price.ts` (+test) — แกะราคา B7
 - `src/app/api/cron/update-diesel-price/route.ts` — cron อัปเดตราคา · `vercel.json` — schedule
