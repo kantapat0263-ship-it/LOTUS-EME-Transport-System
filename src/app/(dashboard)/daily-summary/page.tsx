@@ -111,7 +111,7 @@ export default function DailySummaryPage() {
   const [assistForm, setAssistForm] = React.useState({ targetTripId: "", driverId: "", vehicleId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
-  // ---- วันลาคนขับ (ระบบใบลา): ป้ายในแผงแอดมิน + ด่านยืนยันก่อนส่งออก/มอบงาน ----
+  // ---- วันลาคนขับ (ระบบใบลา): ป้ายในแผงแอดมิน + ด่านยืนยันก่อนมอบงาน (ปุ่มส่งออก LINE/คัดลอก/รูป ไม่มีด่าน) ----
   // ทริปในหน้านี้เป็นวันเดียว (selectedDate) แต่ป้าย/ด่านแต่ละทริปใช้ trip.tripDate ของตัวเอง (นอกช่วง = unknown = ไม่มีป้าย)
   // ส่ง `driversData ?? undefined`: useCollection คืน null ก่อน snapshot แรก — ห้ามส่ง [] (จะกลายเป็น driver_missing ทุกคน)
   const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
@@ -126,7 +126,7 @@ export default function DailySummaryPage() {
   React.useEffect(() => {
     pageVersionRef.current++
   }, [trips, selectedDate, insertDialog, insertForm, reassignNewDialog, reassignNewForm, assistDialog, assistForm])
-  // วันที่ที่เลือกล่าสุด — handler ที่มี await หลังด่าน (บันทึกรูป) ใช้เช็กว่าวันยังตรงกับตอนกด
+  // วันที่ที่เลือกล่าสุด — handler ที่มี await ระหว่างทาง (บันทึกรูป) ใช้เช็กว่าวันยังตรงกับตอนกด
   const selectedDateRef = React.useRef(selectedDate)
   React.useEffect(() => { selectedDateRef.current = selectedDate }, [selectedDate])
   // ออกจากหน้าระหว่างรอ = ยกเลิกด่านที่ค้าง (ไม่เขียน/ไม่ส่ง/ไม่เด้ง confirm หรือ toast บนหน้าอื่น)
@@ -165,8 +165,8 @@ export default function DailySummaryPage() {
     return ok
   }
 
-  // กันกดปุ่มส่งออกซ้ำ: ตั้งธงทันทีตอนกด (ก่อนด่านวันลา) ปลดเมื่อ handler จบ — state loading ถูกตั้งหลัง await ของด่าน
-  // ปุ่มจึงยังไม่ disabled ทันคลิกถัดไป (ส่ง LINE ซ้ำ = ข้อความเบิ้ลในกลุ่มจริง)
+  // กันกดปุ่มส่งออกซ้ำ: ตั้งธงทันทีตอนกด (ซิงก์) ปลดเมื่อ handler จบ — state loading ยังไม่ render ทันคลิกถัดไป
+  // ปุ่มจึงยังไม่ disabled (ส่ง LINE ซ้ำ = ข้อความเบิ้ลในกลุ่มจริง) · run() ถูกเรียกซิงก์ → handler เริ่ม writeText ภายใน click ได้
   const saveImageBusyRef = React.useRef(false)
   const sendLineBusyRef = React.useRef(false)
   const copyMessageBusyRef = React.useRef(false)
@@ -370,23 +370,21 @@ export default function DailySummaryPage() {
 
   const handleSaveImage = exportOnce(saveImageBusyRef, async () => {
     if (trips.length === 0) return
-    // ผูกรูปกับชุดที่ผ่านด่าน: จับเวอร์ชันหน้า + วันที่ไว้ก่อนด่าน แล้วเช็กซ้ำหลังโหลด html2canvas และก่อนดาวน์โหลด
-    // (ระหว่าง await ผู้ใช้เปลี่ยนวันได้ → DOM เป็นอีกวันแต่ชื่อไฟล์/ด่านเป็นวันเดิม) · เปลี่ยน = ไม่แคป/ไม่ดาวน์โหลด
-    const gateVersion = pageVersionRef.current
-    const gateDate = selectedDate
-    const changedSinceGate = () => {
-      if (pageVersionRef.current === gateVersion && selectedDateRef.current === gateDate) return false
+    // ผูกรูปกับวันที่กด: จับเวอร์ชันหน้า + วันที่ไว้ตอนกด แล้วเช็กซ้ำหลังโหลด html2canvas และก่อนดาวน์โหลด
+    // (ระหว่าง await ผู้ใช้เปลี่ยนวันได้ → DOM เป็นอีกวันแต่ชื่อไฟล์เป็นวันเดิม) · เปลี่ยน = ไม่แคป/ไม่ดาวน์โหลด
+    const clickVersion = pageVersionRef.current
+    const clickDate = selectedDate
+    const changedSinceClick = () => {
+      if (pageVersionRef.current === clickVersion && selectedDateRef.current === clickDate) return false
       if (leaveGateMountedRef.current) {
         toast({ title: "ยังไม่ได้ทำรายการ", description: "ข้อมูลบนหน้าเปลี่ยนระหว่างเตรียมรูปภาพ — กดใหม่อีกครั้ง", variant: "destructive" })
       }
       return true
     }
-    // ด่านวันลา — ก่อนตั้ง state loading / แคปรูป · ยกเลิก = ไม่ทำอะไรเลย
-    if (!(await confirmLeaveBeforeExport("export:image"))) return
     setIsSavingImage(true)
     try {
       const html2canvas = (await import('html2canvas')).default
-      if (changedSinceGate()) return
+      if (changedSinceClick()) return
       const element = document.getElementById('summary-report')
       if (!element) return
 
@@ -396,7 +394,7 @@ export default function DailySummaryPage() {
         backgroundColor: '#ffffff',
         logging: false
       })
-      if (changedSinceGate()) return // ไม่มี await คั่นจากตรงนี้ถึง link.click()
+      if (changedSinceClick()) return // ไม่มี await คั่นจากตรงนี้ถึง link.click()
 
       const image = canvas.toDataURL('image/jpeg', 0.95)
       const link = document.createElement('a')
@@ -415,8 +413,6 @@ export default function DailySummaryPage() {
 
   const handleSendLine = exportOnce(sendLineBusyRef, async () => {
     if (trips.length === 0) return
-    // ด่านวันลา — ก่อนตั้ง state loading / สร้าง payload / ส่งบอท · ยกเลิก = ไม่ส่งอะไรเลย
-    if (!(await confirmLeaveBeforeExport("export:line"))) return
     setIsSendingLine(true)
     try {
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
@@ -486,10 +482,6 @@ export default function DailySummaryPage() {
     return stops.every(s => s.outcome && s.outcome !== 'delivered' && (s as any).reassignedToTripId)
   }
 
-  // ด่านวันลาก่อนส่งออก (ส่ง LINE / คัดลอก / บันทึกรูป): ทุกทริปที่จะออกจริง — คนขับจริง + วันของทริปเอง
-  const confirmLeaveBeforeExport = (intent: string) =>
-    passLeaveGate(intent, trips.filter(t => !isFullyMovedOut(t)).map(t => ({ driverId: t.actualDriverId || t.driverId, date: t.tripDate })))
-
   const buildSummaryText = () => {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
     const driverLinks = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
@@ -526,8 +518,7 @@ export default function DailySummaryPage() {
   // คัดลอกข้อความเข้า clipboard → คนจัดรถไปวางในกลุ่ม LINE เอง (ไม่กินโควตา OA)
   const handleCopyMessage = exportOnce(copyMessageBusyRef, async () => {
     if (trips.length === 0) return
-    // ด่านวันลา — ก่อนแตะ clipboard · หลังรอด่าน บางเบราว์เซอร์ (เช่น Safari) อาจปฏิเสธการคัดลอก → ตก catch เดิม ไม่ขึ้น toast สำเร็จ
-    if (!(await confirmLeaveBeforeExport("export:copy"))) return
+    // ห้ามมี await ก่อน writeText — Safari/iOS ปฏิเสธการคัดลอกที่ไม่ได้เริ่มภายใน user gesture (ตัดสินใจ 2026-10-04: ปุ่มส่งออกไม่ตรวจวันลา)
     try {
       await navigator.clipboard.writeText(buildSummaryText())
       setCopiedMsg(true)
