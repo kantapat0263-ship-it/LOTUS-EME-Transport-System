@@ -14,6 +14,7 @@ import {
 import { Truck, User, Navigation, Loader2, AlertCircle } from "lucide-react"
 import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
 import { regularDriversFirst, type DriverLeaveStatus } from "@/lib/driverLeave"
+import { sortVehiclesByType } from "@/lib/vehicleOrder"
 
 interface TripControlPanelProps {
   selectedCount: number;
@@ -45,6 +46,7 @@ export function TripControlPanel({
   leaveFor
 }: TripControlPanelProps) {
   const orderedDrivers = React.useMemo(() => regularDriversFirst(drivers), [drivers])
+  const orderedVehicles = React.useMemo(() => sortVehiclesByType(vehicles), [vehicles])
   return (
     <Card className="fixed bottom-4 left-4 right-4 lg:left-[17rem] lg:right-8 z-30 shadow-xl border-accent/20 bg-card/95 backdrop-blur-md">
       <CardContent className="p-4">
@@ -71,7 +73,7 @@ export function TripControlPanel({
                   <SelectValue placeholder="ค้นหาทะเบียนรถ..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {vehicles.map(v => (
+                  {orderedVehicles.map(v => (
                     <SelectItem key={v.id} value={v.id} className="text-sm">
                       {v.licensePlate} ({v.type})
                     </SelectItem>
