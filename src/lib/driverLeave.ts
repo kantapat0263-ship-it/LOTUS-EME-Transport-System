@@ -180,6 +180,14 @@ export function isOccasionalDriver(d?: { driverType?: string }): boolean {
   return d?.driverType === 'occasional'
 }
 
+/**
+ * คนขับประจำขึ้นก่อน คนขับไม่ประจำตามหลัง — partition เสถียร (ลำดับสัมพัทธ์ในแต่ละกลุ่มคงเดิม ไม่เรียงชื่อ)
+ * คืน array ใหม่เสมอ ไม่แก้ต้นทาง · ไม่มี/ค่าเพี้ยนของ `driverType` นับเป็นคนขับประจำ (ตาม `isOccasionalDriver`)
+ */
+export function regularDriversFirst<T extends { driverType?: string }>(drivers: readonly T[]): T[] {
+  return [...drivers.filter((d) => !isOccasionalDriver(d)), ...drivers.filter((d) => isOccasionalDriver(d))]
+}
+
 /** trim, ตัดว่าง, ตัดซ้ำ, เรียง — ใช้เป็นทั้ง key ของแคชและลำดับ batch */
 export function normalizeCodes(codes: (string | undefined)[]): string[] {
   const set = new Set<string>()

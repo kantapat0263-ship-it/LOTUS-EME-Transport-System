@@ -7,6 +7,7 @@ import {
   leaveCheckCodes,
   leaveConfirmLines,
   leaveStatusOn,
+  regularDriversFirst,
   thaiToday,
   validateLeaveResponse,
   type ApiLeave,
@@ -556,6 +557,60 @@ describe('isOccasionalDriver', () => {
     expect(isOccasionalDriver({ driverType: '' })).toBe(false)
     expect(isOccasionalDriver({ driverType: ' occasional' })).toBe(false)
     expect(isOccasionalDriver({ driverType: 'helper' })).toBe(false)
+  })
+})
+
+// ---------- regularDriversFirst ----------
+
+describe('regularDriversFirst', () => {
+  const ids = (ds: readonly { id: string }[]) => ds.map((d) => d.id)
+
+  it('คนขับประจำขึ้นก่อน คนขับไม่ประจำตามหลัง · ลำดับสัมพัทธ์ในแต่ละกลุ่มคงเดิม (ไม่เรียงชื่อ)', () => {
+    const drivers = [
+      { id: 'o1', driverType: 'occasional' },
+      { id: 'r3', driverType: 'regular' },
+      { id: 'o2', driverType: 'occasional' },
+      { id: 'r1', driverType: 'regular' },
+      { id: 'r2' },
+      { id: 'o0', driverType: 'occasional' },
+    ]
+    expect(ids(regularDriversFirst(drivers))).toEqual(['r3', 'r1', 'r2', 'o1', 'o2', 'o0'])
+  })
+
+  it('ประจำล้วน = ลำดับเดิม', () => {
+    const drivers = [{ id: 'c', driverType: 'regular' }, { id: 'a' }, { id: 'b', driverType: 'regular' }]
+    expect(ids(regularDriversFirst(drivers))).toEqual(['c', 'a', 'b'])
+  })
+
+  it('ไม่ประจำล้วน = ลำดับเดิม', () => {
+    const drivers = [{ id: 'c', driverType: 'occasional' }, { id: 'a', driverType: 'occasional' }]
+    expect(ids(regularDriversFirst(drivers))).toEqual(['c', 'a'])
+  })
+
+  it('ลิสต์ว่าง = ลิสต์ว่าง', () => {
+    expect(regularDriversFirst([])).toEqual([])
+  })
+
+  it('ไม่แก้ array ต้นทาง และคืน array ใหม่', () => {
+    const drivers = Object.freeze([
+      { id: 'o1', driverType: 'occasional' },
+      { id: 'r1', driverType: 'regular' },
+    ])
+    const out = regularDriversFirst(drivers)
+    expect(ids(drivers)).toEqual(['o1', 'r1'])
+    expect(out).not.toBe(drivers)
+    expect(ids(out)).toEqual(['r1', 'o1'])
+  })
+
+  it('ไม่มี driverType / ค่าเพี้ยน นับเป็นคนขับประจำ (ตรงกับ isOccasionalDriver)', () => {
+    const drivers = [
+      { id: 'o', driverType: 'occasional' },
+      { id: 'none' },
+      { id: 'caps', driverType: 'Occasional' },
+      { id: 'empty', driverType: '' },
+      { id: 'other', driverType: 'helper' },
+    ]
+    expect(ids(regularDriversFirst(drivers))).toEqual(['none', 'caps', 'empty', 'other', 'o'])
   })
 })
 
