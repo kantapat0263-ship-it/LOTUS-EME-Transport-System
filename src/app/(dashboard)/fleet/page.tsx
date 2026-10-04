@@ -51,6 +51,7 @@ import { ComplianceTab } from "@/components/fleet/ComplianceTab"
 import { VehicleDetailsDialog } from "@/components/fleet/VehicleDetailsDialog"
 import { EmployeeCodeHint } from "@/components/fleet/EmployeeCodeHint"
 import { isOccasionalDriver, leaveBadgeText } from "@/lib/driverLeave"
+import { driverSchema } from "@/lib/driverFormSchema"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
@@ -58,14 +59,6 @@ const vehicleSchema = z.object({
   maxLoadCapacityKg: z.coerce.number().min(1, "กรุณาระบุน้ำหนักบรรทุก"),
   fuelRate: z.union([z.coerce.number(), z.literal("")]).optional().transform(v => v === "" ? undefined : v),
   gpsDeviceId: z.string().optional(),
-})
-
-const driverSchema = z.object({
-  name: z.string().min(2, "กรุณาระบุชื่อคนขับ"),
-  phoneNumber: z.string().min(9, "กรุณาระบุเบอร์โทรศัพท์"),
-  employeeCode: z.string().trim().regex(/^(\d{4,6})?$/, "รหัสพนักงานเป็นตัวเลข 4–6 หลัก"),
-  // คนขับไม่ประจำ (เรียกมาช่วยขับ / พนักงานที่ขอรถแล้วขับเอง เช่น วิศวกร / คนนอก) = ไม่ตรวจวันลา · บันทึกทุกครั้ง
-  driverType: z.enum(["regular", "occasional"]),
 })
 
 export default function FleetPage() {
@@ -215,10 +208,10 @@ export default function FleetPage() {
     resolver: zodResolver(driverSchema),
     defaultValues: { name: "", phoneNumber: "", employeeCode: "", driverType: "regular" }
   })
-  // คนขับไม่ประจำ → ซ่อนช่องรหัส+hint แต่ค่ารหัสยังอยู่ในฟอร์ม (shouldUnregister ปิดอยู่) และบันทึกกลับตามเดิม
-  // ยกเว้นรหัสที่ค้างอยู่ผิดรูปแบบ → โชว์ช่องพร้อม error ไม่งั้นกดบันทึกแล้วเงียบ (validation ยังตรวจช่องที่ซ่อน)
+  // คนขับไม่ประจำ → ซ่อนช่องรหัส+hint เสมอ แต่ค่ารหัสยังอยู่ในฟอร์ม (shouldUnregister ปิดอยู่) และบันทึกกลับตามเดิม
+  // (schema ไม่ตรวจรหัสของคนขับไม่ประจำ — ช่องที่ซ่อนจึงไม่บล็อกการบันทึก)
   const driverTypeValue = useWatch({ control: driverForm.control, name: "driverType" })
-  const showEmployeeCode = driverTypeValue !== "occasional" || !!driverForm.formState.errors.employeeCode
+  const showEmployeeCode = driverTypeValue !== "occasional"
 
   // Vehicle Types management
   const vehicleTypesRef = useMemoFirebase(() => collection(db, "vehicleTypes"), [db])

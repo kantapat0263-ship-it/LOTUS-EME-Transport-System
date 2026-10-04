@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  driverLeaveStatus,
   formatLeaveRange,
   isOccasionalDriver,
   leaveBadgeText,
+  leaveCheckCodes,
   leaveConfirmLines,
   leaveStatusOn,
   thaiToday,
@@ -554,6 +556,84 @@ describe('isOccasionalDriver', () => {
     expect(isOccasionalDriver({ driverType: '' })).toBe(false)
     expect(isOccasionalDriver({ driverType: ' occasional' })).toBe(false)
     expect(isOccasionalDriver({ driverType: 'helper' })).toBe(false)
+  })
+})
+
+// ---------- leaveCheckCodes / driverLeaveStatus (ตรรกะที่ hook useDriverLeaves ใช้) ----------
+
+describe('leaveCheckCodes', () => {
+  it('ส่งเฉพาะรหัสของคนขับประจำ — คนขับไม่ประจำที่มีรหัสค้างไม่ถูกส่งไปถาม API', () => {
+    expect(
+      leaveCheckCodes([
+        { employeeCode: '10002' },
+        { employeeCode: '10006', driverType: 'occasional' },
+        { employeeCode: '10001', driverType: 'regular' },
+      ]),
+    ).toEqual(['10001', '10002'])
+  })
+
+  it('normalize แบบเดียวกับ normalizeCodes: trim / ตัดว่าง / ตัดซ้ำ / เรียง', () => {
+    expect(
+      leaveCheckCodes([
+        { employeeCode: ' 10002 ' },
+        { employeeCode: '10001' },
+        { employeeCode: '10002' },
+        { employeeCode: '   ' },
+        {},
+      ]),
+    ).toEqual(['10001', '10002'])
+  })
+
+  it('รายชื่อยังไม่โหลด (undefined / null) / ว่าง / มีแต่คนขับไม่ประจำ → []', () => {
+    expect(leaveCheckCodes(undefined)).toEqual([])
+    expect(leaveCheckCodes(null)).toEqual([])
+    expect(leaveCheckCodes([])).toEqual([])
+    expect(leaveCheckCodes([{ employeeCode: '10006', driverType: 'occasional' }])).toEqual([])
+  })
+})
+
+describe('driverLeaveStatus', () => {
+  const crew = [
+    { id: 'd1', employeeCode: '10001' }, // คนขับเดิม ไม่มี driverType = ประจำ
+    { id: 'd2', employeeCode: '10002', driverType: 'regular' },
+    { id: 'd3' }, // ประจำ ไม่ผูกรหัส
+    { id: 'o1', employeeCode: '10001', driverType: 'occasional' }, // ไม่ประจำ รหัสค้าง (รหัสนี้ลาอยู่)
+    { id: 'o2', driverType: 'occasional' }, // ไม่ประจำ ไม่มีรหัส
+  ]
+  const onLeave = res([{}]) // 10001 ลาพักร้อน 3–7 ต.ค.
+  const DAY5 = '2026-10-05'
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+  ])('รายชื่อคนขับยังไม่โหลด (%s) → unknown แม้ id นั้นจะเป็นคนขับไม่ประจำ (ยังไม่รู้)', (_n, notLoaded) => {
+    expect(driverLeaveStatus(notLoaded, 'o1', DAY5, onLeave, cov)).toEqual({ kind: 'unknown' })
+    expect(driverLeaveStatus(notLoaded, 'd1', DAY5, onLeave, cov)).toEqual({ kind: 'unknown' })
+  })
+
+  it('ไม่พบในรายชื่อ → driver_missing (รายชื่อว่างก็เช่นกัน)', () => {
+    expect(driverLeaveStatus(crew, 'ghost', DAY5, onLeave, cov)).toEqual({ kind: 'driver_missing' })
+    expect(driverLeaveStatus([], 'd1', DAY5, onLeave, cov)).toEqual({ kind: 'driver_missing' })
+  })
+
+  it('คนขับไม่ประจำที่มีรหัสค้างซึ่งลาอยู่ → occasional (ไม่ใช่ leave)', () => {
+    expect(driverLeaveStatus(crew, 'o1', DAY5, onLeave, cov)).toEqual({ kind: 'occasional' })
+  })
+
+  it('คนขับไม่ประจำไม่มีรหัส → occasional (ก่อน unmapped — ไม่ขึ้น ❔)', () => {
+    expect(driverLeaveStatus(crew, 'o2', DAY5, onLeave, cov)).toEqual({ kind: 'occasional' })
+  })
+
+  it('คนขับไม่ประจำ ขณะยังไม่มีผล/ตรวจไม่ได้ (res = null) → ยัง occasional ไม่ต้องรอระบบใบลา', () => {
+    expect(driverLeaveStatus(crew, 'o1', DAY5, null, null)).toEqual({ kind: 'occasional' })
+  })
+
+  it('คนขับประจำ (ไม่มีฟิลด์ / regular) → ผลเดียวกับ leaveStatusOn', () => {
+    expect(driverLeaveStatus(crew, 'd1', DAY5, onLeave, cov)).toEqual(leaveStatusOn('10001', DAY5, onLeave, cov))
+    expect(driverLeaveStatus(crew, 'd1', DAY5, onLeave, cov).kind).toBe('leave')
+    expect(driverLeaveStatus(crew, 'd2', DAY5, onLeave, cov)).toEqual({ kind: 'unknown' }) // 10002 ไม่มี key ใน res
+    expect(driverLeaveStatus(crew, 'd3', DAY5, onLeave, cov)).toEqual({ kind: 'unmapped' })
+    expect(driverLeaveStatus(crew, 'd1', DAY5, null, null)).toEqual({ kind: 'unknown' }) // ยังไม่มีผล ≠ free
   })
 })
 

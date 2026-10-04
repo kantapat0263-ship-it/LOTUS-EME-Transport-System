@@ -180,6 +180,24 @@ export function isOccasionalDriver(d?: { driverType?: string }): boolean {
   return d?.driverType === 'occasional'
 }
 
+/** trim, ตัดว่าง, ตัดซ้ำ, เรียง — ใช้เป็นทั้ง key ของแคชและลำดับ batch */
+export function normalizeCodes(codes: (string | undefined)[]): string[] {
+  const set = new Set<string>()
+  for (const c of codes) {
+    const t = c?.trim()
+    if (t) set.add(t)
+  }
+  return [...set].sort()
+}
+
+/** ฟิลด์ของคนขับที่ตรรกะวันลาใช้ — `Driver` จาก Firestore ส่งเข้ามาได้ตรง ๆ */
+type LeaveDriver = { id: string; employeeCode?: string; driverType?: string }
+
+/** รหัสที่ต้องถามระบบใบลา = รหัสของคนขับประจำเท่านั้น (normalize แล้ว) — คนขับไม่ประจำที่มีรหัสค้างไม่ถูกส่ง */
+export function leaveCheckCodes(drivers: Omit<LeaveDriver, 'id'>[] | null | undefined): string[] {
+  return normalizeCodes((drivers ?? []).filter((d) => !isOccasionalDriver(d)).map((d) => d.employeeCode))
+}
+
 // ---------- ตัดสินสถานะ ----------
 
 /** ส่วนของวัน (part) + ช่วงเวลา ของใบลานี้ ณ วัน `date` (ซึ่งอยู่ในช่วงใบลาแล้ว) */
@@ -239,6 +257,27 @@ export function leaveStatusOn(
   // am < (เต็มวัน/hours ตามเวลาเริ่ม) < pm · ค่าเท่ากันคงลำดับเดิม (sort เสถียร)
   placed.sort((a, b) => a.rank - b.rank || (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0))
   return { kind: 'leave', name: emp.name, items: placed.map((p) => p.item) }
+}
+
+/**
+ * สถานะวันลาของคนขับ `driverId` ในวัน `date` — ลำดับตัดสิน (สเปก 5.3):
+ * รายชื่อยังไม่โหลด → unknown · ไม่พบในรายชื่อ → driver_missing · คนขับไม่ประจำ → occasional (ก่อน unmapped)
+ * → ที่เหลือตาม `leaveStatusOn`
+ *
+ * `drivers` ต้องเป็นค่าจาก useCollection ตรง ๆ (ห้าม `?? []` — รายชื่อว่างทำให้ทุกคนเป็น driver_missing)
+ */
+export function driverLeaveStatus(
+  drivers: LeaveDriver[] | null | undefined,
+  driverId: string,
+  date: string,
+  res: LeaveApiResponse | null,
+  coverage: Coverage | null,
+): DriverLeaveStatus {
+  if (!drivers) return { kind: 'unknown' }
+  const driver = drivers.find((d) => d.id === driverId)
+  if (!driver) return { kind: 'driver_missing' }
+  if (isOccasionalDriver(driver)) return { kind: 'occasional' }
+  return leaveStatusOn(driver.employeeCode, date, res, coverage)
 }
 
 // ---------- ข้อความ ----------

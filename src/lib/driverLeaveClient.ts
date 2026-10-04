@@ -12,10 +12,14 @@ import {
   isOccasionalDriver,
   leaveConfirmLines,
   leaveStatusOn,
+  normalizeCodes,
   validateLeaveResponse,
   type Coverage,
   type LeaveApiResponse,
 } from './driverLeave'
+
+// ย้ายไปอยู่ใน driverLeave.ts (ตรรกะล้วน) — export ต่อให้ผู้เรียกเดิม
+export { normalizeCodes }
 
 export type CheckResult = { ok: true; res: LeaveApiResponse; coverage: Coverage } | { ok: false }
 
@@ -25,16 +29,6 @@ const ENDPOINT = '/api/driver-leaves'
 const BATCH_SIZE = 50
 const DEFAULT_TIMEOUT_MS = 8000
 const ABORTED_MSG = 'driver-leaves request aborted or timed out'
-
-/** trim, ตัดว่าง, ตัดซ้ำ, เรียง — ใช้เป็นทั้ง key ของแคชและลำดับ batch */
-export function normalizeCodes(codes: (string | undefined)[]): string[] {
-  const set = new Set<string>()
-  for (const c of codes) {
-    const t = c?.trim()
-    if (t) set.add(t)
-  }
-  return [...set].sort()
-}
 
 /**
  * ดึงใบลาของรหัสพนักงานทั้งหมดในช่วง from–to (รวมหัวท้าย)
