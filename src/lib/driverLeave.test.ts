@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   formatLeaveRange,
+  isOccasionalDriver,
   leaveBadgeText,
   leaveConfirmLines,
   leaveStatusOn,
@@ -436,6 +437,10 @@ describe('leaveBadgeText', () => {
     expect(leaveBadgeText({ kind: 'unknown' })).toBe('')
   })
 
+  it('occasional = "🚗 คนขับไม่ประจำ" — ป้ายกลาง ห้ามว่างเหมือน free (ไม่ได้ตรวจ ≠ ตรวจแล้วว่าง)', () => {
+    expect(leaveBadgeText({ kind: 'occasional' })).toBe('🚗 คนขับไม่ประจำ')
+  })
+
   it('ต่อกับ leaveStatusOn จริง: ใบหลายวันที่ 5 ต.ค.', () => {
     const s = leaveStatusOn('10001', '2026-10-05', res([{}]), cov)
     expect(leaveBadgeText(s)).toBe('🏖 ลาพักร้อน 3–7 ต.ค.')
@@ -508,6 +513,7 @@ describe('leaveConfirmLines', () => {
     ['unmapped', { kind: 'unmapped' }],
     ['not_found', { kind: 'not_found' }],
     ['driver_missing', { kind: 'driver_missing' }],
+    ['occasional', { kind: 'occasional' }],
   ])('%s → ไม่มีบรรทัด (ไม่ถามซ้ำ)', (_kind, s) => {
     expect(leaveConfirmLines('สมศักดิ์', '2026-10-10', s)).toEqual([])
   })
@@ -527,6 +533,27 @@ describe('leaveConfirmLines', () => {
       '• ลากิจ ครึ่งวันเช้า · อนุมัติแล้ว',
       '• ลาพักร้อน ครึ่งวันบ่าย · รออนุมัติ',
     ])
+  })
+})
+
+// ---------- isOccasionalDriver ----------
+
+describe('isOccasionalDriver', () => {
+  it("driverType === 'occasional' เท่านั้นที่เป็นคนขับไม่ประจำ", () => {
+    expect(isOccasionalDriver({ driverType: 'occasional' })).toBe(true)
+  })
+
+  it('regular / ไม่มีฟิลด์ (คนขับเดิม) / ไม่มีคนขับ = คนขับประจำ (ตรวจวันลาตามเดิม)', () => {
+    expect(isOccasionalDriver({ driverType: 'regular' })).toBe(false)
+    expect(isOccasionalDriver({})).toBe(false)
+    expect(isOccasionalDriver(undefined)).toBe(false)
+  })
+
+  it('ค่าเพี้ยน (ตัวพิมพ์ต่าง / ว่าง / มีช่องว่าง / ค่าอื่น) ไม่ทำให้กลายเป็นคนขับไม่ประจำ', () => {
+    expect(isOccasionalDriver({ driverType: 'Occasional' })).toBe(false)
+    expect(isOccasionalDriver({ driverType: '' })).toBe(false)
+    expect(isOccasionalDriver({ driverType: ' occasional' })).toBe(false)
+    expect(isOccasionalDriver({ driverType: 'helper' })).toBe(false)
   })
 })
 

@@ -48,6 +48,8 @@ export type LeaveItem = {
 
 export type DriverLeaveStatus =
   | { kind: 'unknown' }
+  /** คนขับไม่ประจำ — ไม่ตรวจวันลา (ไม่ใช่ "ตรวจแล้วว่าง" จึงมีป้ายกลางของตัวเอง) */
+  | { kind: 'occasional' }
   | { kind: 'unmapped' }
   | { kind: 'driver_missing' }
   | { kind: 'not_found' }
@@ -164,6 +166,20 @@ export function validateLeaveResponse(x: unknown): LeaveApiResponse {
   return x as unknown as LeaveApiResponse
 }
 
+// ---------- ประเภทคนขับ ----------
+
+/**
+ * คนขับไม่ประจำ (`driverType: 'occasional'`) = คนที่ไม่ได้ขับประจำ: คนที่คนจัดรถโทรเรียกมาช่วยขับ,
+ * พนักงานที่ขอรถแล้วขับเอง (เช่น วิศวกร) และคนนอก — คนจัดรถรู้อยู่แล้วว่าว่าง จึง **ไม่ตรวจวันลา**
+ * (ข้ามเฉพาะการตรวจวันลา ไม่ข้ามการตรวจอื่น)
+ *
+ * ต้องเป็น `'occasional'` ตรงตัวเท่านั้น — ไม่มีฟิลด์ (คนขับเดิมทุกคน) / ค่าอื่น / ค่าเพี้ยน = คนขับประจำ (ตรวจวันลาตามเดิม)
+ * เปลี่ยนได้ทางเดียวคือคนจัดรถเลือกในฟอร์มฟลีท — รหัสไม่พบ/ระบบใบลาล่มต้องไม่ทำให้กลายเป็นคนขับไม่ประจำ
+ */
+export function isOccasionalDriver(d?: { driverType?: string }): boolean {
+  return d?.driverType === 'occasional'
+}
+
 // ---------- ตัดสินสถานะ ----------
 
 /** ส่วนของวัน (part) + ช่วงเวลา ของใบลานี้ ณ วัน `date` (ซึ่งอยู่ในช่วงใบลาแล้ว) */
@@ -242,7 +258,7 @@ function itemDetail(i: LeaveItem, forConfirm: boolean): string {
   return forConfirm ? `${range} (${i.days} วัน)` : range
 }
 
-/** ป้ายสั้นบรรทัดเดียวต่อคนขับ — '' = ไม่มีป้าย (free / unknown) */
+/** ป้ายสั้นบรรทัดเดียวต่อคนขับ — '' = ไม่มีป้าย (free / unknown) · occasional มีป้ายเสมอ (ไม่ตรวจ ≠ ตรวจแล้วว่าง) */
 export function leaveBadgeText(s: DriverLeaveStatus): string {
   switch (s.kind) {
     case 'unmapped':
@@ -253,6 +269,8 @@ export function leaveBadgeText(s: DriverLeaveStatus): string {
       return '❔ ไม่พบข้อมูลคนขับ'
     case 'inactive':
       return '⛔ พ้นสภาพในระบบใบลา'
+    case 'occasional':
+      return '🚗 คนขับไม่ประจำ'
     case 'leave': {
       const { items } = s
       if (items.length === 1) {
@@ -267,7 +285,7 @@ export function leaveBadgeText(s: DriverLeaveStatus): string {
   }
 }
 
-/** บรรทัดรายละเอียดสำหรับกล่อง confirm — [] เมื่อไม่ต้องถาม (ไม่ใช่ leave/inactive) */
+/** บรรทัดรายละเอียดสำหรับกล่อง confirm — [] เมื่อไม่ต้องถาม (ไม่ใช่ leave/inactive · occasional ไม่ถามเลย) */
 export function leaveConfirmLines(driverName: string, date: string, s: DriverLeaveStatus): string[] {
   if (s.kind === 'inactive') return [`⛔ ${driverName} พ้นสภาพในระบบใบลาแล้ว`]
   if (s.kind !== 'leave') return []

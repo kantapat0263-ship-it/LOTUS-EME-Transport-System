@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc, setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase"
 import { collection, doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore"
-import { useForm } from "react-hook-form"
+import { useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { useToast } from "@/hooks/use-toast"
@@ -50,6 +50,7 @@ import { ComplianceBadge } from "@/components/fleet/ComplianceBadge"
 import { ComplianceTab } from "@/components/fleet/ComplianceTab"
 import { VehicleDetailsDialog } from "@/components/fleet/VehicleDetailsDialog"
 import { EmployeeCodeHint } from "@/components/fleet/EmployeeCodeHint"
+import { isOccasionalDriver, leaveBadgeText } from "@/lib/driverLeave"
 
 const vehicleSchema = z.object({
   licensePlate: z.string().min(2, "กรุณาระบุทะเบียนรถ"),
@@ -63,6 +64,8 @@ const driverSchema = z.object({
   name: z.string().min(2, "กรุณาระบุชื่อคนขับ"),
   phoneNumber: z.string().min(9, "กรุณาระบุเบอร์โทรศัพท์"),
   employeeCode: z.string().trim().regex(/^(\d{4,6})?$/, "รหัสพนักงานเป็นตัวเลข 4–6 หลัก"),
+  // คนขับไม่ประจำ (เรียกมาช่วยขับ / พนักงานที่ขอรถแล้วขับเอง เช่น วิศวกร / คนนอก) = ไม่ตรวจวันลา · บันทึกทุกครั้ง
+  driverType: z.enum(["regular", "occasional"]),
 })
 
 export default function FleetPage() {
@@ -194,7 +197,8 @@ export default function FleetPage() {
   }
   const driversRef = useMemoFirebase(() => collection(db, "drivers"), [db])
   const { data: drivers, isLoading: loadingDrivers } = useCollection<Driver>(driversRef)
-  const unmappedDriverCount = (drivers ?? []).filter((d) => !d.employeeCode?.trim()).length
+  // นับเฉพาะคนขับประจำที่ไม่มีรหัส — คนขับไม่ประจำไม่ตรวจวันลา จึงไม่ต้องผูกรหัส
+  const unmappedDriverCount = (drivers ?? []).filter((d) => !isOccasionalDriver(d) && !d.employeeCode?.trim()).length
   // ตรวจรหัสพนักงานกับระบบใบลา — token แบบเดียวกับ /api/tracking/devices
   const getToken = React.useCallback(async () => {
     if (!user) throw new Error("not signed in")
@@ -209,8 +213,12 @@ export default function FleetPage() {
 
   const driverForm = useForm<z.infer<typeof driverSchema>>({
     resolver: zodResolver(driverSchema),
-    defaultValues: { name: "", phoneNumber: "", employeeCode: "" }
+    defaultValues: { name: "", phoneNumber: "", employeeCode: "", driverType: "regular" }
   })
+  // คนขับไม่ประจำ → ซ่อนช่องรหัส+hint แต่ค่ารหัสยังอยู่ในฟอร์ม (shouldUnregister ปิดอยู่) และบันทึกกลับตามเดิม
+  // ยกเว้นรหัสที่ค้างอยู่ผิดรูปแบบ → โชว์ช่องพร้อม error ไม่งั้นกดบันทึกแล้วเงียบ (validation ยังตรวจช่องที่ซ่อน)
+  const driverTypeValue = useWatch({ control: driverForm.control, name: "driverType" })
+  const showEmployeeCode = driverTypeValue !== "occasional" || !!driverForm.formState.errors.employeeCode
 
   // Vehicle Types management
   const vehicleTypesRef = useMemoFirebase(() => collection(db, "vehicleTypes"), [db])
@@ -317,7 +325,7 @@ export default function FleetPage() {
   }
 
   // รอ Firestore ยืนยันก่อนค่อยแจ้งสำเร็จ — รหัสพนักงานผิด/หายแล้วป้ายวันลาทั้งแอปผิดตาม จึงห้ามแจ้งสำเร็จทั้งที่ยังไม่ถูกบันทึก
-  // (employeeCode "" = ตั้งใจล้างรหัส)
+  // (employeeCode "" = ตั้งใจล้างรหัส · driverType บันทึกทุกครั้ง — 'regular' หรือ 'occasional')
   async function onDriverSubmit(values: z.infer<typeof driverSchema>) {
     if (isViewer || savingDriverRef.current) return
     savingDriverRef.current = true
@@ -502,7 +510,7 @@ export default function FleetPage() {
                   onClick={() => { 
                     beginDriverDialogSession();
                     setEditingDriver(null); 
-                    driverForm.reset({ name: "", phoneNumber: "", employeeCode: "" }); 
+                    driverForm.reset({ name: "", phoneNumber: "", employeeCode: "", driverType: "regular" });
                     setIsDriverDialogOpen(true); 
                   }}
                 >
@@ -532,7 +540,7 @@ export default function FleetPage() {
                               setTimeout(() => {
                                 beginDriverDialogSession();
                                 setEditingDriver(d); 
-                                driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber, employeeCode: d.employeeCode ?? "" }); 
+                                driverForm.reset({ name: d.name, phoneNumber: d.phoneNumber, employeeCode: d.employeeCode ?? "", driverType: isOccasionalDriver(d) ? "occasional" : "regular" });
                                 setIsDriverDialogOpen(true); 
                               }, 0);
                             }}>
@@ -554,7 +562,9 @@ export default function FleetPage() {
                     </div>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <IdCard className="h-4 w-4 text-accent" />
-                      {d.employeeCode?.trim() ? (
+                      {isOccasionalDriver(d) ? (
+                        <span>{leaveBadgeText({ kind: "occasional" })}</span>
+                      ) : d.employeeCode?.trim() ? (
                         <span>รหัสพนักงาน: <strong>{d.employeeCode.trim()}</strong></span>
                       ) : (
                         <span>❔ ยังไม่ผูกรหัส</span>
@@ -747,14 +757,29 @@ export default function FleetPage() {
               <FormField control={driverForm.control} name="phoneNumber" render={({ field }) => (
                 <FormItem><FormLabel>เบอร์โทรศัพท์</FormLabel><FormControl><Input className="h-11" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
-              <FormField control={driverForm.control} name="employeeCode" render={({ field }) => (
+              <FormField control={driverForm.control} name="driverType" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>รหัสพนักงาน (ระบบใบลา)</FormLabel>
-                  <FormControl><Input className="h-11" inputMode="numeric" placeholder="ตัวเลข 4–6 หลัก (ไม่บังคับ)" {...field} /></FormControl>
-                  <EmployeeCodeHint value={field.value} enabled={!isViewer} getToken={getToken} duplicateOf={otherOwnersOfCode(field.value)} />
+                  <FormLabel>ประเภทคนขับ</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger className="h-11"><SelectValue /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="regular">คนขับประจำ (ตรวจวันลา)</SelectItem>
+                      <SelectItem value="occasional">คนขับไม่ประจำ (ไม่ตรวจวันลา)</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )} />
+              {showEmployeeCode && (
+                <FormField control={driverForm.control} name="employeeCode" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>รหัสพนักงาน (ระบบใบลา)</FormLabel>
+                    <FormControl><Input className="h-11" inputMode="numeric" placeholder="ตัวเลข 4–6 หลัก (ไม่บังคับ)" {...field} /></FormControl>
+                    <EmployeeCodeHint value={field.value} enabled={!isViewer} getToken={getToken} duplicateOf={otherOwnersOfCode(field.value)} />
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              )}
               <Button type="submit" className="w-full bg-accent h-12" disabled={isSavingDriver}>
                 {isSavingDriver ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} บันทึก
               </Button>

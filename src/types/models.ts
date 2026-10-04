@@ -99,6 +99,12 @@ export interface Driver {
   phoneNumber: string;
   /** รหัสพนักงานในระบบใบลา (ใช้ตรวจวันลา) */
   employeeCode?: string;
+  /**
+   * ประเภทคนขับ — ไม่มีฟิลด์ = 'regular' (คนขับเดิมทุกคน ไม่ต้อง migrate)
+   * 'occasional' = คนขับไม่ประจำ (คนที่เรียกมาช่วยขับ / พนักงานที่ขอรถแล้วขับเอง เช่น วิศวกร / คนนอก) → ไม่ตรวจวันลา
+   * ตัดสินผ่าน `isOccasionalDriver()` ใน `lib/driverLeave.ts` เท่านั้น
+   */
+  driverType?: 'regular' | 'occasional';
   createdAt?: any;
   updatedAt?: any;
 }

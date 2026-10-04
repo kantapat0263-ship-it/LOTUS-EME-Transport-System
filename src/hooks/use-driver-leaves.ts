@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@/firebase'
 import type { Driver } from '@/types/models'
-import { leaveStatusOn, type DriverLeaveStatus, type LeaveApiResponse } from '@/lib/driverLeave'
+import { isOccasionalDriver, leaveStatusOn, type DriverLeaveStatus, type LeaveApiResponse } from '@/lib/driverLeave'
 import { fetchDriverLeaves, makeCheck, normalizeCodes, type CheckFn } from '@/lib/driverLeaveClient'
 import { createLatestRequestGuard } from '@/lib/latestRequest'
 
@@ -35,7 +35,10 @@ export function useDriverLeaves(
   const [snap, setSnap] = useState<Snapshot | null>(null)
 
   // key ใช้สตริงรหัสที่ normalize แล้ว — ไม่ผูกกับ identity ของ array `drivers` (กัน refetch วนทุก render)
-  const codesKey = normalizeCodes(drivers?.map((d) => d.employeeCode) ?? []).join(',')
+  // คนขับไม่ประจำไม่ตรวจวันลา → ไม่เอารหัส (ที่อาจค้างอยู่) ไปถาม API
+  const codesKey = normalizeCodes(
+    drivers?.filter((d) => !isOccasionalDriver(d)).map((d) => d.employeeCode) ?? [],
+  ).join(',')
   const key = `${from}|${to}|${codesKey}`
   const codes = useMemo(() => (codesKey ? codesKey.split(',') : []), [codesKey])
 
@@ -135,10 +138,12 @@ export function useDriverLeaves(
 
   const forDriver = useCallback(
     (driverId: string, date: string): DriverLeaveStatus => {
-      // ลำดับตามสเปก 5.3: ยังโหลดรายชื่อไม่เสร็จ = unknown · หาคนขับไม่เจอในรายชื่อที่มีอยู่ = driver_missing
+      // ลำดับตามสเปก 5.3: ยังโหลดรายชื่อไม่เสร็จ = unknown · หาคนขับไม่เจอในรายชื่อที่มีอยู่ = driver_missing → occasional → ที่เหลือ
       if (!drivers) return { kind: 'unknown' }
       const driver = drivers.find((d) => d.id === driverId)
       if (!driver) return { kind: 'driver_missing' }
+      // คนขับไม่ประจำ = ไม่ตรวจวันลา (ก่อน unmapped — ไม่มีรหัสก็ไม่ขึ้น ❔) · ป้ายกลาง ไม่ใช่ "ว่าง"
+      if (isOccasionalDriver(driver)) return { kind: 'occasional' }
       // ไม่มีผลที่ผูกกับ key นี้ → ส่ง null เข้า leaveStatusOn: ไม่มีรหัส = unmapped (ไม่ต้องพึ่งเครือข่าย) · นอกนั้น unknown
       return leaveStatusOn(driver.employeeCode, date, res, res ? { from, to } : null)
     },

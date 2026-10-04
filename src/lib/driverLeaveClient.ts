@@ -9,6 +9,7 @@
 
 import type { Driver } from '@/types/models'
 import {
+  isOccasionalDriver,
   leaveConfirmLines,
   leaveStatusOn,
   validateLeaveResponse,
@@ -125,8 +126,11 @@ const CONFIRM_TAIL = 'ยืนยันทำต่อ?'
  * สถานะคิดจาก `CheckResult` ที่เพิ่งได้ในครั้งนี้เท่านั้น · unmapped / not_found / driver_missing / free ไม่ถาม
  * (มีป้ายอยู่แล้ว กันเตือนจนชิน)
  *
- * `drivers` เป็น null/undefined = รายชื่อคนขับยังไม่โหลด → ถามแบบตรวจไม่ได้ทันที (ไม่เรียก check)
+ * `drivers` เป็น null/undefined = รายชื่อคนขับยังไม่โหลด → ถามแบบตรวจไม่ได้ทันที (ไม่เรียก check — ยังไม่รู้ว่าใครไม่ประจำ)
  * ส่งค่าจาก useCollection มาตรง ๆ ห้าม `?? []` — รายชื่อว่างทำให้ทุกคนเป็น driver_missing แล้วด่านผ่านเงียบ ๆ
+ *
+ * คนขับไม่ประจำ (`isOccasionalDriver`) ถูกตัดออกจาก targets ก่อนทุกอย่าง — ไม่เอารหัส/วันที่ไปถาม ไม่ขึ้นในข้อความ
+ * เหลือ 0 คน = ผ่านทันทีโดยไม่เรียก check (ระบบใบลาล่มก็ไม่ถาม) · driver_missing ไม่ถูกตัด (ไม่รู้ว่าเป็นใคร = ตรวจตามเดิม)
  */
 export async function confirmLeaveBeforeAssign(
   check: CheckFn,
@@ -138,8 +142,11 @@ export async function confirmLeaveBeforeAssign(
   if (!drivers) return confirmFn(UNKNOWN_PROMPT)
 
   const byId = new Map(drivers.map((d) => [d.id, d]))
-  const codes = normalizeCodes(targets.map((t) => byId.get(t.driverId)?.employeeCode))
-  const dates = targets.map((t) => t.date)
+  const checked = targets.filter((t) => !isOccasionalDriver(byId.get(t.driverId)))
+  if (checked.length === 0) return true
+
+  const codes = normalizeCodes(checked.map((t) => byId.get(t.driverId)?.employeeCode))
+  const dates = checked.map((t) => t.date)
   const from = dates.reduce((a, b) => (b < a ? b : a))
   const to = dates.reduce((a, b) => (b > a ? b : a))
 
@@ -148,7 +155,7 @@ export async function confirmLeaveBeforeAssign(
 
   const seen = new Set<string>()
   const blocks: string[] = []
-  for (const { driverId, date } of targets) {
+  for (const { driverId, date } of checked) {
     const key = `${driverId}|${date}`
     if (seen.has(key)) continue
     seen.add(key)

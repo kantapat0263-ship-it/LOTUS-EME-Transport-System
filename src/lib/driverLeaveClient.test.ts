@@ -629,6 +629,126 @@ describe('confirmLeaveBeforeAssign', () => {
     expect(a.asked).toHaveLength(1) // รอบสองว่าง → ไม่ถามเพิ่ม
   })
 
+  describe('คนขับไม่ประจำ (driverType occasional) — ไม่ตรวจวันลา · คนขับประจำตรวจตามเดิม', () => {
+    // o1 = คนขับไม่ประจำที่ยังมีรหัสค้าง (ลาอยู่ในระบบใบลา) · o2 = คนขับไม่ประจำไม่มีรหัส · r7 = ประจำระบุชัด
+    const crew: Driver[] = [
+      ...drivers,
+      { id: 'o1', name: 'ไม่ประจำมีรหัส', phoneNumber: '086', employeeCode: '10006', driverType: 'occasional' },
+      { id: 'o2', name: 'ไม่ประจำไม่มีรหัส', phoneNumber: '087', driverType: 'occasional' },
+      { id: 'r7', name: 'ประจำระบุชัด', phoneNumber: '088', employeeCode: '10007', driverType: 'regular' },
+    ]
+    const crewEmployees: LeaveApiResponse['employees'] = {
+      ...EMPLOYEES,
+      '10006': { name: 'ไม่ประจำ ในระบบใบลา', active: true },
+      '10007': { name: 'ประจำ ในระบบใบลา', active: true },
+    }
+    const occasionalOnLeave = leave({ code: '10006' })
+
+    it('target เป็นคนขับไม่ประจำล้วน → true ไม่เรียก check ไม่ถาม (แม้รหัสค้างจะลาอยู่)', async () => {
+      const check = checkWith([occasionalOnLeave], crewEmployees)
+      const a = asker(false)
+      const r = await confirmLeaveBeforeAssign(
+        check,
+        [{ driverId: 'o1', date: '2026-10-05' }, { driverId: 'o2', date: '2026-10-06' }],
+        crew,
+        a.fn,
+      )
+      expect(r).toBe(true)
+      expect(check).not.toHaveBeenCalled()
+      expect(a.asked).toEqual([])
+    })
+
+    it('คนขับไม่ประจำล้วน + ระบบใบลาล่ม → ยังไม่ถาม (ไม่เรียก check เลย)', async () => {
+      const check = vi.fn<CheckFn>(async () => ({ ok: false }))
+      const a = asker(false)
+      const r = await confirmLeaveBeforeAssign(check, [{ driverId: 'o1', date: '2026-10-05' }], crew, a.fn)
+      expect(r).toBe(true)
+      expect(check).not.toHaveBeenCalled()
+      expect(a.asked).toEqual([])
+    })
+
+    it('คนขับไม่ประจำ + คนขับประจำที่ลา → ถามเฉพาะคนประจำ · รหัส/วันที่ส่งให้ check ไม่รวมของคนขับไม่ประจำ', async () => {
+      const check = checkWith([occasionalOnLeave, leave({ code: '10001' })], crewEmployees)
+      const a = asker(true)
+      await confirmLeaveBeforeAssign(
+        check,
+        [
+          { driverId: 'o1', date: '2026-10-01' }, // วันของคนขับไม่ประจำต้องไม่ถ่างช่วงที่ถาม
+          { driverId: 'd1', date: '2026-10-05' },
+          { driverId: 'o2', date: '2026-10-09' },
+        ],
+        crew,
+        a.fn,
+      )
+      expect(check).toHaveBeenCalledTimes(1)
+      expect(check).toHaveBeenCalledWith(['10001'], '2026-10-05', '2026-10-05')
+      expect(a.asked).toEqual([['⚠️ สมศักดิ์ ลาวันที่ 5 ต.ค.', '• ลากิจ · อนุมัติแล้ว', '', 'ยืนยันทำต่อ?'].join('\n')])
+    })
+
+    it('คนขับไม่ประจำ + คนขับประจำ + check พัง → ถามแบบตรวจไม่ได้ (เพราะยังมีคนประจำ)', async () => {
+      const check = vi.fn<CheckFn>(async () => ({ ok: false }))
+      const no = asker(false)
+      const r = await confirmLeaveBeforeAssign(
+        check,
+        [{ driverId: 'o1', date: '2026-10-05' }, { driverId: 'd2', date: '2026-10-05' }],
+        crew,
+        no.fn,
+      )
+      expect(r).toBe(false)
+      expect(check).toHaveBeenCalledWith(['10002'], '2026-10-05', '2026-10-05')
+      expect(no.asked).toEqual(['⚠️ ตรวจวันลาไม่ได้ตอนนี้ — ยืนยันทำต่อ?'])
+    })
+
+    it.each([
+      ['undefined', undefined],
+      ['null', null],
+    ])('รายชื่อคนขับยังไม่โหลด (%s) → ยังถามแบบตรวจไม่ได้แม้ target จะเป็นคนขับไม่ประจำ (ยังไม่รู้ว่าใครไม่ประจำ)', async (_n, notLoaded) => {
+      const check = checkWith([], crewEmployees)
+      const a = asker(true)
+      expect(await confirmLeaveBeforeAssign(check, [{ driverId: 'o1', date: '2026-10-05' }], notLoaded, a.fn)).toBe(true)
+      expect(a.asked).toEqual(['⚠️ ตรวจวันลาไม่ได้ตอนนี้ — ยืนยันทำต่อ?'])
+      expect(check).not.toHaveBeenCalled()
+    })
+
+    it("คนขับเดิมที่ไม่มี driverType และ driverType 'regular' → ตรวจเหมือนคนขับประจำ", async () => {
+      const check = checkWith([leave({ code: '10001' }), leave({ code: '10007', typeLabel: 'ลาป่วย' })], crewEmployees)
+      const a = asker(true)
+      await confirmLeaveBeforeAssign(
+        check,
+        [{ driverId: 'd1', date: '2026-10-05' }, { driverId: 'r7', date: '2026-10-05' }],
+        crew,
+        a.fn,
+      )
+      expect(check).toHaveBeenCalledWith(['10001', '10007'], '2026-10-05', '2026-10-05')
+      expect(a.asked).toEqual([
+        [
+          '⚠️ สมศักดิ์ ลาวันที่ 5 ต.ค.',
+          '• ลากิจ · อนุมัติแล้ว',
+          '',
+          '⚠️ ประจำระบุชัด ลาวันที่ 5 ต.ค.',
+          '• ลาป่วย · อนุมัติแล้ว',
+          '',
+          'ยืนยันทำต่อ?',
+        ].join('\n'),
+      ])
+    })
+
+    it('คนขับไม่ประจำ + คนขับที่ไม่อยู่ในรายชื่อ (driver_missing) → ยังเรียก check ตามเดิม (ด้วยรหัสว่าง) แล้วไม่ถาม', async () => {
+      const check = checkWith([occasionalOnLeave], crewEmployees)
+      const a = asker(false)
+      const r = await confirmLeaveBeforeAssign(
+        check,
+        [{ driverId: 'o1', date: '2026-10-05' }, { driverId: 'ghost', date: '2026-10-05' }],
+        crew,
+        a.fn,
+      )
+      expect(r).toBe(true)
+      expect(check).toHaveBeenCalledTimes(1)
+      expect(check).toHaveBeenCalledWith([], '2026-10-05', '2026-10-05')
+      expect(a.asked).toEqual([])
+    })
+  })
+
   it('confirmFn ค่าเริ่มต้น = window.confirm (อ้าง window ตอนเรียก ไม่ใช่ตอน import)', async () => {
     const confirm = vi.fn(() => true)
     vi.stubGlobal('window', { confirm })
