@@ -3,7 +3,12 @@ const withPWA = require('next-pwa')({
   dest: 'public',
   register: true,
   skipWaiting: true,
-  disable: process.env.NODE_ENV === 'development'
+  disable: process.env.NODE_ENV === 'development',
+  // ข้อมูลน้ำท่วมต้องสด — ห้าม SW คืนชุดเก่าจาก Cache Storage ตอนเน็ตล้ม (กฎแรกที่ตรงชนะ จึงต้องอยู่หน้าชุดเดิม)
+  runtimeCaching: [
+    { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/road-events', handler: 'NetworkOnly', method: 'GET' },
+    ...require('next-pwa/cache'),
+  ],
 });
 
 /**
