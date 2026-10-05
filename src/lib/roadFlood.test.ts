@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { parseThaiTime, normalizeRoads, RoadFloodDataError } from './roadFlood'
+import {
+  parseThaiTime, normalizeRoads, RoadFloodDataError, summarizeFlood, depthLabel, ageLabel, formatThaiClock,
+  markerKey, parseRoadEventsResponse, floodStatusText,
+  type FloodPoint, type RoadFloodSnapshot, type VisibleFloodPoint,
+} from './roadFlood'
 
 const FETCHED = Date.parse('2026-10-05T14:13:00+07:00')
 const MIN = 60_000
@@ -165,4 +169,144 @@ describe('normalizeRoads', () => {
     ('ข้อมูลใช้ไม่ได้ทั้งชุด → throw (%#)', (raw) => {
       expect(() => normalizeRoads(raw, FETCHED)).toThrow(RoadFloodDataError)
     })
+})
+
+// ---------- Task 2: สรุปผล / ป้าย / ข้อความแถบสถานะ ----------
+
+const NOW = Date.parse('2026-10-05T14:20:00+07:00')
+
+function pt(over: Partial<FloodPoint> = {}): FloodPoint {
+  return {
+    code: 'P1', name: 'ถ.ทดสอบ', road: null, district: null, dir: null, isTunnel: false, lat: 13.7, lng: 100.5,
+    level: 'flood', depthCm: 15, depthAtLeast: false, measuredAt: NOW - 5 * MIN, floodingSince: null, ...over,
+  }
+}
+function snap(points: FloodPoint[], over: Partial<RoadFloodSnapshot> = {}): RoadFloodSnapshot {
+  return {
+    fetchedAt: Date.parse('2026-10-05T14:13:00+07:00'), sourceLatest: Date.parse('2026-10-05T14:10:00+07:00'),
+    sourceStale: false, points, usable: 240, offline: 18, assessable: 222, invalid: 0, ...over,
+  }
+}
+
+describe('summarizeFlood', () => {
+  it('ขอบอายุจุด 45 นาที / 180 นาที', () => {
+    const s = summarizeFlood(snap([
+      pt({ code: 'A45', measuredAt: NOW - 45 * MIN }), pt({ code: 'B45', measuredAt: NOW - 45 * MIN - 1 }),
+      pt({ code: 'C180', measuredAt: NOW - 180 * MIN }), pt({ code: 'D180', measuredAt: NOW - 180 * MIN - 1 }),
+    ]), NOW)
+    const aging = Object.fromEntries(s.visible.map((p) => [p.code, p.aging]))
+    expect(aging).toEqual({ A45: false, B45: true, C180: true })
+    expect(s.tooOld).toBe(1)
+  })
+
+  it('เวลาวัดล้ำหน้าเล็กน้อย → อายุ 0 (ไม่ aging)', () => {
+    const s = summarizeFlood(snap([pt({ measuredAt: NOW + 60_000 })]), NOW)
+    expect(s.visible.map((p) => p.aging)).toEqual([false])
+  })
+
+  it('นับ flood/slight จากจุดที่แสดงเท่านั้น + ส่งต่อจำนวนอื่น', () => {
+    const s = summarizeFlood(snap([
+      pt({ code: 'F', level: 'flood' }), pt({ code: 'S', level: 'slight' }),
+      pt({ code: 'OLD', level: 'flood', measuredAt: NOW - 200 * MIN }),
+    ], { invalid: 2 }), NOW)
+    expect([s.flood, s.slight, s.tooOld, s.offline, s.invalid, s.usable, s.assessable]).toEqual([1, 1, 1, 18, 2, 240, 222])
+  })
+
+  it('ความเก่าของทั้งชุดคิดเป็นนาที ณ เวลาแสดงผล', () => {
+    const at45 = summarizeFlood(snap([], { sourceLatest: NOW - 45 * MIN }), NOW)
+    expect(at45.sourceAgeMin).toBe(45)
+    expect(at45.sourceOld).toBe(false)
+    expect(summarizeFlood(snap([], { sourceLatest: NOW - 45 * MIN - 1 }), NOW).sourceOld).toBe(true)
+    const unknown = summarizeFlood(snap([], { sourceLatest: null }), NOW)
+    expect(unknown.sourceAgeMin).toBeNull()
+    expect(unknown.sourceOld).toBe(true)
+    expect(summarizeFlood(snap([], { sourceStale: true }), NOW).sourceOld).toBe(true)
+    expect(summarizeFlood(snap([], { sourceLatest: NOW + 60_000 }), NOW).sourceAgeMin).toBe(0)
+  })
+})
+
+describe('ป้ายและเวลา', () => {
+  it('depthLabel', () => {
+    expect(depthLabel({ depthCm: 15, depthAtLeast: false })).toBe('15')
+    expect(depthLabel({ depthCm: 20, depthAtLeast: true })).toBe('≥20')
+    expect(depthLabel({ depthCm: null, depthAtLeast: false })).toBe('?')
+  })
+  it('ageLabel', () => {
+    expect(ageLabel(30_000)).toBe('เพิ่งวัด')
+    expect(ageLabel(8 * MIN)).toBe('8 นาทีที่แล้ว')
+    expect(ageLabel(60 * MIN)).toBe('1 ชม.ที่แล้ว')
+    expect(ageLabel(80 * MIN)).toBe('1 ชม. 20 นาทีที่แล้ว')
+  })
+  it('formatThaiClock ใช้เวลาไทย', () => {
+    expect(formatThaiClock(Date.parse('2026-10-05T07:05:00Z'))).toBe('14:05')
+  })
+  it('markerKey ไม่ขึ้นกับลำดับ แต่เปลี่ยนเมื่อสี/ป้ายเปลี่ยน', () => {
+    const a: VisibleFloodPoint = { ...pt({ code: 'A' }), aging: false }
+    const b: VisibleFloodPoint = { ...pt({ code: 'B', level: 'slight' }), aging: false }
+    expect(markerKey([a, b])).toBe(markerKey([b, a]))
+    expect(markerKey([a, b])).not.toBe(markerKey([{ ...a, aging: true }, b]))
+    expect(markerKey([a, b])).not.toBe(markerKey([{ ...a, depthAtLeast: true, depthCm: 20 }, b]))
+  })
+})
+
+describe('parseRoadEventsResponse', () => {
+  it('รูปถูก → snapshot', () => {
+    const s = snap([pt()])
+    expect(parseRoadEventsResponse({ ok: true, snapshot: s })).toEqual(s)
+  })
+  it.each([[{ ok: false }], [null], ['x'], [{ ok: true, snapshot: { ...snap([]), points: undefined } }],
+           [{ ok: true, snapshot: snap([{ ...pt(), lat: '13' as unknown as number }]) }]])
+    ('รูปผิด → null (%#)', (json) => expect(parseRoadEventsResponse(json)).toBeNull())
+})
+
+describe('floodStatusText', () => {
+  const base = { lastFailed: false, now: NOW }
+  const ready = (s: RoadFloodSnapshot) => ({ ...base, phase: 'ready' as const, snapshot: s, summary: summarizeFlood(s, NOW) })
+
+  it('loading', () => {
+    const r = floodStatusText({ ...base, phase: 'loading', snapshot: null, summary: null })
+    expect(r.tone).toBe('info')
+    expect(r.text).toContain('กำลังโหลดข้อมูลน้ำท่วมถนน')
+  })
+  it('error ไม่มีชุดเก่า → ไม่แสดง "ท่วม 0"', () => {
+    const r = floodStatusText({ ...base, phase: 'error', snapshot: null, summary: null })
+    expect(r.tone).toBe('warn')
+    expect(r.text).toContain('โหลดข้อมูลน้ำท่วมไม่ได้')
+    expect(r.text).not.toContain('ท่วม 0')
+  })
+  it('จุดวัดขัดข้องทั้งหมด → ยังประเมินไม่ได้ ไม่แสดง "ท่วม 0"', () => {
+    const r = floodStatusText(ready(snap([], { usable: 18, offline: 18, assessable: 0 })))
+    expect(r.tone).toBe('warn')
+    expect(r.text).toContain('ยังประเมินสถานการณ์ไม่ได้')
+    expect(r.text).not.toContain('ท่วม 0')
+  })
+  it('ปกติ', () => {
+    const s = snap([pt({ code: 'A' }), pt({ code: 'B' }), pt({ code: 'C', level: 'slight' })])
+    const r = floodStatusText(ready(s))
+    expect(r.tone).toBe('info')
+    for (const t of ['ท่วม 2', 'เล็กน้อย 1', 'ขัดข้อง 18', 'จุดวัดที่ประเมินได้', 'ข้อมูล 14:10', 'ดึงเมื่อ 14:13']) expect(r.text).toContain(t)
+    expect(r.text).not.toContain('เก่าเกิน')
+    expect(r.text).not.toContain('ข้อมูลใช้ไม่ได้')
+  })
+  it('มีจุดเก่าเกิน 3 ชม. / ข้อมูลใช้ไม่ได้ → แสดงจำนวน', () => {
+    const old = [1, 2, 3].map((i) => pt({ code: `O${i}`, measuredAt: NOW - 200 * MIN }))
+    const r = floodStatusText(ready(snap(old, { invalid: 2 })))
+    expect(r.text).toContain('เก่าเกิน 3 ชม. 3')
+    expect(r.text).toContain('ข้อมูลใช้ไม่ได้ 2')
+  })
+  it('รอบล่าสุดล้ม → ⚠ อัปเดตไม่ได้', () => {
+    const r = floodStatusText({ ...ready(snap([pt()])), lastFailed: true })
+    expect(r.tone).toBe('warn')
+    expect(r.text.startsWith('⚠ อัปเดตไม่ได้')).toBe(true)
+  })
+  it('ไม่ทราบเวลาต้นทาง → เตือน', () => {
+    const r = floodStatusText(ready(snap([pt()], { sourceLatest: null })))
+    expect(r.tone).toBe('warn')
+    expect(r.text).toContain('ไม่ทราบเวลาข้อมูลต้นทาง')
+  })
+  it('ข้อมูลตัวอย่าง → tone sample ชนะ warn', () => {
+    const r = floodStatusText({ ...ready(snap([pt()], { sample: true, sourceLatest: null })), lastFailed: true })
+    expect(r.tone).toBe('sample')
+    expect(r.text).toContain('ข้อมูลตัวอย่าง — ไม่ใช่สถานการณ์จริง')
+  })
 })
