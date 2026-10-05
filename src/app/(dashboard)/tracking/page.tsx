@@ -28,6 +28,7 @@ import {
   detectStops,
   haversineMeters,
   isPositionStale,
+  isTripNotRun,
   isPowerCut,
   isOverspeed,
   mileageKm,
@@ -38,6 +39,7 @@ import {
   LONG_DWELL_MIN,
   type TrailPoint,
 } from "@/lib/tracking"
+import { incomingStopsForTrip } from "@/lib/calculations"
 import { TrackingMap, type TrackingMapStop } from "@/components/tracking/TrackingMap"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -86,6 +88,8 @@ interface TimelineEntry {
   arrivedAt: number | null
   /** งานนี้ถูกโยกออกไปคันอื่น (คนขับลา/ปฏิเสธ) — ไม่ใช่งานของคันนี้แล้ว */
   movedTo?: string
+  /** งานนี้ถูกเลื่อนไปวันอื่น (YYYY-MM-DD) — ไม่ใช่งานของคันนี้วันนี้ */
+  postponedTo?: string
   /** งานนี้ถูกโยกมาให้คันนี้จากคันอื่น */
   incomingFrom?: { plate: string; refused: boolean }
 }
@@ -277,17 +281,12 @@ export default function TrackingPage() {
       })
     })
 
-    // ทริปที่โยกงานออกครบทุกจุด (มีคันปลายทางรองรับ) + ไม่มีงานโยกเข้า = รถคันนี้ไม่ได้วิ่งงาน
-    // → ไม่โชว์ในหน้าติดตาม (งานไปนับ/ติดตามใต้คันปลายทางแล้ว) — เกณฑ์เดียวกับ isFullyMovedOut ของใบสรุป A4
-    // จุดที่แค่ "เลื่อน" ไม่นับ — การ์ดยังโชว์ตามเดิม
-    const isFullyMovedOut = (t: Trip) => {
-      const stops = t.stops ?? []
-      if (stops.length === 0) return false
-      if ((incomingByTripId[t.id] ?? []).length > 0) return false
-      return stops.every((s: any) => wasMovedAway(s) && s.reassignedToTripId)
-    }
+    // ทริปที่งานทุกจุดถูกโยก/เลื่อน/ปฏิเสธหมด + ไม่มีงานโยกเข้า = รถคันนี้ไม่ได้ออกวิ่ง
+    // → ไม่โชว์ในหน้าติดตาม — เกณฑ์เดียวกับป้าย "🚫 ไม่ได้วิ่ง" ในใบสรุป (งานที่เลื่อนไปรอจัดคิววันใหม่แล้ว)
+    // นับงานโยกเข้าด้วย incomingStopsForTrip ตัวเดียวกับใบสรุป เพื่อให้สองหน้าตัดสินตรงกันเสมอ
+    const isNotRun = (t: Trip) => isTripNotRun(t.stops ?? [], incomingStopsForTrip(activeTrips, t.id).length)
 
-    return activeTrips.filter((t) => !isFullyMovedOut(t)).map((trip) => {
+    return activeTrips.filter((t) => !isNotRun(t)).map((trip) => {
       const deviceId = plateToDevice[trip.vehiclePlate]
       // โหมดดูย้อนหลัง: ไม่ใช้ตำแหน่งสด (collection ตำแหน่งเก็บแค่ล่าสุด ไม่ใช่รายวัน)
       const position = deviceId && isToday ? deviceToPos[deviceId] : undefined
@@ -297,8 +296,9 @@ export default function TrackingPage() {
       const incoming = incomingByTripId[trip.id] ?? []
       const maxOrder = ownSorted.reduce((m, s) => Math.max(m, s.order), 0)
 
-      // จุดที่คันนี้ต้องวิ่งจริง = งานของตัวเองที่ยังไม่ถูกโยกออก + งานที่โยกเข้ามา
-      const activeOwn = ownSorted.filter((s) => !wasMovedAway(s))
+      // จุดที่คันนี้ต้องวิ่งจริง = งานของตัวเองที่ยังไม่ถูกโยกออก/เลื่อนวัน + งานที่โยกเข้ามา
+      const isPostponed = (s: any) => s.outcome === "postponed"
+      const activeOwn = ownSorted.filter((s) => !wasMovedAway(s) && !isPostponed(s))
       const routeStops = [
         ...activeOwn.map((s) => ({ order: s.order, siteName: s.siteName, lat: s.lat, lng: s.lng })),
         ...incoming.map((inc, i) => ({
@@ -334,7 +334,8 @@ export default function TrackingPage() {
       const timeline: TimelineEntry[] = [
         ...ownSorted.map((s: any) => {
           const moved = wasMovedAway(s)
-          const st = moved ? undefined : statusByOrder[s.order]
+          const postponed = isPostponed(s)
+          const st = moved || postponed ? undefined : statusByOrder[s.order]
           return {
             order: s.order,
             name: s.siteName,
@@ -344,6 +345,7 @@ export default function TrackingPage() {
             isCurrent: st?.isCurrent ?? false,
             arrivedAt: st?.arrivedAt ?? null,
             movedTo: moved ? s.reassignedToVehiclePlate : undefined,
+            postponedTo: postponed ? s.postponedToDate || "วันอื่น" : undefined,
           }
         }),
         ...incoming.map((inc, i) => {
@@ -742,6 +744,7 @@ function TruckDetail({
         last.entry.lng === s.lng &&
         last.entry.arrived === s.arrived &&
         !s.movedTo && !last.entry.movedTo &&
+        !s.postponedTo && !last.entry.postponedTo &&
         !s.incomingFrom && !last.entry.incomingFrom
       ) {
         last.count++
@@ -938,9 +941,11 @@ function TruckDetail({
           }
           const s = row.entry
           const t = truck.daily?.stops?.find((d) => d.order === s.order)
-          const longStop = t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
-          const tag = s.movedTo ? "โยกออก" : s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
-          const tagCls = s.movedTo
+          // งานที่โยกออก/เลื่อนวัน = ไม่ใช่งานคันนี้วันนี้ → แสดงจาง ขีดฆ่า ไม่มีขาเดินทาง/ไฮไลต์แวะนาน
+          const off = !!(s.movedTo || s.postponedTo)
+          const longStop = !off && t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
+          const tag = s.movedTo ? "โยกออก" : s.postponedTo ? "เลื่อน" : s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
+          const tagCls = off
             ? "text-muted-foreground"
             : s.arrived
               ? "text-emerald-400"
@@ -949,7 +954,7 @@ function TruckDetail({
                 : "text-muted-foreground"
           return (
             <div key={`${s.order}-${idx}`}>
-              {!s.movedTo && t?.travelMinFromPrev != null && (() => {
+              {!off && t?.travelMinFromPrev != null && (() => {
                 // ขายาวแต่เฉลี่ยช้า = น่าสงสัยว่าถ่วงเวลา (ไม่จับขาในเมือง/รถติดที่ช้าปกติ)
                 const slowHaul = t.travelKmFromPrev != null && t.travelKmFromPrev >= 30 && t.avgSpeedKmh != null && t.avgSpeedKmh < 50
                 return (
@@ -968,13 +973,13 @@ function TruckDetail({
                 className={cn(
                   "flex items-center gap-3 border-b border-dashed border-border py-2.5 last:border-none",
                   longStop && "-mx-2 rounded-md bg-amber-500/10 px-2",
-                  s.movedTo && "opacity-50"
+                  off && "opacity-50"
                 )}
               >
                 <div
                   className={cn(
                     "flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 text-xs font-bold",
-                    s.movedTo
+                    off
                       ? "border-border text-muted-foreground"
                       : s.arrived
                         ? "border-emerald-500 bg-emerald-500 text-white"
@@ -985,10 +990,10 @@ function TruckDetail({
                             : "border-border text-muted-foreground"
                   )}
                 >
-                  {s.movedTo ? "↦" : s.arrived ? "✓" : s.order}
+                  {s.movedTo ? "↦" : s.postponedTo ? "⏭" : s.arrived ? "✓" : s.order}
                 </div>
                 <div className="flex-1">
-                  <div className={cn("text-sm font-medium", s.movedTo && "line-through")}>
+                  <div className={cn("text-sm font-medium", off && "line-through")}>
                     {s.name}
                     {row.count > 1 && (
                       <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
@@ -1005,6 +1010,10 @@ function TruckDetail({
                   <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                     {s.movedTo ? (
                       <span className="text-blue-400">🔄 โยกให้ {s.movedTo} แล้ว — ไม่ใช่งานคันนี้</span>
+                    ) : s.postponedTo ? (
+                      <span className="text-amber-400">
+                        ⏭️ เลื่อนไป {s.postponedTo.split("-").reverse().join("/")} — ไม่ใช่งานวันนี้
+                      </span>
                     ) : s.arrived ? (
                       <>
                         <Clock className="h-3 w-3" /> ถึง {s.arrivedAt ? thTime(s.arrivedAt) : "แล้ว"}

@@ -16,7 +16,30 @@ import {
   computeRecurringStops,
   trackingDateKey,
   isCronSyncWindow,
+  isTripNotRun,
 } from './tracking'
+
+describe('tracking: isTripNotRun (เกณฑ์เดียวกับป้าย 🚫 ไม่ได้วิ่ง ในใบสรุป)', () => {
+  it('งานเดียวถูกเลื่อน + ไม่มีงานโยกเข้า = ไม่ได้วิ่ง (เคส 1ฒล-6100 5 ต.ค.)', () => {
+    expect(isTripNotRun([{ outcome: 'postponed' }], 0)).toBe(true)
+  })
+  it('เลื่อน/โยก/ปฏิเสธ ผสมกันครบทุกจุด = ไม่ได้วิ่ง', () => {
+    expect(isTripNotRun([{ outcome: 'postponed' }, { outcome: 'reassigned' }, { outcome: 'driver-refused' }], 0)).toBe(true)
+  })
+  it('เลื่อนบางจุด ยังมีงานตามแผน = ยังวิ่ง', () => {
+    expect(isTripNotRun([{ outcome: 'postponed' }, {}], 0)).toBe(false)
+    expect(isTripNotRun([{ outcome: 'postponed' }, { outcome: 'delivered' }], 0)).toBe(false)
+  })
+  it('มีงานโยกเข้า = ยังวิ่ง แม้งานตัวเองถูกเลื่อนหมด', () => {
+    expect(isTripNotRun([{ outcome: 'postponed' }], 1)).toBe(false)
+  })
+  it('ยกเลิกการเลื่อน (ผลกลับเป็นตามแผน) = การ์ดกลับมา', () => {
+    expect(isTripNotRun([{}], 0)).toBe(false)
+  })
+  it('ทริปไม่มีจุด = ไม่ซ่อน', () => {
+    expect(isTripNotRun([], 0)).toBe(false)
+  })
+})
 
 describe('tracking: isCronSyncWindow (cron 04:50–21:59 ไทย)', () => {
   const th = (iso: string) => Date.parse(`${iso}+07:00`)

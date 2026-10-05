@@ -163,6 +163,16 @@ export function isPositionStale(
   return nowMs - positionTimeMs > thresholdMin * 60 * 1000
 }
 
+/**
+ * รถคันนี้ "ไม่ได้ออกวิ่ง" วันนี้ = ทุกจุดมีผลที่ไม่ใช่ตามแผน (โยก/เลื่อน/ปฏิเสธ) และไม่มีงานโยกเข้า
+ * — เกณฑ์เดียวกับป้าย "🚫 ไม่ได้วิ่ง" ในใบสรุป (notRun ใน daily-summary) → หน้าติดตามรถไม่ต้องโชว์คันนี้
+ * ยกเลิกการเลื่อน/โยก (ผลกลับเป็นตามแผน) = การ์ดกลับมาเอง เพราะคิดสดจาก trip.stops
+ */
+export function isTripNotRun(stops: { outcome?: string }[], incomingCount: number): boolean {
+  if (incomingCount > 0 || stops.length === 0) return false
+  return stops.every((s) => !!s.outcome && s.outcome !== 'delivered')
+}
+
 /** วันทำการของระบบติดตามรถเริ่ม 05:00 เวลาไทย (ตรงกับเวลาที่ cron เริ่มดึงตำแหน่ง) */
 export const TRACKING_DAY_START_HOUR = 5
 
