@@ -2,6 +2,10 @@
 
 import * as React from "react"
 import { Loader } from "@googlemaps/js-api-loader"
+import { summarizeFlood } from "@/lib/roadFlood"
+import { useRoadFlood } from "@/hooks/use-road-flood"
+import { useFloodMarkers } from "./useFloodMarkers"
+import { FloodStatusBar } from "./FloodStatusBar"
 
 export interface TrackingMapStop {
   order: number
@@ -67,6 +71,15 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
   const lastFitKeyRef = React.useRef<string | null>(null) // zoom พอดีครั้งเดียวต่อการเลือก
   const [ready, setReady] = React.useState(false)
   const [trafficOn, setTrafficOn] = React.useState(false)
+  // ชั้นน้ำท่วมถนน กทม. — floodOn คือความตั้งใจของผู้ใช้ (คงไว้ข้ามโหมดดูย้อนหลัง) · แสดงจริงเฉพาะโหมดวันนี้
+  const [floodOn, setFloodOn] = React.useState(false)
+  const floodLive = floodOn && !!live
+  const flood = useRoadFlood(floodLive)
+  const floodSummary = React.useMemo(
+    () => (flood.snapshot ? summarizeFlood(flood.snapshot, flood.now) : null),
+    [flood.snapshot, flood.now]
+  )
+  useFloodMarkers({ map: ready ? mapRef.current : null, ready, active: floodLive, summary: floodSummary, now: flood.now })
 
   // โหลด map ครั้งเดียว
   React.useEffect(() => {
@@ -217,6 +230,7 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
           strokeColor: "#fff",
           strokeWeight: 2,
         },
+        zIndex: 500, // อยู่เหนือหมุดน้ำท่วม (100) แต่ใต้จุดจอดนาน (900) และรถ (999)
       })
       overlaysRef.current.push(marker)
       bounds.extend(pos)
@@ -328,19 +342,43 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full rounded-lg" />
       {ready && live && (
-        <button
-          type="button"
-          onClick={() => setTrafficOn((v) => !v)}
-          title="แสดง/ซ่อนสภาพจราจรสด"
-          className={
-            "absolute right-2 top-2 z-10 rounded-md border px-2.5 py-1 text-xs font-medium shadow-md backdrop-blur transition " +
-            (trafficOn
-              ? "border-orange-400/60 bg-orange-500/90 text-white"
-              : "border-border bg-background/80 text-foreground hover:bg-background")
-          }
-        >
-          🚦 จราจร{trafficOn ? " เปิด" : ""}
-        </button>
+        <div className="absolute right-2 top-2 z-10 flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => setTrafficOn((v) => !v)}
+            title="แสดง/ซ่อนสภาพจราจรสด"
+            className={
+              "rounded-md border px-2.5 py-1 text-xs font-medium shadow-md backdrop-blur transition " +
+              (trafficOn
+                ? "border-orange-400/60 bg-orange-500/90 text-white"
+                : "border-border bg-background/80 text-foreground hover:bg-background")
+            }
+          >
+            🚦 จราจร{trafficOn ? " เปิด" : ""}
+          </button>
+          <button
+            type="button"
+            onClick={() => setFloodOn((v) => !v)}
+            title="แสดง/ซ่อนจุดวัดน้ำท่วมถนน กทม."
+            className={
+              "rounded-md border px-2.5 py-1 text-xs font-medium shadow-md backdrop-blur transition " +
+              (floodOn
+                ? "border-blue-400/60 bg-blue-600/90 text-white"
+                : "border-border bg-background/80 text-foreground hover:bg-background")
+            }
+          >
+            🌊 น้ำท่วม{floodOn ? " เปิด" : ""}
+          </button>
+        </div>
+      )}
+      {ready && floodLive && (
+        <FloodStatusBar
+          phase={flood.phase}
+          lastFailed={flood.lastFailed}
+          snapshot={flood.snapshot}
+          summary={floodSummary}
+          now={flood.now}
+        />
       )}
     </div>
   )
