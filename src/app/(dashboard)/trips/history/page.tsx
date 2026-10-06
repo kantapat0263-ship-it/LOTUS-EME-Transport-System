@@ -96,11 +96,13 @@ export default function TripHistoryPage() {
     vehicleId: string;
     driverId: string;
     stops: TripStop[];
+    originalStopIndexes: (number | null)[];
     note: string;
   }>({
     vehicleId: "",
     driverId: "",
     stops: [],
+    originalStopIndexes: [],
     note: ""
   })
 
@@ -231,7 +233,8 @@ export default function TripHistoryPage() {
     setEditFormData({
       vehicleId: trip.vehicleId,
       driverId: trip.driverId,
-      stops: [...trip.stops],
+      stops: trip.stops.map(stop => ({ ...stop })),
+      originalStopIndexes: trip.stops.map((_, index) => index),
       note: ""
     })
     setIsEditOpen(true)
@@ -302,7 +305,7 @@ export default function TripHistoryPage() {
         driverName: selectedDriver?.name || "",
         stops: editFormData.stops.map((s, idx) => ({ ...s, order: idx })),
         updatedAt: serverTimestamp()
-      })
+      }, undefined, { expectedStops: editingTrip.stops, sourceIndexes: editFormData.originalStopIndexes })
 
       // Add Log
       const logRef = collection(db, "trips", editingTrip.id, "editLogs")
@@ -760,7 +763,8 @@ export default function TripHistoryPage() {
                       <DropdownMenuItem key={site.id} onClick={() => {
                         setEditFormData({
                           ...editFormData,
-                          stops: [...editFormData.stops, { siteId: site.id, siteName: site.name, order: editFormData.stops.length, cargoDetails: "" }]
+                          stops: [...editFormData.stops, { siteId: site.id, siteName: site.name, order: editFormData.stops.length, cargoDetails: "" }],
+                          originalStopIndexes: [...editFormData.originalStopIndexes, null],
                         })
                       }}>
                         {site.name}
@@ -784,7 +788,7 @@ export default function TripHistoryPage() {
                         value={stop.cargoDetails}
                         onChange={(e) => {
                           const newStops = [...editFormData.stops]
-                          newStops[idx].cargoDetails = e.target.value
+                          newStops[idx] = { ...newStops[idx], cargoDetails: e.target.value }
                           setEditFormData({...editFormData, stops: newStops})
                         }}
                       />
@@ -795,7 +799,7 @@ export default function TripHistoryPage() {
                       className="text-muted-foreground hover:text-destructive h-8 w-8"
                       onClick={() => {
                         const newStops = editFormData.stops.filter((_, i) => i !== idx)
-                        setEditFormData({...editFormData, stops: newStops})
+                        setEditFormData({...editFormData, stops: newStops, originalStopIndexes: editFormData.originalStopIndexes.filter((_, i) => i !== idx)})
                       }}
                     >
                       <Trash2 className="h-4 w-4" />

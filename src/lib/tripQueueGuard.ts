@@ -2,6 +2,7 @@ import { doc, runTransaction, serverTimestamp, type Firestore, type Transaction 
 import { resourceGuardKeys } from './continuousQueue'
 import type { Trip } from '@/types/models'
 import type { QueueSourceAssignment } from '@/types/continuous-queue'
+import { remapStopNotes, type LegacyStopNotes } from './stopNote'
 
 const MANAGED_MESSAGE = 'คิวนี้เป็นคิวต่อเนื่อง กรุณาใช้แผงคิวต่อเนื่องเพื่อปรับเฉพาะวันและเก็บประวัติ'
 
@@ -9,6 +10,11 @@ export interface TripSourceAllocation {
   assignments: (QueueSourceAssignment & { tripStopIndexes?: number[] })[]
   metadata?: { approvedBy?: string; vehiclePlate?: string; driverName?: string; approvedAt?: any }
   expected?: { tripDate: string; driverId: string; vehicleId: string; stops: Trip['stops']; sourceVRIds?: string[] }
+}
+
+export interface TripStopEdit {
+  expectedStops: Trip['stops']
+  sourceIndexes: (number | null)[]
 }
 
 function canonical(value: unknown): string {
@@ -95,16 +101,24 @@ export async function createTripWithQueueGuard(db: Firestore, id: string, data: 
     for (const request of requests) tx.update(request.ref, request.patch)
   })
 }
-export async function updateTripWithQueueGuard(db: Firestore, id: string, patch: Record<string, any>, sources?: TripSourceAllocation): Promise<void> {
+export async function updateTripWithQueueGuard(db: Firestore, id: string, patch: Record<string, any>, sources?: TripSourceAllocation, stopEdit?: TripStopEdit): Promise<Record<string, any>> {
   if ('queueLink' in patch) throw new Error(MANAGED_MESSAGE)
-  await runTransaction(db, async tx => {
+  return runTransaction(db, async tx => {
     const ref = doc(db, 'trips', id)
     const snap = await tx.get(ref)
     if (!snap.exists()) throw new Error('ไม่พบเที่ยววิ่ง กรุณาโหลดคิวใหม่')
-    const before = snap.data() as Trip
+    const before = snap.data() as Trip & LegacyStopNotes
     if (before.queueLink) throw new Error(MANAGED_MESSAGE)
     checkExpected(before, sources)
-    const after = { ...before, ...patch } as Trip
+    let effectivePatch = patch
+    if (stopEdit) {
+      const withoutNotes = (stops: Trip['stops']) => stops.map(({ dispatcherNote: _note, dispatcherName: _author, ...stop }) => stop)
+      if (!Array.isArray(before.stops) || !Array.isArray(patch.stops) || !Array.isArray(stopEdit.expectedStops) || !Array.isArray(stopEdit.sourceIndexes) || canonical(withoutNotes(before.stops)) !== canonical(withoutNotes(stopEdit.expectedStops))) {
+        throw new Error('รายการงานเปลี่ยนระหว่างแก้ไข กรุณาโหลดข้อมูลและเลือกใหม่')
+      }
+      effectivePatch = { ...patch, ...remapStopNotes(before, patch.stops, stopEdit.sourceIndexes) }
+    }
+    const after = { ...before, ...effectivePatch } as Trip
     // deleteField/null clears the override, so the planned driver becomes effective again.
     if ('actualDriverId' in patch && typeof patch.actualDriverId !== 'string') delete after.actualDriverId
     const oldKeys = resourceGuardKeys(before)
@@ -113,8 +127,10 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     if (after.status !== 'Cancelled') assertAvailable(guards.filter(guard => newKeys.includes(guard.ref.id)))
     const requests = await sourceWrites(db, tx, after, id, sources, before.stops?.length || 0)
     touchGuards(tx, guards)
-    tx.update(ref, requests.length ? { ...patch, ...sourceNotePatch(after, requests), sourceVRIds: [...new Set([...(after.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : patch)
+    const savedPatch = requests.length ? { ...effectivePatch, ...sourceNotePatch(after, requests), sourceVRIds: [...new Set([...(after.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : effectivePatch
+    tx.update(ref, savedPatch)
     for (const request of requests) tx.update(request.ref, request.patch)
+    return savedPatch
   })
 }
 export async function deleteTripWithQueueGuard(db: Firestore, id: string): Promise<void> {

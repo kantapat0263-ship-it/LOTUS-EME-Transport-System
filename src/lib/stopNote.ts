@@ -11,6 +11,34 @@ export function stopNoteKey(sIdx: number): string {
   return `stop_${sIdx}`
 }
 
+export interface LegacyStopNotes {
+  stopNotes?: Record<string, string>
+  stopNoteAuthors?: Record<string, string>
+}
+
+/** Bind to original indexes before deletion/renumbering. New stops never inherit legacy entries. */
+export function remapStopNotes<T extends object>(
+  live: LegacyStopNotes & { stops: T[] },
+  nextStops: T[],
+  sourceIndexes: (number | null)[],
+): { stops: T[]; stopNotes: Record<string, string>; stopNoteAuthors: Record<string, string> } {
+  const retained = sourceIndexes.filter(index => index !== null)
+  if (sourceIndexes.length !== nextStops.length || new Set(retained).size !== retained.length || retained.some(index => !Number.isSafeInteger(index) || index < 0 || index >= live.stops.length)) {
+    throw new Error('ลำดับงานเดิมไม่ตรงกับรายการที่แก้ กรุณาโหลดข้อมูลและเลือกใหม่')
+  }
+  const stops = nextStops.map((stop, index) => {
+    const sourceIndex = sourceIndexes[index]
+    if (sourceIndex === null) return stop
+    const source = live.stops[sourceIndex] as T & { dispatcherNote?: string; dispatcherName?: string }
+    const key = stopNoteKey(sourceIndex)
+    const note = live.stopNotes?.[key] || source.dispatcherNote || ''
+    const author = live.stopNoteAuthors?.[key] || source.dispatcherName || ''
+    const { dispatcherNote: _note, dispatcherName: _author, ...rest } = stop as T & { dispatcherNote?: string; dispatcherName?: string }
+    return { ...rest, ...(note ? { dispatcherNote: note } : {}), ...(author ? { dispatcherName: author } : {}) } as T
+  })
+  return { stops, stopNotes: {}, stopNoteAuthors: {} }
+}
+
 /** stops ชุดใหม่ที่แก้หมายเหตุจุด sIdx — ข้อความว่าง = ลบหมายเหตุ+ชื่อทิ้ง · ไม่แก้ array เดิม */
 export function editStopNote<T extends object>(stops: T[], sIdx: number, text: string, author: string): T[] {
   if (!Number.isInteger(sIdx) || sIdx < 0 || sIdx >= stops.length) throw new RangeError(`stop index out of range: ${sIdx}`)

@@ -60,7 +60,7 @@ import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
 import { QueuePanel } from "@/components/continuous-queue/QueuePanel"
 import { isManagedTrip } from "@/lib/continuousQueue"
-import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQueueGuard"
+import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard, type TripStopEdit } from "@/lib/tripQueueGuard"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
 export default function DailySummaryPage() {
@@ -671,10 +671,10 @@ export default function DailySummaryPage() {
     return false
   }
 
-  const persistTripPatch = async (tripId: string, patch: Record<string, any>) => {
+  const persistTripPatch = async (tripId: string, patch: Record<string, any>, stopEdit?: TripStopEdit) => {
     try {
-      await updateTripWithQueueGuard(db, tripId, { ...patch, updatedAt: serverTimestamp() })
-      setTrips(prev => prev.map(t => t.id === tripId ? { ...t, ...patch } : t))
+      const saved = await updateTripWithQueueGuard(db, tripId, { ...patch, updatedAt: serverTimestamp() }, undefined, stopEdit)
+      setTrips(prev => prev.map(t => t.id === tripId ? { ...t, ...saved } : t))
       return true
     } catch (e: any) {
       toast({ title: 'บันทึกไม่สำเร็จ', description: e?.message || 'กรุณาลองอีกครั้ง', variant: 'destructive' })
@@ -682,14 +682,14 @@ export default function DailySummaryPage() {
     }
   }
 
-  const applyStops = async (tripId: string, newStops: TripStop[], persist = true) => {
+  const applyStops = async (tripId: string, newStops: TripStop[], persist = true, stopEdit?: TripStopEdit) => {
     if (!allowOrdinaryEdit(trips.find(t => t.id === tripId))) return false
     // กัน field = undefined หลุดเข้า Firestore — updateDoc จะ throw ทันที (sync) ทั้งก้อน
     // ทำให้ dialog ค้าง + ข้อมูลเข้าแค่ local (เคยเกิดกับแทรกงานที่ไม่กรอกผู้สั่ง)
     const clean = newStops.map(
       (s) => Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)) as unknown as TripStop
     )
-    if (persist) return persistTripPatch(tripId, { stops: clean })
+    if (persist) return persistTripPatch(tripId, { stops: clean }, stopEdit)
     setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: clean } : t)))
     return true
   }
@@ -989,7 +989,10 @@ export default function DailySummaryPage() {
       `${verb} "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?\n` +
       `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่`
     )) return
-    if (!await applyStops(trip.id, remaining, true)) return
+    if (!await applyStops(trip.id, remaining, true, {
+      expectedStops: trip.stops,
+      sourceIndexes: trip.stops.map((_, index) => index).filter(index => index !== sIdx),
+    })) return
     await recalcTripDistance(trip, remaining) // ลบงานแล้ว กม. ต้องลดตามด้วย
     toast({ title: `${verb}แล้ว`, description: `เอา "${stop.siteName}" ออกจากใบสรุปเรียบร้อย` })
   }
