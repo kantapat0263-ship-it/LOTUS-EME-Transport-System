@@ -6,7 +6,7 @@ import type { QueueSourceAssignment } from '@/types/continuous-queue'
 const MANAGED_MESSAGE = 'คิวนี้เป็นคิวต่อเนื่อง กรุณาใช้แผงคิวต่อเนื่องเพื่อปรับเฉพาะวันและเก็บประวัติ'
 
 export interface TripSourceAllocation {
-  assignments: QueueSourceAssignment[]
+  assignments: (QueueSourceAssignment & { tripStopIndexes?: number[] })[]
   metadata?: { approvedBy?: string; vehiclePlate?: string; driverName?: string; approvedAt?: any }
   expected?: { tripDate: string; driverId: string; vehicleId: string; stops: Trip['stops']; sourceVRIds?: string[] }
 }
@@ -17,13 +17,14 @@ function canonical(value: unknown): string {
   return JSON.stringify(value)
 }
 
-async function sourceWrites(db: Firestore, tx: Transaction, trip: Trip, tripId: string, sources?: TripSourceAllocation) {
+async function sourceWrites(db: Firestore, tx: Transaction, trip: Trip, tripId: string, sources?: TripSourceAllocation, existingStopCount = 0) {
   const assignments = sources?.assignments || []
   if (assignments.length > 100) throw new Error('จำนวนใบขอมากเกินไป')
   if (assignments.length && trip.status === 'Cancelled') throw new Error('ทริปถูกยกเลิกแล้ว กรุณาเลือกคิวใหม่')
   const seen = new Set<string>()
+  const noteTargets = new Set<number>()
   const writes = []
-  for (const { requestId, destinationIndexes } of assignments) {
+  for (const { requestId, destinationIndexes, tripStopIndexes } of assignments) {
     if (seen.has(requestId)) throw new Error('เลือกใบขอซ้ำ')
     seen.add(requestId)
     const ref = doc(db, 'vehicleRequests', requestId)
@@ -33,17 +34,30 @@ async function sourceWrites(db: Firestore, tx: Transaction, trip: Trip, tripId: 
     if (request.requestDate !== (trip.tripDate || (trip as Trip & { date?: string }).date)) throw new Error('วันที่ของใบขอเปลี่ยนแล้ว กรุณาเลือกงานใหม่')
     const assigned: number[] = request.assignedDestinations || []
     if (!Array.isArray(request.destinations) || !Array.isArray(assigned) || destinationIndexes.length === 0 || new Set(destinationIndexes).size !== destinationIndexes.length || destinationIndexes.some(index => !Number.isSafeInteger(index) || index < 0 || index >= request.destinations.length || assigned.includes(index))) throw new Error('จุดหมายถูกจัดรถแล้วหรือไม่พบในใบขอ กรุณาเลือกงานใหม่')
+    if (tripStopIndexes !== undefined && (!Array.isArray(tripStopIndexes) || !Array.isArray(trip.stops) || tripStopIndexes.length !== destinationIndexes.length || tripStopIndexes.some(index => !Number.isSafeInteger(index) || index < existingStopCount || index >= trip.stops.length || noteTargets.has(index)))) throw new Error('ลำดับจุดสำหรับหมายเหตุไม่ตรงกับงานที่รวม กรุณาเลือกงานใหม่')
+    if (tripStopIndexes && new Set(tripStopIndexes).size !== tripStopIndexes.length) throw new Error('เลือกจุดหมายเหตุซ้ำ กรุณาเลือกงานใหม่')
+    const noteUpdates = (tripStopIndexes || []).map((stopIndex, index) => {
+      noteTargets.add(stopIndex)
+      const key = `stop_${destinationIndexes[index]}`
+      return { stopIndex, dispatcherNote: request.stopNotes?.[key] || '', dispatcherName: request.stopNoteAuthors?.[key] || request.stopNotesUpdatedBy || '' }
+    })
     const humanId = request.requestId || request.vrId
     if (typeof humanId !== 'string' || !humanId) throw new Error('ใบขอไม่มีรหัสอ้างอิง')
     const newAssigned = [...new Set([...assigned, ...destinationIndexes])]
     const complete = newAssigned.length === request.destinations.length
     const previousTripIds: string[] = Array.isArray(request.tripIds) ? request.tripIds : request.tripId ? [request.tripId] : []
-    writes.push({ ref, humanId, patch: {
+    writes.push({ ref, humanId, noteUpdates, patch: {
       ...sources?.metadata, assignedDestinations: newAssigned, status: complete ? 'approved' : 'partial',
       tripId: complete ? tripId : request.tripId || null, tripIds: [...new Set([...previousTripIds, tripId])], updatedAt: serverTimestamp(),
     } })
   }
   return writes
+}
+
+function sourceNotePatch(trip: Trip, requests: Awaited<ReturnType<typeof sourceWrites>>): Partial<Pick<Trip, 'stops'>> {
+  const updates = new Map(requests.flatMap(request => request.noteUpdates.map(({ stopIndex, ...note }) => [stopIndex, note] as const)))
+  if (!updates.size) return {}
+  return { stops: trip.stops.map((stop, index) => updates.has(index) ? { ...stop, ...updates.get(index) } : stop) }
 }
 
 function checkExpected(trip: Trip, sources?: TripSourceAllocation) {
@@ -77,7 +91,7 @@ export async function createTripWithQueueGuard(db: Firestore, id: string, data: 
     if (data.status !== 'Cancelled') assertAvailable(guards)
     const requests = await sourceWrites(db, tx, data as Trip, id, sources)
     touchGuards(tx, guards)
-    tx.set(ref, requests.length ? { ...data, sourceVRIds: [...new Set([...(data.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : data)
+    tx.set(ref, requests.length ? { ...data, ...sourceNotePatch(data as Trip, requests), sourceVRIds: [...new Set([...(data.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : data)
     for (const request of requests) tx.update(request.ref, request.patch)
   })
 }
@@ -97,9 +111,9 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     const newKeys = resourceGuardKeys(after)
     const guards = await readGuards(db, tx, [...new Set([...oldKeys, ...newKeys])])
     if (after.status !== 'Cancelled') assertAvailable(guards.filter(guard => newKeys.includes(guard.ref.id)))
-    const requests = await sourceWrites(db, tx, after, id, sources)
+    const requests = await sourceWrites(db, tx, after, id, sources, before.stops?.length || 0)
     touchGuards(tx, guards)
-    tx.update(ref, requests.length ? { ...patch, sourceVRIds: [...new Set([...(after.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : patch)
+    tx.update(ref, requests.length ? { ...patch, ...sourceNotePatch(after, requests), sourceVRIds: [...new Set([...(after.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : patch)
     for (const request of requests) tx.update(request.ref, request.patch)
   })
 }

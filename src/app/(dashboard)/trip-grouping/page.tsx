@@ -787,9 +787,7 @@ export default function TripGroupingPage() {
         ...(d.requestedAt != null ? { requestedAt: d.requestedAt } : {}),
         requestTime: d.requestTime || '',
         address: d.address || '',
-        note: d.note || "",
-        dispatcherNote: d.dispatcherNote || "",
-        dispatcherName: d.dispatcherName || ""
+        note: d.note || ""
       }))
 
       const mergedStops = [...currentStops, ...addedStops]
@@ -797,15 +795,20 @@ export default function TripGroupingPage() {
         ...(latestTrip.sourceVRIds || []),
         ...validNewStops.map(d => d.vrId)
       ]))
-      const vrGroups: Record<string, number[]> = {}
-      validNewStops.forEach(d => { (vrGroups[d.vrDocId] ||= []).push(d.destIndex) })
+      // ผูก index ในใบขอกับจุดใหม่ในทริป เพื่ออ่านหมายเหตุสดภายใน transaction ที่จัดงาน
+      const vrGroups: Record<string, { destinationIndexes: number[]; tripStopIndexes: number[] }> = {}
+      validNewStops.forEach((d, index) => {
+        const group = vrGroups[d.vrDocId] ||= { destinationIndexes: [], tripStopIndexes: [] }
+        group.destinationIndexes.push(d.destIndex)
+        group.tripStopIndexes.push(currentStops.length + index)
+      })
 
       await updateTripWithQueueGuard(db, existingTrip.id, {
         stops: mergedStops,
         sourceVRIds,
         updatedAt: serverTimestamp()
       }, {
-        assignments: Object.entries(vrGroups).map(([requestId, destinationIndexes]) => ({ requestId, destinationIndexes })),
+        assignments: Object.entries(vrGroups).map(([requestId, indexes]) => ({ requestId, ...indexes })),
         expected: {
           tripDate: latestTrip.tripDate || latestTrip.date,
           driverId: latestTrip.actualDriverId || latestTrip.driverId,
