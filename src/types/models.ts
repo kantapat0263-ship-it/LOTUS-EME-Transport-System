@@ -205,6 +205,10 @@ export interface Trip {
   vehiclePlate: string;
   /** ทะเบียนรถคันเดิมตอนจัดทริป (ก่อนกด "เปลี่ยนรถ" ในหน้าสรุป — เก็บไว้ดูย้อนหลัง) */
   vehicleChangedFromPlate?: string;
+  /** รูปแบบเส้นทางสำหรับคิดระยะตามแผน — ไม่มี = ไป-กลับคลัง (ดู src/lib/routeMode.ts) */
+  routeMode?: 'round' | 'outbound' | 'return';
+  /** จบการใช้รถของทริปนี้ (unix ms) — GPS หลังเวลานี้ไม่นับเป็นของทริป (รถถูกใช้ต่อในวันเดียวกัน) */
+  gpsEndAt?: number;
   /** ทริปที่ระบบสร้างให้ตอน "แทรกงานด่วน" กับรถที่ยังไม่มีทริปวันนั้น
    *  (ไม่ได้มาจากการจัดคิว) — ลบงานแทรกจนไม่เหลือ = ลบทริปทิ้งได้ กลับไปเหมือนก่อนแทรก */
   adhocCreated?: boolean;
@@ -266,6 +270,9 @@ export interface TrackingDailyDoc {
   vehicleReturnedAt?: number | null;
   /** จุดสุดท้ายของวันอยู่นอกรัศมีออฟฟิศ (วันจบแล้ว = ค้างคืนนอกพื้นที่) */
   endedAwayFromOffice?: boolean;
+  /** เวลาจบการใช้รถ (trip.gpsEndAt) ที่ใช้ตัด trail ตอน sync เขียนสรุปนี้ — null/ไม่มี = สรุปจาก trail เต็มวัน
+   *  ใช้รู้ว่าค่าที่เก็บไว้ถูกตัด (ยกเลิกการตัดย้อนหลัง → หน้าเว็บต้องคิดสรุปใหม่จาก trail เต็ม) */
+  gpsEndAtApplied?: number | null;
   totalKm: number;
   stops: {
     order: number;

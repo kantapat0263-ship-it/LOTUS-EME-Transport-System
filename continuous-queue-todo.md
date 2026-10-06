@@ -10,7 +10,7 @@
 - [x] Integrate isolated frontend and server writers; Lead owns shared contracts, allocation guards and rules.
 - [x] Verify the feature on local demo emulators and desktop/mobile browser surfaces. Source tests 462/462, queue tests 50/50 and existing rules tests 27/27 passed before integration with the latest main.
 - [x] Obtain an independent read-only review of the integrated feature diff.
-- [ ] Preserve and integrate the latest main changes before release; review their interaction with managed trips and rerun affected checks.
+- [x] Preserve and integrate main b2a21a1 (notes, route modes and GPS end time), add ended-use regression coverage, and rerun checks. Source 488/488; queue 54/54; rules 27/27; TypeScript and final build passed. Final independent integration review found no outstanding defects; reviewed source hashes match the release files. Latest desktop/mobile browser checks passed.
 - [ ] Deploy the application and matching Firestore rules after final verification. User authorized DEPLOY on 2026-10-06.
 - [x] Skip an unrequested PR, design panel and unrelated cleanup under project overrides.
 

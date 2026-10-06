@@ -60,7 +60,7 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
   const commandFlightRef = React.useRef(createQueueCommandFlight())
   contextRef.current = `${date}|${JSON.stringify(action)}|${newDate}|${reason}`
   React.useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
-  const normalTrips = trips.filter(t => t.status === 'Planned' && !isManagedTrip(t))
+  const normalTrips = trips.filter(t => t.status === 'Planned' && t.gpsEndAt == null && !isManagedTrip(t))
   const [extendTripId, setExtendTripId] = React.useState('')
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10)
   const booking = action && 'bookingId' in action ? queues.bookings.find(b => b.id === action.bookingId) : undefined
@@ -136,7 +136,7 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
         const override = b.overrides[date]
         const effectiveId = override?.state === 'borrowed' ? override.targetTripId : b.dayTripIds[date]
         const effective = trips.find(t => t.id === effectiveId)
-        const canReturn = override?.state === 'borrowed' && date >= today && effective?.status === 'Planned'
+        const canReturn = override?.state === 'borrowed' && date >= today && effective?.status === 'Planned' && effective.gpsEndAt == null
         return <div key={b.id} className="space-y-3 rounded-lg border border-border p-3">
           <QueueBookingSummary booking={b} date={date} />
           <div className="flex flex-wrap gap-2">

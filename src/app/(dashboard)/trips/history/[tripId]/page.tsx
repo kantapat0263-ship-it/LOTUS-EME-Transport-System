@@ -448,7 +448,7 @@ export default function TripDetailPage() {
                             <p className="text-[10px] font-bold text-blue-400 uppercase mb-0.5 flex items-center gap-1">
                               <Info className="h-3 w-3" /> บันทึกจากจัดรถ:
                             </p>
-                            <p className="text-xs text-blue-100">{stop.dispatcherNote}</p>
+                            <p className="text-xs text-blue-100 whitespace-pre-line break-words">{stop.dispatcherNote}</p>
                           </div>
                         )}
                       </div>

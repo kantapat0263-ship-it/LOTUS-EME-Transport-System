@@ -28,7 +28,7 @@ function rangeDates(from: string, to: string): string[] {
 }
 
 function unstarted(trip: Trip): boolean {
-  return trip.status === 'Planned' && !trip.actualDriverId && !trip.actualDriverName && !trip.vehicleChangedFromPlate && !hasRecordedWork(trip.stops)
+  return trip.status === 'Planned' && trip.gpsEndAt == null && !trip.actualDriverId && !trip.actualDriverName && !trip.vehicleChangedFromPlate && !hasRecordedWork(trip.stops)
 }
 
 function hasRecordedWork(stops: Trip['stops']): boolean {

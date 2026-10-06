@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useMemoFirebase, useUser, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, updateDoc, runTransaction } from "firebase/firestore"
+import { useFirestore, useCollection, useDoc, useMemoFirebase, useUser, errorEmitter, FirestorePermissionError } from "@/firebase"
+import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, updateDoc, runTransaction, deleteField } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -30,7 +30,8 @@ import {
   CalendarClock,
   Ban,
   ListChecks,
-  Trash2
+  Trash2,
+  Pencil
 } from "lucide-react"
 import { 
   Dialog, 
@@ -52,6 +53,8 @@ import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
+import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
+import { ROUTE_MODES, routePlan, tripRouteMode, type RouteMode } from "@/lib/routeMode"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
@@ -103,6 +106,10 @@ export default function DailySummaryPage() {
   // #5 เก็บแค่ tripId + stopIdx (ไม่ snapshot ทั้ง trip) → ตอนยืนยันค่อยหยิบทริปสดล่าสุด
   //     กันเคสเปิด dialog ค้างแล้วไปแก้จุดอื่น แล้วถูกเขียนทับด้วย stops ก้อนเก่า
   const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  // แก้หมายเหตุคนจัดรถรายจุด (✏️) หลังจัดคิวแล้ว — เดิมแก้ได้แค่ในหน้าคำขอก่อนจัด
+  const [noteDialog, setNoteDialog] = React.useState<{ tripId: string; stopIdx: number; fingerprint: string } | null>(null)
+  const [noteDraft, setNoteDraft] = React.useState("")
+  const [isSavingNote, setIsSavingNote] = React.useState(false)
   const [postponeDateStr, setPostponeDateStr] = React.useState<string>("")
   const [isPostponing, setIsPostponing] = React.useState(false)
   // แทรกงานด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — แทรกตรงเข้าทริปคันนั้น เฉพาะทริปวันนี้
@@ -576,6 +583,68 @@ export default function DailySummaryPage() {
 
   // --- Actual-outcome reconciliation (after the report is posted to LINE) ---
   const recordedBy = user?.displayName || user?.email || ""
+  // ชื่อจริงจากโปรไฟล์ (users/{uid}.name) สำหรับ "(โดย …)" ของหมายเหตุ — ติดไปในรูป/ข้อความที่ส่งกลุ่ม จึงไม่ใช้อีเมล
+  const profileRef = useMemoFirebase(() => (db && user ? doc(db, "users", user.uid) : null), [db, user])
+  const { data: profile, isLoading: profileLoading } = useDoc<{ name?: string }>(profileRef)
+  // ใช้ชื่อจากโปรไฟล์เท่านั้น (ไม่ใช้ displayName/อีเมล) · โปรไฟล์ยังไม่โหลด = ว่าง → ปุ่มบันทึกปิด
+  const noteAuthor = profileLoading ? "" : profile?.name?.trim() || (profile ? "ผู้จัดคิว" : "")
+
+  const openNoteDialog = (trip: Trip, sIdx: number) => {
+    if (isManagedTrip(trip)) return
+    const stop = trip.stops?.[sIdx] as any
+    setNoteDraft((trip as any).stopNotes?.[stopNoteKey(sIdx)] || stop?.dispatcherNote || "")
+    setNoteDialog({ tripId: trip.id, stopIdx: sIdx, fingerprint: stopFingerprint(stop || {}) })
+  }
+
+  // บันทึกใน transaction: อ่านทริปสด → ตรวจว่ายังเป็นจุดเดิม → แก้เฉพาะหมายเหตุจุดนั้น (ไม่ทับผล/หมายเหตุจุดอื่นที่คนอื่นเพิ่งแก้)
+  // เก็บบน stop + ลบ key รุ่นเก่า trip.stopNotes[stop_N] ของจุดนี้ (ไม่งั้นค่ารุ่นเก่ายังแสดงทับ) · แจ้งสำเร็จหลังเขียนผ่านจริงเท่านั้น
+  const saveStopNote = async () => {
+    if (!noteDialog || !db || !noteAuthor || isSavingNote) return
+    const { tripId, stopIdx, fingerprint } = noteDialog
+    const key = stopNoteKey(stopIdx)
+    setIsSavingNote(true)
+    try {
+      const omitKey = (m: Record<string, string> | undefined) => {
+        if (!m) return m
+        const { [key]: _drop, ...rest } = m
+        return rest
+      }
+      const live = await runTransaction(db, async (tx) => {
+        const ref = doc(db, "trips", tripId)
+        const snap = await tx.get(ref)
+        if (!snap.exists()) throw new StopNoteConflictError()
+        const data = snap.data() as any
+        if (isManagedTrip(data)) throw new Error('คิวต่อเนื่องยังไม่รองรับการแก้หมายเหตุรายจุด')
+        if (!Array.isArray(data.stops)) throw new Error("trip.stops is not an array")
+        const clean = applyNoteEdit(data.stops as TripStop[], stopIdx, fingerprint, noteDraft, noteAuthor).map(
+          (st) => Object.fromEntries(Object.entries(st).filter(([, v]) => v !== undefined)) as unknown as TripStop
+        )
+        tx.update(ref, {
+          stops: clean,
+          [`stopNotes.${key}`]: deleteField(),
+          [`stopNoteAuthors.${key}`]: deleteField(),
+          updatedAt: serverTimestamp(),
+        })
+        // คืนข้อมูลจาก snapshot ที่บันทึกผ่าน (ไม่ใช่ local เดิม) — หมายเหตุรุ่นเก่าของจุดอื่นที่คนอื่นเพิ่งลบจะไม่กลับมาแสดง
+        return { stops: clean, stopNotes: omitKey(data.stopNotes), stopNoteAuthors: omitKey(data.stopNoteAuthors) }
+      })
+      setTrips((prev) => prev.map((t) => (t.id === tripId ? ({ ...t, ...live } as Trip) : t)))
+      setNoteDialog(null)
+      toast({ title: noteDraft.trim() ? "บันทึกหมายเหตุแล้ว" : "ลบหมายเหตุแล้ว" })
+    } catch (e) {
+      console.error("[saveStopNote]", e)
+      toast({
+        title: "บันทึกหมายเหตุไม่สำเร็จ",
+        description:
+          e instanceof StopNoteConflictError
+            ? "งานในทริปนี้เพิ่งถูกแก้ไข (ลบ/แทรก/สลับจุด) — กดรีเฟรชข้อมูลแล้วเปิดแก้ใหม่"
+            : "ข้อความยังอยู่ในช่อง ลองกดบันทึกอีกครั้ง",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingNote(false)
+    }
+  }
 
   // Strip every outcome-related key so a stop can be reset cleanly back to "as planned".
   // (Firestore rejects `undefined` values, so we omit keys rather than set them.)
@@ -620,35 +689,46 @@ export default function DailySummaryPage() {
   // คิดระยะทางทั้งทริปใหม่จาก stops ที่มีพิกัด (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
   // ใช้ตอนแทรกงานด่วน — ไม่งั้นเลข กม. ในใบสรุป/บอร์ดนักขับจะค้างที่เส้นทางเดิม
   // จุดที่ไม่มีพิกัด (พิมพ์ชื่อเอง) คิดไม่ได้ → ปล่อยตัวเลขเดิมไว้ ไม่ทำให้แทรกงานล้มเหลว
-  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]) => {
+  // คิด กม./ค่าน้ำมันตามแผน (Google Directions) ของทริป — ไม่เขียนอะไรลงฐาน
+  // "no-coords" = ไม่มีจุดที่มีพิกัด (ไม่มีอะไรให้คิด) · "failed" = คิดไม่ได้ (แผนที่ไม่พร้อม/เน็ต/Directions ล้ม)
+  const computePlanDistance = async (
+    tripDoc: Trip,
+    stops: TripStop[]
+  ): Promise<{ km: number; fuelCost: number } | "no-coords" | "failed"> => {
     try {
-      if (!db) return
       const coordStops = (stops || []).filter(
         (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
       )
-      if (coordStops.length === 0) return
+      if (coordStops.length === 0) return "no-coords"
 
       const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
-      if (!apiKey) return
+      if (!apiKey) return "failed"
       const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
       await loader.load()
       const g = (window as any).google
       const svc = new g.maps.DirectionsService()
 
-      const origin = {
+      const office = {
         lat: (tripDoc as any).originLat ?? 14.0815,
         lng: (tripDoc as any).originLng ?? 100.7129,
       }
-      const waypoints = coordStops.map((s: any) => ({
-        location: new g.maps.LatLng(s.lat, s.lng),
+      // รูปแบบเส้นทาง: ไป-กลับ (ปกติ) / ไปอย่างเดียว / กลับอย่างเดียว — ดู src/lib/routeMode.ts
+      const plan = routePlan(
+        tripRouteMode(tripDoc),
+        office,
+        coordStops.map((s: any) => ({ lat: s.lat as number, lng: s.lng as number }))
+      )
+      if (!plan) return "no-coords"
+      const waypoints = plan.waypoints.map((p) => ({
+        location: new g.maps.LatLng(p.lat, p.lng),
         stopover: true,
       }))
 
       const result: any = await new Promise((resolve, reject) => {
         svc.route(
           {
-            origin,
-            destination: origin, // round trip กลับคลัง เหมือนตอนสร้างทริป
+            origin: plan.origin,
+            destination: plan.destination,
             waypoints,
             optimizeWaypoints: false, // งานแทรกต่อท้าย ไม่จัดลำดับใหม่
             travelMode: g.maps.TravelMode.DRIVING,
@@ -661,11 +741,31 @@ export default function DailySummaryPage() {
       let meters = 0
       result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
       const km = meters / 1000
-      if (!(km > 0)) return
+      if (!(km > 0)) return "failed"
 
       const fuelRate = (tripDoc as any).fuelRateUsed || 10
       const diesel = (tripDoc as any).dieselPriceUsed || 32.5
-      const fuelCost = (km / fuelRate) * diesel
+      return { km, fuelCost: (km / fuelRate) * diesel }
+    } catch (e) {
+      console.error("[computePlanDistance]", e)
+      return "failed"
+    }
+  }
+
+  // รุ่นการคิดระยะต่อทริป — ผลที่ตอบช้ากว่ารุ่นล่าสุดของทริปเดียวกันทิ้ง ไม่เขียนทับ
+  // (เช่น แทรก/ลบงานระหว่างเปลี่ยนรูปแบบเส้นทาง → ผลของคำสั่งที่เริ่มทีหลังเท่านั้นที่ได้เขียน)
+  const distGenRef = React.useRef<Record<string, number>>({})
+  const nextDistGen = (tripId: string) => (distGenRef.current[tripId] = (distGenRef.current[tripId] ?? 0) + 1)
+  const isLatestDistGen = (tripId: string, gen: number) => distGenRef.current[tripId] === gen
+
+  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]) => {
+    try {
+      if (!db) return
+      const gen = nextDistGen(tripDoc.id)
+      const r = await computePlanDistance(tripDoc, stops)
+      if (typeof r === "string") return // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้
+      if (!isLatestDistGen(tripDoc.id, gen)) return // มีการคิดรอบใหม่กว่าของทริปนี้แล้ว
+      const { km, fuelCost } = r
 
       setTrips(prev =>
         prev.map(t => (t.id === tripDoc.id ? { ...t, totalDistanceKm: km, fuelCost } : t))
@@ -679,6 +779,60 @@ export default function DailySummaryPage() {
     } catch (e) {
       // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้ (งานแทรกสำเร็จไปแล้ว ห้าม throw ต่อ)
       console.error("[recalcTripDistance]", e)
+    }
+  }
+
+  // เปลี่ยนรูปแบบเส้นทาง (เคสไม่บ่อย: เอารถไปทิ้งที่ไซต์ / ไปรับรถอีกคันกลับ)
+  // คิดระยะตามแผนใหม่ก่อน แล้วบันทึก โหมด + กม. + ค่าน้ำมัน "พร้อมกันครั้งเดียว" — ไม่ให้โหมดใหม่ค้างคู่กับตัวเลขของโหมดเก่า
+  // ระหว่างคิด dropdown ถูกล็อก (กันผลของโหมดก่อนหน้าตอบช้ามาทับ) · คิดไม่ได้ = ยังไม่เปลี่ยน ให้ลองใหม่
+  const [routeModeBusy, setRouteModeBusy] = React.useState(false)
+  const changeRouteMode = async (trip: Trip, mode: RouteMode) => {
+    if (!db || routeModeBusy || isManagedTrip(trip) || tripRouteMode(trip) === mode) return
+    setRouteModeBusy(true)
+    const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
+    try {
+      // จำรุ่นตอนเริ่ม "โดยยังไม่เพิ่ม" — เปลี่ยนโหมดล้มเหลว การคิดระยะที่ค้างอยู่ (เช่น ของงานที่เพิ่งแทรก) ยังได้เขียน
+      const startGen = distGenRef.current[trip.id] ?? 0
+      const r = await computePlanDistance({ ...trip, routeMode: mode } as Trip, trip.stops || [])
+      if ((distGenRef.current[trip.id] ?? 0) !== startGen) {
+        // ทริปถูกแก้ (แทรก/ลบงาน) ระหว่างคิด — ผลนี้ใช้จุดชุดเก่า ไม่บันทึก
+        toast({
+          title: "ยังไม่เปลี่ยนรูปแบบเส้นทาง",
+          description: "งานในทริปเปลี่ยนระหว่างคำนวณ — เลือกรูปแบบเส้นทางอีกครั้ง",
+          variant: "destructive",
+        })
+        return
+      }
+      if (r === "failed") {
+        toast({
+          title: "ยังไม่เปลี่ยนรูปแบบเส้นทาง",
+          description: "คำนวณระยะทางใหม่ไม่ได้ (แผนที่ไม่พร้อม/เน็ตหลุด) — ลองใหม่อีกครั้ง",
+          variant: "destructive",
+        })
+        return
+      }
+      // ไม่มีพิกัดเลย = ไม่มีระยะให้คิด → เปลี่ยนแค่โหมด (ป้ายหน้าติดตามรถ) กม. คงเดิม
+      const dist = r === "no-coords" ? {} : { totalDistanceKm: r.km, fuelCost: r.fuelCost }
+      nextDistGen(trip.id) // ผลนี้ชนะ — การคิดระยะที่เริ่มก่อนหน้าและยังค้างอยู่ถูกทิ้ง
+      // อัปเดตจอก่อนรอฐาน: แทรก/ลบงานระหว่างรอ server จะคิดด้วยโหมดใหม่ (ไม่ได้ กม. ของโหมดเก่ามาทับ)
+      const before = { routeMode: trip.routeMode, totalDistanceKm: trip.totalDistanceKm, fuelCost: trip.fuelCost }
+      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, routeMode: mode, ...dist } : t)))
+      try {
+        await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, ...dist, updatedAt: serverTimestamp() })
+      } catch (e) {
+        setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, ...before } : t))) // เขียนไม่ผ่าน → คืนค่าบนจอ
+        throw e
+      }
+      if (r !== "no-coords") setStatsRefreshKey((k) => k + 1)
+      toast({
+        title: `รูปแบบเส้นทาง: ${label}`,
+        description: r === "no-coords" ? "งานไม่มีพิกัด — กม. ตามแผนยังเป็นค่าเดิม" : "คำนวณระยะทาง/ค่าน้ำมันใหม่แล้ว",
+      })
+    } catch (e) {
+      console.error("[changeRouteMode]", e)
+      toast({ title: "เปลี่ยนรูปแบบเส้นทางไม่สำเร็จ", description: "ลองใหม่อีกครั้ง", variant: "destructive" })
+    } finally {
+      setRouteModeBusy(false)
     }
   }
 
@@ -726,7 +880,7 @@ export default function DailySummaryPage() {
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
       const newStops = [...stops, mkStop(order)]
       if (!await applyStops(target.id, newStops, true)) return false
-      void recalcTripDistance(target, newStops) // เลข กม. ต้องขยับตามงานที่แทรก
+      await recalcTripDistance(target, newStops) // ล็อกการปรับเส้นทางจนบันทึกระยะของจุดใหม่เสร็จ
       return true
     }
 
@@ -767,7 +921,7 @@ export default function DailySummaryPage() {
         }
         await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
         setTrips(prev => [...prev, newTrip])
-        void recalcTripDistance(newTrip, newTrip.stops || []) // ทริปใหม่ก็ต้องมี กม. ตั้งแต่แรก
+        await recalcTripDistance(newTrip, newTrip.stops || []) // ทริปใหม่ก็ต้องมี กม. ตั้งแต่แรก
         toast({ title: "สร้างทริปใหม่ให้รถคันใหม่ ✅", description: `${veh?.licensePlate || ""} (คนขับ ${trip.driverName}) — งาน "${place}"` })
       }
     }
@@ -820,7 +974,7 @@ export default function DailySummaryPage() {
       `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่`
     )) return
     if (!await applyStops(trip.id, remaining, true)) return
-    void recalcTripDistance(trip, remaining) // ลบงานแล้ว กม. ต้องลดตามด้วย
+    await recalcTripDistance(trip, remaining) // ลบงานแล้ว กม. ต้องลดตามด้วย
     toast({ title: `${verb}แล้ว`, description: `เอา "${stop.siteName}" ออกจากใบสรุปเรียบร้อย` })
   }
 
@@ -1325,6 +1479,14 @@ export default function DailySummaryPage() {
             {/* จังหวะส่งคำขอ — เฉพาะหน้าจัดการฝั่งแอดมิน ไม่อยู่ในใบพิมพ์/LINE */}
             <RequestTimingBadge requestedAt={(stop as any).requestedAt} requestDate={trip.tripDate} className="mt-0.5 block" />
           </span>
+          <button
+            type="button"
+            onClick={() => openNoteDialog(trip, sIdx)}
+            title="แก้หมายเหตุคนจัดรถของงานนี้ (✏️ ในใบสรุป/ใบงานคนขับ)"
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-blue-500/40 px-1.5 py-1 text-[11px] font-medium text-blue-300 hover:bg-blue-500/15"
+          >
+            <Pencil className="h-3.5 w-3.5" /> หมายเหตุ
+          </button>
           <button
             type="button"
             onClick={() => void runOrdinaryAction(() => cancelStop(trip, sIdx))}
@@ -1963,6 +2125,21 @@ export default function DailySummaryPage() {
                           ))}
                       </select>
                     </div>
+                    {/* รูปแบบเส้นทาง — คิดระยะตามแผนใหม่ (ไป-กลับ / ไปอย่างเดียว / กลับอย่างเดียว) */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0">รูปแบบเส้นทาง:</span>
+                      <select
+                        value={tripRouteMode(trip)}
+                        disabled={ordinaryBusy || routeModeBusy || isManagedTrip(trip)}
+                        title={isManagedTrip(trip) ? 'คิวต่อเนื่องยังไม่รองรับการเปลี่ยนรูปแบบเส้นทาง' : undefined}
+                        onChange={(e) => { const mode = e.target.value as RouteMode; void runOrdinaryAction(() => changeRouteMode(trip, mode)) }}
+                        className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      >
+                        {ROUTE_MODES.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label} · {m.hint}</option>
+                        ))}
+                      </select>
+                    </div>
                     {(trip as any).vehicleChangedFromPlate && (
                       <p className="rounded-md bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
                         🚚 เปลี่ยนรถจาก {(trip as any).vehicleChangedFromPlate} → <b>{trip.vehiclePlate}</b>
@@ -2031,6 +2208,37 @@ export default function DailySummaryPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="w-full h-11" onClick={() => setSelectedTripForShare(null)}>ปิด</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* แก้หมายเหตุคนจัดรถรายจุด — อยู่นอก #summary-report (ไม่ติดรูป) แต่ผลไปแสดงในใบสรุป/รูป/ใบงานคนขับ */}
+      <Dialog open={!!noteDialog} onOpenChange={(open) => { if (!open && !isSavingNote) setNoteDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-blue-400" /> แก้หมายเหตุคนจัดรถ
+            </DialogTitle>
+            <DialogDescription>
+              {noteDialog
+                ? `จุด: ${trips.find(t => t.id === noteDialog.tripId)?.stops?.[noteDialog.stopIdx]?.siteName || ""} — เว้นว่างแล้วบันทึก = ลบหมายเหตุ · ชื่อท้ายหมายเหตุจะเป็น "${noteAuthor}"`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            disabled={isSavingNote}
+            rows={4}
+            placeholder="เช่น ขากลับให้นำรถแค็ป ถส-5694 กลับมา"
+            className="w-full rounded-lg bg-background border border-border/50 text-sm p-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNoteDialog(null)} disabled={isSavingNote}>ยกเลิก</Button>
+            <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold" onClick={saveStopNote} disabled={isSavingNote || !noteAuthor}>
+              {isSavingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Pencil className="mr-2 h-4 w-4" />}
+              {isSavingNote ? "กำลังบันทึก..." : !noteAuthor ? "กำลังโหลดชื่อผู้ใช้..." : "บันทึกหมายเหตุ"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

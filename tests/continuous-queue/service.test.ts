@@ -123,6 +123,38 @@ describe('continuous queue service on an isolated Firestore project', () => {
     expect(JSON.stringify(publicView)).not.toContain('ตกลงทางโทรศัพท์แล้ว')
   })
 
+  it('does not extend an ordinary planned trip after vehicle use has been ended', async () => {
+    await db.collection('trips').doc('ENDED').set({ ...tripInput(), id: 'ENDED', tripId: 'ENDED', status: 'Planned', gpsEndAt: NOW.getTime() })
+    await expect(executeQueueCommand(db, { operationId: operationId(), action: 'extend', tripId: 'ENDED', endDate: '2026-10-06' }, actor, NOW)).rejects.toThrow('ยังไม่เริ่มงาน')
+    expect((await db.collection('continuousBookings').get()).empty).toBe(true)
+    expect(await trip('ENDED')).not.toHaveProperty('queueLink')
+  })
+
+  it('does not borrow an original day after vehicle use has been ended', async () => {
+    const original = await create()
+    const range = await booking(original.bookingId)
+    await db.collection('trips').doc(range.dayTripIds['2026-10-05']).update({ gpsEndAt: NOW.getTime() })
+    await expect(borrow(original.bookingId)).rejects.toThrow('ยังไม่เริ่มงาน')
+    expect((await booking(original.bookingId)).overrides).toEqual({})
+  })
+
+  it('does not return a borrowed trip after vehicle use has been ended', async () => {
+    const original = await create()
+    const result = await borrow(original.bookingId)
+    await db.collection('trips').doc(result.tripIds[0]).update({ gpsEndAt: NOW.getTime() })
+    await expect(executeQueueCommand(db, { operationId: operationId(), action: 'return', bookingId: original.bookingId, date: '2026-10-05', reason: 'คืนหลังจบการใช้รถ' }, actor, NOW)).rejects.toThrow('ก่อนเริ่มงาน')
+    expect((await booking(original.bookingId)).overrides['2026-10-05'].state).toBe('borrowed')
+  })
+
+  it('does not cancel a compensation trip after vehicle use has been ended', async () => {
+    const original = await create()
+    await borrow(original.bookingId)
+    const result = await executeQueueCommand(db, { operationId: operationId(), action: 'schedule-compensation', bookingId: original.bookingId, originalDate: '2026-10-05', date: '2026-10-11' }, actor, NOW)
+    await db.collection('trips').doc(result.tripIds[0]).update({ gpsEndAt: NOW.getTime() })
+    await expect(executeQueueCommand(db, { operationId: operationId(), action: 'cancel-compensation', bookingId: original.bookingId, originalDate: '2026-10-05' }, actor, NOW)).rejects.toThrow('ก่อนเริ่มงาน')
+    expect((await booking(original.bookingId)).overrides['2026-10-05'].compensation).toBe('scheduled')
+  })
+
   it('returns an unstarted loan, restores the original trip and atomically releases the target request and extra resource', async () => {
     const original = await create()
     const borrowed = await borrow(original.bookingId)

@@ -364,7 +364,7 @@ export default function DriverTripPage() {
                         {dispatcherNote && (
                           <div className="flex gap-2">
                             <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-blue-700 font-medium">บันทึกจัดรถ: {dispatcherNote}{dispatcherBy ? ` (โดย ${dispatcherBy})` : ''}</p>
+                            <p className="text-xs text-blue-700 font-medium whitespace-pre-line break-words">บันทึกจัดรถ: {dispatcherNote}{dispatcherBy ? ` (โดย ${dispatcherBy})` : ''}</p>
                           </div>
                         )}
                       </div>

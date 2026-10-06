@@ -276,6 +276,24 @@ export function trackingDateKey(nowMs = Date.now()): string {
   return new Date(nowMs + (7 - TRACKING_DAY_START_HOUR) * 3600_000).toISOString().slice(0, 10)
 }
 
+/** "HH:MM" เวลาไทยของวันติดตาม dateKey → epoch ms — ก่อนเวลาตัดวัน (ตี 4) = วันถัดไปตามปฏิทิน · รูปแบบผิด = null */
+export function thaiClockToMs(dateKey: string, hhmm: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim())
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return null
+  const h = Number(m[1])
+  const mi = Number(m[2])
+  if (h > 23 || mi > 59) return null
+  const [y, mo, d] = dateKey.split("-").map(Number)
+  const dayOffset = h < TRACKING_DAY_START_HOUR ? 1 : 0
+  return Date.UTC(y, mo - 1, d + dayOffset, h, mi) - 7 * 3600_000
+}
+
+/** epoch ms → "HH:MM" เวลาไทย */
+export function msToThaiClock(ms: number): string {
+  const d = new Date(ms + 7 * 3600_000)
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
+}
+
 /** cron ดึงตำแหน่งช่วง 04:00–21:59 ไทย (ประหยัดโควตา — ผู้ใช้เลือกถึง 4 ทุ่ม) */
 export const CRON_END_HOUR = 22
 /** รอบเก็บตก 10 นาทีก่อนตัดวัน: 03:50–03:59 ไทย — รถที่กลับหลัง 22:00 จะได้จุดในออฟฟิศเข้า "วันเดิม" (ครบเกณฑ์จอด 5 นาที)
@@ -663,4 +681,75 @@ export function computeDailySummary(
     totalKm: Math.round(trailDistanceKm(pts) * 10) / 10,
     stops: timings,
   }
+}
+
+// ---------------------------------------------------------------------------
+// จบการใช้รถของทริป — รถคันเดียวถูกใช้ต่อในวันเดียวกัน (เช่น กลับออฟฟิศแล้วอีกคนเอารถไปนอนที่พัก)
+// GPS ผูกกับ "รถ" ทั้งวัน แต่งานผูกกับ "ทริป" → ตัด trail ของทริปที่เวลาจบ ไม่ให้การวิ่งของคนถัดไปมานับรวม
+// ---------------------------------------------------------------------------
+
+/** trail ของทริปหลังตัดที่เวลาจบการใช้รถ — ไม่ได้ตั้ง = ทั้งหมด (คืน array เดิม) */
+export function cutTrailAt<T extends TrailPoint>(trail: T[], endAt: number | null | undefined): T[] {
+  if (endAt == null) return trail
+  return trail.filter((p) => p.t != null && p.t <= endAt)
+}
+
+/**
+ * เวลาที่ควรเสนอให้ "จบการใช้รถ" = จุดสุดท้ายในออฟฟิศของรอบที่กลับมาจอด (≥ minStayMin) ก่อนรถถูกขับออกไปอีก
+ * — ตัดตรงนี้แล้วยังเห็น "กลับถึงออฟฟิศ" ครบ (มีจุดในออฟฟิศพอให้ผ่านเกณฑ์จอด) · ไม่มีการออกซ้ำหลังกลับ = null
+ */
+export function suggestHandoverTime(
+  trail: TrailPoint[],
+  office: LatLng,
+  opts: { radius?: number; minStayMin?: number } = {}
+): number | null {
+  const radius = opts.radius ?? OFFICE_RADIUS_M
+  const minMs = (opts.minStayMin ?? RETURN_DWELL_MIN) * 60_000
+  const pts = trail.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
+  let best: number | null = null
+  let start: number | null = null
+  let end = 0
+  // ต้องเคย "ออกจากออฟฟิศ" มาก่อน (รอบจอดตอนเช้าก่อนออกงานไม่ใช่การส่งต่อ)
+  // นับเฉพาะการออกที่มีจุดในออฟฟิศนำหน้า — วันตื่นนอกพื้นที่ รอบเข้าออฟฟิศแรกแล้วออกงาน = ออกงาน ไม่ใช่ส่งต่อ
+  let leftOnce = false
+  for (const p of pts) {
+    if (haversineMeters(office, p) <= radius) {
+      if (start == null) start = p.t!
+      end = p.t!
+    } else {
+      if (start != null) {
+        if (leftOnce && end - start >= minMs) best = end
+        leftOnce = true
+      }
+      start = null
+    }
+  }
+  return best
+}
+
+/** เวลาจบการใช้รถที่จะบันทึก: ไม่ได้แก้เวลาตั้งต้น (ข้อเสนอ/ตอนนี้) = ใช้ค่านั้นเป๊ะ (มีวินาที — ปัดเป็นนาทีแล้วจะตัดจุดที่ทำให้จอดครบ 5 นาทีทิ้ง)
+ *  แต่ต้องเป็นวันติดตามเดียวกับทริป (ดูย้อนหลังแล้วค่าเริ่ม "ตอนนี้" = คนละวัน → ใช้นาฬิกานั้นบนวันของทริป)
+ *  แก้เอง = นับถึงสิ้นนาทีนั้น (กรอก 17:05 = รวมจุด 17:05:xx) แต่ไม่เกิน now (พิมพ์นาทีปัจจุบันไม่โดนปฏิเสธว่าเป็นอนาคต)
+ *  เวลาผิดรูปแบบ = null */
+export function handoverCutMs(
+  dateKey: string,
+  hhmm: string,
+  base: number | null | undefined,
+  now: number = Date.now()
+): number | null {
+  if (base != null && msToThaiClock(base) === hhmm && trackingDateKey(base) === dateKey) return base
+  const ms = thaiClockToMs(dateKey, hhmm)
+  if (ms == null) return null
+  const end = ms + 59_999
+  return end > now && ms <= now ? now : end
+}
+
+/** ตรวจเวลาจบการใช้รถก่อนบันทึก — อนาคต (ยังไม่เกิด) / ก่อนรถออกงาน (จะตัด GPS ทั้งทริปทิ้ง) = ไม่รับ */
+export function handoverTimeError(
+  ms: number,
+  ctx: { departedAt: number | null | undefined; now: number }
+): "future" | "before-departure" | null {
+  if (ms > ctx.now) return "future"
+  if (ctx.departedAt != null && ms < ctx.departedAt) return "before-departure"
+  return null
 }

@@ -334,6 +334,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const handleSaveStopNote = async (stopIndex: number) => {
     if (!selectedReq || !isStaff) return
+    // จุดที่จัดเข้าทริปแล้ว: หมายเหตุที่คนขับ/ใบสรุปเห็นอยู่บน stop ของทริป — แก้ที่นี่ไม่มีผล ให้ไปแก้ที่ใบสรุป
+    if ((selectedReq.assignedDestinations || []).includes(stopIndex)) {
+      toast({ title: "จุดนี้จัดเข้าทริปแล้ว", description: "แก้หมายเหตุที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)", variant: "destructive" })
+      return
+    }
     const requestId = selectedReq.id
     const flight = noteFlightRef.current.begin(() => selectedReqIdRef.current === requestId)
     if (!flight) return
@@ -350,29 +355,22 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         [`stopNotesUpdatedBy`]: profileName || "Dispatcher",
         [`stopNotesUpdatedAt`]: new Date().toISOString()
       }
-      const [sourceSnap, linked] = await Promise.all([
-        getDoc(vrRef),
-        getDocs(query(collection(db, 'trips'), where('sourceVRIds', 'array-contains', selectedReq.requestId))),
-      ])
-      const tripRefs = new Map(linked.docs.map(s => [s.id, s.ref]))
-      const source = sourceSnap.data()
-      if (!source) throw new Error('ไม่พบใบขอแล้ว')
-      if (source.tripId) tripRefs.set(source.tripId, doc(db, 'trips', source.tripId))
-      if (linked.docs.some(s => isManagedTrip(s.data()))) throw new Error('ใบขอนี้อยู่ในคิวต่อเนื่อง ยังไม่รองรับการแก้หมายเหตุผ่านใบขอ')
-      if (!flight.isCurrent()) return
-      await runTransaction(db, async tx => {
-        const freshSource = await tx.get(vrRef)
-        const fresh = freshSource.data()
-        if (!fresh || fresh.tripId !== source.tripId || JSON.stringify(fresh.assignedDestinations || []) !== JSON.stringify(source.assignedDestinations || [])) throw new Error('การจัดคิวของใบขอเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่')
-        const linkedTrips = await Promise.all([...tripRefs.values()].map(ref => tx.get(ref)))
-        if (linkedTrips.some(s => s.exists() && isManagedTrip(s.data()))) throw new Error('ใบขอนี้อยู่ในคิวต่อเนื่อง ยังไม่รองรับการแก้หมายเหตุผ่านใบขอ')
+      // อ่านใบสดใน transaction: ถ้าจุดนี้เพิ่งถูกจัดเข้าทริป (อีกเครื่อง/snapshot ยังมาไม่ถึง) ไม่เขียน — กันแจ้งสำเร็จทั้งที่ทริปไม่เปลี่ยน
+      const assignedNow = await runTransaction(db, async (tx) => {
+        const fresh = await tx.get(vrRef)
+        if (!fresh.exists()) throw new Error('ไม่พบใบขอแล้ว')
+        if (((fresh.data() as any)?.assignedDestinations || []).includes(stopIndex)) return true
         if (!flight.isCurrent()) throw new Error('เปลี่ยนใบขอระหว่างบันทึก กรุณาลองอีกครั้ง')
         tx.update(vrRef, updateData)
-        if (source.tripId) tx.update(doc(db, 'trips', source.tripId), {
-          [`stopNotes.${noteKey}`]: noteValue,
-          [`stopNoteAuthors.${noteKey}`]: authorName,
-        })
+        return false
       })
+      if (assignedNow) {
+        toast({ title: "จุดนี้เพิ่งถูกจัดเข้าทริป", description: "หมายเหตุยังไม่ถูกบันทึก — แก้ที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)", variant: "destructive" })
+        return
+      }
+      // ไม่ mirror ไป trip.stopNotes แล้ว: noteKey คือลำดับจุดใน "ใบขอ" แต่ใบสรุป/ใบงานคนขับอ่านด้วยลำดับจุดใน "ทริป"
+      // (ทริปรวมหลายใบ ลำดับไม่ตรงกัน → หมายเหตุไปโผล่ผิดจุด) · จุดที่ยังไม่จัด หมายเหตุติดไปกับ stop ตอนจัดเข้าทริปเอง
+      // · จุดที่จัดแล้ว แก้ได้ที่ใบสรุป (แผงปิดผลงาน → ✏️ หมายเหตุ)
 
       toast({ title: "บันทึกแล้ว", description: `บันทึกหมายเหตุจุดที่ ${stopIndex + 1} เรียบร้อย` })
     } catch (e: any) {
@@ -937,12 +935,17 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                         ...prev,
                                         [noteKey]: e.target.value
                                       }))}
-                                      onBlur={() => { if (dirty) handleSaveStopNote(idx) }}
-                                      disabled={isSavingNote !== null || !!relatedTrip?.queueLink}
+                                      onBlur={() => { if (dirty && !isAssigned) handleSaveStopNote(idx) }}
+                                      disabled={isAssigned || isSavingNote !== null}
                                       className="text-xs bg-background min-h-[60px]"
                                     />
+                                    {isAssigned && (
+                                      <span className="text-[10px] text-amber-400">
+                                        🔒 จุดนี้จัดเข้าทริปแล้ว — แก้หมายเหตุที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)
+                                      </span>
+                                    )}
                                     <div className="text-[10px] flex items-center gap-1 h-4">
-                                      {relatedTrip?.queueLink ? <span className="text-amber-400">คิวต่อเนื่อง ยังไม่รองรับการแก้หมายเหตุผ่านใบขอ</span> : saving ? (
+                                      {saving ? (
                                         <span className="text-blue-400 flex items-center gap-1">
                                           <Loader2 className="h-3 w-3 animate-spin" /> กำลังบันทึก…
                                         </span>

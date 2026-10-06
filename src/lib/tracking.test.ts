@@ -25,6 +25,12 @@ import {
   stopTiming,
   isAwaitingDwell,
   STAY_MIN,
+  cutTrailAt,
+  suggestHandoverTime,
+  thaiClockToMs,
+  msToThaiClock,
+  handoverCutMs,
+  handoverTimeError,
 } from './tracking'
 
 describe('tracking: เวลาที่จุดงานนับทุกรอบที่จอดจริง ไม่นับรอบที่ขับผ่าน (Codex รอบ 1 ข้อ 3, 5, 7)', () => {
@@ -711,5 +717,82 @@ describe('tracking: จุดแวะประจำนอกจุดงาน
     expect(s.offLunchMin).toBe(210)
     expect(s.distFromOfficeKm).toBeGreaterThan(8)
     expect(s.distFromOfficeKm).toBeLessThan(13)
+  })
+})
+
+describe('tracking: จบการใช้รถของทริป (ส่งต่อรถให้คนอื่นในวันเดียวกัน)', () => {
+  const MIN = 60_000
+  const T0 = Date.parse('2026-10-06T08:00:00+07:00')
+  const office = OFFICE_LOCATION
+  const atOffice = (t: number) => ({ lat: office.lat + 0.0005, lng: office.lng, t }) // ~55 ม.
+  const away = (t: number) => ({ lat: office.lat + 0.05, lng: office.lng, t }) // ~5.5 กม.
+
+  it('cutTrailAt: เก็บเฉพาะจุดที่เวลา ≤ เวลาจบ · ไม่ได้ตั้ง = ทั้งหมด', () => {
+    const trail = [atOffice(T0), away(T0 + 60 * MIN), atOffice(T0 + 120 * MIN)]
+    expect(cutTrailAt(trail, T0 + 60 * MIN)).toEqual(trail.slice(0, 2))
+    expect(cutTrailAt(trail, null)).toBe(trail)
+    expect(cutTrailAt(trail, undefined)).toBe(trail)
+  })
+
+  it('suggestHandoverTime: เวลาที่รถออกจากออฟฟิศอีกรอบหลังกลับมาจอด (จุดสุดท้ายในออฟฟิศของรอบจอดนั้น)', () => {
+    const trail = [
+      atOffice(T0), away(T0 + 30 * MIN), // ออกงาน
+      ...Array.from({ length: 11 }, (_, i) => atOffice(T0 + 540 * MIN + i * 10 * MIN)), // กลับ 17:00 จอดถึง 18:40
+      away(T0 + 660 * MIN), // อีกคนเอารถออก 19:00
+    ]
+    expect(suggestHandoverTime(trail, office)).toBe(T0 + 640 * MIN)
+  })
+
+  it('suggestHandoverTime: ไม่มีการออกซ้ำหลังกลับ หรือจอดไม่ถึง 5 นาที → null', () => {
+    expect(suggestHandoverTime([atOffice(T0), away(T0 + 30 * MIN), atOffice(T0 + 540 * MIN), atOffice(T0 + 560 * MIN)], office)).toBeNull()
+    expect(suggestHandoverTime([away(T0), atOffice(T0 + MIN), away(T0 + 2 * MIN)], office)).toBeNull()
+  })
+
+  it('thaiClockToMs: เวลาไทยของวันติดตาม — ก่อนตี 4 = วันถัดไป · รูปแบบผิด = null', () => {
+    expect(thaiClockToMs('2026-10-06', '18:30')).toBe(Date.parse('2026-10-06T18:30:00+07:00'))
+    expect(thaiClockToMs('2026-10-06', '01:15')).toBe(Date.parse('2026-10-07T01:15:00+07:00'))
+    expect(thaiClockToMs('2026-10-06', '25:00')).toBeNull()
+    expect(thaiClockToMs('2026-10-06', 'abc')).toBeNull()
+  })
+
+  it('msToThaiClock: แสดงเวลาไทย HH:MM', () => {
+    expect(msToThaiClock(Date.parse('2026-10-06T18:30:00+07:00'))).toBe('18:30')
+  })
+
+  it('suggestHandoverTime: เริ่มวันนอกออฟฟิศ → รอบเข้าออฟฟิศแรกแล้วออกงาน ไม่ใช่การส่งต่อ', () => {
+    // ตื่นนอกพื้นที่ 08:00 → เข้าออฟฟิศ 09:00–09:05 → ออกทำงาน 09:10 (ไม่มีการกลับมาอีก)
+    const startAway = [away(T0), atOffice(T0 + 60 * MIN), atOffice(T0 + 65 * MIN), away(T0 + 70 * MIN)]
+    expect(suggestHandoverTime(startAway, office)).toBeNull()
+    // ...แล้วกลับมาจอด 17:00–17:10 และมีคนเอารถออกไปอีก → เสนอรอบหลัง
+    const thenHandover = [...startAway, atOffice(T0 + 540 * MIN), atOffice(T0 + 550 * MIN), away(T0 + 560 * MIN)]
+    expect(suggestHandoverTime(thenHandover, office)).toBe(T0 + 550 * MIN)
+  })
+
+  it('handoverCutMs: ไม่แก้เวลาที่เสนอ = ใช้เวลาเสนอเป๊ะ (มีวินาที) · แก้เอง = สิ้นนาทีนั้น', () => {
+    const sug = Date.parse('2026-10-06T17:05:40+07:00')
+    expect(handoverCutMs('2026-10-06', '17:05', sug)).toBe(sug)
+    expect(handoverCutMs('2026-10-06', '17:10', sug)).toBe(Date.parse('2026-10-06T17:10:00+07:00') + 59_999)
+    expect(handoverCutMs('2026-10-06', '17:10', null)).toBe(Date.parse('2026-10-06T17:10:00+07:00') + 59_999)
+    expect(handoverCutMs('2026-10-06', '', sug)).toBeNull()
+  })
+
+  it('handoverCutMs: เวลาตั้งต้นคนละวันติดตามกับทริป (ดูย้อนหลังแล้วค่าเริ่ม = ตอนนี้) → ใช้นาฬิกาบนวันของทริป', () => {
+    const todayNow = Date.parse('2026-10-07T10:15:20+07:00')
+    expect(handoverCutMs('2026-10-06', '10:15', todayNow)).toBe(Date.parse('2026-10-06T10:15:00+07:00') + 59_999)
+  })
+
+  it('handoverCutMs: พิมพ์นาทีปัจจุบันเอง → ไม่เกินตอนนี้ (ไม่โดนปฏิเสธว่าเป็นอนาคต)', () => {
+    const now = Date.parse('2026-10-06T15:30:20+07:00')
+    expect(handoverCutMs('2026-10-06', '15:30', null, now)).toBe(now)
+    expect(handoverCutMs('2026-10-06', '15:31', null, now)).toBe(Date.parse('2026-10-06T15:31:00+07:00') + 59_999) // อนาคตจริง → ให้ guard ปฏิเสธ
+  })
+
+  it('handoverTimeError: เวลาในอนาคต / ก่อนรถออกงาน = ไม่รับ', () => {
+    const now = Date.parse('2026-10-06T15:00:00+07:00')
+    const dep = Date.parse('2026-10-06T08:00:00+07:00')
+    expect(handoverTimeError(Date.parse('2026-10-06T12:00:00+07:00'), { departedAt: dep, now })).toBeNull()
+    expect(handoverTimeError(Date.parse('2026-10-06T16:00:00+07:00'), { departedAt: dep, now })).toBe('future')
+    expect(handoverTimeError(Date.parse('2026-10-06T07:30:00+07:00'), { departedAt: dep, now })).toBe('before-departure')
+    expect(handoverTimeError(Date.parse('2026-10-06T07:30:00+07:00'), { departedAt: null, now })).toBeNull()
   })
 })

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, SINOTRACK_SERVER, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey, computeDailySummary, OFFICE_LOCATION, isCronSyncWindow } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary, cutTrailAt, OFFICE_LOCATION, isCronSyncWindow } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -111,7 +111,10 @@ export async function GET(req: NextRequest) {
   } catch {
     /* ใช้พิกัดออฟฟิศคงที่ */
   }
-  const plateToJob: Record<string, { stops: any[]; origin: { lat: number; lng: number } | null }> = {}
+  const plateToJob: Record<
+    string,
+    { stops: any[]; origin: { lat: number; lng: number } | null; gpsEndAt: number | null }
+  > = {}
   try {
     const tripSnap = await db.collection('trips').where('tripDate', '==', dateKey).get()
     tripSnap.forEach((d) => {
@@ -124,7 +127,9 @@ export async function GET(req: NextRequest) {
         lat: s.lat,
         lng: s.lng,
       }))
-      plateToJob[String(t.vehiclePlate)] = { stops, origin }
+      // gpsEndAt = staff กด "จบการใช้รถ" (รถถูกคนอื่นใช้ต่อวันเดียวกัน) → GPS หลังเวลานี้ไม่นับเป็นของทริป
+      const gpsEndAt = typeof t.gpsEndAt === 'number' ? t.gpsEndAt : null
+      plateToJob[String(t.vehiclePlate)] = { stops, origin, gpsEndAt }
     })
   } catch (e: any) {
     console.error('[tracking-sync] read trips failed:', e?.message)
@@ -207,7 +212,7 @@ export async function GET(req: NextRequest) {
       // สรุปรายวัน (เวลาจอด/เดินทาง/เข้า-ออกออฟฟิศ) — คำนวณจาก trail + งานของคันนั้น
       const job = plateToJob[plate]
       if (job) {
-        const sum = computeDailySummary(effPoints, job.stops, job.origin)
+        const sum = computeDailySummary(cutTrailAt(effPoints, job.gpsEndAt), job.stops, job.origin)
         await db
           .collection('trackingDaily')
           .doc(`${date}__${p.deviceId}`)
@@ -221,6 +226,7 @@ export async function GET(req: NextRequest) {
               startedAwayFromOffice: sum.startedAwayFromOffice,
               vehicleReturnedAt: sum.vehicleReturnedAt,
               endedAwayFromOffice: sum.endedAwayFromOffice,
+              gpsEndAtApplied: job.gpsEndAt,
               totalKm: sum.totalKm,
               stops: sum.stops,
               updatedAt: FieldValue.serverTimestamp(),
