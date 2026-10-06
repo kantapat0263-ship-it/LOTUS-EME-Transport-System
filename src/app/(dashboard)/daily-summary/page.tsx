@@ -758,9 +758,10 @@ export default function DailySummaryPage() {
     setRouteModeBusy(true)
     const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
     try {
-      const gen = nextDistGen(trip.id)
+      // จำรุ่นตอนเริ่ม "โดยยังไม่เพิ่ม" — เปลี่ยนโหมดล้มเหลว การคิดระยะที่ค้างอยู่ (เช่น ของงานที่เพิ่งแทรก) ยังได้เขียน
+      const startGen = distGenRef.current[trip.id] ?? 0
       const r = await computePlanDistance({ ...trip, routeMode: mode } as Trip, trip.stops || [])
-      if (!isLatestDistGen(trip.id, gen)) {
+      if ((distGenRef.current[trip.id] ?? 0) !== startGen) {
         // ทริปถูกแก้ (แทรก/ลบงาน) ระหว่างคิด — ผลนี้ใช้จุดชุดเก่า ไม่บันทึก
         toast({
           title: "ยังไม่เปลี่ยนรูปแบบเส้นทาง",
@@ -779,8 +780,16 @@ export default function DailySummaryPage() {
       }
       // ไม่มีพิกัดเลย = ไม่มีระยะให้คิด → เปลี่ยนแค่โหมด (ป้ายหน้าติดตามรถ) กม. คงเดิม
       const dist = r === "no-coords" ? {} : { totalDistanceKm: r.km, fuelCost: r.fuelCost }
-      await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, ...dist, updatedAt: serverTimestamp() })
+      nextDistGen(trip.id) // ผลนี้ชนะ — การคิดระยะที่เริ่มก่อนหน้าและยังค้างอยู่ถูกทิ้ง
+      // อัปเดตจอก่อนรอฐาน: แทรก/ลบงานระหว่างรอ server จะคิดด้วยโหมดใหม่ (ไม่ได้ กม. ของโหมดเก่ามาทับ)
+      const before = { routeMode: trip.routeMode, totalDistanceKm: trip.totalDistanceKm, fuelCost: trip.fuelCost }
       setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, routeMode: mode, ...dist } : t)))
+      try {
+        await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, ...dist, updatedAt: serverTimestamp() })
+      } catch (e) {
+        setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, ...before } : t))) // เขียนไม่ผ่าน → คืนค่าบนจอ
+        throw e
+      }
       if (r !== "no-coords") setStatsRefreshKey((k) => k + 1)
       toast({
         title: `รูปแบบเส้นทาง: ${label}`,

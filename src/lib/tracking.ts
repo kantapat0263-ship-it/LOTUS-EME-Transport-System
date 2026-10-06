@@ -727,12 +727,21 @@ export function suggestHandoverTime(
   return best
 }
 
-/** เวลาจบการใช้รถที่จะบันทึก: ไม่ได้แก้เวลาที่ระบบเสนอ = ใช้เวลาเสนอเป๊ะ (มีวินาที — ปัดเป็นนาทีแล้วจะตัดจุดที่ทำให้จอดครบ 5 นาทีทิ้ง)
- *  แก้เอง = นับถึงสิ้นนาทีนั้น (กรอก 17:05 = รวมจุด 17:05:xx) · เวลาผิดรูปแบบ = null */
-export function handoverCutMs(dateKey: string, hhmm: string, suggestion: number | null | undefined): number | null {
-  if (suggestion != null && msToThaiClock(suggestion) === hhmm) return suggestion
+/** เวลาจบการใช้รถที่จะบันทึก: ไม่ได้แก้เวลาตั้งต้น (ข้อเสนอ/ตอนนี้) = ใช้ค่านั้นเป๊ะ (มีวินาที — ปัดเป็นนาทีแล้วจะตัดจุดที่ทำให้จอดครบ 5 นาทีทิ้ง)
+ *  แต่ต้องเป็นวันติดตามเดียวกับทริป (ดูย้อนหลังแล้วค่าเริ่ม "ตอนนี้" = คนละวัน → ใช้นาฬิกานั้นบนวันของทริป)
+ *  แก้เอง = นับถึงสิ้นนาทีนั้น (กรอก 17:05 = รวมจุด 17:05:xx) แต่ไม่เกิน now (พิมพ์นาทีปัจจุบันไม่โดนปฏิเสธว่าเป็นอนาคต)
+ *  เวลาผิดรูปแบบ = null */
+export function handoverCutMs(
+  dateKey: string,
+  hhmm: string,
+  base: number | null | undefined,
+  now: number = Date.now()
+): number | null {
+  if (base != null && msToThaiClock(base) === hhmm && trackingDateKey(base) === dateKey) return base
   const ms = thaiClockToMs(dateKey, hhmm)
-  return ms == null ? null : ms + 59_999
+  if (ms == null) return null
+  const end = ms + 59_999
+  return end > now && ms <= now ? now : end
 }
 
 /** ตรวจเวลาจบการใช้รถก่อนบันทึก — อนาคต (ยังไม่เกิด) / ก่อนรถออกงาน (จะตัด GPS ทั้งทริปทิ้ง) = ไม่รับ */

@@ -399,7 +399,10 @@ export default function TrackingPage() {
       // จบการใช้รถแล้ว = ค่าที่เก็บไว้อาจรวม GPS ของคนที่ใช้รถต่อ (กดตัดทีหลังวันนั้น) → คิดใหม่จาก trail ที่ตัดแล้วทั้งชุด
       // ส่วน stored ที่ sync เคยตัดไว้ (gpsEndAtApplied) แต่ตอนนี้ยกเลิกการตัดแล้ว → คิดใหม่จาก trail เต็มให้ค่ากลับมาครบ
       const storedCut = stored?.gpsEndAtApplied ?? null
-      if (deviceId && (isToday || endAt != null || storedCut != null)) {
+      // กลับอย่างเดียวย้อนหลังที่ไม่มีสรุปเลย (สร้างทริปทีหลัง sync ไม่ได้เขียน) → คิดจาก trail ไม่มีค่าเก็บไว้ให้รักษา
+      const isReturnMode = tripRouteMode(trip) === "return"
+      const returnNoStored = isReturnMode && !stored && trail.length >= 2
+      if (deviceId && (isToday || endAt != null || storedCut != null || returnNoStored)) {
         const sum = computeDailySummary(trail, routeStops, origin)
         dailyDoc = {
           id: "",
@@ -443,14 +446,7 @@ export default function TrackingPage() {
       const mKm = position ? mileageKm(position.mileage ?? 0) : 0
 
       // กลับอย่างเดียว: ถึงไซต์ (จุดเริ่ม) ยังไม่ใช่จบงาน — ต้องพารถถึงออฟฟิศก่อน
-      const isReturnMode = tripRouteMode(trip) === "return"
-      let backAtOffice = dailyDoc?.returnedOfficeAt != null || dailyDoc?.vehicleReturnedAt != null
-      // ย้อนหลังที่ไม่มีสรุป (เช่น สร้างทริปทีหลังวันนั้น sync ไม่ได้เขียน) → ดูจาก trail ว่ารถถึงออฟฟิศหรือยัง
-      // ใช้ตัดสินสถานะอย่างเดียว ไม่เอาไปทับ กม./เวลาที่เก็บไว้
-      if (isReturnMode && !backAtOffice && trail.length >= 2) {
-        const s = computeDailySummary(trail, routeStops, origin)
-        backAtOffice = s.returnedOfficeAt != null || s.vehicleReturnedAt != null
-      }
+      const backAtOffice = dailyDoc?.returnedOfficeAt != null || dailyDoc?.vehicleReturnedAt != null
       const allDone = totalStops > 0 && arrivedCount >= totalStops && (!isReturnMode || backAtOffice)
       let status: TruckStatus
       if (!deviceId) status = "unmapped"
@@ -753,13 +749,14 @@ function TruckDetail({
   // จบการใช้รถ: บันทึกเวลาลงทริป (trips subscribe แบบ realtime → หน้าอัปเดตเอง) · ยกเลิก = ลบ field
   const saveHandover = async (value: number | null) => {
     if (!db || savingHandover) return
+    const tripId = truck.trip.id
     setSavingHandover(true)
     try {
-      await updateDoc(doc(db, "trips", truck.trip.id), {
+      await updateDoc(doc(db, "trips", tripId), {
         gpsEndAt: value == null ? deleteField() : value,
         updatedAt: serverTimestamp(),
       })
-      setHandoverDraft(null)
+      setDraftState((d) => (d?.tripId === tripId ? null : d)) // ระหว่างบันทึกไปเปิดช่องของอีกคัน → ไม่ล้างของคันนั้น
       toast({ title: value == null ? "ยกเลิกการจบการใช้รถแล้ว" : `จบการใช้รถที่ ${msToThaiClock(value)} แล้ว` })
     } catch (e) {
       console.error("[saveHandover]", e)
@@ -1018,9 +1015,11 @@ function TruckDetail({
                 ยกเลิก
               </button>
               <span className="text-muted-foreground">
-                {truck.handoverSuggestion != null
-                  ? `ระบบเสนอ ${thTime(truck.handoverSuggestion)} = เวลาที่รถออกจากออฟฟิศอีกรอบ`
-                  : "GPS หลังเวลานี้จะไม่นับเป็นของทริปนี้"}
+                {truck.handoverSuggestion != null && truck.handoverSuggestion !== ownDraft?.baseMs
+                  ? `มีเวลาเสนอใหม่ ${thTime(truck.handoverSuggestion)} (รถออกจากออฟฟิศอีกรอบ) — กดยกเลิกแล้วเปิดใหม่เพื่อใช้เวลานี้`
+                  : truck.handoverSuggestion != null
+                    ? `ระบบเสนอ ${thTime(truck.handoverSuggestion)} = เวลาที่รถออกจากออฟฟิศอีกรอบ`
+                    : "GPS หลังเวลานี้จะไม่นับเป็นของทริปนี้"}
               </span>
             </>
           ) : (

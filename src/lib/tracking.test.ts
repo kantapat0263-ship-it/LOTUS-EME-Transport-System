@@ -776,6 +776,17 @@ describe('tracking: จบการใช้รถของทริป (ส่�
     expect(handoverCutMs('2026-10-06', '', sug)).toBeNull()
   })
 
+  it('handoverCutMs: เวลาตั้งต้นคนละวันติดตามกับทริป (ดูย้อนหลังแล้วค่าเริ่ม = ตอนนี้) → ใช้นาฬิกาบนวันของทริป', () => {
+    const todayNow = Date.parse('2026-10-07T10:15:20+07:00')
+    expect(handoverCutMs('2026-10-06', '10:15', todayNow)).toBe(Date.parse('2026-10-06T10:15:00+07:00') + 59_999)
+  })
+
+  it('handoverCutMs: พิมพ์นาทีปัจจุบันเอง → ไม่เกินตอนนี้ (ไม่โดนปฏิเสธว่าเป็นอนาคต)', () => {
+    const now = Date.parse('2026-10-06T15:30:20+07:00')
+    expect(handoverCutMs('2026-10-06', '15:30', null, now)).toBe(now)
+    expect(handoverCutMs('2026-10-06', '15:31', null, now)).toBe(Date.parse('2026-10-06T15:31:00+07:00') + 59_999) // อนาคตจริง → ให้ guard ปฏิเสธ
+  })
+
   it('handoverTimeError: เวลาในอนาคต / ก่อนรถออกงาน = ไม่รับ', () => {
     const now = Date.parse('2026-10-06T15:00:00+07:00')
     const dep = Date.parse('2026-10-06T08:00:00+07:00')
