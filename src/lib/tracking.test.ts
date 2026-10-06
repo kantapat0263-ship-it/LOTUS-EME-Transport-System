@@ -75,6 +75,34 @@ describe('tracking: เวลาที่จุดงานนับทุกร
     expect(sum.stops[1].travelMinFromPrev).toBe(30)
   })
 
+  it('สรุปรายวัน A→B→A→C: รอบจอด A ที่เกิดหลังถึง B ไม่ถูกนับให้ A — ขาไป B ไม่หาย (Codex รอบ 2 ข้อ 1)', () => {
+    const third = { lat: 13.95, lng: 100.6 }
+    const trail = [
+      { ...office, t: T0 - 90 * MIN },
+      ...parked(far, T0, 5), // A 09:00–09:05
+      outside(far, T0 + 10 * MIN),
+      ...parked(nextFar, T0 + 20 * MIN, 5), // B 09:20–09:25
+      outside(nextFar, T0 + 30 * MIN),
+      ...parked(far, T0 + 40 * MIN, 30), // A อีกรอบ 09:40–10:10
+      outside(far, T0 + 80 * MIN),
+      ...parked(third, T0 + 90 * MIN, 5), // C 10:30
+    ]
+    const sum = computeDailySummary(
+      trail,
+      [{ order: 1, siteName: 'A', ...far }, { order: 2, siteName: 'B', ...nextFar }, { order: 3, siteName: 'C', ...third }],
+      office
+    )
+    const [a, b] = sum.stops
+    expect(a.departedAt).toBe(T0 + 5 * MIN)
+    expect(a.dwellMin).toBe(5)
+    expect(b.travelMinFromPrev).toBe(15)
+  })
+
+  it('stopTiming: รอบจอดที่เริ่มหลัง until ไม่นับ', () => {
+    const trail = [...parked(far, T0, 5), outside(far, T0 + 10 * MIN), ...parked(far, T0 + 40 * MIN, 30)]
+    expect(stopTiming(far, trail, ARRIVAL_RADIUS_M, 0, T0 + 20 * MIN)).toEqual({ arrivedAt: T0, departedAt: T0 + 5 * MIN, dwellMin: 5 })
+  })
+
   it('จุดไกล: เวลาถึง = เวลาเร็วที่สุดในรัศมี แม้ trail ไม่เรียงเวลา', () => {
     const trail = [inside(far, T0 + 20 * MIN), outside(far, T0 + 10 * MIN), inside(far, T0)]
     const [st] = computeStopStatuses([{ order: 1, ...far }], trail, { office })

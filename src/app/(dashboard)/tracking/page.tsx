@@ -377,9 +377,12 @@ export default function TrackingPage() {
       // วันนี้ = คำนวณสรุปสดจาก merged stops (รวมงานที่โยก) ; ย้อนหลัง = ใช้ที่เก็บไว้
       const stored = deviceId ? deviceToDaily[deviceId] ?? null : null
       let dailyDoc: TrackingDailyDoc | null = stored
-      // ย้อนหลังก็คำนวณจาก trail ด้วย (ถ้ามี) — ให้เวลาถึง/จอดใช้เกณฑ์เดียวกับป้าย "ถึงแล้ว" ที่คิดสดเสมอ
-      // ไม่งั้นวันก่อนแก้เกณฑ์จะได้ป้ายแบบใหม่คู่กับเวลาจอดแบบเก่าที่ server เก็บไว้ (ไม่มี trail → ใช้ที่เก็บไว้)
-      if (deviceId && (isToday || trail.length > 0)) {
+      // ย้อนหลัง: คิดใหม่จาก trail "เฉพาะเวลาที่จุดงาน" ให้ตรงกับป้าย "ถึงแล้ว" ที่คิดสดเสมอ (วันก่อนแก้เกณฑ์ server เก็บแบบเก่า)
+      // เวลาออก/กลับออฟฟิศ + กม. คงค่าที่เก็บไว้ของวันนั้น (ไม่ให้พิกัดออฟฟิศ/งานที่เปลี่ยนภายหลังไปแก้ประวัติ)
+      if (!isToday && deviceId && stored && trail.length >= 2) {
+        dailyDoc = { ...stored, stops: computeDailySummary(trail, routeStops, origin).stops }
+      }
+      if (isToday && deviceId) {
         const sum = computeDailySummary(trail, routeStops, origin)
         dailyDoc = {
           id: "",
@@ -952,7 +955,7 @@ function TruckDetail({
           const longStop = !off && t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
           // รถอยู่ในรัศมีจุดใกล้ออฟฟิศแล้วแต่ยังจอดไม่ครบเกณฑ์ → บอกตามจริงแทน "กำลังไป"
           const awaiting =
-            isToday && !off && !s.arrived && s.lat != null && s.lng != null && !!truck.position &&
+            isToday && !truck.stale && !off && !s.arrived && s.lat != null && s.lng != null && !!truck.position &&
             isAwaitingDwell({ lat: s.lat, lng: s.lng }, { lat: truck.position.lat, lng: truck.position.lng }, truck.origin)
           const tag = s.movedTo
             ? "โยกออก"

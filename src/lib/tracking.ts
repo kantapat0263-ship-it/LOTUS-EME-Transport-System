@@ -75,17 +75,21 @@ export function firstArrivalVisit(stop: LatLng, trail: TrailPoint[], radius: num
  * เวลาถึง/ออก/จอดของจุดงาน — ถึง = เริ่มรอบแรกที่ผ่านเกณฑ์ (needMin) · ออก = จบรอบจอดสุดท้าย ·
  * จอด = รวมทุกรอบจอด (รอบแรก + รอบหลังที่นาน ≥ STAY_MIN) — รอบสั้นกว่านั้นคือขับผ่าน ไม่นับ
  * (เคสจริง: จอด 5 นาที ออกไป แล้วกลับมาจอดอีก 30 นาที → จอดรวม 35 · เวลาเดินทางไปจุดถัดไปนับจากออกรอบหลัง)
+ * until = นับเฉพาะรอบจอดที่เริ่มก่อนเวลานี้ (เวลาถึงจุดงานถัดไป) — กัน A→B→A: รอบ A หลังถึง B ไม่ถูกนับให้ A
  */
 export function stopTiming(
   stop: LatLng,
   trail: TrailPoint[],
   radius: number,
-  needMin: number
+  needMin: number,
+  until = Number.POSITIVE_INFINITY
 ): { arrivedAt: number; departedAt: number; dwellMin: number | null } | null {
   const visits = stopVisits(stop, trail, radius)
   const i = visits.findIndex((v) => v.end - v.start >= needMin * 60_000)
   if (i < 0) return null
-  const stays = visits.slice(i).filter((v, k) => k === 0 || v.end - v.start >= STAY_MIN * 60_000)
+  const stays = visits
+    .slice(i)
+    .filter((v, k) => k === 0 || (v.end - v.start >= STAY_MIN * 60_000 && v.start < until))
   const dwellMs = stays.reduce((s, v) => s + (v.end - v.start), 0)
   return {
     arrivedAt: stays[0].start,
@@ -603,11 +607,17 @@ export function computeDailySummary(
   // ถึง = รอบแรกที่ผ่านเกณฑ์ · ออก = จบรอบจอดสุดท้าย · จอด = รวมทุกรอบจอด (stopTiming) — เดิมเอาจุดแรก/สุดท้าย
   // ที่เคยเข้ารัศมีทั้งวัน ทำให้ขับผ่านจุดเดิมตอนเช้า+บ่าย กลายเป็น "จอด" หลายชั่วโมง · จุดใกล้ออฟฟิศต้องจอด ≥ 5 นาทีถึงจะนับ
   const ordered = [...stops].sort((a, b) => a.order - b.order)
-  const timings: StopTiming[] = ordered.map((s) => {
-    const timing =
-      s.lat != null && s.lng != null
-        ? stopTiming({ lat: s.lat, lng: s.lng }, pts, arrivalRadius, arrivalDwellMin({ lat: s.lat, lng: s.lng }, origin))
-        : null
+  const timingOf = (s: { lat?: number; lng?: number }, until?: number) =>
+    s.lat != null && s.lng != null
+      ? stopTiming({ lat: s.lat, lng: s.lng }, pts, arrivalRadius, arrivalDwellMin({ lat: s.lat, lng: s.lng }, origin), until)
+      : null
+  // รอบจอดหลังถึงจุดงานถัดไปไม่นับให้จุดนี้ (A→B→A) — ไม่งั้นเวลาออก A เลยเวลาถึง B แล้วขาไป B หาย
+  const firstArrivals = ordered.map((s) => timingOf(s)?.arrivedAt ?? null)
+  const timings: StopTiming[] = ordered.map((s, idx) => {
+    const a = firstArrivals[idx]
+    const until =
+      a == null ? undefined : Math.min(...firstArrivals.filter((x): x is number => x != null && x > a), Number.POSITIVE_INFINITY)
+    const timing = timingOf(s, until)
     return {
       order: s.order,
       siteName: s.siteName ?? "",
