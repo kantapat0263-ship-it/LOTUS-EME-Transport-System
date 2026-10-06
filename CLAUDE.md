@@ -257,21 +257,21 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - [x] ~~ทำ "เลื่อน" ให้สร้างงานวันใหม่จริง~~ (เสร็จ `7c55b1f` — ดู section ด้านบน)
 - [ ] (อาจมี) ปุ่ม "ปิดผลทริปนี้" เพื่อรู้ว่า reconcile ครบหรือยัง
 - [ ] **ปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป** — เคสแอดมินแก้หมุด `sites` หลังออกใบ/ส่ง LINE แล้ว งานเดิมไม่ตาม (พิกัดเป็น snapshot ดู gotcha) → ให้กดอัปเดต `stop.lat/lng` จาก `sites` ล่าสุดเฉพาะจุดที่เลือก
-- [ ] **ตั้ง ENV เฟส 2 บน Vercel ถ้ายังไม่ได้ตั้ง** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — cron ราคาดีเซล + ยาม auth API ส่ง LINE ถึงจะทำงาน
+- [ ] **ยืนยัน ENV เฟส 2 บน Vercel สำหรับ cron ราคาดีเซล** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — รายการนี้ไม่ใช่งาน merge ยาม auth LINE อีกแล้ว
 - [ ] **publish Firestore rules ชุด `cc7c069` (อยู่บน main แล้ว)** — ก่อน publish: เช็กใน Console ว่า users ที่เป็น admin/dispatcher เป็นตัวจริงทุกคน + staff ทุกคนมี `active: true` (ดู section "สิทธิ์ Firestore")
-- [ ] **merge ยาม auth API ส่ง LINE** (`a5fce13` บน branch) — รอตั้ง env ก่อน ไม่งั้นปุ่มส่งบอท 401
+- [x] **ยาม auth API ส่ง LINE (2026-10-06):** API ใช้ `verifyStaffToken` ตัวเดียวกับ GPS/ใบลา ตรวจโปรไฟล์ล่าสุดว่าเป็น admin/dispatcher และ `active: true` ก่อนอ่าน body หรือส่ง LINE; ปุ่มส่งแนบ Firebase ID token แล้ว ไม่ต้อง cherry-pick `a5fce13` จาก branch เก่า
 
 ## งานความปลอดภัย/ค่าใช้จ่าย (2026-06-22)
 - **ปัญหา LINE ส่งไม่ได้ปลายเดือน = โควตาเต็ม** — LINE นับ push เข้ากลุ่ม = `1 ข้อความ × จำนวนสมาชิกกลุ่ม` (กลุ่ม ~17 คน → ส่งวันละครั้งกิน 17/วัน) แผนฟรี 300/เดือน เลยตันราววันที่ ~20 ทุกเดือน → แก้ด้วย **ปุ่ม "คัดลอกข้อความ"** (`6c931ff`, deploy แล้ว): คนจัดรถก๊อปข้อความสรุปไปวางในกลุ่มเอง = ข้อความจากคน ไม่กินโควตา OA = ฟรีถาวร (ทางเลือกแทนจ่ายแผนเบสิค ฿1,280/ด.)
-- **ยาม auth API ส่ง LINE** (`a5fce13`, **ยังอยู่บน branch**) — เดิม `/api/line/send-summary` ไม่มี auth ใครก็ยิงสั่งบอทส่งกลุ่มได้ แก้: client แนบ Firebase ID token, server verify + เช็ก role staff (`requireStaff` ใน `admin.ts`) **ต้องตั้ง env `FIREBASE_SERVICE_ACCOUNT_BASE64` ก่อน merge** ไม่งั้นปุ่มส่งบอทตอบ 401
+- **ยาม auth API ส่ง LINE (แก้แล้ว 2026-10-06):** `/api/line/send-summary` ตรวจ Firebase ID token และสิทธิ์ล่าสุดผ่าน `verifyStaffToken`; คนจัดรถ/แอดมินที่ active ส่งได้ตามเดิม ผู้ใช้ทั่วไป บัญชีระงับ และผู้ไม่ล็อกอินได้ 401 โดยไม่ส่ง LINE ใช้ Firebase Admin config ที่ระบบ GPS/ใบลาใช้อยู่ การทดสอบ mock ขอบเขต Firebase/LINE ทั้งหมดและไม่ส่งกลุ่มจริง
 - ~~**รัด Firestore rules** (`4e974ce` บน branch)~~ — **ถูกแทนด้วย `cc7c069` บน main แล้ว (รวมงานนี้ไว้ ไม่ต้อง cherry-pick)** — เดิม: ปิด fallback `allow if isAuthenticated()` → `if false` (deny by default) + เพิ่มกฎ collection ที่เคยพึ่ง fallback (`vehicleTypes`/`urgentRequests`/`dieselPriceHistory`) คงสิทธิ์เท่าเดิม **zero-impact** แต่ **กฎไม่ deploy ผ่าน git** — ต้อง publish ที่ Firebase Console (Rules Playground เทสก่อน). ⚠️ Firebase project เดียวกัน prod+preview → publish = มีผล prod ทันที, rollback ได้ใน Console
 
 ## สถานะ ณ handoff (2026-06-22, อัปเดตหลังรอบแก้บั๊ก)
 - main tip = `3311f54` — deploy production แล้ว, typecheck ✅ + test 48/48 ✅
 - **ขึ้น production แล้ว:** ปุ่มคัดลอก LINE + เลื่อนจริง + บั๊ก 6 ตัวจากรอบตรวจ (`2984509`, `3311f54`) — ดู section "รอบตรวจ+แก้บั๊ก 6 ตัว"
 - หมายเหตุ: main มี commit จาก session อื่นแทรก (โยกงานไปให้ฝั่งต้นทางในใบงาน/LINE, ชื่อคนจัดรถต่อจุด, ค่าน้ำมันโดยประมาณในรูป ฯลฯ `72a1574`..`233d2ce`) — งานเหล่านั้นอยู่บน main ครบ
-- **ค้างบน branch `claude/transport-system-review-QvCtP`** (ยังไม่ขึ้น main, ต้องทำเงื่อนไขก่อน): ยาม auth API (รอ env `FIREBASE_SERVICE_ACCOUNT_BASE64`) + Firestore rules (รอ publish ที่ Console)
-- ⚠️ **branch ตามหลัง main อยู่เยอะ** (main มี fix บั๊ก + งาน session อื่นที่ branch ยังไม่มี) — ตอนจะเอา auth/rules ขึ้น main ให้ **cherry-pick ทีละ commit** (`a5fce13` auth, `4e974ce` rules) ไม่ใช่ merge ทั้ง branch (จะตีกับ main) หรือ rebase branch ใหม่บน main ก่อน
+- **รายการค้างใน handoff มิถุนายนนี้ปิดแล้วเมื่อ 2026-10-06:** ยาม auth LINE ใช้ verifier ปัจจุบันตามหัวข้อด้านบน และ Firestore rules เผยแพร่พร้อมคิวต่อเนื่องแล้ว
+- ⚠️ **branch เก่าตามหลัง main อยู่เยอะ** อย่า merge ทั้ง branch หรือ cherry-pick `a5fce13`/`4e974ce` ซ้ำ เพราะ main มีงานทดแทนแล้ว
 - (อัปเดต 2026-10-03) ส่วน rules ไม่ต้อง cherry-pick `4e974ce` แล้ว — `cc7c069` บน main รวมไว้แล้ว เหลือแค่ publish
 
 ## สิทธิ์ Firestore (rules) — รัดแล้วบน main 2026-10-03 (`cc7c069`), **ยังไม่ publish**

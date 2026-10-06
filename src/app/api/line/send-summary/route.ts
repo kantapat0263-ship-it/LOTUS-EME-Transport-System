@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyStaffToken } from '@/firebase/admin'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
 
 export async function POST(req: NextRequest) {
   try {
+    const uid = await verifyStaffToken(req.headers.get('authorization'))
+    if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
     const { trips, selectedDate } = await req.json()
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
     const groupId = process.env.LINE_GROUP_ID

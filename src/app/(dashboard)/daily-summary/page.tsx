@@ -438,8 +438,13 @@ export default function DailySummaryPage() {
 
   const handleSendLine = exportOnce(sendLineBusyRef, async () => {
     if (trips.length === 0) return
+    if (!user) {
+      toast({ title: "กรุณาเข้าสู่ระบบ", description: "เข้าสู่ระบบอีกครั้งก่อนส่งเข้า LINE", variant: "destructive" })
+      return
+    }
     setIsSendingLine(true)
     try {
+      const idToken = await user.getIdToken()
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
       // ไม่เคยใช้ imageBase64 เลย การส่ง base64 หลาย MB เสี่ยงชนลิมิต body ของ Vercel (~4.5MB)
       // ทำปุ่มพังทั้งปุ่มในวันที่ทริปเยอะ + ทำให้กดส่งช้าโดยไม่จำเป็น
@@ -465,7 +470,7 @@ export default function DailySummaryPage() {
 
       const res = await fetch('/api/line/send-summary', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({ 
           trips: tripData,
           dateStr: formatThaiDate(selectedDate),
