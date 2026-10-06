@@ -22,7 +22,72 @@ import {
   NEAR_OFFICE_ARRIVAL_DWELL_MIN,
   arrivalDwellMin,
   firstArrivalVisit,
+  stopTiming,
+  isAwaitingDwell,
+  STAY_MIN,
 } from './tracking'
+
+describe('tracking: เวลาที่จุดงานนับทุกรอบที่จอดจริง ไม่นับรอบที่ขับผ่าน (Codex รอบ 1 ข้อ 3, 5, 7)', () => {
+  const T0 = Date.parse('2026-10-06T09:00:00+07:00')
+  const MIN = 60_000
+  const office = OFFICE_LOCATION
+  const near = { lat: OFFICE_LOCATION.lat + 0.018, lng: OFFICE_LOCATION.lng }
+  const far = { lat: 13.75, lng: 100.5 }
+  const nextFar = { lat: 13.85, lng: 100.55 }
+  const inside = (s: { lat: number; lng: number }, t: number) => ({ lat: s.lat + 0.001, lng: s.lng, t })
+  const outside = (s: { lat: number; lng: number }, t: number) => ({ lat: s.lat + 0.01, lng: s.lng, t })
+  const parked = (s: { lat: number; lng: number }, start: number, minutes: number) =>
+    Array.from({ length: minutes + 1 }, (_, i) => inside(s, start + i * MIN))
+
+  it('STAY_MIN = 2 นาที (สั้นกว่านี้ถือว่าขับผ่าน)', () => expect(STAY_MIN).toBe(2))
+
+  it('stopTiming: จอด 5 นาที ออกไป แล้วกลับมาจอด 30 นาที → ถึงรอบแรก ออกรอบหลัง จอดรวม 35', () => {
+    const trail = [...parked(near, T0, 5), outside(near, T0 + 10 * MIN), ...parked(near, T0 + 20 * MIN, 30)]
+    expect(stopTiming(near, trail, ARRIVAL_RADIUS_M, 5)).toEqual({ arrivedAt: T0, departedAt: T0 + 50 * MIN, dwellMin: 35 })
+  })
+
+  it('stopTiming: รอบที่ขับผ่าน (< 2 นาที) หลังถึงแล้ว ไม่ยืดเวลาออก/จอด', () => {
+    const trail = [...parked(far, T0, 10), outside(far, T0 + 20 * MIN), inside(far, T0 + 300 * MIN), outside(far, T0 + 301 * MIN)]
+    expect(stopTiming(far, trail, ARRIVAL_RADIUS_M, 0)).toEqual({ arrivedAt: T0, departedAt: T0 + 10 * MIN, dwellMin: 10 })
+  })
+
+  it('stopTiming: ยังไม่ถึงตามเกณฑ์ → null · จุดไกลผ่านจุดเดียว → ถึง แต่ไม่มีเวลาจอด', () => {
+    expect(stopTiming(near, [inside(near, T0)], ARRIVAL_RADIUS_M, 5)).toBeNull()
+    expect(stopTiming(far, [inside(far, T0)], ARRIVAL_RADIUS_M, 0)).toEqual({ arrivedAt: T0, departedAt: T0, dwellMin: null })
+  })
+
+  it('สรุปรายวัน: กลับมาจอดไซต์เดิมอีกรอบก่อนไปจุดถัดไป → เวลาเดินทางนับจากออกรอบหลัง', () => {
+    const trail = [
+      { ...office, t: T0 - 90 * MIN },
+      ...parked(far, T0, 5),
+      outside(far, T0 + 10 * MIN),
+      ...parked(far, T0 + 20 * MIN, 30), // กลับมาจอดอีก 09:20–09:50
+      outside(far, T0 + 60 * MIN),
+      ...parked(nextFar, T0 + 80 * MIN, 10), // จุดถัดไป 10:20
+    ]
+    const sum = computeDailySummary(
+      trail,
+      [{ order: 1, siteName: 'A', ...far }, { order: 2, siteName: 'B', ...nextFar }],
+      office
+    )
+    expect(sum.stops[0].dwellMin).toBe(35)
+    expect(sum.stops[0].departedAt).toBe(T0 + 50 * MIN)
+    expect(sum.stops[1].travelMinFromPrev).toBe(30)
+  })
+
+  it('จุดไกล: เวลาถึง = เวลาเร็วที่สุดในรัศมี แม้ trail ไม่เรียงเวลา', () => {
+    const trail = [inside(far, T0 + 20 * MIN), outside(far, T0 + 10 * MIN), inside(far, T0)]
+    const [st] = computeStopStatuses([{ order: 1, ...far }], trail, { office })
+    expect(st.arrivedAt).toBe(T0)
+  })
+
+  it('isAwaitingDwell: รถอยู่ในรัศมีจุดใกล้ออฟฟิศ (ยังไม่ครบเวลา) → true · จุดไกล/อยู่นอกรัศมี/ไม่รู้ออฟฟิศ → false', () => {
+    expect(isAwaitingDwell(near, inside(near, T0), office)).toBe(true)
+    expect(isAwaitingDwell(far, inside(far, T0), office)).toBe(false)
+    expect(isAwaitingDwell(near, outside(near, T0), office)).toBe(false)
+    expect(isAwaitingDwell(near, inside(near, T0), null)).toBe(false)
+  })
+})
 
 describe('tracking: จุดงานใกล้ออฟฟิศต้องจอดจริงถึงจะนับว่าถึง (กันขับผ่าน)', () => {
   const T0 = Date.parse('2026-10-06T09:00:00+07:00')

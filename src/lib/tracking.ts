@@ -38,31 +38,65 @@ export function arrivalDwellMin(stop: LatLng, office: LatLng | null | undefined)
   return office && haversineMeters(stop, office) <= NEAR_OFFICE_M ? NEAR_OFFICE_ARRIVAL_DWELL_MIN : 0
 }
 
+/** รอบที่อยู่ในรัศมีจุดงานสั้นกว่านี้ (นาที) = ขับผ่าน — ไม่นับเป็นเวลาจอดใน timeline */
+export const STAY_MIN = 2
+
+type Visit = { start: number; end: number }
+
 /**
- * รอบแรกที่ "ถึงจุดงานจริง" — ช่วงจุด trail ต่อเนื่อง (เรียงตามเวลา) ที่อยู่ในรัศมีทุกจุด และนานรวม ≥ minDwellMin
- * จุดที่หลุดออกนอกรัศมีตัดช่วง · GPS ขาดช่วงแต่จุดก่อน-หลังอยู่ในรัศมีทั้งคู่ = ถือว่าจอดต่อเนื่อง
- * ใช้เฉพาะจุดที่มีเวลา (t) · minDwellMin 0 = จุดเดียวก็นับ
+ * ทุกช่วงที่รถอยู่ในรัศมีจุดงาน — ช่วงจุด trail ต่อเนื่อง (เรียงตามเวลา) ที่อยู่ในรัศมีทุกจุด
+ * จุดที่หลุดออกนอกรัศมีตัดช่วง · GPS ขาดช่วงแต่จุดก่อน-หลังอยู่ในรัศมีทั้งคู่ = ถือว่าอยู่ต่อเนื่อง
+ * (trail ข้ามจุดที่เวลา GPS ซ้ำ → ช่องว่างเกิดตอนอุปกรณ์ไม่รายงาน ซึ่งส่วนใหญ่คือจอดนิ่ง ถ้าตัดช่องว่าง
+ *  รถที่จอดนานจะไม่เคยถูกนับว่าถึง) · ใช้เฉพาะจุดที่มีเวลา (t)
  */
-export function firstArrivalVisit(
+function stopVisits(stop: LatLng, trail: TrailPoint[], radius: number): Visit[] {
+  const pts = trail.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
+  const visits: Visit[] = []
+  let cur: Visit | null = null
+  for (const p of pts) {
+    if (haversineMeters(stop, p) <= radius) {
+      if (cur) cur.end = p.t!
+      else cur = { start: p.t!, end: p.t! }
+    } else if (cur) {
+      visits.push(cur)
+      cur = null
+    }
+  }
+  if (cur) visits.push(cur)
+  return visits
+}
+
+/** รอบแรกที่ "ถึงจุดงานจริง" = ช่วงแรกที่อยู่ในรัศมีนานรวม ≥ minDwellMin · 0 = จุดเดียวก็นับ */
+export function firstArrivalVisit(stop: LatLng, trail: TrailPoint[], radius: number, minDwellMin: number): Visit | null {
+  return stopVisits(stop, trail, radius).find((v) => v.end - v.start >= minDwellMin * 60_000) ?? null
+}
+
+/**
+ * เวลาถึง/ออก/จอดของจุดงาน — ถึง = เริ่มรอบแรกที่ผ่านเกณฑ์ (needMin) · ออก = จบรอบจอดสุดท้าย ·
+ * จอด = รวมทุกรอบจอด (รอบแรก + รอบหลังที่นาน ≥ STAY_MIN) — รอบสั้นกว่านั้นคือขับผ่าน ไม่นับ
+ * (เคสจริง: จอด 5 นาที ออกไป แล้วกลับมาจอดอีก 30 นาที → จอดรวม 35 · เวลาเดินทางไปจุดถัดไปนับจากออกรอบหลัง)
+ */
+export function stopTiming(
   stop: LatLng,
   trail: TrailPoint[],
   radius: number,
-  minDwellMin: number
-): { start: number; end: number } | null {
-  const pts = trail.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
-  const minMs = minDwellMin * 60_000
-  let start: number | null = null
-  let end = 0
-  for (const p of pts) {
-    if (haversineMeters(stop, p) <= radius) {
-      if (start == null) start = p.t!
-      end = p.t!
-      continue
-    }
-    if (start != null && end - start >= minMs) return { start, end }
-    start = null
+  needMin: number
+): { arrivedAt: number; departedAt: number; dwellMin: number | null } | null {
+  const visits = stopVisits(stop, trail, radius)
+  const i = visits.findIndex((v) => v.end - v.start >= needMin * 60_000)
+  if (i < 0) return null
+  const stays = visits.slice(i).filter((v, k) => k === 0 || v.end - v.start >= STAY_MIN * 60_000)
+  const dwellMs = stays.reduce((s, v) => s + (v.end - v.start), 0)
+  return {
+    arrivedAt: stays[0].start,
+    departedAt: stays[stays.length - 1].end,
+    dwellMin: dwellMs > 0 ? Math.round((dwellMs / 60_000) * 10) / 10 : null, // ทศนิยม 1 ตำแหน่ง เหมือน toMin
   }
-  return start != null && end - start >= minMs ? { start, end } : null
+}
+
+/** รถอยู่ในรัศมีจุดงานที่ต้องจอดยืนยัน (จุดใกล้ออฟฟิศ) — ใช้บอกว่า "อยู่บริเวณจุดงาน รอยืนยันจอดครบ" แทน "กำลังไป" */
+export function isAwaitingDwell(stop: LatLng, pos: LatLng, office: LatLng | null | undefined, radius = ARRIVAL_RADIUS_M): boolean {
+  return arrivalDwellMin(stop, office) > 0 && haversineMeters(stop, pos) <= radius
 }
 
 export interface StopStatus {
@@ -108,11 +142,11 @@ export function computeStopStatuses(
       }
       const needMin = arrivalDwellMin(stopPos, opts.office)
       if (needMin === 0) {
-        // กติกาเดิม: เข้าใกล้จุดเดียวก็นับ (รองรับ trail ที่ไม่มีเวลา)
+        // กติกาเดิม: เข้าใกล้จุดเดียวก็นับ (รองรับ trail ที่ไม่มีเวลา) · เวลาถึง = เวลาเร็วที่สุดในรัศมี (ไม่ขึ้นกับลำดับ array)
         for (const p of trail) {
           if (haversineMeters(stopPos, p) <= radius) {
             arrived = true
-            if (arrivedAt == null && p.t != null) arrivedAt = p.t
+            if (p.t != null && (arrivedAt == null || p.t < arrivedAt)) arrivedAt = p.t
           }
         }
       } else {
@@ -566,22 +600,24 @@ export function computeDailySummary(
   }
 
   // ---- เวลาถึง/ออก ต่อจุดงาน ----
-  // ใช้ "รอบที่ถึงจริงรอบแรก" (ช่วงต่อเนื่องในรัศมี) — เดิมเอาจุดแรก/สุดท้ายที่เคยเข้ารัศมีทั้งวัน
-  // ทำให้ขับผ่านจุดเดิมตอนเช้า+บ่าย กลายเป็น "จอด" หลายชั่วโมง · จุดใกล้ออฟฟิศต้องจอด ≥ 5 นาทีถึงจะนับ
+  // ถึง = รอบแรกที่ผ่านเกณฑ์ · ออก = จบรอบจอดสุดท้าย · จอด = รวมทุกรอบจอด (stopTiming) — เดิมเอาจุดแรก/สุดท้าย
+  // ที่เคยเข้ารัศมีทั้งวัน ทำให้ขับผ่านจุดเดิมตอนเช้า+บ่าย กลายเป็น "จอด" หลายชั่วโมง · จุดใกล้ออฟฟิศต้องจอด ≥ 5 นาทีถึงจะนับ
   const ordered = [...stops].sort((a, b) => a.order - b.order)
   const timings: StopTiming[] = ordered.map((s) => {
-    let arrivedAt: number | null = null
-    let departedAt: number | null = null
-    if (s.lat != null && s.lng != null) {
-      const stopPos = { lat: s.lat, lng: s.lng }
-      const visit = firstArrivalVisit(stopPos, pts, arrivalRadius, arrivalDwellMin(stopPos, origin))
-      if (visit) {
-        arrivedAt = visit.start
-        departedAt = visit.end
-      }
+    const timing =
+      s.lat != null && s.lng != null
+        ? stopTiming({ lat: s.lat, lng: s.lng }, pts, arrivalRadius, arrivalDwellMin({ lat: s.lat, lng: s.lng }, origin))
+        : null
+    return {
+      order: s.order,
+      siteName: s.siteName ?? "",
+      arrivedAt: timing?.arrivedAt ?? null,
+      departedAt: timing?.departedAt ?? null,
+      dwellMin: timing?.dwellMin ?? null,
+      travelMinFromPrev: null,
+      travelKmFromPrev: null,
+      avgSpeedKmh: null,
     }
-    const dwellMin = arrivedAt != null && departedAt != null && departedAt > arrivedAt ? toMin(departedAt - arrivedAt) : null
-    return { order: s.order, siteName: s.siteName ?? "", arrivedAt, departedAt, dwellMin, travelMinFromPrev: null, travelKmFromPrev: null, avgSpeedKmh: null }
   })
 
   // ---- เวลาเดินทางช่วง (ถึงจุดนี้ − ออกจุดก่อน / ออกออฟฟิศ) ----

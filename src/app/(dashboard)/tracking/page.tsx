@@ -29,6 +29,8 @@ import {
   haversineMeters,
   isPositionStale,
   isTripNotRun,
+  isAwaitingDwell,
+  NEAR_OFFICE_ARRIVAL_DWELL_MIN,
   isPowerCut,
   isOverspeed,
   mileageKm,
@@ -375,7 +377,9 @@ export default function TrackingPage() {
       // วันนี้ = คำนวณสรุปสดจาก merged stops (รวมงานที่โยก) ; ย้อนหลัง = ใช้ที่เก็บไว้
       const stored = deviceId ? deviceToDaily[deviceId] ?? null : null
       let dailyDoc: TrackingDailyDoc | null = stored
-      if (isToday && deviceId) {
+      // ย้อนหลังก็คำนวณจาก trail ด้วย (ถ้ามี) — ให้เวลาถึง/จอดใช้เกณฑ์เดียวกับป้าย "ถึงแล้ว" ที่คิดสดเสมอ
+      // ไม่งั้นวันก่อนแก้เกณฑ์จะได้ป้ายแบบใหม่คู่กับเวลาจอดแบบเก่าที่ server เก็บไว้ (ไม่มี trail → ใช้ที่เก็บไว้)
+      if (deviceId && (isToday || trail.length > 0)) {
         const sum = computeDailySummary(trail, routeStops, origin)
         dailyDoc = {
           id: "",
@@ -946,14 +950,30 @@ function TruckDetail({
           // งานที่โยกออก/เลื่อนวัน = ไม่ใช่งานคันนี้วันนี้ → แสดงจาง ขีดฆ่า ไม่มีขาเดินทาง/ไฮไลต์แวะนาน
           const off = !!(s.movedTo || s.postponedTo)
           const longStop = !off && t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
-          const tag = s.movedTo ? "โยกออก" : s.postponedTo ? "เลื่อน" : s.arrived ? "ถึงแล้ว" : s.isCurrent ? "กำลังไป" : "รอ"
+          // รถอยู่ในรัศมีจุดใกล้ออฟฟิศแล้วแต่ยังจอดไม่ครบเกณฑ์ → บอกตามจริงแทน "กำลังไป"
+          const awaiting =
+            isToday && !off && !s.arrived && s.lat != null && s.lng != null && !!truck.position &&
+            isAwaitingDwell({ lat: s.lat, lng: s.lng }, { lat: truck.position.lat, lng: truck.position.lng }, truck.origin)
+          const tag = s.movedTo
+            ? "โยกออก"
+            : s.postponedTo
+              ? "เลื่อน"
+              : s.arrived
+                ? "ถึงแล้ว"
+                : awaiting
+                  ? "รอยืนยัน"
+                  : s.isCurrent
+                    ? "กำลังไป"
+                    : "รอ"
           const tagCls = off
             ? "text-muted-foreground"
             : s.arrived
               ? "text-emerald-400"
-              : s.isCurrent
-                ? "text-accent"
-                : "text-muted-foreground"
+              : awaiting
+                ? "text-amber-400"
+                : s.isCurrent
+                  ? "text-accent"
+                  : "text-muted-foreground"
           return (
             <div key={`${s.order}-${idx}`}>
               {!off && t?.travelMinFromPrev != null && (() => {
@@ -1028,6 +1048,10 @@ function TruckDetail({
                           <span> · ออก {thTime(t.departedAt)}</span>
                         )}
                       </>
+                    ) : awaiting ? (
+                      <span className="text-amber-400">
+                        อยู่บริเวณจุดงาน — รอยืนยันจอดครบ {NEAR_OFFICE_ARRIVAL_DWELL_MIN} นาที
+                      </span>
                     ) : s.isCurrent ? (
                       "รถกำลังมุ่งหน้า"
                     ) : s.lat == null ? (
