@@ -17,7 +17,107 @@ import {
   trackingDateKey,
   isCronSyncWindow,
   isTripNotRun,
+  OFFICE_LOCATION,
+  NEAR_OFFICE_M,
+  NEAR_OFFICE_ARRIVAL_DWELL_MIN,
+  arrivalDwellMin,
+  firstArrivalVisit,
 } from './tracking'
+
+describe('tracking: จุดงานใกล้ออฟฟิศต้องจอดจริงถึงจะนับว่าถึง (กันขับผ่าน)', () => {
+  const T0 = Date.parse('2026-10-06T09:00:00+07:00')
+  const MIN = 60_000
+  const office = OFFICE_LOCATION
+  const near = { lat: OFFICE_LOCATION.lat + 0.018, lng: OFFICE_LOCATION.lng } // ~2 กม. จากออฟฟิศ
+  const far = { lat: 13.75, lng: 100.5 } // กทม. ~40 กม.
+  const inside = (s: { lat: number; lng: number }, t: number) => ({ lat: s.lat + 0.001, lng: s.lng, t }) // ~110 ม.
+  const outside = (s: { lat: number; lng: number }, t: number) => ({ lat: s.lat + 0.01, lng: s.lng, t }) // ~1.1 กม.
+  const parked = (s: { lat: number; lng: number }, start: number, minutes: number) =>
+    Array.from({ length: minutes + 1 }, (_, i) => inside(s, start + i * MIN))
+
+  it('ค่าคงที่ตามที่ตกลง: โซน 5 กม. จอด 5 นาที', () => {
+    expect(NEAR_OFFICE_M).toBe(5000)
+    expect(NEAR_OFFICE_ARRIVAL_DWELL_MIN).toBe(5)
+  })
+
+  it('arrivalDwellMin: ใกล้ออฟฟิศ 5 · ไกล 0 · ไม่รู้ตำแหน่งออฟฟิศ 0', () => {
+    expect(arrivalDwellMin(near, office)).toBe(5)
+    expect(arrivalDwellMin(far, office)).toBe(0)
+    expect(arrivalDwellMin(near, null)).toBe(0)
+  })
+
+  it('firstArrivalVisit: ช่วงต่อเนื่องในรัศมี ≥ เกณฑ์ · จุดหลุดนอกรัศมีตัดช่วง · GPS ขาดช่วงแต่หัวท้ายอยู่ในรัศมี = จอดต่อเนื่อง', () => {
+    expect(firstArrivalVisit(near, parked(near, T0, 5), ARRIVAL_RADIUS_M, 5)).toEqual({ start: T0, end: T0 + 5 * MIN })
+    expect(firstArrivalVisit(near, parked(near, T0, 4), ARRIVAL_RADIUS_M, 5)).toBeNull()
+    const split = [...parked(near, T0, 3), outside(near, T0 + 4 * MIN), ...parked(near, T0 + 5 * MIN, 3)]
+    expect(firstArrivalVisit(near, split, ARRIVAL_RADIUS_M, 5)).toBeNull()
+    expect(firstArrivalVisit(near, [inside(near, T0), inside(near, T0 + 10 * MIN)], ARRIVAL_RADIUS_M, 5)).toEqual({
+      start: T0,
+      end: T0 + 10 * MIN,
+    })
+    expect(firstArrivalVisit(near, [inside(near, T0)], ARRIVAL_RADIUS_M, 0)).toEqual({ start: T0, end: T0 })
+  })
+
+  it('จุดใกล้ออฟฟิศ: ขับผ่าน (อยู่ในรัศมีจุดเดียว) → ยังไม่ถึง และเป็นเป้าหมายปัจจุบัน', () => {
+    const trail = [outside(near, T0), inside(near, T0 + MIN), outside(near, T0 + 2 * MIN)]
+    const [st] = computeStopStatuses([{ order: 1, ...near }], trail, { office })
+    expect(st.arrived).toBe(false)
+    expect(st.isCurrent).toBe(true)
+    expect(st.nearestM!).toBeLessThan(ARRIVAL_RADIUS_M)
+  })
+
+  it('จุดใกล้ออฟฟิศ: จอด 5 นาที → ถึง (เวลาถึง = เริ่มจอด) · จอด 4 นาที → ยังไม่ถึง', () => {
+    const [ok] = computeStopStatuses([{ order: 1, ...near }], parked(near, T0, 5), { office })
+    expect(ok.arrived).toBe(true)
+    expect(ok.arrivedAt).toBe(T0)
+    const [short] = computeStopStatuses([{ order: 1, ...near }], parked(near, T0, 4), { office })
+    expect(short.arrived).toBe(false)
+  })
+
+  it('จุดใกล้ออฟฟิศ: ขับผ่านตอนเช้า แล้วกลับมาจอดจริงทีหลัง → เวลาถึง = ตอนจอดจริง', () => {
+    const trail = [inside(near, T0), outside(near, T0 + MIN), ...parked(near, T0 + 120 * MIN, 6)]
+    const [st] = computeStopStatuses([{ order: 1, ...near }], trail, { office })
+    expect(st.arrived).toBe(true)
+    expect(st.arrivedAt).toBe(T0 + 120 * MIN)
+  })
+
+  it('จุดไกลออฟฟิศ / ไม่ส่งตำแหน่งออฟฟิศ: กติกาเดิม เข้าใกล้จุดเดียว = ถึง', () => {
+    const [farSt] = computeStopStatuses([{ order: 1, ...far }], [outside(far, T0), inside(far, T0 + MIN)], { office })
+    expect(farSt.arrived).toBe(true)
+    expect(farSt.arrivedAt).toBe(T0 + MIN)
+    const [noOffice] = computeStopStatuses([{ order: 1, ...near }], [inside(near, T0)])
+    expect(noOffice.arrived).toBe(true)
+  })
+
+  it('สรุปรายวัน: จุดใกล้ออฟฟิศที่ขับผ่านก่อน → เวลาถึง/ออก/จอด มาจากรอบจอดจริง', () => {
+    const trail = [
+      { ...office, t: T0 - 60 * MIN },
+      outside(near, T0 - 30 * MIN),
+      inside(near, T0), // ขับผ่าน
+      outside(near, T0 + MIN),
+      ...parked(near, T0 + 120 * MIN, 20), // จอดจริง 11:00–11:20
+      outside(near, T0 + 150 * MIN),
+    ]
+    const sum = computeDailySummary(trail, [{ order: 1, siteName: 'โรงเก็บของ', ...near }], office)
+    expect(sum.stops[0].arrivedAt).toBe(T0 + 120 * MIN)
+    expect(sum.stops[0].departedAt).toBe(T0 + 140 * MIN)
+    expect(sum.stops[0].dwellMin).toBe(20)
+  })
+
+  it('สรุปรายวัน: จุดไกลที่ขับผ่านซ้ำตอนบ่าย → เวลาออก/จอด ไม่ยืดไปถึงตอนขับผ่าน', () => {
+    const trail = [
+      { ...office, t: T0 - 90 * MIN },
+      ...parked(far, T0, 10), // ถึงจริง 09:00–09:10
+      outside(far, T0 + 20 * MIN),
+      inside(far, T0 + 360 * MIN), // ขับผ่านอีกรอบ 15:00
+      outside(far, T0 + 361 * MIN),
+    ]
+    const sum = computeDailySummary(trail, [{ order: 1, siteName: 'ไซต์ในเมือง', ...far }], office)
+    expect(sum.stops[0].arrivedAt).toBe(T0)
+    expect(sum.stops[0].departedAt).toBe(T0 + 10 * MIN)
+    expect(sum.stops[0].dwellMin).toBe(10)
+  })
+})
 
 describe('tracking: isTripNotRun (เกณฑ์เดียวกับป้าย 🚫 ไม่ได้วิ่ง ในใบสรุป)', () => {
   it('งานเดียวถูกเลื่อน + ไม่มีงานโยกเข้า = ไม่ได้วิ่ง (เคส 1ฒล-6100 5 ต.ค.)', () => {

@@ -309,9 +309,17 @@ export default function TrackingPage() {
         })),
       ]
 
+      // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
+      const origin =
+        settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
+          ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
+          : OFFICE_LOCATION
+
+      // ส่งออฟฟิศเข้าไปด้วย — จุดงานใกล้ออฟฟิศต้องจอดจริงถึงจะนับว่าถึง (กันขับผ่าน)
       const statuses = computeStopStatuses(
         routeStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng })),
-        trail
+        trail,
+        { office: origin }
       )
       const statusByOrder: Record<number, (typeof statuses)[number]> = {}
       statuses.forEach((st) => (statusByOrder[st.order] = st))
@@ -363,12 +371,6 @@ export default function TrackingPage() {
           }
         }),
       ]
-
-      // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
-      const origin =
-        settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
-          ? { lat: settings.warehouseLatitude, lng: settings.warehouseLongitude }
-          : OFFICE_LOCATION
 
       // วันนี้ = คำนวณสรุปสดจาก merged stops (รวมงานที่โยก) ; ย้อนหลัง = ใช้ที่เก็บไว้
       const stored = deviceId ? deviceToDaily[deviceId] ?? null : null
@@ -882,7 +884,7 @@ function TruckDetail({
       )}
 
       <div className="px-4 pb-1 pt-3 text-xs text-muted-foreground">
-        ROOT งานวันนี้ · {truck.arrivedCount}/{truck.totalStops} จุด — “เข้าใกล้จุดงาน ≈300 ม. = ถือว่าทำภารกิจแล้ว ✅”
+        ROOT งานวันนี้ · {truck.arrivedCount}/{truck.totalStops} จุด — “เข้าใกล้จุดงาน ≈300 ม. = ถือว่าทำภารกิจแล้ว ✅ · จุดใกล้ออฟฟิศ (≤5 กม.) ต้องจอด ≥5 นาที”
       </div>
 
       <div className="px-4 pb-4">

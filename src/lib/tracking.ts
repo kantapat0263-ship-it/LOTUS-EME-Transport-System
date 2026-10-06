@@ -27,9 +27,47 @@ export const ARRIVAL_RADIUS_M = 300
 /** เกินเวลานี้ (นาที) ถือว่า GPS ออฟไลน์/ข้อมูลเก่า */
 export const STALE_THRESHOLD_MIN = 30
 
+/** จุดงานที่ห่างออฟฟิศไม่เกินนี้ (เมตร) ต้อง "จอดจริง" ถึงจะนับว่าถึง — งานแถวออฟฟิศ (โรงเก็บของ/ตรอ./ร้านของเก่า)
+ *  อยู่บนเส้นทางวิ่งปกติ ขับผ่านใกล้ ๆ ง่าย · งานในเมืองจุดห่างกัน เข้าใกล้ = ไปจุดนั้นจริง (ผู้ใช้ยืนยัน 2026-10-06) */
+export const NEAR_OFFICE_M = 5000
+/** จุดงานใกล้ออฟฟิศ: ต้องอยู่ในรัศมีจุดงานต่อเนื่องอย่างน้อยกี่นาที */
+export const NEAR_OFFICE_ARRIVAL_DWELL_MIN = 5
+
+/** เวลาจอดขั้นต่ำ (นาที) ที่จุดงานนี้ต้องมีถึงจะนับว่า "ถึง" — 0 = เข้าใกล้จุดเดียวก็นับ (กติกาเดิม) */
+export function arrivalDwellMin(stop: LatLng, office: LatLng | null | undefined): number {
+  return office && haversineMeters(stop, office) <= NEAR_OFFICE_M ? NEAR_OFFICE_ARRIVAL_DWELL_MIN : 0
+}
+
+/**
+ * รอบแรกที่ "ถึงจุดงานจริง" — ช่วงจุด trail ต่อเนื่อง (เรียงตามเวลา) ที่อยู่ในรัศมีทุกจุด และนานรวม ≥ minDwellMin
+ * จุดที่หลุดออกนอกรัศมีตัดช่วง · GPS ขาดช่วงแต่จุดก่อน-หลังอยู่ในรัศมีทั้งคู่ = ถือว่าจอดต่อเนื่อง
+ * ใช้เฉพาะจุดที่มีเวลา (t) · minDwellMin 0 = จุดเดียวก็นับ
+ */
+export function firstArrivalVisit(
+  stop: LatLng,
+  trail: TrailPoint[],
+  radius: number,
+  minDwellMin: number
+): { start: number; end: number } | null {
+  const pts = trail.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
+  const minMs = minDwellMin * 60_000
+  let start: number | null = null
+  let end = 0
+  for (const p of pts) {
+    if (haversineMeters(stop, p) <= radius) {
+      if (start == null) start = p.t!
+      end = p.t!
+      continue
+    }
+    if (start != null && end - start >= minMs) return { start, end }
+    start = null
+  }
+  return start != null && end - start >= minMs ? { start, end } : null
+}
+
 export interface StopStatus {
   order: number
-  /** เคยเข้าใกล้จุดงานในรัศมีไหม = ทำภารกิจแล้ว */
+  /** ถึงจุดงานแล้ว = ทำภารกิจแล้ว (จุดไกลออฟฟิศ: เข้าใกล้ในรัศมี · จุดใกล้ออฟฟิศ: จอดในรัศมี ≥ NEAR_OFFICE_ARRIVAL_DWELL_MIN) */
   arrived: boolean
   /** ระยะที่เข้าใกล้ที่สุด (เมตร) — null ถ้าไม่มี trail */
   nearestM: number | null
@@ -44,15 +82,17 @@ export type TrailPoint = LatLng & { t?: number }
 
 /**
  * ประเมินสถานะแต่ละจุดงานจากเส้นทางที่วิ่งจริง (trail)
- * - arrived = มีจุดใน trail เข้าใกล้จุดงานภายใน radius
+ * - arrived = จุดไกลออฟฟิศ: มีจุดใน trail เข้าใกล้จุดงานภายใน radius
+ *             จุดใกล้ออฟฟิศ (ส่ง office มา): ต้องจอดในรัศมีต่อเนื่อง ≥ NEAR_OFFICE_ARRIVAL_DWELL_MIN (กันขับผ่าน)
  * - isCurrent = จุดแรก (ตามลำดับ order) ที่ยังไม่ arrived
- * - arrivedAt = เวลาของจุด trail แรกที่เข้าใกล้ (ถ้ามี t)
+ * - arrivedAt = เวลาเริ่มของรอบที่ถึงจริงรอบแรก (ถ้ามี t)
  */
 export function computeStopStatuses(
   stops: { order: number; lat?: number; lng?: number }[],
   trail: TrailPoint[],
-  radius = ARRIVAL_RADIUS_M
+  opts: { radius?: number; office?: LatLng | null } = {}
 ): StopStatus[] {
+  const radius = opts.radius ?? ARRIVAL_RADIUS_M
   const ordered = [...stops].sort((a, b) => a.order - b.order)
   let currentAssigned = false
 
@@ -65,10 +105,20 @@ export function computeStopStatuses(
       for (const p of trail) {
         const d = haversineMeters(stopPos, p)
         if (nearestM == null || d < nearestM) nearestM = d
-        if (d <= radius) {
-          arrived = true
-          if (arrivedAt == null && p.t != null) arrivedAt = p.t
+      }
+      const needMin = arrivalDwellMin(stopPos, opts.office)
+      if (needMin === 0) {
+        // กติกาเดิม: เข้าใกล้จุดเดียวก็นับ (รองรับ trail ที่ไม่มีเวลา)
+        for (const p of trail) {
+          if (haversineMeters(stopPos, p) <= radius) {
+            arrived = true
+            if (arrivedAt == null && p.t != null) arrivedAt = p.t
+          }
         }
+      } else {
+        const visit = firstArrivalVisit(stopPos, trail, radius, needMin)
+        arrived = visit != null
+        arrivedAt = visit?.start ?? null
       }
     }
     const isCurrent = !arrived && !currentAssigned
@@ -516,17 +566,18 @@ export function computeDailySummary(
   }
 
   // ---- เวลาถึง/ออก ต่อจุดงาน ----
+  // ใช้ "รอบที่ถึงจริงรอบแรก" (ช่วงต่อเนื่องในรัศมี) — เดิมเอาจุดแรก/สุดท้ายที่เคยเข้ารัศมีทั้งวัน
+  // ทำให้ขับผ่านจุดเดิมตอนเช้า+บ่าย กลายเป็น "จอด" หลายชั่วโมง · จุดใกล้ออฟฟิศต้องจอด ≥ 5 นาทีถึงจะนับ
   const ordered = [...stops].sort((a, b) => a.order - b.order)
   const timings: StopTiming[] = ordered.map((s) => {
     let arrivedAt: number | null = null
     let departedAt: number | null = null
     if (s.lat != null && s.lng != null) {
       const stopPos = { lat: s.lat, lng: s.lng }
-      for (const p of pts) {
-        if (haversineMeters(stopPos, p) <= arrivalRadius) {
-          if (arrivedAt == null) arrivedAt = p.t!
-          departedAt = p.t!
-        }
+      const visit = firstArrivalVisit(stopPos, pts, arrivalRadius, arrivalDwellMin(stopPos, origin))
+      if (visit) {
+        arrivedAt = visit.start
+        departedAt = visit.end
       }
     }
     const dwellMin = arrivedAt != null && departedAt != null && departedAt > arrivedAt ? toMin(departedAt - arrivedAt) : null
