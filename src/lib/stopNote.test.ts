@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { editStopNote, stopNoteKey } from './stopNote'
+import { editStopNote, stopNoteKey, applyNoteEdit, StopNoteConflictError } from './stopNote'
 
 const stops = [
   { order: 1, siteName: 'CP All - Udon Thani', dispatcherNote: 'ขากลับให้นำรถแค็ป ถส-5964 กลับมา', dispatcherName: 'มนทิรา จงบุรี' },
@@ -33,5 +33,27 @@ describe('stopNote: แก้หมายเหตุคนจัดรถรา
   it('ลำดับนอกช่วง → throw (กันเขียนผิดจุด)', () => {
     expect(() => editStopNote(stops, 5, 'x', 'ก')).toThrow()
     expect(() => editStopNote(stops, -1, 'x', 'ก')).toThrow()
+  })
+})
+
+describe('stopNote: applyNoteEdit (ใช้ใน transaction — อ่านทริปสดแล้วแก้เฉพาะจุดเดิม)', () => {
+  const live = [
+    { order: 1, siteName: 'CP All - Udon Thani', outcome: 'delivered' },
+    { order: 2, siteName: 'สสวท.', dispatcherNote: 'คนอื่นเพิ่งแก้', dispatcherName: 'ข' },
+  ]
+
+  it('จุดเดิม (ชื่อ+ลำดับตรง) → แก้เฉพาะจุดนั้น เก็บของที่คนอื่นเพิ่งแก้ในจุดอื่นไว้', () => {
+    const next = applyNoteEdit(live, 0, { siteName: 'CP All - Udon Thani', order: 1 }, 'ใหม่', 'ก')
+    expect(next[0]).toMatchObject({ outcome: 'delivered', dispatcherNote: 'ใหม่', dispatcherName: 'ก' })
+    expect(next[1]).toBe(live[1])
+  })
+
+  it('จุดในทริปสดไม่ใช่จุดเดิม (ถูกลบ/แทรก/สลับไประหว่างเปิดหน้าต่าง) → throw StopNoteConflictError', () => {
+    expect(() => applyNoteEdit(live, 0, { siteName: 'สสวท.', order: 2 }, 'x', 'ก')).toThrow(StopNoteConflictError)
+    expect(() => applyNoteEdit(live, 5, { siteName: 'CP All - Udon Thani', order: 1 }, 'x', 'ก')).toThrow(StopNoteConflictError)
+  })
+
+  it('ไม่มีชื่อผู้แก้ → throw (กันบันทึกตอนโปรไฟล์ยังไม่โหลด)', () => {
+    expect(() => applyNoteEdit(live, 0, { siteName: 'CP All - Udon Thani', order: 1 }, 'x', '  ')).toThrow()
   })
 })

@@ -329,6 +329,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const handleSaveStopNote = async (stopIndex: number) => {
     if (!selectedReq) return
+    // จุดที่จัดเข้าทริปแล้ว: หมายเหตุที่คนขับ/ใบสรุปเห็นอยู่บน stop ของทริป — แก้ที่นี่ไม่มีผล ให้ไปแก้ที่ใบสรุป
+    if ((selectedReq.assignedDestinations || []).includes(stopIndex)) {
+      toast({ title: "จุดนี้จัดเข้าทริปแล้ว", description: "แก้หมายเหตุที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)", variant: "destructive" })
+      return
+    }
     setIsSavingNote(stopIndex)
     try {
       const noteKey = `stop_${stopIndex}`
@@ -909,9 +914,15 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                         ...prev,
                                         [noteKey]: e.target.value
                                       }))}
-                                      onBlur={() => { if (dirty) handleSaveStopNote(idx) }}
+                                      onBlur={() => { if (dirty && !isAssigned) handleSaveStopNote(idx) }}
+                                      disabled={isAssigned}
                                       className="text-xs bg-background min-h-[60px]"
                                     />
+                                    {isAssigned && (
+                                      <span className="text-[10px] text-amber-400">
+                                        🔒 จุดนี้จัดเข้าทริปแล้ว — แก้หมายเหตุที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)
+                                      </span>
+                                    )}
                                     <div className="text-[10px] flex items-center gap-1 h-4">
                                       {saving ? (
                                         <span className="text-blue-400 flex items-center gap-1">
