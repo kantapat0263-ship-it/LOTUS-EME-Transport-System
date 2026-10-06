@@ -29,6 +29,8 @@ import {
   suggestHandoverTime,
   thaiClockToMs,
   msToThaiClock,
+  handoverCutMs,
+  handoverTimeError,
 } from './tracking'
 
 describe('tracking: เวลาที่จุดงานนับทุกรอบที่จอดจริง ไม่นับรอบที่ขับผ่าน (Codex รอบ 1 ข้อ 3, 5, 7)', () => {
@@ -755,5 +757,31 @@ describe('tracking: จบการใช้รถของทริป (ส่�
 
   it('msToThaiClock: แสดงเวลาไทย HH:MM', () => {
     expect(msToThaiClock(Date.parse('2026-10-06T18:30:00+07:00'))).toBe('18:30')
+  })
+
+  it('suggestHandoverTime: เริ่มวันนอกออฟฟิศ → รอบเข้าออฟฟิศแรกแล้วออกงาน ไม่ใช่การส่งต่อ', () => {
+    // ตื่นนอกพื้นที่ 08:00 → เข้าออฟฟิศ 09:00–09:05 → ออกทำงาน 09:10 (ไม่มีการกลับมาอีก)
+    const startAway = [away(T0), atOffice(T0 + 60 * MIN), atOffice(T0 + 65 * MIN), away(T0 + 70 * MIN)]
+    expect(suggestHandoverTime(startAway, office)).toBeNull()
+    // ...แล้วกลับมาจอด 17:00–17:10 และมีคนเอารถออกไปอีก → เสนอรอบหลัง
+    const thenHandover = [...startAway, atOffice(T0 + 540 * MIN), atOffice(T0 + 550 * MIN), away(T0 + 560 * MIN)]
+    expect(suggestHandoverTime(thenHandover, office)).toBe(T0 + 550 * MIN)
+  })
+
+  it('handoverCutMs: ไม่แก้เวลาที่เสนอ = ใช้เวลาเสนอเป๊ะ (มีวินาที) · แก้เอง = สิ้นนาทีนั้น', () => {
+    const sug = Date.parse('2026-10-06T17:05:40+07:00')
+    expect(handoverCutMs('2026-10-06', '17:05', sug)).toBe(sug)
+    expect(handoverCutMs('2026-10-06', '17:10', sug)).toBe(Date.parse('2026-10-06T17:10:00+07:00') + 59_999)
+    expect(handoverCutMs('2026-10-06', '17:10', null)).toBe(Date.parse('2026-10-06T17:10:00+07:00') + 59_999)
+    expect(handoverCutMs('2026-10-06', '', sug)).toBeNull()
+  })
+
+  it('handoverTimeError: เวลาในอนาคต / ก่อนรถออกงาน = ไม่รับ', () => {
+    const now = Date.parse('2026-10-06T15:00:00+07:00')
+    const dep = Date.parse('2026-10-06T08:00:00+07:00')
+    expect(handoverTimeError(Date.parse('2026-10-06T12:00:00+07:00'), { departedAt: dep, now })).toBeNull()
+    expect(handoverTimeError(Date.parse('2026-10-06T16:00:00+07:00'), { departedAt: dep, now })).toBe('future')
+    expect(handoverTimeError(Date.parse('2026-10-06T07:30:00+07:00'), { departedAt: dep, now })).toBe('before-departure')
+    expect(handoverTimeError(Date.parse('2026-10-06T07:30:00+07:00'), { departedAt: null, now })).toBeNull()
   })
 })

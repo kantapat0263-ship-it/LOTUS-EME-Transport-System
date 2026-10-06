@@ -226,6 +226,7 @@ export async function GET(req: NextRequest) {
               startedAwayFromOffice: sum.startedAwayFromOffice,
               vehicleReturnedAt: sum.vehicleReturnedAt,
               endedAwayFromOffice: sum.endedAwayFromOffice,
+              gpsEndAtApplied: job.gpsEndAt,
               totalKm: sum.totalKm,
               stops: sum.stops,
               updatedAt: FieldValue.serverTimestamp(),

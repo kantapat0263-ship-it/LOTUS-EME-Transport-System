@@ -709,16 +709,38 @@ export function suggestHandoverTime(
   let best: number | null = null
   let start: number | null = null
   let end = 0
-  let leftOnce = false // ต้องเคยออกไปก่อน (รอบจอดตอนเช้าก่อนออกงานไม่ใช่การส่งต่อ)
+  // ต้องเคย "ออกจากออฟฟิศ" มาก่อน (รอบจอดตอนเช้าก่อนออกงานไม่ใช่การส่งต่อ)
+  // นับเฉพาะการออกที่มีจุดในออฟฟิศนำหน้า — วันตื่นนอกพื้นที่ รอบเข้าออฟฟิศแรกแล้วออกงาน = ออกงาน ไม่ใช่ส่งต่อ
+  let leftOnce = false
   for (const p of pts) {
     if (haversineMeters(office, p) <= radius) {
       if (start == null) start = p.t!
       end = p.t!
     } else {
-      if (start != null && leftOnce && end - start >= minMs) best = end
+      if (start != null) {
+        if (leftOnce && end - start >= minMs) best = end
+        leftOnce = true
+      }
       start = null
-      leftOnce = true
     }
   }
   return best
+}
+
+/** เวลาจบการใช้รถที่จะบันทึก: ไม่ได้แก้เวลาที่ระบบเสนอ = ใช้เวลาเสนอเป๊ะ (มีวินาที — ปัดเป็นนาทีแล้วจะตัดจุดที่ทำให้จอดครบ 5 นาทีทิ้ง)
+ *  แก้เอง = นับถึงสิ้นนาทีนั้น (กรอก 17:05 = รวมจุด 17:05:xx) · เวลาผิดรูปแบบ = null */
+export function handoverCutMs(dateKey: string, hhmm: string, suggestion: number | null | undefined): number | null {
+  if (suggestion != null && msToThaiClock(suggestion) === hhmm) return suggestion
+  const ms = thaiClockToMs(dateKey, hhmm)
+  return ms == null ? null : ms + 59_999
+}
+
+/** ตรวจเวลาจบการใช้รถก่อนบันทึก — อนาคต (ยังไม่เกิด) / ก่อนรถออกงาน (จะตัด GPS ทั้งทริปทิ้ง) = ไม่รับ */
+export function handoverTimeError(
+  ms: number,
+  ctx: { departedAt: number | null | undefined; now: number }
+): "future" | "before-departure" | null {
+  if (ms > ctx.now) return "future"
+  if (ctx.departedAt != null && ms < ctx.departedAt) return "before-departure"
+  return null
 }

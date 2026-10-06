@@ -143,12 +143,13 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
     const destination = rest[rest.length - 1]
     const waypoints = rest.slice(0, -1).map((location) => ({ location, stopover: true }))
 
+    let cancelled = false // routeKey เปลี่ยนก่อนผลตอบ → ทิ้งผลเก่า ไม่ให้วาดทับเส้นใหม่
     try {
       const ds = new google.maps.DirectionsService()
       ds.route(
         { origin: originPt, destination, waypoints, travelMode: google.maps.TravelMode.DRIVING, region: "TH" },
         (res, status) => {
-          if (!mapRef.current) return
+          if (!mapRef.current || cancelled) return
           if (status === google.maps.DirectionsStatus.OK && res?.routes?.[0]) {
             routeRef.current?.setMap(null)
             routeRef.current = new google.maps.Polyline({
@@ -165,6 +166,9 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       )
     } catch {
       drawStraight()
+    }
+    return () => {
+      cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, routeKey])

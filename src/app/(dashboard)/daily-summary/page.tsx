@@ -656,16 +656,20 @@ export default function DailySummaryPage() {
   // คิดระยะทางทั้งทริปใหม่จาก stops ที่มีพิกัด (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
   // ใช้ตอนแทรกงานด่วน — ไม่งั้นเลข กม. ในใบสรุป/บอร์ดนักขับจะค้างที่เส้นทางเดิม
   // จุดที่ไม่มีพิกัด (พิมพ์ชื่อเอง) คิดไม่ได้ → ปล่อยตัวเลขเดิมไว้ ไม่ทำให้แทรกงานล้มเหลว
-  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]): Promise<boolean> => {
+  // คิด กม./ค่าน้ำมันตามแผน (Google Directions) ของทริป — ไม่เขียนอะไรลงฐาน
+  // "no-coords" = ไม่มีจุดที่มีพิกัด (ไม่มีอะไรให้คิด) · "failed" = คิดไม่ได้ (แผนที่ไม่พร้อม/เน็ต/Directions ล้ม)
+  const computePlanDistance = async (
+    tripDoc: Trip,
+    stops: TripStop[]
+  ): Promise<{ km: number; fuelCost: number } | "no-coords" | "failed"> => {
     try {
-      if (!db) return false
       const coordStops = (stops || []).filter(
         (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
       )
-      if (coordStops.length === 0) return false
+      if (coordStops.length === 0) return "no-coords"
 
       const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
-      if (!apiKey) return false
+      if (!apiKey) return "failed"
       const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
       await loader.load()
       const g = (window as any).google
@@ -681,7 +685,7 @@ export default function DailySummaryPage() {
         office,
         coordStops.map((s: any) => ({ lat: s.lat as number, lng: s.lng as number }))
       )
-      if (!plan) return false
+      if (!plan) return "no-coords"
       const waypoints = plan.waypoints.map((p) => ({
         location: new g.maps.LatLng(p.lat, p.lng),
         stopover: true,
@@ -704,11 +708,23 @@ export default function DailySummaryPage() {
       let meters = 0
       result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
       const km = meters / 1000
-      if (!(km > 0)) return false
+      if (!(km > 0)) return "failed"
 
       const fuelRate = (tripDoc as any).fuelRateUsed || 10
       const diesel = (tripDoc as any).dieselPriceUsed || 32.5
-      const fuelCost = (km / fuelRate) * diesel
+      return { km, fuelCost: (km / fuelRate) * diesel }
+    } catch (e) {
+      console.error("[computePlanDistance]", e)
+      return "failed"
+    }
+  }
+
+  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]) => {
+    try {
+      if (!db) return
+      const r = await computePlanDistance(tripDoc, stops)
+      if (typeof r === "string") return // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้
+      const { km, fuelCost } = r
 
       setTrips(prev =>
         prev.map(t => (t.id === tripDoc.id ? { ...t, totalDistanceKm: km, fuelCost } : t))
@@ -719,33 +735,45 @@ export default function DailySummaryPage() {
         updatedAt: serverTimestamp(),
       })
       setStatsRefreshKey(k => k + 1) // บอร์ดนักขับต้องขยับตามด้วย ไม่ต้องให้ผู้ใช้กดวันที่ใหม่
-      return true
     } catch (e) {
       // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้ (งานแทรกสำเร็จไปแล้ว ห้าม throw ต่อ)
       console.error("[recalcTripDistance]", e)
-      return false
     }
   }
 
-  // เปลี่ยนรูปแบบเส้นทาง (เคสไม่บ่อย: เอารถไปทิ้งที่ไซต์ / ไปรับรถอีกคันกลับ) → บันทึก แล้วคิด กม./ค่าน้ำมันใหม่
+  // เปลี่ยนรูปแบบเส้นทาง (เคสไม่บ่อย: เอารถไปทิ้งที่ไซต์ / ไปรับรถอีกคันกลับ)
+  // คิดระยะตามแผนใหม่ก่อน แล้วบันทึก โหมด + กม. + ค่าน้ำมัน "พร้อมกันครั้งเดียว" — ไม่ให้โหมดใหม่ค้างคู่กับตัวเลขของโหมดเก่า
+  // ระหว่างคิด dropdown ถูกล็อก (กันผลของโหมดก่อนหน้าตอบช้ามาทับ) · คิดไม่ได้ = ยังไม่เปลี่ยน ให้ลองใหม่
+  const [routeModeBusy, setRouteModeBusy] = React.useState(false)
   const changeRouteMode = async (trip: Trip, mode: RouteMode) => {
-    if (!db || tripRouteMode(trip) === mode) return
+    if (!db || routeModeBusy || tripRouteMode(trip) === mode) return
+    setRouteModeBusy(true)
+    const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
     try {
-      await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, updatedAt: serverTimestamp() })
+      const r = await computePlanDistance({ ...trip, routeMode: mode } as Trip, trip.stops || [])
+      if (r === "failed") {
+        toast({
+          title: "ยังไม่เปลี่ยนรูปแบบเส้นทาง",
+          description: "คำนวณระยะทางใหม่ไม่ได้ (แผนที่ไม่พร้อม/เน็ตหลุด) — ลองใหม่อีกครั้ง",
+          variant: "destructive",
+        })
+        return
+      }
+      // ไม่มีพิกัดเลย = ไม่มีระยะให้คิด → เปลี่ยนแค่โหมด (ป้ายหน้าติดตามรถ) กม. คงเดิม
+      const dist = r === "no-coords" ? {} : { totalDistanceKm: r.km, fuelCost: r.fuelCost }
+      await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, ...dist, updatedAt: serverTimestamp() })
+      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, routeMode: mode, ...dist } : t)))
+      if (r !== "no-coords") setStatsRefreshKey((k) => k + 1)
+      toast({
+        title: `รูปแบบเส้นทาง: ${label}`,
+        description: r === "no-coords" ? "งานไม่มีพิกัด — กม. ตามแผนยังเป็นค่าเดิม" : "คำนวณระยะทาง/ค่าน้ำมันใหม่แล้ว",
+      })
     } catch (e) {
       console.error("[changeRouteMode]", e)
       toast({ title: "เปลี่ยนรูปแบบเส้นทางไม่สำเร็จ", description: "ลองใหม่อีกครั้ง", variant: "destructive" })
-      return
+    } finally {
+      setRouteModeBusy(false)
     }
-    const updated = { ...trip, routeMode: mode } as Trip
-    setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, routeMode: mode } : t)))
-    const ok = await recalcTripDistance(updated, trip.stops || [])
-    const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
-    toast(
-      ok
-        ? { title: `รูปแบบเส้นทาง: ${label}`, description: "คำนวณระยะทาง/ค่าน้ำมันใหม่แล้ว" }
-        : { title: `รูปแบบเส้นทาง: ${label}`, description: "คำนวณระยะทางใหม่ไม่ได้ (งานไม่มีพิกัด/แผนที่ไม่พร้อม) — ตัวเลข กม. ยังเป็นค่าเดิม", variant: "destructive" }
-    )
   }
 
   // แทรกงานด่วน: เพิ่ม stop ตรงเข้าทริปคันนั้น (ไม่ผ่านกองจัดกลุ่ม = ไม่มี race/จุดผี)
@@ -2013,6 +2041,7 @@ export default function DailySummaryPage() {
                       <span className="text-muted-foreground shrink-0">รูปแบบเส้นทาง:</span>
                       <select
                         value={tripRouteMode(trip)}
+                        disabled={routeModeBusy}
                         onChange={(e) => void changeRouteMode(trip, e.target.value as RouteMode)}
                         className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
                       >

@@ -44,8 +44,9 @@ import {
   LONG_DWELL_MIN,
   cutTrailAt,
   suggestHandoverTime,
-  thaiClockToMs,
   msToThaiClock,
+  handoverCutMs,
+  handoverTimeError,
   type TrailPoint,
 } from "@/lib/tracking"
 import { tripRouteMode } from "@/lib/routeMode"
@@ -396,7 +397,9 @@ export default function TrackingPage() {
         dailyDoc = { ...stored, stops: computeDailySummary(trail, routeStops, origin).stops }
       }
       // จบการใช้รถแล้ว = ค่าที่เก็บไว้อาจรวม GPS ของคนที่ใช้รถต่อ (กดตัดทีหลังวันนั้น) → คิดใหม่จาก trail ที่ตัดแล้วทั้งชุด
-      if (deviceId && (isToday || (endAt != null && trail.length >= 2))) {
+      // ส่วน stored ที่ sync เคยตัดไว้ (gpsEndAtApplied) แต่ตอนนี้ยกเลิกการตัดแล้ว → คิดใหม่จาก trail เต็มให้ค่ากลับมาครบ
+      const storedCut = stored?.gpsEndAtApplied ?? null
+      if (deviceId && (isToday || endAt != null || storedCut != null)) {
         const sum = computeDailySummary(trail, routeStops, origin)
         dailyDoc = {
           id: "",
@@ -439,11 +442,15 @@ export default function TrackingPage() {
         isToday && !stale && !!position && isOverspeed(position.speed, position.alarmState ?? 0, overspeedLimit)
       const mKm = position ? mileageKm(position.mileage ?? 0) : 0
 
+      // กลับอย่างเดียว: ถึงไซต์ (จุดเริ่ม) ยังไม่ใช่จบงาน — ต้องพารถถึงออฟฟิศก่อน
+      const backAtOffice = dailyDoc?.returnedOfficeAt != null || dailyDoc?.vehicleReturnedAt != null
+      const allDone =
+        totalStops > 0 && arrivedCount >= totalStops && (tripRouteMode(trip) !== "return" || backAtOffice)
       let status: TruckStatus
       if (!deviceId) status = "unmapped"
-      else if (!isToday || endAt != null) status = totalStops > 0 && arrivedCount >= totalStops ? "done" : "ok"
+      else if (!isToday || endAt != null) status = allDone ? "done" : "ok"
       else if (stale) status = "stale"
-      else if (totalStops > 0 && arrivedCount >= totalStops) status = "done"
+      else if (allDone) status = "done"
       else status = "ok"
 
       return {
@@ -724,7 +731,11 @@ function TruckDetail({
   const { toast } = useToast()
   const routeMode = tripRouteMode(truck.trip)
   const endAt = truck.trip.gpsEndAt ?? null
-  const [handoverDraft, setHandoverDraft] = React.useState<string | null>(null) // null = ไม่ได้แก้อยู่
+  // draft ผูกกับทริป — เลือกรถคันอื่นแล้วช่องเวลาของคันก่อนต้องไม่ติดมา (ไม่งั้นกดยืนยันจะไปตัดอีกทริป)
+  const [draftState, setDraftState] = React.useState<{ tripId: string; hhmm: string } | null>(null)
+  const handoverDraft = draftState?.tripId === truck.trip.id ? draftState.hhmm : null // null = ไม่ได้แก้อยู่
+  const setHandoverDraft = (hhmm: string | null) =>
+    setDraftState(hhmm == null ? null : { tripId: truck.trip.id, hhmm })
   const [savingHandover, setSavingHandover] = React.useState(false)
 
   // จบการใช้รถ: บันทึกเวลาลงทริป (trips subscribe แบบ realtime → หน้าอัปเดตเอง) · ยกเลิก = ลบ field
@@ -819,6 +830,8 @@ function TruckDetail({
         <span className="ml-auto text-xs text-muted-foreground">
           {!isToday ? (
             <span>📅 ดูย้อนหลัง</span>
+          ) : endAt != null ? (
+            <span>✂️ จบการใช้รถแล้ว</span>
           ) : truck.deviceId ? (
             truck.stale ? (
               <span className="inline-flex items-center gap-1 text-amber-400">
@@ -867,7 +880,7 @@ function TruckDetail({
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#5b7cfa" }} /> เส้นทางที่ควรวิ่ง</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: "#2fb6a0" }} /> เส้นทางที่วิ่งจริง</span>
         {truck.stopEvents.length > 0 && <span className="inline-flex items-center gap-1.5">⏸ จุดจอดนาน</span>}
-        {isToday && <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>}
+        {isToday && endAt == null && <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>}
       </div>
 
       {offJobStops.length > 0 && (
@@ -963,9 +976,24 @@ function TruckDetail({
                 type="button"
                 disabled={savingHandover}
                 onClick={() => {
-                  const ms = thaiClockToMs(truck.trip.tripDate, handoverDraft)
+                  const ms = handoverCutMs(truck.trip.tripDate, handoverDraft, truck.handoverSuggestion)
                   if (ms == null) {
                     toast({ title: "เวลาไม่ถูกต้อง", variant: "destructive" })
+                    return
+                  }
+                  // truck.daily ตอนนี้ยังไม่ถูกตัด (endAt ว่าง) → เวลาออกงานจริงของทริป
+                  const departedAt = truck.daily?.departedOfficeAt ?? null
+                  const err = handoverTimeError(ms, { departedAt, now: Date.now() })
+                  if (err) {
+                    toast(
+                      err === "future"
+                        ? { title: "เวลานี้ยังไม่ถึง", description: "ตั้งจบการใช้รถได้เฉพาะเวลาที่ผ่านมาแล้ว", variant: "destructive" }
+                        : {
+                            title: "เวลานี้ก่อนรถออกงาน",
+                            description: `รถออกงาน ${thTime(departedAt)} — ตัดก่อนนั้นจะไม่เหลือ GPS ของทริปนี้`,
+                            variant: "destructive",
+                          }
+                    )
                     return
                   }
                   void saveHandover(ms)
@@ -1017,11 +1045,15 @@ function TruckDetail({
       </div>
 
       <div className="px-4 pb-4">
-        {/* ออฟฟิศ = จุดเริ่มต้นเสมอ */}
+        {/* จุดเริ่มต้น = ออฟฟิศ (กลับอย่างเดียว = ไซต์ที่ไปรับรถ) */}
         <div className="flex items-center gap-3 border-b border-dashed border-border py-2.5">
-          <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-primary bg-primary/20 text-xs">🏢</div>
+          <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-primary bg-primary/20 text-xs">
+            {routeMode === "return" ? "🚩" : "🏢"}
+          </div>
           <div className="flex-1">
-            <div className="text-sm font-medium">ออฟฟิศ (จุดเริ่มต้น)</div>
+            <div className="text-sm font-medium">
+              {routeMode === "return" ? "เริ่มจากไซต์ (กลับอย่างเดียว)" : "ออฟฟิศ (จุดเริ่มต้น)"}
+            </div>
             <div className="text-xs text-muted-foreground">
               ออกรถ {thTime(truck.daily?.departedOfficeAt)}
             </div>

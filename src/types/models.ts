@@ -267,6 +267,9 @@ export interface TrackingDailyDoc {
   vehicleReturnedAt?: number | null;
   /** จุดสุดท้ายของวันอยู่นอกรัศมีออฟฟิศ (วันจบแล้ว = ค้างคืนนอกพื้นที่) */
   endedAwayFromOffice?: boolean;
+  /** เวลาจบการใช้รถ (trip.gpsEndAt) ที่ใช้ตัด trail ตอน sync เขียนสรุปนี้ — null/ไม่มี = สรุปจาก trail เต็มวัน
+   *  ใช้รู้ว่าค่าที่เก็บไว้ถูกตัด (ยกเลิกการตัดย้อนหลัง → หน้าเว็บต้องคิดสรุปใหม่จาก trail เต็ม) */
+  gpsEndAtApplied?: number | null;
   totalKm: number;
   stops: {
     order: number;

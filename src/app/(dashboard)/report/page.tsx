@@ -35,7 +35,7 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { Trip, CompanySetting } from "@/types/models"
 import { computeOutcomeStats, computeDriverReliability } from "@/lib/calculations"
-import { detectStops, computeRecurringStops, haversineMeters, OFFICE_LOCATION, OFFICE_RADIUS_M, ARRIVAL_RADIUS_M, type RecurringSpot, type StopEvent } from "@/lib/tracking"
+import { detectStops, cutTrailAt, computeRecurringStops, haversineMeters, OFFICE_LOCATION, OFFICE_RADIUS_M, ARRIVAL_RADIUS_M, type RecurringSpot, type StopEvent } from "@/lib/tracking"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
 import { th } from "date-fns/locale"
@@ -89,11 +89,13 @@ export default function ReportPage() {
       // จาก trips: วันนั้นใครขับคันไหน (รองรับคนขับแทน) + จุดงานของคัน-วันนั้น (ใช้กรอง "จอดที่จุดงาน" ออก)
       const jobsByPlateDate: Record<string, { lat: number; lng: number }[]> = {}
       const driverByPlateDate: Record<string, string> = {}
+      const cutByPlateDate: Record<string, number> = {} // จบการใช้รถ: GPS หลังเวลานี้เป็นของคนที่เอารถไปใช้ต่อ
       for (const t of trips) {
         if (t.status === "Cancelled" || !t.vehiclePlate) continue
         const key = `${t.vehiclePlate}__${t.tripDate}`
         const driver = (t as any).actualDriverName || t.driverName || ""
         if (driver) driverByPlateDate[key] = driver
+        if (typeof t.gpsEndAt === "number") cutByPlateDate[key] = t.gpsEndAt
         if (!jobsByPlateDate[key]) jobsByPlateDate[key] = []
         for (const s of t.stops || []) {
           if (s.lat != null && s.lng != null) jobsByPlateDate[key].push({ lat: s.lat, lng: s.lng })
@@ -109,7 +111,7 @@ export default function ReportPage() {
         if (!plate || !doc.date) return
         const driver = driverByPlateDate[`${plate}__${doc.date}`]
         if (!driver) return // ไม่รู้ว่าวันนั้นใครขับคันนี้ → โยงกับคนขับไม่ได้
-        const events = detectStops(doc.points || [])
+        const events = detectStops(cutTrailAt(doc.points || [], cutByPlateDate[`${plate}__${doc.date}`]))
           .filter((ev) => haversineMeters(office, ev) > OFFICE_RADIUS_M) // จอดที่ออฟฟิศ ไม่นับ
           .filter((ev) => {
             const jobs = jobsByPlateDate[`${plate}__${doc.date}`] || []
