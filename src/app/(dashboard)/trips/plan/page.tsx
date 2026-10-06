@@ -39,14 +39,15 @@ import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-descripti
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useDoc, useUser } from "@/firebase"
-import { collection, serverTimestamp, doc, updateDoc, getDocs, query, where } from "firebase/firestore"
+import { collection, serverTimestamp, doc, getDocs, query, where } from "firebase/firestore"
 import { Site, Vehicle, Driver, CompanySetting } from "@/types/models"
-import { setDocumentNonBlocking, updateDocumentNonBlocking } from "@/firebase/non-blocking-updates"
 import { useRouter } from "next/navigation"
 import { Loader } from "@googlemaps/js-api-loader"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
+import { createTripWithQueueGuard } from "@/lib/tripQueueGuard"
+import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
@@ -63,6 +64,7 @@ interface StopItem {
   note?: string;
   dispatcherNote?: string;
   dispatcherName?: string;
+  sourceDestinationIndex?: number;
 }
 
 export default function TripPlanPage() {
@@ -93,6 +95,15 @@ export default function TripPlanPage() {
   
   // Pending VR State
   const [pendingVr, setPendingVr] = React.useState<any>(null)
+  const formSig = JSON.stringify({ vehicleId, driverId, tripDate, departurePointId, stops, pendingVr, userId: user?.uid })
+  const formSigRef = React.useRef(formSig)
+  formSigRef.current = formSig
+  const mountedRef = React.useRef(true)
+  const saveFlightRef = React.useRef(createQueueCommandFlight())
+  React.useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   // UI State
   const [isLoadingAi, setIsLoadingAi] = React.useState<string | null>(null)
@@ -209,6 +220,7 @@ export default function TripPlanPage() {
         // Set stops
         const newStops: StopItem[] = vr.destinations.map((d: any, idx: number) => ({
           id: `vr-${idx}`,
+          sourceDestinationIndex: idx,
           siteId: d.type === 'site' ? d.siteId : `custom-${idx}`,
           cargo: d.jobDescription,
           customData: d.type === 'other' ? { name: d.siteName, lat: d.lat, lng: d.lng } : null,
@@ -565,18 +577,36 @@ export default function TripPlanPage() {
   }
 
   const handleSaveTrip = async () => {
+    if (saveFlightRef.current.isPending()) return
     const hasValidStops = stops.some(s => s.siteId !== "");
     if (!vehicleId || !driverId || !tripDate || !hasValidStops) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณากรอกข้อมูลคนขับ รถ และจุดส่งอย่างน้อย 1 จุด", variant: "destructive" })
       return
     }
+    const destinationIndexes = stops
+      .filter(s => s.siteId !== "")
+      .flatMap(s => s.sourceDestinationIndex === undefined ? [] : [s.sourceDestinationIndex])
+    if (pendingVr && (tripDate !== pendingVr.requestDate || destinationIndexes.length === 0)) {
+      toast({ title: "ยังไม่ได้จัดรถ", description: "ใช้วันที่ของใบขอรถและเลือกจุดจากใบขออย่างน้อย 1 จุด หรือกดล้างข้อมูลเพื่อสร้างแผนใหม่", variant: "destructive" })
+      return
+    }
 
+    const flight = saveFlightRef.current.begin(() => mountedRef.current && formSigRef.current === formSig)
+    if (!flight) return
+    let succeeded = false
+    const cancelled = () => {
+      if (!mountedRef.current) return true
+      if (flight.isCurrent()) return false
+      toast({ title: "ยังไม่ได้บันทึก", description: "วันที่ คนขับ รถ หรือจุดส่งเปลี่ยนระหว่างบันทึก กรุณาตรวจข้อมูลแล้วกดอีกครั้ง", variant: "destructive" })
+      return true
+    }
     setIsSaving(true)
     
     try {
       if (!routeStats || routeStats.distanceNum === 0) {
         await calculateRoute(false, true);
       }
+      if (cancelled()) return
 
       const selectedVehicle = vehicles?.find(v => v.id === vehicleId)
       const selectedDriver = drivers?.find(d => d.id === driverId)
@@ -586,11 +616,11 @@ export default function TripPlanPage() {
       const datePrefix = `T-${day}${month}`;
       const q = query(collection(db, "trips"), where("tripDate", "==", tripDate));
       const snapshot = await getDocs(q);
+      if (cancelled()) return
       const sequence = String(snapshot.size + 1).padStart(3, '0');
       const safety = Math.floor(Math.random() * 10);
       const tripId = `${datePrefix}-${sequence}${safety}`;
 
-      const tripRef = doc(db, "trips", tripId)
 
       const tripStops = stops
         .filter(s => s.siteId !== "")
@@ -621,7 +651,7 @@ export default function TripPlanPage() {
           }
         })
       
-      setDocumentNonBlocking(tripRef, {
+      await createTripWithQueueGuard(db, tripId, {
         id: tripId,
         tripId: tripId,
         tripDate,
@@ -637,19 +667,19 @@ export default function TripPlanPage() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         vrReferenceId: pendingVr?.vrId || null
-      }, { merge: true })
-
-      // Update VR status if this trip was generated from a request
-      if (pendingVr) {
-        const vrRef = doc(db, "vehicleRequests", pendingVr.docId)
-        updateDoc(vrRef, {
-          status: "approved",
-          tripId: tripId,
+      }, pendingVr ? {
+        assignments: [{ requestId: pendingVr.docId, destinationIndexes }],
+        metadata: {
           approvedBy: user?.email || "system",
           vehiclePlate: selectedVehicle?.licensePlate || "",
           driverName: selectedDriver?.name || "",
           approvedAt: serverTimestamp()
-        })
+        }
+      } : undefined)
+      succeeded = true
+      if (!flight.isCurrent()) return
+
+      if (pendingVr) {
         if (typeof window !== "undefined") sessionStorage.removeItem("pendingVR")
         toast({ title: "จัดรถสำเร็จ!", description: `${pendingVr.vrId} → Trip ${tripId}` })
       } else {
@@ -657,11 +687,12 @@ export default function TripPlanPage() {
       }
 
       router.push("/trips/history")
-    } catch (error) {
+    } catch (error: any) {
       console.error(error)
-      toast({ title: "Error", description: "เกิดข้อผิดพลาดในการบันทึก", variant: "destructive" })
+      toast({ title: "Error", description: error?.message || "เกิดข้อผิดพลาดในการบันทึก", variant: "destructive" })
     } finally {
-      setIsSaving(false)
+      flight.finish(succeeded)
+      if (mountedRef.current) setIsSaving(false)
     }
   }
 

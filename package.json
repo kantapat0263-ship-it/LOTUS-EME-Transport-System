@@ -13,6 +13,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:rules": "firebase emulators:exec --config tests/rules/firebase.json --only firestore --project demo-lotus-eme \"vitest run --config vitest.rules.config.ts\"",
+    "test:queue": "firebase emulators:exec --config tests/continuous-queue/firebase.json --only firestore,auth --project demo-lotus-eme \"vitest run --config vitest.queue.config.ts\"",
     "emulators": "firebase emulators:start --only firestore,auth --project demo-lotus-eme",
     "seed:emulator": "tsx scripts/seed-emulator.ts"
   },

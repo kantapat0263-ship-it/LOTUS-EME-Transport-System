@@ -93,9 +93,64 @@ service cloud.firestore {
     }
 
     // ใบงานคนขับ /driver/[tripId] เปิดได้โดยไม่ login → trips/drivers อ่านแบบ public
+    match /queueResourceDays/{key} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly(['version', 'updatedAt'])
+        && request.resource.data.version == 1;
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['version', 'updatedAt'])
+        && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
+    match /continuousBookings/{bookingId} { allow read, write: if false; }
+    match /continuousQueueEvents/{eventId} { allow read, write: if false; }
+    match /continuousQueueOperations/{operationId} { allow read, write: if false; }
+
+    function queueGuardTouched(key, mustBeFree) {
+      let path = /databases/$(database)/documents/queueResourceDays/$(key);
+      return existsAfter(path)
+        && getAfter(path).data.version == (exists(path) ? get(path).data.version + 1 : 1)
+        && (!mustBeFree || getAfter(path).data.get('bookingId', '') == '');
+    }
+    function tripAllocationDate(data) {
+      let canonical = data.get('tripDate', '');
+      return canonical is string && canonical != '' ? canonical : data.get('date', '');
+    }
+    function tripGuardsTouched(data, mustBeFree) {
+      let actual = data.get('actualDriverId', '');
+      let driver = actual is string && actual != '' ? actual : data.get('driverId', '');
+      let vehicle = data.get('vehicleId', '');
+      let date = tripAllocationDate(data);
+      return (driver == '' || queueGuardTouched('driver__' + driver + '__' + date, mustBeFree))
+        && (vehicle == '' || queueGuardTouched('vehicle__' + vehicle + '__' + date, mustBeFree));
+    }
+    function ordinaryTrip(data) {
+      return !data.keys().hasAny(['queueLink']);
+    }
+    function validTripAllocation(data) {
+      let date = tripAllocationDate(data);
+      return date is string && date.size() == 10
+        && data.driverId is string && data.driverId != ''
+        && data.get('vehicleId', '') is string
+        && data.status in ['Planned', 'In Progress', 'Completed', 'Cancelled'];
+    }
+
     match /trips/{tripId} {
       allow read: if true;
-      allow write: if isStaff();
+      allow create: if isStaff() && ordinaryTrip(request.resource.data)
+        && request.resource.data.tripDate is string && request.resource.data.tripDate.size() == 10
+        && validTripAllocation(request.resource.data)
+        && request.resource.data.get('vehicleId', '') != ''
+        && tripGuardsTouched(request.resource.data, request.resource.data.status != 'Cancelled');
+      allow update: if isStaff() && ordinaryTrip(resource.data) && ordinaryTrip(request.resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['tripDate', 'date', 'driverId', 'actualDriverId', 'vehicleId', 'status']) || (
+          validTripAllocation(request.resource.data)
+          && (!resource.data.keys().hasAny(['vehicleId']) || request.resource.data.get('vehicleId', '') != '')
+          && tripGuardsTouched(resource.data, false)
+          && tripGuardsTouched(request.resource.data, request.resource.data.status != 'Cancelled')
+        ));
+      allow delete: if isStaff() && ordinaryTrip(resource.data) && tripGuardsTouched(resource.data, false);
 
       match /stops/{stopId} {
         allow read: if true;

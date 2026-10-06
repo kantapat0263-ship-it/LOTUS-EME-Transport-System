@@ -36,7 +36,7 @@ import {
   Info
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
+import { doc, collection, query, updateDoc, serverTimestamp, getDocs, getDoc, runTransaction, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
 import { UserProfile, Site } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -73,6 +73,8 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
+import { isManagedTrip } from "@/lib/continuousQueue"
+import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -164,6 +166,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const [stopNotes, setStopNotes] = React.useState<Record<string, string>>({})
   const [isSavingNote, setIsSavingNote] = React.useState<number | null>(null)
+  const noteFlightRef = React.useRef(createQueueCommandFlight())
+  const selectedReqIdRef = React.useRef(selectedReqId)
+  selectedReqIdRef.current = selectedReqId
 
   const selectedReq = React.useMemo(() => {
     if (!selectedReqId) return null
@@ -328,7 +333,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   }
 
   const handleSaveStopNote = async (stopIndex: number) => {
-    if (!selectedReq) return
+    if (!selectedReq || !isStaff) return
+    const requestId = selectedReq.id
+    const flight = noteFlightRef.current.begin(() => selectedReqIdRef.current === requestId)
+    if (!flight) return
     setIsSavingNote(stopIndex)
     try {
       const noteKey = `stop_${stopIndex}`
@@ -342,20 +350,35 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         [`stopNotesUpdatedBy`]: profileName || "Dispatcher",
         [`stopNotesUpdatedAt`]: new Date().toISOString()
       }
-      await updateDoc(vrRef, updateData)
-
-      if (selectedReq.tripId) {
-        const tripRef = doc(db, "trips", selectedReq.tripId)
-        await updateDoc(tripRef, {
+      const [sourceSnap, linked] = await Promise.all([
+        getDoc(vrRef),
+        getDocs(query(collection(db, 'trips'), where('sourceVRIds', 'array-contains', selectedReq.requestId))),
+      ])
+      const tripRefs = new Map(linked.docs.map(s => [s.id, s.ref]))
+      const source = sourceSnap.data()
+      if (!source) throw new Error('ไม่พบใบขอแล้ว')
+      if (source.tripId) tripRefs.set(source.tripId, doc(db, 'trips', source.tripId))
+      if (linked.docs.some(s => isManagedTrip(s.data()))) throw new Error('ใบขอนี้อยู่ในคิวต่อเนื่อง ยังไม่รองรับการแก้หมายเหตุผ่านใบขอ')
+      if (!flight.isCurrent()) return
+      await runTransaction(db, async tx => {
+        const freshSource = await tx.get(vrRef)
+        const fresh = freshSource.data()
+        if (!fresh || fresh.tripId !== source.tripId || JSON.stringify(fresh.assignedDestinations || []) !== JSON.stringify(source.assignedDestinations || [])) throw new Error('การจัดคิวของใบขอเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่')
+        const linkedTrips = await Promise.all([...tripRefs.values()].map(ref => tx.get(ref)))
+        if (linkedTrips.some(s => s.exists() && isManagedTrip(s.data()))) throw new Error('ใบขอนี้อยู่ในคิวต่อเนื่อง ยังไม่รองรับการแก้หมายเหตุผ่านใบขอ')
+        if (!flight.isCurrent()) throw new Error('เปลี่ยนใบขอระหว่างบันทึก กรุณาลองอีกครั้ง')
+        tx.update(vrRef, updateData)
+        if (source.tripId) tx.update(doc(db, 'trips', source.tripId), {
           [`stopNotes.${noteKey}`]: noteValue,
-          [`stopNoteAuthors.${noteKey}`]: authorName // mirror ชื่อไป trip ให้หน้าคนขับ/ใบสรุปโชว์ได้
+          [`stopNoteAuthors.${noteKey}`]: authorName,
         })
-      }
+      })
 
       toast({ title: "บันทึกแล้ว", description: `บันทึกหมายเหตุจุดที่ ${stopIndex + 1} เรียบร้อย` })
-    } catch (e) {
-      toast({ title: "ผิดพลาด", variant: "destructive" })
+    } catch (e: any) {
+      toast({ title: "บันทึกหมายเหตุไม่สำเร็จ", description: e?.message || 'กรุณาลองอีกครั้ง', variant: "destructive" })
     } finally {
+      flight.finish(true)
       setIsSavingNote(null)
     }
   }
@@ -915,10 +938,11 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                         [noteKey]: e.target.value
                                       }))}
                                       onBlur={() => { if (dirty) handleSaveStopNote(idx) }}
+                                      disabled={isSavingNote !== null || !!relatedTrip?.queueLink}
                                       className="text-xs bg-background min-h-[60px]"
                                     />
                                     <div className="text-[10px] flex items-center gap-1 h-4">
-                                      {saving ? (
+                                      {relatedTrip?.queueLink ? <span className="text-amber-400">คิวต่อเนื่อง ยังไม่รองรับการแก้หมายเหตุผ่านใบขอ</span> : saving ? (
                                         <span className="text-blue-400 flex items-center gap-1">
                                           <Loader2 className="h-3 w-3 animate-spin" /> กำลังบันทึก…
                                         </span>

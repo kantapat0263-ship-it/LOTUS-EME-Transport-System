@@ -161,7 +161,7 @@ export default function ReportPage() {
 
       const [tripsSnap, vrSnap] = await Promise.all([getDocs(tripsQ), getDocs(vrQ)])
 
-      const tripsData = tripsSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+      const tripsData = tripsSnap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Trip)).filter(t => t.status !== 'Cancelled')
       setTrips(tripsData)
 
       const vrData = vrSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))

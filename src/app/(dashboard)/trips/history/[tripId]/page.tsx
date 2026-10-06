@@ -40,12 +40,14 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog"
-import { useDoc, useFirestore, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, updateDoc, serverTimestamp, collection } from "firebase/firestore"
-import { Trip, TripStatus, CompanySetting, Site, Driver } from "@/types/models"
+import { useDoc, useFirestore, useMemoFirebase, useCollection, useUser } from "@/firebase"
+import { doc, serverTimestamp, collection } from "firebase/firestore"
+import { Trip, TripStatus, CompanySetting, Site, Driver, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 import { useToast } from "@/hooks/use-toast"
+import { isManagedTrip } from "@/lib/continuousQueue"
+import { updateTripWithQueueGuard } from "@/lib/tripQueueGuard"
 
 // Production URL for public access
 const PRODUCTION_URL = "https://lotus-eme-transport-system.vercel.app"
@@ -59,6 +61,10 @@ export default function TripDetailPage() {
   const { toast } = useToast()
   const db = useFirestore()
   const tripId = params.tripId as string
+  const { user } = useUser()
+  const profileRef = useMemoFirebase(() => user ? doc(db, 'users', user.uid) : null, [db, user])
+  const { data: profile } = useDoc<UserProfile>(profileRef)
+  const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
   
   const tripRef = useMemoFirebase(() => doc(db, "trips", tripId), [db, tripId])
   const { data: trip, isLoading: isTripLoading } = useDoc<Trip>(tripRef)
@@ -268,12 +274,13 @@ export default function TripDetailPage() {
   }, [apiLoaded, trip, allSites, isSitesLoading]);
 
   const handleStatusChange = async (newStatus: TripStatus) => {
-    if (!trip) return
-    const tRef = doc(db, "trips", trip.id)
-    await updateDoc(tRef, { 
+    if (!trip || !isStaff || isManagedTrip(trip)) return
+    try {
+    await updateTripWithQueueGuard(db, trip.id, {
       status: newStatus,
       updatedAt: serverTimestamp()
     })
+    } catch (e: any) { toast({ title: 'เปลี่ยนสถานะไม่สำเร็จ', description: e.message, variant: 'destructive' }) }
   }
 
   const driverUrl = `${PRODUCTION_URL}/driver/${trip?.tripId}`;
@@ -307,6 +314,7 @@ export default function TripDetailPage() {
     : (calculatedStats?.distance || 0);
 
   const getDisplayStatus = (t: any): TripStatus => {
+    if (isManagedTrip(t)) return t.status
     if (t.status === 'Cancelled') return 'Cancelled';
     const today = new Date().toISOString().split('T')[0];
     if (!t.tripDate) return t.status;
@@ -336,7 +344,7 @@ export default function TripDetailPage() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button className={cn("flex-1 sm:flex-none h-11 sm:h-9 hover:opacity-90", getStatusColor(displayStatus))}>
+                <Button disabled={!isStaff || isManagedTrip(trip)} className={cn("flex-1 sm:flex-none h-11 sm:h-9 hover:opacity-90", getStatusColor(displayStatus))}>
                   สถานะ: {displayStatus}
                 </Button>
               </DropdownMenuTrigger>

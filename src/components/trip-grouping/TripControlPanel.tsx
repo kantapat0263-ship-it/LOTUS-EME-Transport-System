@@ -29,6 +29,12 @@ interface TripControlPanelProps {
   isProcessing: boolean;
   mode: 'auto' | 'manual';
   leaveFor: (driverId: string) => DriverLeaveStatus;
+  startDate: string;
+  endDate: string;
+  setEndDate: (date: string) => void;
+  queueStatus: 'loading' | 'ready' | 'error';
+  hasQueueConflict: boolean;
+  onRefreshQueues: () => void;
 }
 
 export function TripControlPanel({
@@ -43,7 +49,13 @@ export function TripControlPanel({
   onCreate,
   isProcessing,
   mode,
-  leaveFor
+  leaveFor,
+  startDate,
+  endDate,
+  setEndDate,
+  queueStatus,
+  hasQueueConflict,
+  onRefreshQueues
 }: TripControlPanelProps) {
   const orderedDrivers = React.useMemo(() => regularDriversFirst(drivers), [drivers])
   const orderedVehicles = React.useMemo(() => sortVehiclesByType(vehicles), [vehicles])
@@ -68,7 +80,7 @@ export function TripControlPanel({
               <label className="text-[10px] font-bold text-accent flex items-center gap-1 uppercase">
                 <Truck className="h-3 w-3" /> เลือกรถ
               </label>
-              <Select value={vehicleId} onValueChange={setVehicleId}>
+              <Select value={vehicleId} onValueChange={setVehicleId} disabled={isProcessing}>
                 <SelectTrigger className="h-10 text-sm font-medium">
                   <SelectValue placeholder="ค้นหาทะเบียนรถ..." />
                 </SelectTrigger>
@@ -86,7 +98,7 @@ export function TripControlPanel({
               <label className="text-[10px] font-bold text-accent flex items-center gap-1 uppercase">
                 <User className="h-3 w-3" /> เลือกคนขับ
               </label>
-              <Select value={driverId} onValueChange={setDriverId}>
+              <Select value={driverId} onValueChange={setDriverId} disabled={isProcessing}>
                 <SelectTrigger className="h-10 text-sm font-medium">
                   <SelectValue placeholder="ค้นหาชื่อคนขับ..." />
                 </SelectTrigger>
@@ -108,6 +120,13 @@ export function TripControlPanel({
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1 md:col-span-2">
+              <label htmlFor="continuous-queue-end" className="text-xs text-muted-foreground">คิวต่อเนื่องถึงวันที่ <span className="text-[10px]">เว้นว่างหากทำวันเดียว</span></label>
+              <input id="continuous-queue-end" type="date" min={startDate} value={endDate} onChange={e => setEndDate(e.target.value)} disabled={isProcessing || hasQueueConflict} className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm" />
+              {hasQueueConflict && <p className="text-xs text-amber-300">คนขับหรือรถมีคิวต่อเนื่องอยู่ ปรับเฉพาะวันที่เลือกได้หลังตกลงกับไซต์เดิม</p>}
+              {queueStatus !== 'ready' && <p className="text-xs text-amber-300">{queueStatus === 'loading' ? 'กำลังตรวจคิวต่อเนื่อง' : 'ตรวจคิวต่อเนื่องไม่ได้ ลองโหลดข้อมูลอีกครั้ง'}</p>}
+              {queueStatus === 'error' && <Button variant="outline" size="sm" type="button" onClick={onRefreshQueues}>ตรวจคิวอีกครั้ง</Button>}
+            </div>
           </div>
 
           {/* Action */}
@@ -115,14 +134,14 @@ export function TripControlPanel({
             <Button 
               className="w-full xl:w-auto h-11 px-8 bg-accent hover:bg-accent/90 text-sm font-bold shadow shadow-accent/20 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
               onClick={onCreate}
-              disabled={isProcessing || selectedCount === 0 || !vehicleId || !driverId}
+              disabled={isProcessing || selectedCount === 0 || !vehicleId || !driverId || queueStatus !== 'ready'}
             >
               {isProcessing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Navigation className="mr-2 h-4 w-4" />
               )}
-              {selectedCount === 0 && mode === 'manual' ? "กรุณาเลือกจุดบน Map" : "สร้างเที่ยววิ่ง"}
+              {selectedCount === 0 && mode === 'manual' ? "กรุณาเลือกจุดบน Map" : hasQueueConflict ? "ปรับคิวเฉพาะวันนี้" : endDate && endDate > startDate ? "สร้างคิวต่อเนื่อง" : "สร้างเที่ยววิ่ง"}
             </Button>
           </div>
         </div>

@@ -1,4 +1,6 @@
 
+import type { QueueLink } from './continuous-queue';
+
 export type ProjectType = 'LOTUS EME' | 'P-ADVANCED';
 
 export interface Site {
@@ -189,6 +191,7 @@ export interface TripStop {
 }
 
 export interface Trip {
+  queueLink?: QueueLink;
   id: string;
   tripId: string;
   tripDate: string;

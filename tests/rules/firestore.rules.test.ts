@@ -22,9 +22,12 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  setLogLevel,
   updateDoc,
   where,
+  type Firestore,
 } from 'firebase/firestore'
+import { updateTripWithQueueGuard } from '../../src/lib/tripQueueGuard'
 
 let env: RulesTestEnvironment
 
@@ -47,6 +50,7 @@ const as = (uid: Uid | 'noProfile', email = `${uid}@example.com`) =>
 const anon = () => env.unauthenticatedContext().firestore()
 
 beforeAll(async () => {
+  setLogLevel('silent')
   env = await initializeTestEnvironment({
     projectId: 'demo-lotus-eme',
     firestore: { rules: readFileSync('firestore.rules', 'utf8') },
@@ -164,7 +168,7 @@ describe('drivers / ข้อมูลหลัก — เขียนได้�
     await assertFails(updateDoc(doc(as('viewer'), 'trips', 'TRIP-1'), { status: 'Cancelled' }))
     await assertSucceeds(setDoc(doc(as('dispatcher'), 'vehicles', 'V1'), { plate: '1กก-1111' }))
     await assertSucceeds(setDoc(doc(as('dispatcher'), 'companySettings', 'default'), { dieselPrice: 31 }, { merge: true }))
-    await assertSucceeds(updateDoc(doc(as('dispatcher'), 'trips', 'TRIP-1'), { status: 'In Progress' }))
+    await assertSucceeds(updateTripWithQueueGuard(as('dispatcher') as unknown as Firestore, 'TRIP-1', { status: 'In Progress' }))
   })
 
   it('ฝั่ง client เขียน collection ที่ server เขียนเท่านั้นไม่ได้ แม้เป็น admin', async () => {

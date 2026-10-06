@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc, updateDoc, runTransaction } from "firebase/firestore"
+import { useFirestore, useCollection, useMemoFirebase, useUser, errorEmitter, FirestorePermissionError } from "@/firebase"
+import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, updateDoc, runTransaction } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -55,6 +55,10 @@ import { cn } from "@/lib/utils"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
+import { QueuePanel } from "@/components/continuous-queue/QueuePanel"
+import { isManagedTrip } from "@/lib/continuousQueue"
+import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQueueGuard"
+import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
 export default function DailySummaryPage() {
   const { toast } = useToast()
@@ -65,6 +69,8 @@ export default function DailySummaryPage() {
   const [selectedDate, setSelectedDate] = React.useState<string>("")
   const [trips, setTrips] = React.useState<Trip[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
+  const [ordinaryBusy, setOrdinaryBusy] = React.useState(false)
+  const ordinaryFlightRef = React.useRef(createQueueCommandFlight())
   const [isSavingImage, setIsSavingImage] = React.useState(false)
   const [isSendingLine, setIsSendingLine] = React.useState(false)
   
@@ -165,6 +171,18 @@ export default function DailySummaryPage() {
     return ok
   }
 
+  const runOrdinaryAction = async (run: () => unknown | Promise<unknown>) => {
+    const flight = ordinaryFlightRef.current.begin(() => leaveGateMountedRef.current)
+    if (!flight) return
+    setOrdinaryBusy(true)
+    try { await run() } catch (e: any) {
+      if (leaveGateMountedRef.current) toast({ title: 'บันทึกไม่สำเร็จ', description: e?.message || 'กรุณาลองอีกครั้ง', variant: 'destructive' })
+    } finally {
+      flight.finish(true)
+      if (leaveGateMountedRef.current) setOrdinaryBusy(false)
+    }
+  }
+
   // กันกดปุ่มส่งออกซ้ำ: ตั้งธงทันทีตอนกด (ซิงก์) ปลดเมื่อ handler จบ — state loading ยังไม่ render ทันคลิกถัดไป
   // ปุ่มจึงยังไม่ disabled (ส่ง LINE ซ้ำ = ข้อความเบิ้ลในกลุ่มจริง) · run() ถูกเรียกซิงก์ → handler เริ่ม writeText ภายใน click ได้
   const saveImageBusyRef = React.useRef(false)
@@ -194,7 +212,7 @@ export default function DailySummaryPage() {
     const minDate = new Date()
     minDate.setDate(today.getDate() - 7)
     const maxDate = new Date()
-    maxDate.setDate(today.getDate() + 7)
+    maxDate.setDate(today.getDate() + 90)
     
     const minDateStr = format(minDate, "yyyy-MM-dd")
     const maxDateStr = format(maxDate, "yyyy-MM-dd")
@@ -282,11 +300,11 @@ export default function DailySummaryPage() {
 
       const seen = new Set<string>()
       const results = [...snap1.docs, ...snap2.docs]
-        .map(doc => ({ ...doc.data(), id: doc.id } as Trip))
+        .map(doc => ({ ...doc.data(), id: doc.id, tripDate: doc.data().tripDate || doc.data().date } as Trip))
         .filter(trip => {
           if (seen.has(trip.id)) return false
           seen.add(trip.id)
-          return trip.status !== 'Cancelled'
+          return trip.tripDate === targetDate && trip.status !== 'Cancelled'
         })
         .sort((a, b) => {
           const timeA = (a.stops?.[0] as any)?.requestTime || (a as any).departureTime || "08:30"
@@ -570,20 +588,33 @@ export default function DailySummaryPage() {
     return base
   }
 
-  // Persist a trip's stops array (optimistic local update + non-blocking write).
-  const applyStops = (tripId: string, newStops: TripStop[], persist = true) => {
+  const allowOrdinaryEdit = (trip: Trip | undefined) => {
+    if (!trip || !isManagedTrip(trip)) return true
+    toast({ title: 'คิวต่อเนื่อง', description: 'ใช้แผงคิวต่อเนื่องเพื่อปรับเฉพาะวันและเก็บประวัติ', variant: 'destructive' })
+    return false
+  }
+
+  const persistTripPatch = async (tripId: string, patch: Record<string, any>) => {
+    try {
+      await updateTripWithQueueGuard(db, tripId, { ...patch, updatedAt: serverTimestamp() })
+      setTrips(prev => prev.map(t => t.id === tripId ? { ...t, ...patch } : t))
+      return true
+    } catch (e: any) {
+      toast({ title: 'บันทึกไม่สำเร็จ', description: e?.message || 'กรุณาลองอีกครั้ง', variant: 'destructive' })
+      return false
+    }
+  }
+
+  const applyStops = async (tripId: string, newStops: TripStop[], persist = true) => {
+    if (!allowOrdinaryEdit(trips.find(t => t.id === tripId))) return false
     // กัน field = undefined หลุดเข้า Firestore — updateDoc จะ throw ทันที (sync) ทั้งก้อน
     // ทำให้ dialog ค้าง + ข้อมูลเข้าแค่ local (เคยเกิดกับแทรกงานที่ไม่กรอกผู้สั่ง)
     const clean = newStops.map(
       (s) => Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)) as unknown as TripStop
     )
+    if (persist) return persistTripPatch(tripId, { stops: clean })
     setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: clean } : t)))
-    if (persist && db) {
-      updateDocumentNonBlocking(doc(db, "trips", tripId), {
-        stops: clean,
-        updatedAt: serverTimestamp(),
-      })
-    }
+    return true
   }
 
   // คิดระยะทางทั้งทริปใหม่จาก stops ที่มีพิกัด (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
@@ -639,7 +670,7 @@ export default function DailySummaryPage() {
       setTrips(prev =>
         prev.map(t => (t.id === tripDoc.id ? { ...t, totalDistanceKm: km, fuelCost } : t))
       )
-      updateDocumentNonBlocking(doc(db, "trips", tripDoc.id), {
+      await updateTripWithQueueGuard(db, tripDoc.id, {
         totalDistanceKm: km,
         fuelCost,
         updatedAt: serverTimestamp(),
@@ -658,6 +689,7 @@ export default function DailySummaryPage() {
     if (!insertDialog) return
     const trip = trips.find(t => t.id === insertDialog.tripId)
     if (!trip) { setInsertDialog(null); return }
+    if (!allowOrdinaryEdit(trip)) return
     if (trip.tripDate !== todayStr) {
       toast({ title: "แทรกได้เฉพาะงานวันนี้", description: "งานย้อนหลังข้ามวันแทรกไม่ได้", variant: "destructive" })
       return
@@ -688,18 +720,20 @@ export default function DailySummaryPage() {
       if (req) s.requestedBy = req
       return s
     }
-    const appendTo = (target: Trip) => {
+    const appendTo = async (target: Trip) => {
+      if (!allowOrdinaryEdit(target)) return false
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
       const newStops = [...stops, mkStop(order)]
-      applyStops(target.id, newStops, true)
+      if (!await applyStops(target.id, newStops, true)) return false
       void recalcTripDistance(target, newStops) // เลข กม. ต้องขยับตามงานที่แทรก
+      return true
     }
 
     try {
     if (chosenVehId === trip.vehicleId) {
       // คันเดิม → แทรกเข้าทริปนี้
-      appendTo(trip)
+      if (!await appendTo(trip)) return
       toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริป ${trip.driverName} (${trip.vehiclePlate})` })
     } else {
       // เปลี่ยนรถ → งานแทรกไปอยู่ทริปของรถคันใหม่ (คนขับคนเดิม) เพื่อ GPS ตรงคัน
@@ -710,7 +744,7 @@ export default function DailySummaryPage() {
         ? { driverId: targetTrip.actualDriverId || targetTrip.driverId, date: targetTrip.tripDate }
         : { driverId: trip.driverId, date: todayStr }]))) return
       if (targetTrip) {
-        appendTo(targetTrip)
+        if (!await appendTo(targetTrip)) return
         toast({ title: "แทรกงานแล้ว ✅", description: `เพิ่ม "${place}" เข้าทริปรถ ${veh?.licensePlate || ""} (คนขับ ${trip.driverName})` })
       } else {
         // รถคันใหม่ยังไม่มีทริปวันนี้ → สร้างทริปใหม่ให้ (คนขับคนเดิม)
@@ -731,10 +765,8 @@ export default function DailySummaryPage() {
           status: "Planned",
           adhocCreated: true, // ระบบสร้างให้ตอนแทรกงาน — ลบงานหมดแล้วลบทริปทิ้งได้
         }
+        await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
         setTrips(prev => [...prev, newTrip])
-        if (db) {
-          setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
-        }
         void recalcTripDistance(newTrip, newTrip.stops || []) // ทริปใหม่ก็ต้องมี กม. ตั้งแต่แรก
         toast({ title: "สร้างทริปใหม่ให้รถคันใหม่ ✅", description: `${veh?.licensePlate || ""} (คนขับ ${trip.driverName}) — งาน "${place}"` })
       }
@@ -763,7 +795,8 @@ export default function DailySummaryPage() {
   // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
   // ยกเลิก/ลบงานออกจากทริป (ลูกค้าแจ้งยกเลิกหลังออกคิว) — งานหายจากใบสรุป
   // ถ้าจะกลับมาให้ทำใบคิวใหม่ ; ลบจนไม่เหลืองาน = ลบทริปทิ้งทั้งใบ
-  const cancelStop = (trip: Trip, sIdx: number) => {
+  const cancelStop = async (trip: Trip, sIdx: number) => {
+    if (!allowOrdinaryEdit(trip)) return
     const stop = trip.stops?.[sIdx]
     if (!stop) return
     const verb = (stop as any).adhoc ? "ลบงานแทรก" : "ยกเลิกงาน"
@@ -774,8 +807,10 @@ export default function DailySummaryPage() {
         `${verb} "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
         `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ ใช่หรือไม่?`
       )) return
+      try { await deleteTripWithQueueGuard(db, trip.id) } catch (e: any) {
+        toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
+      }
       setTrips(prev => prev.filter(t => t.id !== trip.id))
-      if (db) deleteDoc(doc(db, "trips", trip.id)).catch(() => {})
       toast({ title: `${verb}แล้ว`, description: `${trip.vehiclePlate} (${trip.driverName}) — ไม่เหลืองาน ลบทริปทิ้ง` })
       return
     }
@@ -784,7 +819,7 @@ export default function DailySummaryPage() {
       `${verb} "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?\n` +
       `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่`
     )) return
-    applyStops(trip.id, remaining, true)
+    if (!await applyStops(trip.id, remaining, true)) return
     void recalcTripDistance(trip, remaining) // ลบงานแล้ว กม. ต้องลดตามด้วย
     toast({ title: `${verb}แล้ว`, description: `เอา "${stop.siteName}" ออกจากใบสรุปเรียบร้อย` })
   }
@@ -794,22 +829,16 @@ export default function DailySummaryPage() {
   const setActualDriver = async (tripId: string, driverId: string) => {
     const name = driverId ? (driversData?.find(d => d.id === driverId)?.name || "") : ""
     const target = trips.find(t => t.id === tripId)
+    if (!allowOrdinaryEdit(target)) return
     const prevActualDriverId = target?.actualDriverId // อ่านก่อนเขียนทับ (ใช้ตอน revert)
     // ด่านวันลา: เฉพาะตอนเลือกคนใหม่ (ล้างกลับเป็นคนขับประจำไม่ถาม) · ยกเลิก = ไม่เขียนอะไร select เด้งกลับค่าเดิมเอง
     if (driverId && target && !(await passLeaveGate(`actual:${tripId}:${driverId}`, [{ driverId, date: target.tripDate }]))) return
-    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, actualDriverId: driverId, actualDriverName: name } : t)))
-    if (db) {
-      updateDocumentNonBlocking(doc(db, "trips", tripId), {
-        actualDriverId: driverId,
-        actualDriverName: name,
-        updatedAt: serverTimestamp(),
-      })
-    }
+    if (!await persistTripPatch(tripId, { actualDriverId: driverId, actualDriverName: name })) return
 
     // ---- ลิงก์อัตโนมัติ: คนขับแทนมีทริปของตัวเองวันเดียวกัน = ขับสองคันพร้อมกันไม่ได้ ----
     if (driverId && target) {
       // งานของคนขับแทนที่ยัง "ตามแผน" → เสนอโยกมาลงรถคันนี้ทั้งหมดในคลิกเดียว
-      for (const own of trips.filter(t => t.id !== tripId && t.driverId === driverId)) {
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === driverId && !isManagedTrip(t))) {
         const movable = (own.stops || []).filter(s => !s.outcome || s.outcome === 'delivered')
         if (movable.length === 0) continue
         const ok = window.confirm(
@@ -819,7 +848,7 @@ export default function DailySummaryPage() {
         )
         if (!ok) continue
         const nowIso = new Date().toISOString()
-        applyStops(own.id, (own.stops || []).map(s =>
+        if (!await applyStops(own.id, (own.stops || []).map(s =>
           (!s.outcome || s.outcome === 'delivered')
             ? {
                 ...stripOutcome(s),
@@ -831,21 +860,21 @@ export default function DailySummaryPage() {
                 outcomeAt: nowIso,
               }
             : s
-        ))
+        ))) return
         toast({ title: "🔗 โยกงานให้อัตโนมัติแล้ว", description: `${movable.length} จุดของ ${name} ย้ายมาลงรถ ${target.vehiclePlate}` })
       }
     }
 
     // ---- ยกเลิกขับแทน → เสนอเอางานที่เคยโยกมาอัตโนมัติ กลับคืนทริปเดิม ----
     if (!driverId && prevActualDriverId) {
-      for (const own of trips.filter(t => t.id !== tripId && t.driverId === prevActualDriverId)) {
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === prevActualDriverId && !isManagedTrip(t))) {
         const moved = (own.stops || []).filter(s => s.outcome === 'reassigned' && s.reassignedToTripId === tripId)
         if (moved.length === 0) continue
         const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
         if (!ok) continue
-        applyStops(own.id, (own.stops || []).map(s =>
+        if (!await applyStops(own.id, (own.stops || []).map(s =>
           (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
-        ))
+        ))) return
         toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
       }
     }
@@ -853,11 +882,12 @@ export default function DailySummaryPage() {
 
   // เปลี่ยนรถของทริป (รถเสีย/ใช้ไม่ได้ — งาน+คนขับเดิม แค่สลับคันรถ)
   // ทุกอย่างผูกกับทะเบียน → ใบงาน/ข้อความ LINE/ติดตาม GPS เปลี่ยนตามอัตโนมัติ
-  const changeVehicle = (tripId: string, vehicleId: string) => {
+  const changeVehicle = async (tripId: string, vehicleId: string) => {
     if (!vehicleId) return
     const trip = trips.find(t => t.id === tripId)
     const v = vehiclesData?.find(x => x.id === vehicleId)
     if (!trip || !v || v.licensePlate === trip.vehiclePlate) return
+    if (!allowOrdinaryEdit(trip)) return
     const ok = window.confirm(
       `เปลี่ยนรถของทริป ${trip.driverName} จาก ${trip.vehiclePlate} → ${v.licensePlate} ?\n` +
       `(ใบงาน / ข้อความ LINE / ติดตาม GPS จะเปลี่ยนตามทันที และคิดค่าน้ำมันตามอัตราของรถคันใหม่)`
@@ -874,14 +904,13 @@ export default function DailySummaryPage() {
     if (trip.totalDistanceKm) patch.fuelCost = calculateFuelCost(trip.totalDistanceKm, newRate, trip.dieselPriceUsed)
     // เก็บทะเบียนเดิมไว้ดูย้อนหลัง (ครั้งแรกครั้งเดียว — เปลี่ยนซ้ำก็ยังรู้ว่าตอนจัดใช้คันไหน)
     if (!(trip as any).vehicleChangedFromPlate) patch.vehicleChangedFromPlate = trip.vehiclePlate
-    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, ...patch } : t)))
-    if (db) updateDocumentNonBlocking(doc(db, "trips", tripId), { ...patch, updatedAt: serverTimestamp() })
+    if (!await persistTripPatch(tripId, patch)) return
     // งานของคันอื่นที่ "โยกเข้ามา" ที่ทริปนี้ เก็บทะเบียนเป็น snapshot → อัปเดตให้ตรงคันใหม่
-    for (const other of trips.filter(t => t.id !== tripId)) {
+    for (const other of trips.filter(t => t.id !== tripId && !isManagedTrip(t))) {
       if (!(other.stops || []).some(s => s.reassignedToTripId === tripId)) continue
-      applyStops(other.id, (other.stops || []).map(s =>
+      if (!await applyStops(other.id, (other.stops || []).map(s =>
         s.reassignedToTripId === tripId ? { ...s, reassignedToVehiclePlate: v.licensePlate } : s
-      ))
+      ))) return
     }
     toast({ title: "🚚 เปลี่ยนรถแล้ว", description: `${trip.driverName}: ${trip.vehiclePlate} → ${v.licensePlate}` })
   }
@@ -906,6 +935,7 @@ export default function DailySummaryPage() {
     stops.map((st) => Object.fromEntries(Object.entries(st).filter(([, v]) => v !== undefined)) as unknown as TripStop)
 
   const chooseOutcome = async (trip: Trip, stopIdx: number, outcome: StopOutcome) => {
+    if (!allowOrdinaryEdit(trip)) return
     // "เลื่อน" ไม่ได้แค่ติดป้าย — ต้องเลือกวันใหม่ก่อน (เปิด dialog) แล้วสร้างใบขอรถจริง
     if (outcome === 'postponed') {
       openPostponeDialog(trip, stopIdx)
@@ -955,7 +985,7 @@ export default function DailySummaryPage() {
       if (outcome === 'delivered') return base // back to "as planned"
       return { ...base, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
     })
-    applyStops(trip.id, newStops, true)
+    await applyStops(trip.id, newStops, true)
   }
 
   const tomorrowStr = () => {
@@ -965,6 +995,7 @@ export default function DailySummaryPage() {
   }
 
   const openPostponeDialog = (trip: Trip, stopIdx: number) => {
+    if (!allowOrdinaryEdit(trip)) return
     setPostponeDialog({ tripId: trip.id, stopIdx })
     setPostponeDateStr(tomorrowStr())
     setPostponeWarn("")
@@ -978,6 +1009,7 @@ export default function DailySummaryPage() {
     // #5 หยิบทริปสดล่าสุดจาก state (ไม่ใช้ snapshot ตอนเปิด dialog) กันเขียนทับการแก้จุดอื่น
     const trip = trips.find(t => t.id === tripId)
     if (!trip) { setPostponeDialog(null); return }
+    if (!allowOrdinaryEdit(trip)) return
     const stop = trip.stops?.[stopIdx]
     if (!stop) return
     const newDate = postponeDateStr
@@ -1009,6 +1041,7 @@ export default function DailySummaryPage() {
         // ---- อ่านให้ครบก่อน (ข้อบังคับของ transaction: ห้ามอ่านหลังเขียน) ----
         const tripSnap = await t.get(tripRef)
         if (!tripSnap.exists()) throw new Error("ไม่พบทริปนี้แล้ว")
+        if (isManagedTrip(tripSnap.data() as Trip)) throw new Error('คิวต่อเนื่องต้องปรับด้วยแผงคิวต่อเนื่อง')
         const oldReqSnap = existingReqId ? await t.get(doc(db, "vehicleRequests", existingReqId)) : null
         const id = await findFreeRequestId(
           { exists: async (candidate: string) => (await t.get(doc(db, "vehicleRequests", candidate))).exists() },
@@ -1099,6 +1132,7 @@ export default function DailySummaryPage() {
 
   const setReassignTarget = async (trip: Trip, stopIdx: number, targetTripId: string) => {
     const target = trips.find(t => t.id === targetTripId)
+    if (!allowOrdinaryEdit(trip) || !allowOrdinaryEdit(target)) return
     // ด่านวันลา: คนขับจริงของทริปปลายทาง ตามวันของทริปนั้น · ล้างคันปลายทางไม่ถาม · ยกเลิก = select เด้งกลับค่าเดิม
     if (target && !(await passLeaveGate(`reassign:${trip.id}:${stopIdx}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
     const newStops = buildStops(trip, stopIdx, (s) => {
@@ -1113,7 +1147,7 @@ export default function DailySummaryPage() {
         reassignedToDriverName: target.driverName,
       }
     })
-    applyStops(trip.id, newStops, true)
+    await applyStops(trip.id, newStops, true)
   }
 
   // โยกงานให้คน/รถที่ "ยังไม่มีทริป" วันนั้น — สร้างทริปว่างให้ก่อน แล้วโยกงานไปคันนั้น
@@ -1121,6 +1155,7 @@ export default function DailySummaryPage() {
     if (!reassignNewDialog) return
     const srcTrip = trips.find(t => t.id === reassignNewDialog.tripId)
     if (!srcTrip) { setReassignNewDialog(null); return }
+    if (!allowOrdinaryEdit(srcTrip)) return
     const driver = driversData?.find(d => d.id === reassignNewForm.driverId)
     const veh = vehiclesData?.find(v => v.id === reassignNewForm.vehicleId)
     if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
@@ -1139,8 +1174,10 @@ export default function DailySummaryPage() {
       driverId: driver.id, driverName: driver.name,
       departureSiteId: "", stops: [], status: "Planned", adhocCreated: true,
     }
+    try { await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }) } catch (e: any) {
+      toast({ title: 'สร้างทริปไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
+    }
     setTrips(prev => [...prev, newTrip])
-    if (db) setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
 
     // โยกงานต้นทางไปทริปใหม่ (เก็บ outcome เดิม เช่น reassigned/driver-refused ไว้)
     const newStops = buildStops(srcTrip, reassignNewDialog.stopIdx, (s) => ({
@@ -1149,7 +1186,7 @@ export default function DailySummaryPage() {
       reassignedToVehiclePlate: veh.licensePlate,
       reassignedToDriverName: driver.name,
     }))
-    applyStops(srcTrip.id, newStops, true)
+    if (!await applyStops(srcTrip.id, newStops, true)) return
     toast({ title: "โยกงานให้คนใหม่แล้ว ✅", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
     setReassignNewDialog(null)
     setReassignNewForm({ driverId: "", vehicleId: "" })
@@ -1162,6 +1199,7 @@ export default function DailySummaryPage() {
     const src = trips.find(t => t.id === assistDialog.tripId)
     const stop = src?.stops?.[assistDialog.stopIdx]
     if (!src || !stop) { setAssistDialog(null); return }
+    if (!allowOrdinaryEdit(src)) return
 
     // copy เฉพาะ field ที่มีค่า — ห้ามมี undefined (Firestore reject ทั้งก้อน)
     const mkCopy = (order: number): TripStop => {
@@ -1189,11 +1227,12 @@ export default function DailySummaryPage() {
     if (assistForm.targetTripId && assistForm.targetTripId !== "__new__") {
       const target = trips.find(t => t.id === assistForm.targetTripId)
       if (!target) { toast({ title: "ไม่พบทริปคันช่วย", variant: "destructive" }); return }
+      if (!allowOrdinaryEdit(target)) return
       // ด่านวันลา: คนขับจริงของคันช่วย ตามวันของทริปนั้น · ยกเลิก = dialog ค้างไว้
       if (!(await passLeaveGate(`assist:${src.id}:${assistDialog.stopIdx}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
-      applyStops(target.id, [...stops, mkCopy(order)], true)
+      if (!await applyStops(target.id, [...stops, mkCopy(order)], true)) return
       toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${target.driverName} (${target.vehiclePlate}) ไปช่วย "${stop.siteName}" ของ ${src.driverName}` })
     } else if (assistForm.targetTripId === "__new__") {
       const driver = driversData?.find(d => d.id === assistForm.driverId)
@@ -1211,8 +1250,10 @@ export default function DailySummaryPage() {
         driverId: driver.id, driverName: driver.name,
         departureSiteId: "", stops: [mkCopy(1)], status: "Planned", adhocCreated: true,
       }
+      try { await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }) } catch (e: any) {
+        toast({ title: 'สร้างทริปไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
+      }
       setTrips(prev => [...prev, newTrip])
-      if (db) setDoc(doc(db, "trips", tripId), { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(() => {})
       toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
     } else {
       toast({ title: "เลือกคันที่ไปช่วยก่อน", variant: "destructive" })
@@ -1223,9 +1264,9 @@ export default function DailySummaryPage() {
   }
 
   // Reason text: update locally on every keystroke, persist on blur.
-  const setRefuseReason = (trip: Trip, stopIdx: number, reason: string, persist: boolean) => {
+  const setRefuseReason = async (trip: Trip, stopIdx: number, reason: string, persist: boolean) => {
     const newStops = buildStops(trip, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
-    applyStops(trip.id, newStops, persist)
+    await applyStops(trip.id, newStops, persist)
   }
 
   // guard 4: เตือน (ไม่ห้าม) ถ้าวันที่เลือกเลื่อนไปมีเที่ยววิ่งจัดไว้แล้ว
@@ -1247,12 +1288,17 @@ export default function DailySummaryPage() {
   const outcomeStats = computeOutcomeStats(trips as any)
 
   const renderStopRow = (trip: Trip, stop: TripStop, sIdx: number) => {
+    if (isManagedTrip(trip)) return <div key={`${trip.id}-${sIdx}`} className="rounded-md bg-secondary/20 p-2.5 text-sm">
+      <p>{sIdx + 1}. {stop.siteName}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{stop.cargoDetails}</p>
+    </div>
     const current: StopOutcome = stop.outcome || 'delivered'
     const inputClass = "w-full h-9 rounded-md bg-background border border-border/50 text-sm px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
     const btn = (key: StopOutcome, label: string, Icon: any, activeClass: string) => (
       <button
         type="button"
-        onClick={() => chooseOutcome(trip, sIdx, key)}
+        onClick={() => void runOrdinaryAction(() => chooseOutcome(trip, sIdx, key))}
+        disabled={ordinaryBusy}
         className={cn(
           "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
           current === key ? activeClass : "border-border/50 text-muted-foreground hover:bg-secondary/40"
@@ -1281,7 +1327,8 @@ export default function DailySummaryPage() {
           </span>
           <button
             type="button"
-            onClick={() => cancelStop(trip, sIdx)}
+            onClick={() => void runOrdinaryAction(() => cancelStop(trip, sIdx))}
+            disabled={ordinaryBusy}
             title={(stop as any).adhoc ? "ลบงานแทรกนี้" : "ยกเลิกงานนี้ (ลูกค้าแจ้งยกเลิก — งานหายจากใบสรุป)"}
             className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-500/40 px-1.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/15"
           >
@@ -1297,6 +1344,7 @@ export default function DailySummaryPage() {
           <button
             type="button"
             onClick={() => { setAssistForm({ targetTripId: "", driverId: "", vehicleId: "" }); setAssistDialog({ tripId: trip.id, stopIdx: sIdx }) }}
+            disabled={ordinaryBusy}
             className="flex items-center gap-1 rounded-md border border-teal-500/50 px-2 py-1 text-[11px] font-medium text-teal-300 hover:bg-teal-500/10"
           >
             🚛+ คันช่วย
@@ -1308,7 +1356,8 @@ export default function DailySummaryPage() {
             value={stop.outcomeReason || ''}
             placeholder="เหตุผลที่ปฏิเสธ (เช่น บอกไกล ไม่คุ้ม)"
             onChange={(e) => setRefuseReason(trip, sIdx, e.target.value, false)}
-            onBlur={(e) => setRefuseReason(trip, sIdx, e.target.value, true)}
+            onBlur={(e) => { const value = e.target.value; void runOrdinaryAction(() => setRefuseReason(trip, sIdx, value, true)) }}
+            disabled={ordinaryBusy}
             className={inputClass}
           />
         )}
@@ -1326,17 +1375,19 @@ export default function DailySummaryPage() {
                 setReassignNewForm({ driverId: "", vehicleId: "" })
                 setReassignNewDialog({ tripId: trip.id, stopIdx: sIdx })
               } else {
-                setReassignTarget(trip, sIdx, e.target.value)
+                const targetId = e.target.value
+                void runOrdinaryAction(() => setReassignTarget(trip, sIdx, targetId))
               }
             }}
             className={cn(inputClass, "cursor-pointer")}
+            disabled={ordinaryBusy}
           >
             <option value="">
               {current === 'driver-refused'
                 ? '-- มีคันรับไปทำแทนไหม? (กม. ลงคันนั้น) --'
                 : '-- เลือกคันที่รับงานไปทำ (กม. ลงคันนั้น) --'}
             </option>
-            {trips.filter(t => t.id !== trip.id).map(t => (
+            {trips.filter(t => t.id !== trip.id && !isManagedTrip(t)).map(t => (
               <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
             ))}
             <option value="__new__">➕ โยกให้คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>
@@ -1377,6 +1428,7 @@ export default function DailySummaryPage() {
               <select
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
+                disabled={ordinaryBusy}
                 className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">-- เลือกวันที่ --</option>
@@ -1393,6 +1445,9 @@ export default function DailySummaryPage() {
                     )
                   })}
               </select>
+              <label className="mt-3 block space-y-1 text-xs text-muted-foreground">เลือกวันอื่นเพื่อดูคิวต่อเนื่องหรือวันชดเชย
+                <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} disabled={ordinaryBusy} className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" />
+              </label>
               {datesWithWork.size === 0 && (
                 <p className="text-xs text-muted-foreground mt-2 text-center">ไม่มีคิวงานในระบบ</p>
               )}
@@ -1805,6 +1860,9 @@ export default function DailySummaryPage() {
         </div>
       </div>
 
+      {selectedDate && !isLoading && <QueuePanel key={selectedDate} date={selectedDate} trips={trips} onChanged={() => fetchTrips(selectedDate)}
+        checkAssignments={targets => passLeaveGate(`continuous:${selectedDate}:${JSON.stringify(targets)}`, targets)} />}
+
       {/* Reconcile actual outcomes (does NOT appear in the printed/JPEG report) */}
       {selectedDate && trips.length > 0 && !isLoading && (
         <Card className="no-print border-accent/20">
@@ -1871,7 +1929,8 @@ export default function DailySummaryPage() {
                       <span className="text-muted-foreground shrink-0">ขับแทนโดย:</span>
                       <select
                         value={trip.actualDriverId || ""}
-                        onChange={(e) => setActualDriver(trip.id, e.target.value)}
+                        onChange={(e) => { const id = e.target.value; void runOrdinaryAction(() => setActualDriver(trip.id, id)) }}
+                        disabled={isManagedTrip(trip) || ordinaryBusy}
                         className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
                       >
                         <option value="">— คนขับประจำ ({trip.driverName}) —</option>
@@ -1892,7 +1951,8 @@ export default function DailySummaryPage() {
                       <span className="text-muted-foreground shrink-0">เปลี่ยนรถเป็น:</span>
                       <select
                         value=""
-                        onChange={(e) => changeVehicle(trip.id, e.target.value)}
+                        onChange={(e) => { const id = e.target.value; void runOrdinaryAction(() => changeVehicle(trip.id, id)) }}
+                        disabled={isManagedTrip(trip) || ordinaryBusy}
                         className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
                       >
                         <option value="">— ใช้รถเดิม ({trip.vehiclePlate}) —</option>
@@ -1908,10 +1968,12 @@ export default function DailySummaryPage() {
                         🚚 เปลี่ยนรถจาก {(trip as any).vehicleChangedFromPlate} → <b>{trip.vehiclePlate}</b>
                       </p>
                     )}
-                    {trip.tripDate === todayStr && (
+                    {isManagedTrip(trip) && <p className="rounded-md border border-amber-500/30 p-2 text-xs text-amber-300">คิวต่อเนื่อง ปรับคิวและยืนยันปิดผลงานในแผงคิวต่อเนื่องด้านบน</p>}
+                    {trip.tripDate === todayStr && !isManagedTrip(trip) && (
                       <button
                         type="button"
                         onClick={() => { setInsertForm({ place: "", detail: "", requester: "", vehicleId: trip.vehicleId, siteId: "" }); setInsertDialog({ tripId: trip.id }) }}
+                        disabled={ordinaryBusy}
                         className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-purple-500/50 bg-purple-500/5 px-2 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/15"
                       >
                         ➕ แทรกงานด่วน (สั่งเพิ่มระหว่างวัน)
@@ -2007,8 +2069,8 @@ export default function DailySummaryPage() {
             <Button variant="ghost" onClick={() => setPostponeDialog(null)} disabled={isPostponing}>ยกเลิก</Button>
             <Button
               className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
-              onClick={handlePostpone}
-              disabled={isPostponing || !postponeDateStr}
+              onClick={() => void runOrdinaryAction(handlePostpone)}
+              disabled={isPostponing || ordinaryBusy || !postponeDateStr}
             >
               {isPostponing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CalendarClock className="mr-2 h-4 w-4" />}
               {isPostponing ? "กำลังเลื่อน..." : "ยืนยันเลื่อน"}
@@ -2118,8 +2180,8 @@ export default function DailySummaryPage() {
             <Button variant="ghost" onClick={() => setInsertDialog(null)}>ยกเลิก</Button>
             <Button
               className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
-              onClick={handleInsertJob}
-              disabled={!insertForm.siteId && !insertForm.place.trim()}
+              onClick={() => void runOrdinaryAction(handleInsertJob)}
+              disabled={ordinaryBusy || (!insertForm.siteId && !insertForm.place.trim())}
             >
               ➕ แทรกงาน
             </Button>
@@ -2168,8 +2230,8 @@ export default function DailySummaryPage() {
             <Button variant="ghost" onClick={() => setReassignNewDialog(null)}>ยกเลิก</Button>
             <Button
               className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
-              onClick={createReassignTarget}
-              disabled={!reassignNewForm.driverId || !reassignNewForm.vehicleId}
+              onClick={() => void runOrdinaryAction(createReassignTarget)}
+              disabled={ordinaryBusy || !reassignNewForm.driverId || !reassignNewForm.vehicleId}
             >
               <ArrowRightLeft className="mr-2 h-4 w-4" /> โยกงาน + สร้างทริป
             </Button>
@@ -2202,7 +2264,7 @@ export default function DailySummaryPage() {
                 className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">— เลือกคันที่ไปช่วย —</option>
-                {trips.filter(t => t.id !== assistDialog?.tripId).map(t => (
+                {trips.filter(t => t.id !== assistDialog?.tripId && !isManagedTrip(t)).map(t => (
                   <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
                 ))}
                 <option value="__new__">➕ คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>
@@ -2240,8 +2302,8 @@ export default function DailySummaryPage() {
             <Button variant="ghost" onClick={() => setAssistDialog(null)}>ยกเลิก</Button>
             <Button
               className="bg-teal-600 hover:bg-teal-700 text-white font-bold"
-              onClick={addAssistStop}
-              disabled={!assistForm.targetTripId || (assistForm.targetTripId === "__new__" && (!assistForm.driverId || !assistForm.vehicleId))}
+              onClick={() => void runOrdinaryAction(addAssistStop)}
+              disabled={ordinaryBusy || !assistForm.targetTripId || (assistForm.targetTripId === "__new__" && (!assistForm.driverId || !assistForm.vehicleId))}
             >
               🤝 เพิ่มคันช่วย
             </Button>

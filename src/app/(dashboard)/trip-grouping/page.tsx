@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, query, where, orderBy, doc, serverTimestamp, setDoc, updateDoc, arrayUnion, getDocs, getDoc } from "firebase/firestore"
+import { collection, query, where, orderBy, doc, serverTimestamp, runTransaction, getDocs, getDoc } from "firebase/firestore"
 import { Vehicle, Driver, Site, CompanySetting, Trip } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
@@ -12,7 +12,6 @@ import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -27,6 +26,14 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { useDriverLeaves } from "@/hooks/use-driver-leaves"
 import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
+import { useContinuousQueues } from "@/hooks/use-continuous-queues"
+import { runContinuousQueueCommand } from "@/lib/continuousQueueClient"
+import { createTripWithQueueGuard, updateTripWithQueueGuard } from "@/lib/tripQueueGuard"
+import { expandQueueDates, isManagedTrip } from "@/lib/continuousQueue"
+import { BorrowQueueDialog, type BorrowChoice } from "@/components/continuous-queue/BorrowQueueDialog"
+import { queueDateLabel } from "@/components/continuous-queue/QueueNoticeCard"
+import type { QueueTripInput } from "@/types/continuous-queue"
+import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -55,6 +62,10 @@ export default function TripGroupingPage() {
   const [driverId, setDriverId] = React.useState("")
   const [isConfirmOpen, setIsConfirmOpen] = React.useState(false)
   const [isProcessing, setIsProcessing] = React.useState(false)
+  const [continuousEndDate, setContinuousEndDate] = React.useState('')
+  const [borrowOpen, setBorrowOpen] = React.useState(false)
+  const commandFlightRef = React.useRef(createQueueCommandFlight())
+  const lookupBusyRef = React.useRef(false)
 
   // Merge Dialog State
   const [mergeDialog, setMergeDialog] = React.useState<{
@@ -177,10 +188,12 @@ export default function TripGroupingPage() {
   // ป้ายวันลาใน dropdown คนขับ — ใช้วันของจุดที่เลือก (ไม่มี = วันของกองที่เปิดอยู่)
   // ส่ง `drivers ?? undefined`: useCollection คืน null ก่อน snapshot แรก — ห้ามส่ง [] (จะกลายเป็น "โหลดแล้วว่าง" → driver_missing ทุกคน)
   const badgeDate = selectedDestinations[0]?.requestDate ?? targetDateStr
+  const continuousQueues = useContinuousQueues(badgeDate)
+  const queueConflicts = continuousQueues.bookings.filter(b => b.startDate <= badgeDate && b.endDate >= badgeDate && (b.driverId === driverId || b.vehicleId === vehicleId))
   const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
     useDriverLeaves(drivers ?? undefined, badgeDate, badgeDate)
 
-  // ด่านวันลาตอนสร้าง/รวมทริป (สเปก 5.5) — ระหว่างรอตรวจ (ดึงสด ≤8 วิ + กล่อง confirm) หน้ายังกดได้ (AlertDialogAction ปิด dialog ทันที)
+  // ด่านวันลาตอนสร้าง/รวมทริปผูกกับการเลือกและหน้าต่างที่ผู้ใช้ยืนยัน
   // · selectionSigRef: ลายเซ็นการเลือกล่าสุดของหน้า (จุด + รถ + คนขับ + วัน) — เปลี่ยนระหว่างรอ = ยกเลิกการสร้าง (ห้ามเขียนชุดที่เลือกไว้ก่อน)
   // · mergeDialogRef: dialog รวมทริปตัวล่าสุด — ปิด/เปิดใหม่ระหว่างรอ = ยกเลิกการรวม
   // · pageVersionRef: เปลี่ยนเมื่อออกจากหน้า — ด่านที่ค้างอยู่ไม่เด้ง confirm / ไม่เขียน / ไม่ขึ้น toast บนหน้าอื่น
@@ -188,10 +201,15 @@ export default function TripGroupingPage() {
     mode === 'manual' ? manualOrder.join(',') : [...selectedIds].sort().join(','),
     vehicleId,
     driverId,
+    continuousEndDate,
     Array.from(new Set(selectedDestinations.map((d: any) => d.requestDate))).sort().join(','),
   ].join('|')
   const selectionSigRef = React.useRef(selectionSig)
-  React.useEffect(() => { selectionSigRef.current = selectionSig }, [selectionSig])
+  selectionSigRef.current = selectionSig
+  const borrowOpenRef = React.useRef(borrowOpen)
+  borrowOpenRef.current = borrowOpen
+  const confirmOpenRef = React.useRef(isConfirmOpen)
+  confirmOpenRef.current = isConfirmOpen
   const mergeDialogRef = React.useRef(mergeDialog)
   React.useEffect(() => { mergeDialogRef.current = mergeDialog }, [mergeDialog])
   const pageVersionRef = React.useRef(0)
@@ -232,25 +250,25 @@ export default function TripGroupingPage() {
     if (moveDate === moveDialog.currentDate) { setMoveDialog(null); return }
     setIsMovingDate(true)
     try {
-      // อ่านสดกันเคสเพิ่งถูกจัดไประหว่างเปิด dialog — ใบที่มีจุดถูกจัดเข้าทริปแล้ว ย้ายไม่ได้ (ทริปอ้าง index อยู่)
-      const snap = await getDoc(doc(db, "vehicleRequests", moveDialog.vrDocId))
-      const fresh = snap.data() as any
-      if (!fresh) throw new Error("request missing")
-      if ((fresh.assignedDestinations || []).length > 0) {
-        toast({ title: "ย้ายไม่ได้", description: "ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน", variant: "destructive" })
-        return
-      }
-      await updateDoc(doc(db, "vehicleRequests", moveDialog.vrDocId), {
-        requestDate: moveDate,
-        movedDateFrom: moveDialog.currentDate, // เก็บวันเดิมไว้ audit
-        movedDateBy: user?.displayName || user?.email || "dispatcher",
-        updatedAt: serverTimestamp(),
+      const ref = doc(db, "vehicleRequests", moveDialog.vrDocId)
+      await runTransaction(db, async tx => {
+        const fresh = (await tx.get(ref)).data()
+        if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
+        if ((fresh.assignedDestinations || []).length > 0) throw new Error("ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน")
+        if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
+        if (fresh.requestDate !== moveDialog.currentDate) throw new Error("วันที่ของใบขอเปลี่ยนแล้ว กรุณาเปิดรายการใหม่")
+        tx.update(ref, {
+          requestDate: moveDate,
+          movedDateFrom: fresh.requestDate,
+          movedDateBy: user?.displayName || user?.email || "dispatcher",
+          updatedAt: serverTimestamp(),
+        })
       })
       toast({ title: "ย้ายวันแล้ว 📅", description: `"${moveDialog.siteName}" ย้ายไปวันที่ ${moveDate.split('-').reverse().join('/')} — ไปโผล่ในกองของวันนั้นแล้ว` })
       setMoveDialog(null)
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      toast({ title: "ย้ายวันไม่สำเร็จ", variant: "destructive" })
+      toast({ title: "ย้ายวันไม่สำเร็จ", description: e?.message || "ไม่สามารถย้ายวันได้", variant: "destructive" })
     } finally {
       setIsMovingDate(false)
     }
@@ -267,51 +285,54 @@ export default function TripGroupingPage() {
     if (!reason) { toast({ title: "ระบุเหตุผล", description: "ช่วยระบุเหตุผลที่ยกเลิก เพื่อให้ผู้ขอทราบ", variant: "destructive" }); return }
     setIsCancelling(true)
     try {
-      // ใบที่มีจุดถูกจัดเข้าทริปแล้ว ยกเลิกจากตรงนี้ไม่ได้ (ทริปยังอ้างอยู่) — อ่านสดกัน race
-      const snap = await getDoc(doc(db, "vehicleRequests", cancelDialog.vrDocId))
-      const fresh = snap.data() as any
-      if (!fresh) throw new Error("request missing")
-      if ((fresh.assignedDestinations || []).length > 0) {
-        toast({ title: "ยกเลิกไม่ได้", description: "ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน", variant: "destructive" })
-        return
-      }
-      await updateDoc(doc(db, "vehicleRequests", cancelDialog.vrDocId), {
-        status: "rejected",
-        rejectReason: reason,
-        rejectedBy: user?.displayName || user?.email || "Dispatcher",
-        rejectedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const ref = doc(db, "vehicleRequests", cancelDialog.vrDocId)
+      await runTransaction(db, async tx => {
+        const fresh = (await tx.get(ref)).data()
+        if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
+        if ((fresh.assignedDestinations || []).length > 0) throw new Error("ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน")
+        if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
+        tx.update(ref, {
+          status: "rejected",
+          rejectReason: reason,
+          rejectedBy: user?.displayName || user?.email || "Dispatcher",
+          rejectedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
       })
       toast({ title: "ยกเลิกใบขอแล้ว", description: `"${cancelDialog.siteName}" (${cancelDialog.vrId}) — ผู้ขอจะเห็นสถานะพร้อมเหตุผล` })
       setSelectedIds(prev => { const n = new Set(prev); [...prev].forEach(id => { if (id.startsWith(cancelDialog.vrDocId + "-")) n.delete(id) }); return n })
       setCancelDialog(null)
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      toast({ title: "ยกเลิกไม่สำเร็จ", variant: "destructive" })
+      toast({ title: "ยกเลิกไม่สำเร็จ", description: e?.message || "ไม่สามารถยกเลิกได้", variant: "destructive" })
     } finally {
       setIsCancelling(false)
     }
   }
 
   const duplicateDestination = async (dest: any) => {
-    const req = requests?.find(r => r.id === dest.vrDocId)
-    const orig = req?.destinations?.[dest.destIndex]
-    if (!req || !orig) { toast({ title: "ไม่พบจุดต้นฉบับ", variant: "destructive" }); return }
-    // สำเนา = ข้อมูลเดิมทั้งหมด (ตัด field ที่เป็น undefined — Firestore reject ทั้งก้อน)
-    const copy: Record<string, any> = Object.fromEntries(
-      Object.entries(orig).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
-    )
-    copy.pairedCopy = true
-    copy.pairedFromIndex = dest.destIndex
     try {
-      await updateDoc(doc(db, "vehicleRequests", dest.vrDocId), {
-        destinations: [...req.destinations, copy],
-        updatedAt: serverTimestamp(),
+      const ref = doc(db, "vehicleRequests", dest.vrDocId)
+      await runTransaction(db, async tx => {
+        const fresh = (await tx.get(ref)).data()
+        if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
+        if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
+        const orig = fresh.destinations?.[dest.destIndex]
+        if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !orig || orig.pairedCopy) throw new Error("ไม่พบจุดต้นฉบับ หรือจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
+        const copy: Record<string, any> = Object.fromEntries(
+          Object.entries(orig).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
+        )
+        copy.pairedCopy = true
+        copy.pairedFromIndex = dest.destIndex
+        tx.update(ref, {
+          destinations: [...fresh.destinations, copy],
+          updatedAt: serverTimestamp(),
+        })
       })
       toast({ title: "เพิ่มคันคู่แล้ว 🚛🚛", description: `"${dest.siteName}" มีสำเนาในกองอีก 1 ใบ — หยิบไปจัดให้อีกคันได้เลย` })
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      toast({ title: "เพิ่มคันคู่ไม่สำเร็จ", variant: "destructive" })
+      toast({ title: "เพิ่มคันคู่ไม่สำเร็จ", description: e?.message || "ไม่สามารถเพิ่มคันคู่ได้", variant: "destructive" })
     }
   }
 
@@ -320,27 +341,33 @@ export default function TripGroupingPage() {
   const removeDuplicate = async (dest: any) => {
     const req = requests?.find(r => r.id === dest.vrDocId)
     if (!req?.destinations?.[dest.destIndex]?.pairedCopy) return
-    const assigned: number[] = req.assignedDestinations || []
-    if (assigned.includes(dest.destIndex)) { toast({ title: "ถอนไม่ได้", description: "สำเนานี้ถูกจัดเข้าทริปแล้ว", variant: "destructive" }); return }
-    if (assigned.some(i => i > dest.destIndex)) {
-      toast({ title: "ถอนไม่ได้", description: "มีจุดที่ถูกจัดแล้วอยู่ถัดจากสำเนานี้ — ลบแล้วลำดับจะเพี้ยน", variant: "destructive" })
-      return
-    }
     if (!window.confirm(`ถอนคันคู่ "${dest.siteName}" ออกจากกอง?`)) return
     try {
-      await updateDoc(doc(db, "vehicleRequests", dest.vrDocId), {
-        destinations: req.destinations.filter((_: any, i: number) => i !== dest.destIndex),
-        updatedAt: serverTimestamp(),
+      const ref = doc(db, "vehicleRequests", dest.vrDocId)
+      await runTransaction(db, async tx => {
+        const fresh = (await tx.get(ref)).data()
+        if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
+        if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
+        const paired = fresh.destinations?.[dest.destIndex]
+        if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !paired?.pairedCopy || paired.pairedFromIndex !== dest.pairedFromIndex) throw new Error("สำเนาหรือลำดับจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
+        const assigned: number[] = fresh.assignedDestinations || []
+        if (assigned.includes(dest.destIndex)) throw new Error("สำเนานี้ถูกจัดเข้าทริปแล้ว")
+        if (assigned.some(i => i > dest.destIndex)) throw new Error("มีจุดที่ถูกจัดแล้วอยู่ถัดจากสำเนานี้ — ลบแล้วลำดับจะเพี้ยน")
+        tx.update(ref, {
+          destinations: fresh.destinations.filter((_: any, i: number) => i !== dest.destIndex),
+          updatedAt: serverTimestamp(),
+        })
       })
       setSelectedIds(prev => { const n = new Set(prev); n.delete(dest.id); return n })
       toast({ title: "ถอนคันคู่แล้ว", description: `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      toast({ title: "ถอนไม่สำเร็จ", variant: "destructive" })
+      toast({ title: "ถอนไม่สำเร็จ", description: e?.message || "ไม่สามารถถอนคันคู่ได้", variant: "destructive" })
     }
   }
 
   const handleCreateTrip = React.useCallback(async () => {
+    if (lookupBusyRef.current || commandFlightRef.current.isPending()) return
     const count = mode === 'manual' ? manualOrder.length : selectedIds.size
     if (count === 0) {
       toast({ title: "ข้อมูลไม่ครบ", description: mode === 'manual' ? "กรุณาเลือกจุดหมายบน Map" : "กรุณาเลือกอย่างน้อย 1 จุดหมาย", variant: "destructive" })
@@ -378,12 +405,43 @@ export default function TripGroupingPage() {
       return
     }
 
+    if (continuousQueues.status !== 'ready') {
+      continuousQueues.refresh()
+      toast({ title: 'ยังไม่ได้จัดคิว', description: 'รอตรวจคิวต่อเนื่องให้สำเร็จก่อน แล้วกดอีกครั้ง', variant: 'destructive' })
+      return
+    }
+    if (queueConflicts.length > 0) {
+      setBorrowOpen(true)
+      return
+    }
+    if (continuousEndDate && continuousEndDate > badgeDate) {
+      try { expandQueueDates(badgeDate, continuousEndDate) } catch (e: any) {
+        toast({ title: 'ช่วงวันที่ไม่ถูกต้อง', description: e.message, variant: 'destructive' })
+        return
+      }
+      setIsConfirmOpen(true)
+      return
+    }
+    if (continuousEndDate && continuousEndDate < badgeDate) {
+      toast({ title: 'ช่วงวันที่ไม่ถูกต้อง', description: 'วันสิ้นสุดต้องไม่ก่อนวันเริ่มคิว', variant: 'destructive' }); return
+    }
+
     // Check if driver already has a trip on the target date
+    lookupBusyRef.current = true
+    const lookupSignature = selectionSigRef.current
+    const lookupVersion = pageVersionRef.current
+    try {
     const targetDateStrForCheck = selectedDestinations[0]?.requestDate || new Date().toISOString().split('T')[0];
     const tripsOnTargetDate = await getDocs(query(collection(db, "trips"), where("tripDate", "==", targetDateStrForCheck), where("driverId", "==", driverId)));
+    if (lookupSignature !== selectionSigRef.current || lookupVersion !== pageVersionRef.current) return
     const existingTrip = tripsOnTargetDate.docs.map(d => ({...d.data(), id: d.id})).find((t: any) => t.status !== 'Cancelled');
 
     if (existingTrip) {
+      if (isManagedTrip(existingTrip as Trip)) {
+        toast({ title: 'ทริปนี้เป็นคิวต่อเนื่อง', description: 'ใช้ปรับคิวเฉพาะวันนี้ หรือเลือกคนขับและรถอื่น', variant: 'destructive' })
+        continuousQueues.refresh()
+        return
+      }
       setMergeDialog({
         show: true,
         existingTrip,
@@ -393,9 +451,18 @@ export default function TripGroupingPage() {
     }
 
     setIsConfirmOpen(true)
-  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, selectedDestinations, db])
+    } catch (e: any) {
+      toast({ title: 'ตรวจคิวไม่สำเร็จ', description: e.message, variant: 'destructive' })
+    } finally { lookupBusyRef.current = false }
+  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, selectedDestinations, db, continuousQueues, queueConflicts, continuousEndDate, badgeDate])
 
-  const confirmCreateTrip = async () => {
+  const confirmCreateTrip = async (borrowChoice?: BorrowChoice) => {
+    if (!user) return
+    const actionSig = selectionSig
+    const actionVersion = pageVersionRef.current
+    const flight = commandFlightRef.current.begin(() => selectionSigRef.current === actionSig && pageVersionRef.current === actionVersion && (borrowChoice ? borrowOpenRef.current : confirmOpenRef.current))
+    if (!flight) return
+    let succeeded = false
     setIsProcessing(true)
     try {
       // ด่านวันลา: ทำก่อนด่าน 2 (อ่านสถานะใบ) เสมอ — ตรงนี้ผู้ใช้อาจรอดึงข้อมูล ≤8 วิ + กล่อง confirm ได้นาน
@@ -406,6 +473,7 @@ export default function TripGroupingPage() {
       const gateDate = selectedDestinations[0]?.requestDate
       const gateSig = selectionSig // ลายเซ็นของ render เดียวกับ selectedDestinations/driverId/vehicleId ที่จะเขียน
       const gateVersion = pageVersionRef.current
+      const queueDates = borrowChoice || !continuousEndDate ? [gateDate] : expandQueueDates(gateDate, continuousEndDate)
       const lastStats = (window as any).__lastTripStats || { distance: 0, duration: 0, fuelCost: 0 }
       // เช็กหลังทุก await ก่อนทำอะไรต่อ: true = หยุด ไม่เขียน — ออกจากหน้าแล้ว (เงียบ) / การเลือกเปลี่ยนระหว่างรอ (บอกผู้ใช้)
       const cancelled = () => {
@@ -418,22 +486,28 @@ export default function TripGroupingPage() {
       // confirmFn ไม่เด้งกล่องถ้าการเลือกเปลี่ยน/ออกจากหน้าไปแล้ว (ไม่ถามยืนยันของชุดเก่า)
       const ok = await confirmLeaveBeforeAssign(
         checkLeave,
-        [{ driverId: gateDriverId, date: gateDate }],
+        queueDates.map(date => ({ driverId: gateDriverId, date })),
         drivers,
         (m) => pageVersionRef.current === gateVersion && selectionSigRef.current === gateSig && window.confirm(m),
       )
       if (cancelled() || !ok) return
+      if (borrowChoice && !borrowOpen) return
 
       // ด่าน 2: re-read สถานะใบสดๆ ก่อนเขียน — กันจัดทับ/ฟื้นใบที่เพิ่งถูกยกเลิก (race / un-reject)
       const GROUPABLE = ["pending", "in_progress", "partial", "rescheduled"]
       const vrDocIds = Array.from(new Set(selectedDestinations.map(d => d.vrDocId)))
       const freshStatus: Record<string, string> = {}
+      const freshRequests: Record<string, any> = {}
       await Promise.all(vrDocIds.map(async (id) => {
         const snap = await getDoc(doc(db, "vehicleRequests", id))
         freshStatus[id] = snap.exists() ? (snap.data().status as string) : "missing"
+        if (snap.exists()) freshRequests[id] = snap.data()
       }))
       if (cancelled()) return
       const dests = selectedDestinations.filter(d => GROUPABLE.includes(freshStatus[d.vrDocId]))
+      if (dests.some(d => freshRequests[d.vrDocId]?.requestDate !== d.requestDate || (freshRequests[d.vrDocId]?.assignedDestinations || []).includes(d.destIndex))) {
+        throw new Error('วันที่หรือการจัดจุดของใบขอเปลี่ยนแล้ว กรุณาเลือกงานใหม่')
+      }
       if (dests.length === 0) {
         toast({ title: "จัดไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
         return
@@ -445,13 +519,55 @@ export default function TripGroupingPage() {
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const now = new Date();
       const tripDateStr = dests[0]?.requestDate || now.toISOString().split('T')[0];
+      if (borrowChoice || (continuousEndDate && continuousEndDate > tripDateStr)) {
+        if (dests.length !== selectedDestinations.length) throw new Error('บางใบเปลี่ยนสถานะแล้ว กรุณาเลือกงานใหม่ก่อนจัดคิวต่อเนื่อง')
+        const warehousePos = { lat: settings?.warehouseLatitude || 14.0815, lng: settings?.warehouseLongitude || 100.7129 }
+        const trip: QueueTripInput = {
+          tripDate: tripDateStr, vehicleId, vehiclePlate: selectedVehicle?.licensePlate || '',
+          vehicleType: selectedVehicle?.type, driverId, driverName: selectedDriver?.name || '',
+          sourceVRIds: Array.from(new Set(dests.map(d => d.vrId))),
+          totalDistanceKm: lastStats.distance || 0, totalEstimatedTimeMinutes: lastStats.duration || 0,
+          fuelCost: lastStats.fuelCost || 0, dieselPriceUsed: lastStats.dieselPrice || settings?.dieselPrice || 32.5,
+          fuelRateUsed: lastStats.fuelRate || settings?.defaultFuelRate || 10,
+          departurePoint: settings?.warehouseName || 'คลังสินค้า LOTUS EME', originLat: warehousePos.lat, originLng: warehousePos.lng,
+          stops: dests.map((d, index) => {
+            const req = freshRequests[d.vrDocId]
+            const fresh = req.destinations[d.destIndex]
+            return {
+              order: index + 1, siteId: fresh.siteId || '', siteName: fresh.siteName || fresh.customName || '',
+              ...(fresh.lat != null ? { lat: fresh.lat } : {}), ...(fresh.lng != null ? { lng: fresh.lng } : {}),
+              cargoDetails: fresh.jobDescription || '', requestedBy: req.requestedBy || '',
+              requestedByPhone: req.requestedByPhone || '', requestedByUserId: req.userId || '',
+              ...(req.createdAt?.toMillis?.() != null ? { requestedAt: req.createdAt.toMillis() } : {}),
+              requestTime: fresh.requestTime || req.requestTime || '08:30', address: fresh.address || '',
+              note: req.note || req.notes || '', dispatcherNote: req.stopNotes?.[`stop_${d.destIndex}`] || '',
+              dispatcherName: req.stopNoteAuthors?.[`stop_${d.destIndex}`] || req.stopNotesUpdatedBy || '',
+            }
+          }),
+        }
+        const grouped: Record<string, number[]> = {}
+        dests.forEach(d => { (grouped[d.vrDocId] ||= []).push(d.destIndex) })
+        const assignments = Object.entries(grouped).map(([requestId, destinationIndexes]) => ({ requestId, destinationIndexes }))
+        if (cancelled() || !flight.isCurrent()) return
+        const payload = borrowChoice
+          ? { action: 'borrow' as const, date: tripDateStr, trip, assignments, ...borrowChoice }
+          : { action: 'create' as const, trip, endDate: continuousEndDate, assignments }
+        const operationId = flight.operationId(JSON.stringify({ userId: user.uid, ...payload }))
+        const result = await runContinuousQueueCommand(user, { ...payload, operationId })
+        succeeded = true
+        if (!flight.isCurrent()) return
+        continuousQueues.refresh()
+        toast({ title: 'บันทึกคิวแล้ว', description: borrowChoice ? 'ปรับเฉพาะวันนี้ และเก็บช่วงคิวเดิมไว้แล้ว' : `คิว ${queueDateLabel(tripDateStr)} ถึง ${queueDateLabel(continuousEndDate)} · ${result.tripIds.length} วัน` })
+        resetAll()
+        return
+      }
       const tripDateObj = new Date(tripDateStr + 'T00:00:00');
       const d = String(tripDateObj.getDate()).padStart(2, '0');
       const m = String(tripDateObj.getMonth() + 1).padStart(2, '0');
       const datePrefix = `T-${d}${m}`;
       const qTrips = query(collection(db, "trips"), where("tripDate", "==", tripDateStr));
       const snapTrips = await getDocs(qTrips);
-      // เช็กครั้งสุดท้าย — ไม่มี await คั่นระหว่างตรงนี้กับการเขียนครั้งแรก (setDoc)
+      // เช็กการเลือกครั้งสุดท้ายก่อนส่งทริปไปบันทึกพร้อมตรวจคิวต่อเนื่อง
       if (cancelled()) return
       const sequence = String(snapTrips.size + 1).padStart(3, '0');
       const safety = Math.floor(Math.random() * 10);
@@ -462,7 +578,10 @@ export default function TripGroupingPage() {
         lng: settings?.warehouseLongitude || 100.7129 
       }
 
-      await setDoc(doc(db, "trips", tripId), {
+      const vrGroups: Record<string, number[]> = {}
+      dests.forEach(d => { (vrGroups[d.vrDocId] ||= []).push(d.destIndex) })
+
+      await createTripWithQueueGuard(db, tripId, {
         id: tripId,
         tripId,
         tripDate: tripDateStr,
@@ -500,37 +619,18 @@ export default function TripGroupingPage() {
           dispatcherNote: d.dispatcherNote || "",
           dispatcherName: d.dispatcherName || ""
         }))
+      }, {
+        assignments: Object.entries(vrGroups).map(([requestId, destinationIndexes]) => ({ requestId, destinationIndexes }))
       })
-
-      const vrGroups: Record<string, number[]> = {}
-      dests.forEach(d => {
-        if (!vrGroups[d.vrDocId]) vrGroups[d.vrDocId] = []
-        vrGroups[d.vrDocId].push(d.destIndex)
-      })
-
-      // Update every source vehicle request in parallel instead of
-      // awaiting them one-by-one (previously O(n) sequential round-trips).
-      await Promise.all(
-        Object.entries(vrGroups).map(([docId, indexes]) => {
-          const vr = requests?.find(r => r.id === docId)
-          if (!vr) return null
-          const newAssigned = [...(vr.assignedDestinations || []), ...indexes]
-          const isComplete = newAssigned.length === vr.destinations.length
-          return updateDoc(doc(db, "vehicleRequests", docId), {
-            assignedDestinations: arrayUnion(...indexes),
-            status: isComplete ? "approved" : "partial",
-            tripId: isComplete ? tripId : vr.tripId || null,
-            updatedAt: serverTimestamp()
-          })
-        })
-      )
 
       toast({ title: "สำเร็จ", description: `สร้างเที่ยววิ่ง ${tripId} เรียบร้อยแล้ว` })
+      succeeded = true
       resetAll()
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถสร้างเที่ยววิ่งได้", variant: "destructive" })
+      toast({ title: "เกิดข้อผิดพลาด", description: e?.message || "ไม่สามารถสร้างเที่ยววิ่งได้", variant: "destructive" })
     } finally {
+      flight.finish(succeeded)
       setIsProcessing(false)
     }
   }
@@ -581,7 +681,7 @@ export default function TripGroupingPage() {
 
       const fuelRate = trip.fuelRateUsed || settings?.defaultFuelRate || 10
       const diesel = trip.dieselPriceUsed || settings?.dieselPrice || 32.5
-      await updateDoc(doc(db, "trips", trip.id), {
+      await updateTripWithQueueGuard(db, trip.id, {
         totalDistanceKm: km,
         fuelCost: (km / fuelRate) * diesel,
         updatedAt: serverTimestamp(),
@@ -613,6 +713,7 @@ export default function TripGroupingPage() {
         return
       }
       const freshTrip = freshTripSnap.data() as any
+      if (isManagedTrip(freshTrip)) throw new Error('คิวต่อเนื่องต้องปรับเฉพาะวัน ไม่สามารถรวมงานด้วยปุ่มนี้')
       const gateDriverId: string = freshTrip.actualDriverId || freshTrip.driverId
       // drivers ส่งตรง ๆ (ยังไม่โหลด = ถามแบบตรวจไม่ได้) · confirmFn ไม่เด้งกล่องถ้า dialog ถูกปิด/ออกจากหน้าไปแล้ว
       const ok = await confirmLeaveBeforeAssign(
@@ -639,7 +740,7 @@ export default function TripGroupingPage() {
       }
 
       // อ่านทริปปลายทางสดอีกครั้งหลังด่าน 2 แล้วใช้ snapshot นี้เป็นฐานของ stops/sourceVRIds (ไม่ใช่ existingTrip ใน state ตอนเปิด dialog)
-      // — กันจุดที่ session อื่นเพิ่มเข้าทริประหว่างเปิด dialog/รอด่านหายไป · ไม่มี await คั่นระหว่างการอ่านนี้กับการเขียนครั้งแรก (updateDoc trips)
+      // กันจุดที่ session อื่นเพิ่มระหว่างเปิด dialog หรือรอด่านหายไป
       // ทริปหาย / ถูกยกเลิก / คนขับจริงหรือวันของทริปไม่ตรงกับที่ด่านวันลาเพิ่งตรวจ = ไม่เขียนอะไรเลย ให้เลือกใหม่
       const latestTripSnap = await getDoc(doc(db, "trips", existingTrip.id))
       if (cancelled()) return
@@ -689,39 +790,30 @@ export default function TripGroupingPage() {
         ...(latestTrip.sourceVRIds || []),
         ...validNewStops.map(d => d.vrId)
       ]))
+      const vrGroups: Record<string, number[]> = {}
+      validNewStops.forEach(d => { (vrGroups[d.vrDocId] ||= []).push(d.destIndex) })
 
-      await updateDoc(doc(db, "trips", existingTrip.id), {
+      await updateTripWithQueueGuard(db, existingTrip.id, {
         stops: mergedStops,
         sourceVRIds,
         updatedAt: serverTimestamp()
+      }, {
+        assignments: Object.entries(vrGroups).map(([requestId, destinationIndexes]) => ({ requestId, destinationIndexes })),
+        expected: {
+          tripDate: latestTrip.tripDate || latestTrip.date,
+          driverId: latestTrip.actualDriverId || latestTrip.driverId,
+          vehicleId: latestTrip.vehicleId,
+          stops: currentStops,
+          sourceVRIds: latestTrip.sourceVRIds || []
+        }
       })
       void recalcMergedTripDistance(latestTrip, mergedStops) // เลข กม. ต้องขยับตามจุดที่รวมเข้า
 
-      const vrGroups: Record<string, number[]> = {}
-      validNewStops.forEach(d => {
-        if (!vrGroups[d.vrDocId]) vrGroups[d.vrDocId] = []
-        vrGroups[d.vrDocId].push(d.destIndex)
-      })
-
-      for (const [docId, indexes] of Object.entries(vrGroups)) {
-        const vr = requests?.find(r => r.id === docId)
-        if (vr) {
-          const newAssigned = [...(vr.assignedDestinations || []), ...indexes]
-          const isComplete = newAssigned.length === vr.destinations.length
-          await updateDoc(doc(db, "vehicleRequests", docId), {
-            assignedDestinations: arrayUnion(...indexes),
-            status: isComplete ? "approved" : "partial",
-            tripId: isComplete ? existingTrip.id : vr.tripId || null,
-            updatedAt: serverTimestamp()
-          })
-        }
-      }
-
       toast({ title: "สำเร็จ", description: `รวมจุดใหม่เข้า Trip ${latestTrip.tripId} ของ ${latestTrip.driverName} แล้ว` })
       resetAll()
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถรวม Trip ได้", variant: "destructive" })
+      toast({ title: "เกิดข้อผิดพลาด", description: e?.message || "ไม่สามารถรวม Trip ได้", variant: "destructive" })
     } finally {
       setIsProcessing(false)
     }
@@ -734,6 +826,8 @@ export default function TripGroupingPage() {
     setVehicleId("")
     setDriverId("")
     setIsConfirmOpen(false)
+    setBorrowOpen(false)
+    setContinuousEndDate('')
     setMergeDialog({ show: false })
     // กลับไปเริ่มที่ "วันแรกที่มีงาน" อัตโนมัติอีกครั้ง (ออปชัน A) ไม่เด้งกลับเป็น "ทั้งหมด"
     didAutoPickDate.current = false
@@ -878,10 +972,15 @@ export default function TripGroupingPage() {
         vehicleId={vehicleId} driverId={driverId} setVehicleId={setVehicleId} setDriverId={setDriverId}
         onCreate={handleCreateTrip} isProcessing={isProcessing} mode={mode}
         leaveFor={(id) => leaveForDriver(id, badgeDate)}
+        startDate={badgeDate} endDate={continuousEndDate} setEndDate={setContinuousEndDate}
+        queueStatus={continuousQueues.status} hasQueueConflict={queueConflicts.length > 0}
+        onRefreshQueues={continuousQueues.refresh}
       />
+      <BorrowQueueDialog open={borrowOpen} onClose={() => setBorrowOpen(false)} date={badgeDate} bookings={queueConflicts} driverId={driverId} vehicleId={vehicleId}
+        destinationNames={selectedDestinations.map(d => d.siteName || d.customName || '')} isProcessing={isProcessing} onConfirm={confirmCreateTrip} />
 
       {/* Confirmation Dialog */}
-      <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+      <AlertDialog open={isConfirmOpen} onOpenChange={open => { if (!isProcessing) setIsConfirmOpen(open) }}>
         <AlertDialogContent className="max-w-md rounded-xl border-accent/20 bg-card">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-lg font-bold text-accent">ยืนยันสร้างเที่ยววิ่ง</AlertDialogTitle>
@@ -892,15 +991,16 @@ export default function TripGroupingPage() {
                   <p>• จำนวนจุดหมาย: <span className="font-bold text-white">{selectedDestinations.length} จุด</span></p>
                   <p>• ทะเบียนรถ: <span className="font-bold text-white">{selectedVehicle?.licensePlate}</span></p>
                   <p>• คนขับ: <span className="font-bold text-white">{drivers?.find(d => d.id === driverId)?.name}</span></p>
+                  <p>• วันที่ <span className="font-bold text-white">{queueDateLabel(badgeDate)}{continuousEndDate && continuousEndDate > badgeDate ? ` ถึง ${queueDateLabel(continuousEndDate)}` : ''}</span></p>
                 </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 mt-4">
-            <AlertDialogCancel className="h-10 text-sm flex-1">ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCreateTrip} className="h-10 text-sm flex-1 bg-accent" disabled={isProcessing}>
+            <AlertDialogCancel className="h-10 text-sm flex-1" disabled={isProcessing}>ยกเลิก</AlertDialogCancel>
+            <Button onClick={() => void confirmCreateTrip()} className="h-10 text-sm flex-1 bg-accent" disabled={isProcessing}>
               {isProcessing ? "กำลังประมวลผล..." : "ยืนยันสร้างงาน"}
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

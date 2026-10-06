@@ -42,6 +42,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
+import { useContinuousQueues } from "@/hooks/use-continuous-queues"
+import { QueueNoticeCard } from "@/components/continuous-queue/QueueNoticeCard"
 
 interface DestinationRequest {
   id: string;
@@ -150,6 +152,7 @@ export function RequestForm() {
   const [isSendingUrgent, setIsSendingUrgent] = React.useState(false)
   const [requestedBy, setRequestedBy] = React.useState("")
   const [selectedDate, setSelectedDate] = React.useState("")
+  const continuousQueues = useContinuousQueues(selectedDate)
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [note, setNote] = React.useState("")
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
@@ -491,6 +494,7 @@ export function RequestForm() {
                     />
                   </PopoverContent>
                 </Popover>
+                <QueueNoticeCard date={selectedDate} status={continuousQueues.status} notices={continuousQueues.notices} />
                 {isSelectingToday && (
                   <div className="mt-2 flex items-start gap-2 rounded-lg border border-orange-500/40 bg-orange-500/10 p-3 text-xs text-orange-300">
                     <span className="text-base leading-none">⚠️</span>

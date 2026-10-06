@@ -33,7 +33,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc } from "@/firebase"
-import { collection, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc, addDoc, where } from "firebase/firestore"
+import { collection, query, orderBy, doc, serverTimestamp, addDoc, where } from "firebase/firestore"
 import { Trip, TripStatus, UserProfile, Driver, Vehicle, Site, TripStop } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
@@ -45,6 +45,8 @@ import { useDriverLeaves } from "@/hooks/use-driver-leaves"
 import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
 import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
+import { isManagedTrip } from "@/lib/continuousQueue"
+import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQueueGuard"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -138,6 +140,7 @@ export default function TripHistoryPage() {
   const { data: sites } = useCollection<Site>(sitesRef)
 
   const getDisplayStatus = (trip: any): TripStatus => {
+    if (isManagedTrip(trip)) return trip.status
     if (trip.status === 'Cancelled') return 'Cancelled'
     const today = new Date().toISOString().split('T')[0]
     const tripDate = trip.tripDate || ""
@@ -197,17 +200,22 @@ export default function TripHistoryPage() {
   }, [searchTerm, selectedStatus, startDate, endDate])
 
   const handleStatusChange = async (tripId: string, newStatus: TripStatus) => {
-    if (isViewer) return
-    const tripRef = doc(db, "trips", tripId)
-    await updateDoc(tripRef, { 
+    const target = trips?.find(t => t.id === tripId)
+    if (!isStaff || !target || isManagedTrip(target)) return
+    try {
+    await updateTripWithQueueGuard(db, tripId, {
       status: newStatus,
       updatedAt: serverTimestamp()
     })
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} แล้ว` })
+    } catch (e: any) { toast({ title: 'เปลี่ยนสถานะไม่สำเร็จ', description: e.message, variant: 'destructive' }) }
   }
 
   const handleOpenEdit = (trip: Trip) => {
     if (isViewer) return
+    if (isManagedTrip(trip)) {
+      toast({ title: 'คิวต่อเนื่อง', description: 'ปรับคิวเฉพาะวันในหน้าสรุปคิวรถประจำวัน', variant: 'destructive' }); return
+    }
     
     const canEdit = isAdmin || (profile?.role === 'dispatcher' && (trip.status === 'Planned' || trip.status === 'In Progress'))
     if (!canEdit) {
@@ -231,6 +239,7 @@ export default function TripHistoryPage() {
 
   const handleSaveEdit = async () => {
     if (!editingTrip || !user) return
+    if (isManagedTrip(editingTrip)) return
     if (!editFormData.note.trim()) {
       toast({ title: "กรุณาระบุหมายเหตุ", description: "ต้องระบุเหตุผลในการแก้ไขเพื่อบันทึกประวัติ", variant: "destructive" })
       return
@@ -262,7 +271,6 @@ export default function TripHistoryPage() {
         if (!ok) return
       }
 
-      const tripRef = doc(db, "trips", editingTrip.id)
       const selectedVehicle = vehicles?.find(v => v.id === editFormData.vehicleId)
       const selectedDriver = drivers?.find(d => d.id === editFormData.driverId)
 
@@ -287,7 +295,7 @@ export default function TripHistoryPage() {
       if (cargoChanged) changes.cargoChanged = true
 
       // Update Trip
-      await updateDoc(tripRef, {
+      await updateTripWithQueueGuard(db, editingTrip.id, {
         vehicleId: editFormData.vehicleId,
         vehiclePlate: selectedVehicle?.licensePlate || "",
         driverId: editFormData.driverId,
@@ -307,8 +315,8 @@ export default function TripHistoryPage() {
 
       toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลเที่ยววิ่ง ${editingTrip.tripId} เรียบร้อยแล้ว` })
       setIsEditOpen(false)
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })
+    } catch (e: any) {
+      toast({ title: "เกิดข้อผิดพลาด", description: e?.message || "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })
     } finally {
       saveEditBusyRef.current = false
     }
@@ -316,6 +324,7 @@ export default function TripHistoryPage() {
 
   const initiateDelete = (trip: any) => {
     if (isViewer) return
+    if (isManagedTrip(trip)) return
     setTripToDelete(trip)
     setIsDeleteOpen(true)
   }
@@ -323,19 +332,21 @@ export default function TripHistoryPage() {
   const confirmDelete = async () => {
     if (!tripToDelete) return
     try {
-      await deleteDoc(doc(db, "trips", tripToDelete.id))
+      await deleteTripWithQueueGuard(db, tripToDelete.id)
       toast({ title: "ลบสำเร็จ", description: `ลบเที่ยววิ่ง ${tripToDelete.tripId || tripToDelete.id} เรียบร้อยแล้ว` })
       setIsDeleteOpen(false)
       setTripToDelete(null)
       const newSelection = new Set(selectedIds)
       newSelection.delete(tripToDelete.id)
       setSelectedIds(newSelection)
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
+    } catch (e: any) {
+      toast({ title: "เกิดข้อผิดพลาด", description: e?.message || "ไม่สามารถลบข้อมูลได้", variant: "destructive" })
     }
   }
 
   const toggleSelect = (id: string) => {
+    const target = trips?.find(t => t.id === id)
+    if (!target || isManagedTrip(target)) return
     const newSelection = new Set(selectedIds)
     if (newSelection.has(id)) {
       newSelection.delete(id)
@@ -346,16 +357,17 @@ export default function TripHistoryPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredTrips.length) {
+    const deletable = filteredTrips.filter(t => !isManagedTrip(t))
+    if (selectedIds.size === deletable.length) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(filteredTrips.map(t => t.id)))
+      setSelectedIds(new Set(deletable.map(t => t.id)))
     }
   }
 
   const confirmBulkDelete = async () => {
     try {
-      const promises = Array.from(selectedIds).map(id => deleteDoc(doc(db, "trips", id)))
+      const promises = Array.from(selectedIds).map(id => deleteTripWithQueueGuard(db, id))
       await Promise.all(promises)
       toast({ title: "ลบสำเร็จ", description: `ลบทั้งหมด ${selectedIds.size} รายการเรียบร้อยแล้ว` })
       setSelectedIds(new Set())
@@ -367,7 +379,7 @@ export default function TripHistoryPage() {
 
   const handleCleanup = async () => {
     if (isViewer) return
-    const incomplete = trips?.filter(t => !t.tripId || t.stops?.length === 0 || !t.vehiclePlate);
+    const incomplete = trips?.filter(t => !isManagedTrip(t) && (!t.tripId || t.stops?.length === 0 || !t.vehiclePlate));
     if (!incomplete || incomplete.length === 0) {
       toast({ title: "ไม่พบข้อมูลที่ไม่สมบูรณ์" });
       return;
@@ -375,7 +387,7 @@ export default function TripHistoryPage() {
     
     if (confirm(`พบข้อมูลไม่สมบูรณ์ ${incomplete.length} รายการ ต้องการลบทั้งหมดหรือไม่?`)) {
       for (const t of incomplete) {
-        await deleteDoc(doc(db, "trips", t.id));
+        await deleteTripWithQueueGuard(db, t.id);
       }
       toast({ title: `ลบข้อมูลไม่สมบูรณ์ ${incomplete.length} รายการเรียบร้อยแล้ว` });
     }
@@ -480,7 +492,7 @@ export default function TripHistoryPage() {
           <div className="flex items-center gap-3">
             <Checkbox 
               id="select-all"
-              checked={selectedIds.size === filteredTrips.length && filteredTrips.length > 0}
+              checked={selectedIds.size > 0 && selectedIds.size === filteredTrips.filter(t => !isManagedTrip(t)).length}
               onCheckedChange={toggleSelectAll}
             />
             <label htmlFor="select-all" className="text-xs md:text-sm font-semibold cursor-pointer select-none">
@@ -519,6 +531,7 @@ export default function TripHistoryPage() {
                   <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
                     <Checkbox 
                       checked={selectedIds.has(trip.id)}
+                      disabled={isManagedTrip(trip)}
                       onCheckedChange={() => toggleSelect(trip.id)}
                     />
                   </div>
@@ -529,7 +542,7 @@ export default function TripHistoryPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="font-bold text-base md:text-lg truncate">{trip.tripId || "ID Error"}</span>
-                    {!isStaff ? (
+                    {!isStaff || isManagedTrip(trip) ? (
                       <Badge className={cn("text-[10px] h-5", getStatusColor(getDisplayStatus(trip)))}>
                         {getDisplayStatus(trip)}
                       </Badge>
@@ -552,6 +565,7 @@ export default function TripHistoryPage() {
                     )}
                   </div>
                   <p className="text-[10px] md:text-xs text-muted-foreground truncate">{formatDateDisplay(trip.tripDate)} • {trip.stops?.[trip.stops.length - 1]?.siteName || "No stops"}</p>
+                  {isManagedTrip(trip) && <p className="text-xs text-amber-300">คิวต่อเนื่อง ปรับเฉพาะวันในหน้าสรุปคิวรถ</p>}
                 </div>
               </div>
 
@@ -594,6 +608,7 @@ export default function TripHistoryPage() {
                         e.stopPropagation();
                         handleOpenEdit(trip);
                       }}
+                      disabled={isManagedTrip(trip)}
                     >
                       <Edit className="h-5 w-5" />
                     </Button>
@@ -605,6 +620,7 @@ export default function TripHistoryPage() {
                         e.stopPropagation();
                         initiateDelete(trip);
                       }}
+                      disabled={isManagedTrip(trip)}
                     >
                       <Trash2 className="h-5 w-5" />
                     </Button>

@@ -55,13 +55,14 @@ export default function DashboardPage() {
   // Filter trips based on role
   const visibleTrips = React.useMemo(() => {
     if (!allTrips || !profile) return []
+    const activeTrips = allTrips.filter(t => t.status !== 'Cancelled')
     const isStaff = profile.role === 'admin' || profile.role === 'dispatcher'
-    if (isStaff) return allTrips
+    if (isStaff) return activeTrips
 
     const userEmail = user?.email
     const userName = profile.name
 
-    return allTrips.filter(trip => {
+    return activeTrips.filter(trip => {
       const isOwner = 
         trip.requestedBy === userEmail || 
         (trip as any).requestedByEmail === userEmail ||
