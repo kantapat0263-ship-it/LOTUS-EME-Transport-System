@@ -11,7 +11,8 @@
 - [x] Verify the feature on local demo emulators and desktop/mobile browser surfaces. Source tests 462/462, queue tests 50/50 and existing rules tests 27/27 passed before integration with the latest main.
 - [x] Obtain an independent read-only review of the integrated feature diff.
 - [x] Preserve and integrate main b2a21a1 (notes, route modes and GPS end time), add ended-use regression coverage, and rerun checks. Source 488/488; queue 54/54; rules 27/27; TypeScript and final build passed. Final independent integration review found no outstanding defects; reviewed source hashes match the release files. Latest desktop/mobile browser checks passed.
-- [ ] Deploy the application and matching Firestore rules after final verification. User authorized DEPLOY on 2026-10-06.
+- [x] Deploy application e68709a and matching Firestore rules after verification. User authorized DEPLOY on 2026-10-06. Production build ID matches; public pages200; unauthenticated queue GET401; live rules hash matches source.
+- [ ] Repair pre-existing CI dependency installation mismatch and verify the next GitHub run. No application-source or runtime-package changes are part of this repair.
 - [x] Skip an unrequested PR, design panel and unrelated cleanup under project overrides.
 
 ## Acceptance
