@@ -343,14 +343,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         [`stopNotesUpdatedAt`]: new Date().toISOString()
       }
       await updateDoc(vrRef, updateData)
-
-      if (selectedReq.tripId) {
-        const tripRef = doc(db, "trips", selectedReq.tripId)
-        await updateDoc(tripRef, {
-          [`stopNotes.${noteKey}`]: noteValue,
-          [`stopNoteAuthors.${noteKey}`]: authorName // mirror ชื่อไป trip ให้หน้าคนขับ/ใบสรุปโชว์ได้
-        })
-      }
+      // ไม่ mirror ไป trip.stopNotes แล้ว: noteKey คือลำดับจุดใน "ใบขอ" แต่ใบสรุป/ใบงานคนขับอ่านด้วยลำดับจุดใน "ทริป"
+      // (ทริปรวมหลายใบ ลำดับไม่ตรงกัน → หมายเหตุไปโผล่ผิดจุด) · จุดที่ยังไม่จัด หมายเหตุติดไปกับ stop ตอนจัดเข้าทริปเอง
+      // · จุดที่จัดแล้ว แก้ได้ที่ใบสรุป (แผงปิดผลงาน → ✏️ หมายเหตุ)
 
       toast({ title: "บันทึกแล้ว", description: `บันทึกหมายเหตุจุดที่ ${stopIndex + 1} เรียบร้อย` })
     } catch (e) {

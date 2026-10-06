@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useCollection, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
-import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc, updateDoc, runTransaction } from "firebase/firestore"
+import { useFirestore, useCollection, useDoc, useMemoFirebase, useUser, updateDocumentNonBlocking, errorEmitter, FirestorePermissionError } from "@/firebase"
+import { collection, query, where, orderBy, getDocs, getDoc, doc, onSnapshot, serverTimestamp, setDoc, deleteDoc, updateDoc, runTransaction, deleteField } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { 
@@ -30,7 +30,8 @@ import {
   CalendarClock,
   Ban,
   ListChecks,
-  Trash2
+  Trash2,
+  Pencil
 } from "lucide-react"
 import { 
   Dialog, 
@@ -52,6 +53,7 @@ import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
+import { editStopNote, stopNoteKey } from "@/lib/stopNote"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
@@ -97,6 +99,9 @@ export default function DailySummaryPage() {
   // #5 เก็บแค่ tripId + stopIdx (ไม่ snapshot ทั้ง trip) → ตอนยืนยันค่อยหยิบทริปสดล่าสุด
   //     กันเคสเปิด dialog ค้างแล้วไปแก้จุดอื่น แล้วถูกเขียนทับด้วย stops ก้อนเก่า
   const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  // แก้หมายเหตุคนจัดรถรายจุด (✏️) หลังจัดคิวแล้ว — เดิมแก้ได้แค่ในหน้าคำขอก่อนจัด
+  const [noteDialog, setNoteDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  const [noteDraft, setNoteDraft] = React.useState("")
   const [postponeDateStr, setPostponeDateStr] = React.useState<string>("")
   const [isPostponing, setIsPostponing] = React.useState(false)
   // แทรกงานด่วน (สั่งเพิ่มระหว่างวัน เช่นทางไลน์) — แทรกตรงเข้าทริปคันนั้น เฉพาะทริปวันนี้
@@ -558,6 +563,52 @@ export default function DailySummaryPage() {
 
   // --- Actual-outcome reconciliation (after the report is posted to LINE) ---
   const recordedBy = user?.displayName || user?.email || ""
+  // ชื่อจริงจากโปรไฟล์ (users/{uid}.name) สำหรับ "(โดย …)" ของหมายเหตุ — ติดไปในรูป/ข้อความที่ส่งกลุ่ม จึงไม่ใช้อีเมล
+  const profileRef = useMemoFirebase(() => (db && user ? doc(db, "users", user.uid) : null), [db, user])
+  const { data: profile } = useDoc<{ name?: string }>(profileRef)
+  const noteAuthor = profile?.name || user?.displayName || "ผู้จัดคิว"
+
+  const openNoteDialog = (trip: Trip, sIdx: number) => {
+    const current = (trip as any).stopNotes?.[stopNoteKey(sIdx)] || (trip.stops?.[sIdx] as any)?.dispatcherNote || ""
+    setNoteDraft(current)
+    setNoteDialog({ tripId: trip.id, stopIdx: sIdx })
+  }
+
+  // เก็บหมายเหตุบนตัว stop + ลบ key รุ่นเก่า trip.stopNotes[stop_N] ของจุดนี้ (ไม่งั้นค่ารุ่นเก่ายังแสดงทับ)
+  const saveStopNote = () => {
+    if (!noteDialog) return
+    const trip = trips.find((t) => t.id === noteDialog.tripId) // หยิบทริปสด ไม่ใช้ snapshot ตอนเปิด dialog
+    if (!trip || !(trip.stops || [])[noteDialog.stopIdx]) {
+      setNoteDialog(null)
+      return
+    }
+    const key = stopNoteKey(noteDialog.stopIdx)
+    const clean = editStopNote(trip.stops || [], noteDialog.stopIdx, noteDraft, noteAuthor).map(
+      (st) => Object.fromEntries(Object.entries(st).filter(([, v]) => v !== undefined)) as unknown as TripStop
+    )
+    const omitKey = (m: Record<string, string> | undefined) => {
+      if (!m) return m
+      const { [key]: _drop, ...rest } = m
+      return rest
+    }
+    setTrips((prev) =>
+      prev.map((t) =>
+        t.id === trip.id
+          ? ({ ...t, stops: clean, stopNotes: omitKey((t as any).stopNotes), stopNoteAuthors: omitKey((t as any).stopNoteAuthors) } as Trip)
+          : t
+      )
+    )
+    if (db) {
+      updateDocumentNonBlocking(doc(db, "trips", trip.id), {
+        stops: clean,
+        [`stopNotes.${key}`]: deleteField(),
+        [`stopNoteAuthors.${key}`]: deleteField(),
+        updatedAt: serverTimestamp(),
+      })
+    }
+    setNoteDialog(null)
+    toast({ title: noteDraft.trim() ? "บันทึกหมายเหตุแล้ว" : "ลบหมายเหตุแล้ว" })
+  }
 
   // Strip every outcome-related key so a stop can be reset cleanly back to "as planned".
   // (Firestore rejects `undefined` values, so we omit keys rather than set them.)
@@ -1281,6 +1332,14 @@ export default function DailySummaryPage() {
           </span>
           <button
             type="button"
+            onClick={() => openNoteDialog(trip, sIdx)}
+            title="แก้หมายเหตุคนจัดรถของงานนี้ (✏️ ในใบสรุป/ใบงานคนขับ)"
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-blue-500/40 px-1.5 py-1 text-[11px] font-medium text-blue-300 hover:bg-blue-500/15"
+          >
+            <Pencil className="h-3.5 w-3.5" /> หมายเหตุ
+          </button>
+          <button
+            type="button"
             onClick={() => cancelStop(trip, sIdx)}
             title={(stop as any).adhoc ? "ลบงานแทรกนี้" : "ยกเลิกงานนี้ (ลูกค้าแจ้งยกเลิก — งานหายจากใบสรุป)"}
             className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-500/40 px-1.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/15"
@@ -1969,6 +2028,35 @@ export default function DailySummaryPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="w-full h-11" onClick={() => setSelectedTripForShare(null)}>ปิด</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* แก้หมายเหตุคนจัดรถรายจุด — อยู่นอก #summary-report (ไม่ติดรูป) แต่ผลไปแสดงในใบสรุป/รูป/ใบงานคนขับ */}
+      <Dialog open={!!noteDialog} onOpenChange={(open) => { if (!open) setNoteDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-blue-400" /> แก้หมายเหตุคนจัดรถ
+            </DialogTitle>
+            <DialogDescription>
+              {noteDialog
+                ? `จุด: ${trips.find(t => t.id === noteDialog.tripId)?.stops?.[noteDialog.stopIdx]?.siteName || ""} — เว้นว่างแล้วบันทึก = ลบหมายเหตุ · ชื่อท้ายหมายเหตุจะเป็น "${noteAuthor}"`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            rows={4}
+            placeholder="เช่น ขากลับให้นำรถแค็ป ถส-5694 กลับมา"
+            className="w-full rounded-lg bg-background border border-border/50 text-sm p-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNoteDialog(null)}>ยกเลิก</Button>
+            <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold" onClick={saveStopNote}>
+              <Pencil className="mr-2 h-4 w-4" /> บันทึกหมายเหตุ
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
