@@ -586,6 +586,9 @@ export default function DailySummaryPage() {
   // ชื่อจริงจากโปรไฟล์ (users/{uid}.name) สำหรับ "(โดย …)" ของหมายเหตุ — ติดไปในรูป/ข้อความที่ส่งกลุ่ม จึงไม่ใช้อีเมล
   const profileRef = useMemoFirebase(() => (db && user ? doc(db, "users", user.uid) : null), [db, user])
   const { data: profile, isLoading: profileLoading } = useDoc<{ name?: string }>(profileRef)
+  // คีย์ Google Maps: production ไม่ได้ตั้ง env → ใช้คีย์ในเมนูตั้งค่าระบบ เหมือนหน้าอื่น (จัดกลุ่ม/ติดตามรถ/คำขอ)
+  const settingsRef = useMemoFirebase(() => (db && user ? doc(db, "companySettings", "default") : null), [db, user])
+  const { data: companySettings } = useDoc<{ googleMapsApiKeyReference?: string }>(settingsRef)
   // ใช้ชื่อจากโปรไฟล์เท่านั้น (ไม่ใช้ displayName/อีเมล) · โปรไฟล์ยังไม่โหลด = ว่าง → ปุ่มบันทึกปิด
   const noteAuthor = profileLoading ? "" : profile?.name?.trim() || (profile ? "ผู้จัดคิว" : "")
 
@@ -701,8 +704,11 @@ export default function DailySummaryPage() {
       )
       if (coordStops.length === 0) return "no-coords"
 
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
-      if (!apiKey) return "failed"
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference || ""
+      if (!apiKey) {
+        console.error("[computePlanDistance] ไม่พบคีย์ Google Maps (env/ตั้งค่าระบบ)")
+        return "failed"
+      }
       const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
       await loader.load()
       const g = (window as any).google
