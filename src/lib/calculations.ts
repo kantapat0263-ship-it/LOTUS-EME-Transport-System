@@ -442,6 +442,8 @@ export interface IncomingStopLike extends OutcomeStopLike {
   requestedByPhone?: string | null
   note?: string | null
   address?: string | null
+  dispatcherNote?: string | null
+  dispatcherName?: string | null
 }
 
 export interface IncomingTripLike {
@@ -449,6 +451,8 @@ export interface IncomingTripLike {
   driverName?: string | null
   vehiclePlate?: string | null
   stops?: IncomingStopLike[] | null
+  stopNotes?: Record<string, string> | null
+  stopNoteAuthors?: Record<string, string> | null
 }
 
 export interface IncomingJob {
@@ -464,6 +468,8 @@ export interface IncomingJob {
   requestedByPhone: string
   note: string
   address: string
+  dispatcherNote: string
+  dispatcherName: string
   /** True if the source stop was a refusal someone picked up — kept for internal
    *  logic only; the destination UI must stay public-safe and never show "ปฏิเสธ". */
   wasRefused: boolean
@@ -483,7 +489,7 @@ export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: strin
   const out: IncomingJob[] = []
   for (const t of allTrips) {
     if (t.id === tripId) continue // a trip never reassigns to itself
-    for (const s of t.stops || []) {
+    for (const [sIdx, s] of (t.stops || []).entries()) {
       if (s.reassignedToTripId === tripId) {
         out.push({
           fromTripId: t.id || '',
@@ -496,6 +502,8 @@ export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: strin
           requestedByPhone: s.requestedByPhone || '',
           note: s.note || '',
           address: s.address || '',
+          dispatcherNote: t.stopNotes?.[`stop_${sIdx}`] || s.dispatcherNote || '',
+          dispatcherName: t.stopNoteAuthors?.[`stop_${sIdx}`] || s.dispatcherName || '',
           wasRefused: s.outcome === 'driver-refused',
         })
       }

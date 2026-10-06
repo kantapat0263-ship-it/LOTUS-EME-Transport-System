@@ -254,6 +254,14 @@ export default function DriverTripPage() {
                         {job.cargoDetails && (
                           <p className="text-sm text-gray-700 whitespace-pre-wrap leading-snug mt-0.5">{job.cargoDetails}</p>
                         )}
+                        {job.dispatcherNote && (
+                          <div className="mt-2 flex gap-2">
+                            <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-blue-700 font-medium whitespace-pre-line break-words">
+                              บันทึกจัดรถ: {job.dispatcherNote}{job.dispatcherName ? ` (โดย ${job.dispatcherName})` : ""}
+                            </p>
+                          </div>
+                        )}
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           {(job.fromVehiclePlate || job.fromDriverName) && (
                             <span className="text-[11px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">

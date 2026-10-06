@@ -1949,6 +1949,11 @@ export default function DailySummaryPage() {
                                     {job.note && (
                                       <div className="pl-3 text-[10px] text-amber-700">📌 หมายเหตุผู้ขอ: {job.note}</div>
                                     )}
+                                    {job.dispatcherNote && (
+                                      <div className="pl-3 text-[10px] text-blue-700 font-bold whitespace-pre-line break-words">
+                                        บันทึกจัดรถ: {job.dispatcherNote}{job.dispatcherName ? ` (โดย ${job.dispatcherName})` : ""}
+                                      </div>
+                                    )}
                                     {(job.fromVehiclePlate || job.fromDriverName) && (
                                       <div className="pl-3 text-[10px] text-gray-600">
                                         โยกมาจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}

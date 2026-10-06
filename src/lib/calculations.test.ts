@@ -339,6 +339,68 @@ describe('computeDriverReliability', () => {
 })
 
 describe('incomingStopsForTrip', () => {
+  it('โยกบางจุดหรือทั้งเที่ยวแล้วหมายเหตุอยู่กับจุดและรถปลายทางที่ถูกต้อง', () => {
+    const source = {
+      id: 'source', stops: [
+        { siteName: 'A', dispatcherNote: 'หมายเหตุ A', dispatcherName: 'ผู้จัด A', reassignedToTripId: 'receiver' },
+        { siteName: 'B', dispatcherNote: 'หมายเหตุ B', dispatcherName: 'ผู้จัด B' },
+        { siteName: 'C', dispatcherNote: 'หมายเหตุ C', reassignedToTripId: 'other-receiver' },
+      ],
+    }
+    expect(incomingStopsForTrip([source], 'receiver').map(j => [j.siteName, j.dispatcherNote])).toEqual([['A', 'หมายเหตุ A']])
+    expect(incomingStopsForTrip([source], 'other-receiver').map(j => [j.siteName, j.dispatcherNote])).toEqual([['C', 'หมายเหตุ C']])
+    const whollyMoved = { ...source, stops: source.stops.map(s => ({ ...s, reassignedToTripId: 'receiver' })) }
+    expect(incomingStopsForTrip([whollyMoved], 'receiver').map(j => [j.siteName, j.dispatcherNote])).toEqual([['A', 'หมายเหตุ A'], ['B', 'หมายเหตุ B'], ['C', 'หมายเหตุ C']])
+  })
+
+  it('คำนวณใหม่แล้วใช้หมายเหตุล่าสุดหรือข้อความที่ล้างแล้วจากต้นทาง', () => {
+    const source = { id: 'source', stops: [{ reassignedToTripId: 'receiver', dispatcherNote: 'ข้อความเดิม', dispatcherName: 'ผู้จัดคิว' }] }
+    expect(incomingStopsForTrip([source], 'receiver')[0].dispatcherNote).toBe('ข้อความเดิม')
+    source.stops[0].dispatcherNote = 'ข้อความใหม่'
+    expect(incomingStopsForTrip([source], 'receiver')[0].dispatcherNote).toBe('ข้อความใหม่')
+    source.stops[0].dispatcherNote = ''
+    source.stops[0].dispatcherName = ''
+    expect(incomingStopsForTrip([source], 'receiver')[0]).toMatchObject({ dispatcherNote: '', dispatcherName: '' })
+  })
+
+  it('หมายเหตุเก่าว่างใช้ค่าบน stop และข้อมูลที่ไม่มีหมายเหตุคืนค่าว่าง', () => {
+    const source = {
+      id: 'source', stopNotes: { stop_0: '' }, stopNoteAuthors: { stop_0: '' },
+      stops: [{ reassignedToTripId: 'receiver', dispatcherNote: 'ข้อความบน stop', dispatcherName: 'ชื่อบน stop' }, { reassignedToTripId: 'receiver' }],
+    }
+    expect(incomingStopsForTrip([source], 'receiver')).toMatchObject([
+      { dispatcherNote: 'ข้อความบน stop', dispatcherName: 'ชื่อบน stop' },
+      { dispatcherNote: '', dispatcherName: '' },
+    ])
+  })
+
+  it('อ่านหมายเหตุรุ่นเก่าจากลำดับจุดต้นทางและเลือกค่าเดียวกับใบงานต้นทาง', () => {
+    const source = {
+      id: 'source',
+      stopNotes: { stop_1: 'หมายเหตุรุ่นเก่าที่ใช้งานอยู่' },
+      stopNoteAuthors: { stop_1: 'ผู้จัดคิวรุ่นเก่า' },
+      stops: [
+        { siteName: 'จุดไม่โยก', dispatcherNote: 'ห้ามเอาข้อความจุดนี้ไป' },
+        { siteName: 'จุดที่โยก', reassignedToTripId: 'receiver', dispatcherNote: 'ข้อความบน stop', dispatcherName: 'ชื่อบน stop' },
+      ],
+    }
+    expect(incomingStopsForTrip([source], 'receiver')[0]).toMatchObject({
+      siteName: 'จุดที่โยก', dispatcherNote: 'หมายเหตุรุ่นเก่าที่ใช้งานอยู่', dispatcherName: 'ผู้จัดคิวรุ่นเก่า',
+    })
+  })
+
+  it('พกหมายเหตุคนจัดรถและชื่อผู้บันทึกจากจุดต้นทางแยกจากหมายเหตุผู้ขอ', () => {
+    const source = {
+      id: 'source',
+      stops: [{ siteName: 'ไซต์ทดสอบ', reassignedToTripId: 'receiver', note: 'ส่งอุปกรณ์', dispatcherNote: 'โทรหาหน้างานก่อนเข้า\nใช้ประตูด้านหลัง', dispatcherName: 'ผู้จัดคิวทดสอบ' }],
+    }
+    const before = structuredClone(source)
+    expect(incomingStopsForTrip([source], 'receiver')[0]).toMatchObject({
+      note: 'ส่งอุปกรณ์', dispatcherNote: 'โทรหาหน้างานก่อนเข้า\nใช้ประตูด้านหลัง', dispatcherName: 'ผู้จัดคิวทดสอบ',
+    })
+    expect(source).toEqual(before)
+  })
+
   const trips = [
     {
       id: 'A', driverName: 'เจี๊ยบ', vehiclePlate: '1ตณษ-4413',
