@@ -161,7 +161,7 @@ export default function TrackingPage() {
     return () => clearInterval(id)
   }, [])
 
-  // เปิดหน้าค้างข้ามวัน (05:00) ขณะดู "วันนี้" → เลื่อนไปวันใหม่เอง
+  // เปิดหน้าค้างข้ามวัน (04:00) ขณะดู "วันนี้" → เลื่อนไปวันใหม่เอง
   // ไม่งั้น selectedDate ค้างเป็นเมื่อวาน → isToday = false → หยุด sync เงียบ ๆ
   const prevTodayKeyRef = React.useRef(todayKey)
   React.useEffect(() => {

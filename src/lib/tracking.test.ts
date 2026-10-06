@@ -41,24 +41,25 @@ describe('tracking: isTripNotRun (เกณฑ์เดียวกับป้�
   })
 })
 
-describe('tracking: isCronSyncWindow (cron 04:50–21:59 ไทย)', () => {
+describe('tracking: isCronSyncWindow (cron 03:50–21:59 ไทย)', () => {
   const th = (iso: string) => Date.parse(`${iso}+07:00`)
-  it('กลางวันถึง 21:59 ดึง / 22:00 หยุด', () => {
-    expect(isCronSyncWindow(th('2026-10-01T05:00:00'))).toBe(true)
+  it('ตี 4 ถึง 21:59 ดึง / 22:00 หยุด', () => {
+    expect(isCronSyncWindow(th('2026-10-01T04:00:00'))).toBe(true)
+    expect(isCronSyncWindow(th('2026-10-01T04:30:00'))).toBe(true) // คนขับออกก่อนตี 5 — ต้องมีจุด
     expect(isCronSyncWindow(th('2026-10-01T20:13:00'))).toBe(true)
     expect(isCronSyncWindow(th('2026-10-01T21:59:00'))).toBe(true)
     expect(isCronSyncWindow(th('2026-10-01T22:00:00'))).toBe(false)
     expect(isCronSyncWindow(th('2026-10-02T03:00:00'))).toBe(false)
   })
-  it('รอบเก็บตก 04:50–04:59 ยังเข้าวันเดิม (จุดรถที่กลับหลัง 22:00 ไม่ตกไปวันใหม่)', () => {
-    expect(isCronSyncWindow(th('2026-10-02T04:49:00'))).toBe(false)
-    expect(isCronSyncWindow(th('2026-10-02T04:50:00'))).toBe(true)
-    expect(trackingDateKey(th('2026-10-02T04:50:00'))).toBe('2026-10-01')
-    expect(trackingDateKey(th('2026-10-02T04:59:00'))).toBe('2026-10-01')
+  it('รอบเก็บตก 03:50–03:59 ยังเข้าวันเดิม (จุดรถที่กลับหลัง 22:00 ไม่ตกไปวันใหม่)', () => {
+    expect(isCronSyncWindow(th('2026-10-02T03:49:00'))).toBe(false)
+    expect(isCronSyncWindow(th('2026-10-02T03:50:00'))).toBe(true)
+    expect(trackingDateKey(th('2026-10-02T03:50:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-02T03:59:00'))).toBe('2026-10-01')
   })
 })
 
-describe('tracking: trackingDateKey (วันทำการไทย ตัดวันตอน 05:00)', () => {
+describe('tracking: trackingDateKey (วันทำการไทย ตัดวันตอน 04:00)', () => {
   // เวลาไทย = UTC+7 → แปลงเวลาไทยเป็น ms
   const th = (iso: string) => Date.parse(`${iso}+07:00`)
   it('กลางวัน/หัวค่ำ = วันที่ไทยวันนั้น (เดิม UTC ก็ตรง)', () => {
@@ -66,11 +67,13 @@ describe('tracking: trackingDateKey (วันทำการไทย ตัด
     expect(trackingDateKey(th('2026-09-30T20:13:00'))).toBe('2026-09-30')
     expect(trackingDateKey(th('2026-09-30T23:59:00'))).toBe('2026-09-30')
   })
-  it('หลังเที่ยงคืนถึง 04:59 ยังนับเป็นวันก่อน (รถกลับดึกอยู่กับทริปวันนั้น)', () => {
+  it('หลังเที่ยงคืนถึง 03:59 ยังนับเป็นวันก่อน (รถกลับดึกอยู่กับทริปวันนั้น)', () => {
     expect(trackingDateKey(th('2026-10-01T00:30:00'))).toBe('2026-09-30')
-    expect(trackingDateKey(th('2026-10-01T04:59:00'))).toBe('2026-09-30')
+    expect(trackingDateKey(th('2026-10-01T03:59:00'))).toBe('2026-09-30')
   })
-  it('05:00 เริ่มวันใหม่ — ช่วง 05:00–06:59 ไม่ตกไปวันก่อนแบบ UTC อีก', () => {
+  it('04:00 เริ่มวันใหม่ — รถที่ออกก่อนตี 5 อยู่กับทริปของวันนั้น', () => {
+    expect(trackingDateKey(th('2026-10-01T04:00:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-01T04:59:00'))).toBe('2026-10-01')
     expect(trackingDateKey(th('2026-10-01T05:00:00'))).toBe('2026-10-01')
     expect(trackingDateKey(th('2026-10-01T06:30:00'))).toBe('2026-10-01')
     expect(trackingDateKey(th('2026-10-01T07:00:00'))).toBe('2026-10-01')
