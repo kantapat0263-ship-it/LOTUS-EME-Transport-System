@@ -3,6 +3,7 @@ import { FieldValue, type DocumentData, type Firestore, type Transaction } from 
 import { expandQueueDates, MAX_QUEUE_DAYS, queueNotice, resourceGuardKeys } from '@/lib/continuousQueue'
 import type { ContinuousBooking, QueueAuditEvent, QueueCommand, QueueCommandResult, QueueResourceGuard, QueueSnapshot, QueueSourceAssignment, QueueTripInput } from '@/types/continuous-queue'
 import type { Trip } from '@/types/models'
+import { assertRequestDestinationsUnchanged } from '@/lib/requestDestination'
 
 const MAX_SNAPSHOT_BOOKINGS = 500
 const MAX_DAY_TRIPS = 500
@@ -188,6 +189,8 @@ class QueueTransaction {
       const indexes = assignment.destinationIndexes
       const assigned: number[] = request.assignedDestinations || []
       requireValue(indexes.length > 0 && new Set(indexes).size === indexes.length && indexes.every(index => Number.isSafeInteger(index) && index >= 0 && index < request.destinations.length && !assigned.includes(index)), 'จุดหมายถูกจัดรถแล้วหรือไม่พบในใบขอ')
+      try { assertRequestDestinationsUnchanged(request, indexes, assignment.expectedDestinationFingerprints) }
+      catch (error) { throw new QueueServiceError(error instanceof Error ? error.message : 'ข้อมูลจุดหมายเปลี่ยนแล้ว กรุณาเลือกงานใหม่') }
       const humanId = request.requestId || request.vrId
       requireValue(typeof humanId === 'string' && !!humanId, 'ใบขอไม่มีรหัสอ้างอิง')
       vrIds.push(humanId)

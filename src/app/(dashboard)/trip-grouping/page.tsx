@@ -35,6 +35,7 @@ import { queueDateLabel } from "@/components/continuous-queue/QueueNoticeCard"
 import type { QueueTripInput } from "@/types/continuous-queue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { routePlan, sumRouteLegs, tripRouteMode } from "@/lib/routeMode"
+import { assertRequestDestinationsUnchanged, requestDestinationFingerprint } from "@/lib/requestDestination"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -48,6 +49,7 @@ export default function TripGroupingPage() {
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [manualOrder, setManualOrder] = React.useState<string[]>([])
   const [optimizedOrder, setOptimizedOrder] = React.useState<string[]>([])
+  const selectionFingerprintsRef = React.useRef(new Map<string, string>())
   const [selectedDateFilter, setSelectedDateFilter] = React.useState<string>("all")
   // ย้ายวันใช้รถของใบขอ (คนจัดเลื่อนงานเองได้ เช่น พรุ่งนี้ → วันนี้ เพราะคนขับว่าง)
   const [moveDialog, setMoveDialog] = React.useState<{ vrDocId: string; vrId: string; siteName: string; currentDate: string } | null>(null)
@@ -104,6 +106,7 @@ export default function TripGroupingPage() {
             vrId: req.requestId,
             vrDocId: req.id,
             destIndex: idx,
+            sourceFingerprint: requestDestinationFingerprint(req, idx),
             requestedBy: req.requestedBy,
             requestedByPhone: req.requestedByPhone || "",
             requestedByUserId: req.userId || "",
@@ -121,6 +124,21 @@ export default function TripGroupingPage() {
     })
     return list
   }, [requests])
+
+  React.useEffect(() => {
+    const selected = new Set([...selectedIds, ...manualOrder])
+    const invalid = new Set([...selected].filter(id =>
+      availableDestinations.find(d => d.id === id)?.sourceFingerprint !== selectionFingerprintsRef.current.get(id)
+    ))
+    if (invalid.size === 0) return
+    invalid.forEach(id => selectionFingerprintsRef.current.delete(id))
+    setSelectedIds(prev => new Set([...prev].filter(id => !invalid.has(id))))
+    setManualOrder(prev => prev.filter(id => !invalid.has(id)))
+    setOptimizedOrder(prev => prev.filter(id => !invalid.has(id)))
+    setIsConfirmOpen(false)
+    setBorrowOpen(false)
+    toast({ title: "ตรวจงานที่เลือกอีกครั้ง", description: "รายละเอียดหรือการจัดจุดของใบขอเปลี่ยนแล้ว ระบบถอนจุดที่เปลี่ยนออกจากรายการเลือก", variant: "destructive" })
+  }, [availableDestinations, selectedIds, manualOrder, toast])
 
   // Dynamic Data Fetching based on selected date
   const targetDateStr = React.useMemo(() => {
@@ -171,11 +189,12 @@ export default function TripGroupingPage() {
   }, [mode, manualOrder, optimizedOrder, selectedIds]);
 
   const selectedDestinations = React.useMemo(() => {
+    const matchesSelection = (d: any) => d && selectionFingerprintsRef.current.get(d.id) === d.sourceFingerprint
     const ids = mode === 'manual' ? manualOrder : currentOrderedIds;
-    const items = ids.map(id => availableDestinations.find(d => d.id === id)).filter(Boolean);
+    const items = ids.map(id => availableDestinations.find(d => d.id === id)).filter(matchesSelection);
     
     if (mode === 'auto') {
-      const remaining = availableDestinations.filter(d => selectedIds.has(d.id) && !ids.includes(d.id));
+      const remaining = availableDestinations.filter(d => selectedIds.has(d.id) && !ids.includes(d.id) && matchesSelection(d));
       return [...items, ...remaining];
     }
     return items;
@@ -200,6 +219,7 @@ export default function TripGroupingPage() {
   // · pageVersionRef: เปลี่ยนเมื่อออกจากหน้า — ด่านที่ค้างอยู่ไม่เด้ง confirm / ไม่เขียน / ไม่ขึ้น toast บนหน้าอื่น
   const selectionSig = [
     mode === 'manual' ? manualOrder.join(',') : [...selectedIds].sort().join(','),
+    JSON.stringify(selectedDestinations.map(d => [d.id, d.sourceFingerprint])),
     vehicleId,
     driverId,
     continuousEndDate,
@@ -217,6 +237,11 @@ export default function TripGroupingPage() {
   React.useEffect(() => () => { pageVersionRef.current++ }, [])
 
   const handleToggleSelect = React.useCallback((id: string) => {
+    const destination = availableDestinations.find(d => d.id === id)
+    if (!destination) return
+    const isSelected = mode === 'manual' ? manualOrder.includes(id) : selectedIds.has(id)
+    if (isSelected) selectionFingerprintsRef.current.delete(id)
+    else selectionFingerprintsRef.current.set(id, destination.sourceFingerprint)
     if (mode === 'manual') {
       setManualOrder(prev => {
         if (prev.includes(id)) {
@@ -232,7 +257,7 @@ export default function TripGroupingPage() {
         return newSet
       })
     }
-  }, [mode])
+  }, [mode, availableDestinations, manualOrder, selectedIds])
 
   // งานที่ต้องใช้รถมากกว่า 1 คัน: เพิ่ม "คันคู่" = ต่อท้ายสำเนา destination ในใบขอเดิม
   // (เก็บลงใบขอจริง → refresh ไม่หาย, มี index ของตัวเอง → ไม่แตะกลไก assignment เลย)
@@ -320,6 +345,7 @@ export default function TripGroupingPage() {
         if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
         const orig = fresh.destinations?.[dest.destIndex]
         if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !orig || orig.pairedCopy) throw new Error("ไม่พบจุดต้นฉบับ หรือจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
+        assertRequestDestinationsUnchanged(fresh, [dest.destIndex], [dest.sourceFingerprint])
         const copy: Record<string, any> = Object.fromEntries(
           Object.entries(orig).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
         )
@@ -351,15 +377,38 @@ export default function TripGroupingPage() {
         if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
         const paired = fresh.destinations?.[dest.destIndex]
         if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !paired?.pairedCopy || paired.pairedFromIndex !== dest.pairedFromIndex) throw new Error("สำเนาหรือลำดับจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
+        assertRequestDestinationsUnchanged(fresh, [dest.destIndex], [dest.sourceFingerprint])
         const assigned: number[] = fresh.assignedDestinations || []
         if (assigned.includes(dest.destIndex)) throw new Error("สำเนานี้ถูกจัดเข้าทริปแล้ว")
         if (assigned.some(i => i > dest.destIndex)) throw new Error("มีจุดที่ถูกจัดแล้วอยู่ถัดจากสำเนานี้ — ลบแล้วลำดับจะเพี้ยน")
+        const destinations = fresh.destinations.filter((_: any, i: number) => i !== dest.destIndex).map((d: any) => {
+          if (d.pairedFromIndex === dest.destIndex) throw new Error("มีสำเนาที่อ้างถึงจุดนี้อยู่ กรุณาตรวจข้อมูลก่อนถอน")
+          return Number.isSafeInteger(d.pairedFromIndex) && d.pairedFromIndex > dest.destIndex
+            ? { ...d, pairedFromIndex: d.pairedFromIndex - 1 } : d
+        })
+        const remapNotes = (notes: Record<string, any> = {}) => Object.fromEntries(
+          Object.entries(notes).flatMap(([key, value]) => {
+            const match = /^stop_(\d+)$/.exec(key)
+            if (!match) return [[key, value]]
+            const index = Number(match[1])
+            if (index === dest.destIndex) return []
+            return [[`stop_${index > dest.destIndex ? index - 1 : index}`, value]]
+          })
+        )
         tx.update(ref, {
-          destinations: fresh.destinations.filter((_: any, i: number) => i !== dest.destIndex),
+          destinations,
+          stopNotes: remapNotes(fresh.stopNotes),
+          stopNoteAuthors: remapNotes(fresh.stopNoteAuthors),
           updatedAt: serverTimestamp(),
         })
       })
-      setSelectedIds(prev => { const n = new Set(prev); n.delete(dest.id); return n })
+      const belongsToRequest = (id: string) => id.slice(0, id.lastIndexOf("-")) === dest.vrDocId
+      for (const id of selectionFingerprintsRef.current.keys()) {
+        if (belongsToRequest(id)) selectionFingerprintsRef.current.delete(id)
+      }
+      setSelectedIds(prev => new Set([...prev].filter(id => !belongsToRequest(id))))
+      setManualOrder(prev => prev.filter(id => !belongsToRequest(id)))
+      setOptimizedOrder(prev => prev.filter(id => !belongsToRequest(id)))
       toast({ title: "ถอนคันคู่แล้ว", description: `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
     } catch (e: any) {
       console.error(e)
@@ -509,6 +558,7 @@ export default function TripGroupingPage() {
       if (dests.some(d => freshRequests[d.vrDocId]?.requestDate !== d.requestDate || (freshRequests[d.vrDocId]?.assignedDestinations || []).includes(d.destIndex))) {
         throw new Error('วันที่หรือการจัดจุดของใบขอเปลี่ยนแล้ว กรุณาเลือกงานใหม่')
       }
+      dests.forEach(d => assertRequestDestinationsUnchanged(freshRequests[d.vrDocId], [d.destIndex], [d.sourceFingerprint]))
       if (dests.length === 0) {
         toast({ title: "จัดไม่ได้", description: "ใบคำขอที่เลือกถูกยกเลิก/เปลี่ยนสถานะไปแล้ว — รีเฟรชแล้วเลือกใหม่", variant: "destructive" })
         return
@@ -546,9 +596,13 @@ export default function TripGroupingPage() {
             }
           }),
         }
-        const grouped: Record<string, number[]> = {}
-        dests.forEach(d => { (grouped[d.vrDocId] ||= []).push(d.destIndex) })
-        const assignments = Object.entries(grouped).map(([requestId, destinationIndexes]) => ({ requestId, destinationIndexes }))
+        const grouped: Record<string, { destinationIndexes: number[]; expectedDestinationFingerprints: string[] }> = {}
+        dests.forEach(d => {
+          const group = grouped[d.vrDocId] ||= { destinationIndexes: [], expectedDestinationFingerprints: [] }
+          group.destinationIndexes.push(d.destIndex)
+          group.expectedDestinationFingerprints.push(d.sourceFingerprint)
+        })
+        const assignments = Object.entries(grouped).map(([requestId, indexes]) => ({ requestId, ...indexes }))
         if (cancelled() || !flight.isCurrent()) return
         const payload = borrowChoice
           ? { action: 'borrow' as const, date: tripDateStr, trip, assignments, ...borrowChoice }
@@ -579,8 +633,12 @@ export default function TripGroupingPage() {
         lng: settings?.warehouseLongitude || 100.7129 
       }
 
-      const vrGroups: Record<string, number[]> = {}
-      dests.forEach(d => { (vrGroups[d.vrDocId] ||= []).push(d.destIndex) })
+      const vrGroups: Record<string, { destinationIndexes: number[]; expectedDestinationFingerprints: string[] }> = {}
+      dests.forEach(d => {
+        const group = vrGroups[d.vrDocId] ||= { destinationIndexes: [], expectedDestinationFingerprints: [] }
+        group.destinationIndexes.push(d.destIndex)
+        group.expectedDestinationFingerprints.push(d.sourceFingerprint)
+      })
 
       await createTripWithQueueGuard(db, tripId, {
         id: tripId,
@@ -621,7 +679,7 @@ export default function TripGroupingPage() {
           dispatcherName: d.dispatcherName || ""
         }))
       }, {
-        assignments: Object.entries(vrGroups).map(([requestId, destinationIndexes]) => ({ requestId, destinationIndexes }))
+        assignments: Object.entries(vrGroups).map(([requestId, indexes]) => ({ requestId, ...indexes }))
       })
 
       toast({ title: "สำเร็จ", description: `สร้างเที่ยววิ่ง ${tripId} เรียบร้อยแล้ว` })
@@ -796,11 +854,12 @@ export default function TripGroupingPage() {
         ...validNewStops.map(d => d.vrId)
       ]))
       // ผูก index ในใบขอกับจุดใหม่ในทริป เพื่ออ่านหมายเหตุสดภายใน transaction ที่จัดงาน
-      const vrGroups: Record<string, { destinationIndexes: number[]; tripStopIndexes: number[] }> = {}
+      const vrGroups: Record<string, { destinationIndexes: number[]; tripStopIndexes: number[]; expectedDestinationFingerprints: string[] }> = {}
       validNewStops.forEach((d, index) => {
-        const group = vrGroups[d.vrDocId] ||= { destinationIndexes: [], tripStopIndexes: [] }
+        const group = vrGroups[d.vrDocId] ||= { destinationIndexes: [], tripStopIndexes: [], expectedDestinationFingerprints: [] }
         group.destinationIndexes.push(d.destIndex)
         group.tripStopIndexes.push(currentStops.length + index)
+        group.expectedDestinationFingerprints.push(d.sourceFingerprint)
       })
 
       await updateTripWithQueueGuard(db, existingTrip.id, {
@@ -830,6 +889,7 @@ export default function TripGroupingPage() {
   }
 
   const resetAll = () => {
+    selectionFingerprintsRef.current.clear()
     setSelectedIds(new Set())
     setManualOrder([])
     setOptimizedOrder([])
@@ -848,6 +908,7 @@ export default function TripGroupingPage() {
 
   const handleModeChange = (newMode: GroupingMode) => {
     if (newMode === 'manual') {
+      selectionFingerprintsRef.current.clear()
       setManualOrder([]);
       setSelectedIds(new Set());
       setOptimizedOrder([]);

@@ -16,9 +16,9 @@ function arrange(statuses: Record<string, string> = {}) {
   const existingStop = { order: 1, siteName: 'งานเดิม', dispatcherNote: 'คำสั่งงานเดิม' }
   const trip = { id: 'T1', tripId: 'T1', driverId: 'D1', driverName: 'คนขับทดสอบ', vehicleId: 'V1', tripDate: '2026-10-07', status: 'Planned', stops: [existingStop], sourceVRIds: ['VR-OLD'] }
   const selected = [
-    { vrDocId: 'R1', vrId: 'VR-A', destIndex: 2, siteName: 'จุด A2', lat: 13, lng: 100 },
-    { vrDocId: 'R2', vrId: 'VR-B', destIndex: 1, siteName: 'จุด B1', lat: 13, lng: 100 },
-    { vrDocId: 'R1', vrId: 'VR-A', destIndex: 0, siteName: 'จุด A0', lat: 13, lng: 100 },
+    { vrDocId: 'R1', vrId: 'VR-A', destIndex: 2, sourceFingerprint: 'original-A2', siteName: 'จุด A2', lat: 13, lng: 100 },
+    { vrDocId: 'R2', vrId: 'VR-B', destIndex: 1, sourceFingerprint: 'original-B1', siteName: 'จุด B1', lat: 13, lng: 100 },
+    { vrDocId: 'R1', vrId: 'VR-A', destIndex: 0, sourceFingerprint: 'original-A0', siteName: 'จุด A0', lat: 13, lng: 100 },
   ]
   const dialog = { existingTrip: trip, newStops: selected }
   const update = vi.fn().mockResolvedValue(undefined)
@@ -36,7 +36,7 @@ describe('actual merge click handler source-note mapping', () => {
   it('ข้ามใบที่ยกเลิกแล้วผูกหมายเหตุกับแถวใหม่โดยไม่มีช่องว่างของ index', async () => {
     const { handler, update } = arrange({ R1: 'cancelled' })
     await handler()
-    expect(update.mock.calls[0][3].assignments).toEqual([{ requestId: 'R2', destinationIndexes: [1], tripStopIndexes: [1] }])
+    expect(update.mock.calls[0][3].assignments).toEqual([{ requestId: 'R2', destinationIndexes: [1], tripStopIndexes: [1], expectedDestinationFingerprints: ['original-B1'] }])
   })
 
   it('ทุกใบถูกยกเลิกแล้วไม่เขียนทริปและไม่รีเซ็ตการเลือก', async () => {
@@ -52,8 +52,8 @@ describe('actual merge click handler source-note mapping', () => {
     expect(update).toHaveBeenCalledTimes(1)
     const [, , patch, allocation] = update.mock.calls[0]
     expect(allocation.assignments).toEqual([
-      { requestId: 'R1', destinationIndexes: [2, 0], tripStopIndexes: [1, 3] },
-      { requestId: 'R2', destinationIndexes: [1], tripStopIndexes: [2] },
+      { requestId: 'R1', destinationIndexes: [2, 0], tripStopIndexes: [1, 3], expectedDestinationFingerprints: ['original-A2', 'original-A0'] },
+      { requestId: 'R2', destinationIndexes: [1], tripStopIndexes: [2], expectedDestinationFingerprints: ['original-B1'] },
     ])
     expect(patch.stops[0]).toEqual(trip.stops[0])
     expect(allocation.expected).toMatchObject({ stops: trip.stops, tripDate: trip.tripDate, driverId: trip.driverId, vehicleId: trip.vehicleId })

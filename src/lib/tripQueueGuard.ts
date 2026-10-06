@@ -3,6 +3,7 @@ import { resourceGuardKeys } from './continuousQueue'
 import type { Trip } from '@/types/models'
 import type { QueueSourceAssignment } from '@/types/continuous-queue'
 import { remapStopNotes, type LegacyStopNotes } from './stopNote'
+import { assertRequestDestinationsUnchanged } from './requestDestination'
 
 const MANAGED_MESSAGE = 'คิวนี้เป็นคิวต่อเนื่อง กรุณาใช้แผงคิวต่อเนื่องเพื่อปรับเฉพาะวันและเก็บประวัติ'
 
@@ -17,7 +18,10 @@ export interface TripStopEdit {
   sourceIndexes: (number | null)[]
   supersedeRequest?: { id: string; by: string }
   createTarget?: { id: string; data: Record<string, any> }
+  assistSource?: TripAssistSource
 }
+
+export interface TripAssistSource { tripId: string; stopIndex: number; expectedTrip: Trip }
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
@@ -39,7 +43,7 @@ async function sourceWrites(db: Firestore, tx: Transaction, trip: Trip, tripId: 
   const seen = new Set<string>()
   const noteTargets = new Set<number>()
   const writes = []
-  for (const { requestId, destinationIndexes, tripStopIndexes } of assignments) {
+  for (const { requestId, destinationIndexes, tripStopIndexes, expectedDestinationFingerprints } of assignments) {
     if (seen.has(requestId)) throw new Error('เลือกใบขอซ้ำ')
     seen.add(requestId)
     const ref = doc(db, 'vehicleRequests', requestId)
@@ -51,6 +55,7 @@ async function sourceWrites(db: Firestore, tx: Transaction, trip: Trip, tripId: 
     if (!Array.isArray(request.destinations) || !Array.isArray(assigned) || destinationIndexes.length === 0 || new Set(destinationIndexes).size !== destinationIndexes.length || destinationIndexes.some(index => !Number.isSafeInteger(index) || index < 0 || index >= request.destinations.length || assigned.includes(index))) throw new Error('จุดหมายถูกจัดรถแล้วหรือไม่พบในใบขอ กรุณาเลือกงานใหม่')
     if (tripStopIndexes !== undefined && (!Array.isArray(tripStopIndexes) || !Array.isArray(trip.stops) || tripStopIndexes.length !== destinationIndexes.length || tripStopIndexes.some(index => !Number.isSafeInteger(index) || index < existingStopCount || index >= trip.stops.length || noteTargets.has(index)))) throw new Error('ลำดับจุดสำหรับหมายเหตุไม่ตรงกับงานที่รวม กรุณาเลือกงานใหม่')
     if (tripStopIndexes && new Set(tripStopIndexes).size !== tripStopIndexes.length) throw new Error('เลือกจุดหมายเหตุซ้ำ กรุณาเลือกงานใหม่')
+    assertRequestDestinationsUnchanged(request, destinationIndexes, expectedDestinationFingerprints)
     const noteUpdates = (tripStopIndexes || []).map((stopIndex, index) => {
       noteTargets.add(stopIndex)
       const key = `stop_${destinationIndexes[index]}`
@@ -96,18 +101,37 @@ function assertAvailable(guards: Awaited<ReturnType<typeof readGuards>>) {
   if (guards.some(guard => !!guard.data?.bookingId)) throw new Error('คนขับหรือรถมีคิวต่อเนื่องในวันที่เลือก กรุณาปรับคิวเฉพาะวันผ่านแผงคิวต่อเนื่อง')
 }
 
-export async function createTripWithQueueGuard(db: Firestore, id: string, data: Record<string, any>, sources?: TripSourceAllocation): Promise<void> {
+async function readAssistNote(db: Firestore, tx: Transaction, targetId: string, target: Trip, source: TripAssistSource) {
+  const message = 'งานหรือรถต้นทางของคันช่วยเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่และเลือกงานใหม่'
+  if (!source || source.tripId === targetId || source.expectedTrip?.id !== source.tripId || !Number.isSafeInteger(source.stopIndex) || source.stopIndex < 0 || target.status === 'Cancelled') throw new Error(message)
+  const snap = await tx.get(doc(db, 'trips', source.tripId))
+  const live = snap.data() as (Trip & LegacyStopNotes) | undefined
+  const expected = source.expectedTrip
+  const identity = (trip: Trip) => [trip.tripDate || (trip as Trip & { date?: string }).date, trip.driverId, trip.driverName, trip.actualDriverId || '', trip.actualDriverName || '', trip.vehicleId, trip.vehiclePlate, trip.status]
+  if (!live || live.queueLink || live.status === 'Cancelled' || canonical(identity(live)) !== canonical(identity(expected)) || target.tripDate !== (live.tripDate || (live as Trip & { date?: string }).date)) throw new Error(message)
+  assertTripStopsUnchanged(live.stops, expected.stops)
+  const stop = live.stops[source.stopIndex]
+  if (!stop) throw new Error(message)
+  const key = `stop_${source.stopIndex}`
+  return { dispatcherNote: live.stopNotes?.[key] || stop.dispatcherNote || '', dispatcherName: live.stopNoteAuthors?.[key] || stop.dispatcherName || '' }
+}
+
+export async function createTripWithQueueGuard(db: Firestore, id: string, data: Record<string, any>, sources?: TripSourceAllocation, assistSource?: TripAssistSource): Promise<Record<string, any>> {
   if (data.queueLink) throw new Error(MANAGED_MESSAGE)
   if (!data.tripDate || !data.driverId || !data.vehicleId) throw new Error('ระบุวัน คนขับ และรถให้ครบก่อนจัดคิว')
-  await runTransaction(db, async tx => {
+  return runTransaction(db, async tx => {
     const ref = doc(db, 'trips', id)
     if ((await tx.get(ref)).exists()) throw new Error('รหัสเที่ยววิ่งถูกใช้แล้ว กรุณาจัดคิวใหม่')
     const guards = await readGuards(db, tx, resourceGuardKeys(data as Trip))
     if (data.status !== 'Cancelled') assertAvailable(guards)
+    if (assistSource && (data.stops?.length !== 1 || sources?.assignments.length)) throw new Error('ข้อมูลคันช่วยไม่ตรงกับงานต้นทาง')
+    const assistNote = assistSource ? await readAssistNote(db, tx, id, data as Trip, assistSource) : null
     const requests = await sourceWrites(db, tx, data as Trip, id, sources)
+    const saved = requests.length ? { ...data, ...sourceNotePatch(data as Trip, requests), sourceVRIds: [...new Set([...(data.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : assistNote ? { ...data, stops: [{ ...data.stops[0], ...assistNote }] } : data
     touchGuards(tx, guards)
-    tx.set(ref, requests.length ? { ...data, ...sourceNotePatch(data as Trip, requests), sourceVRIds: [...new Set([...(data.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : data)
+    tx.set(ref, saved)
     for (const request of requests) tx.update(request.ref, request.patch)
+    return saved
   })
 }
 export async function updateTripWithQueueGuard(db: Firestore, id: string, patch: Record<string, any>, sources?: TripSourceAllocation, stopEdit?: TripStopEdit): Promise<Record<string, any>> {
@@ -146,6 +170,12 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     const guards = await readGuards(db, tx, [...new Set([...oldKeys, ...newKeys, ...targetKeys])])
     if (after.status !== 'Cancelled') assertAvailable(guards.filter(guard => newKeys.includes(guard.ref.id)))
     if (target) assertAvailable(guards.filter(guard => targetKeys.includes(guard.ref.id)))
+    if (stopEdit?.assistSource) {
+      if (target || sources?.assignments.length || after.stops.length !== before.stops.length + 1 || stopEdit.sourceIndexes.some((index, position) => index !== (position < before.stops.length ? position : null))) throw new Error('ข้อมูลคันช่วยไม่ตรงกับงานต้นทาง')
+      const note = await readAssistNote(db, tx, id, after, stopEdit.assistSource)
+      effectivePatch = { ...effectivePatch, stops: after.stops.map((stop, index) => index === before.stops.length ? { ...stop, ...note } : stop) }
+      after.stops = effectivePatch.stops
+    }
     const requests = await sourceWrites(db, tx, after, id, sources, before.stops?.length || 0)
     touchGuards(tx, guards)
     if (target && targetRef) tx.set(targetRef, target.data)

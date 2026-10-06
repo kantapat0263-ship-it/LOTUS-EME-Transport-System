@@ -120,7 +120,7 @@ export default function DailySummaryPage() {
   const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number; expectedStops: TripStop[] } | null>(null)
   const [reassignNewForm, setReassignNewForm] = React.useState({ driverId: "", vehicleId: "" })
   // "คันช่วย" — copy งานไปให้อีกคันไปช่วยขน (งานต้นทางยังอยู่คันเดิม ไม่ใช่โยก)
-  const [assistDialog, setAssistDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  const [assistDialog, setAssistDialog] = React.useState<{ tripId: string; stopIdx: number; expectedTrip: Trip } | null>(null)
   const [assistForm, setAssistForm] = React.useState({ targetTripId: "", driverId: "", vehicleId: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
@@ -1354,10 +1354,11 @@ export default function DailySummaryPage() {
   // งานต้นทางไม่ถูกแตะ ; งานฝั่งคันช่วยเป็น adhoc (ลบได้ด้วยปุ่มถังขยะ) + ป้าย "คันช่วย · จาก ..."
   const addAssistStop = async () => {
     if (!assistDialog) return
-    const src = trips.find(t => t.id === assistDialog.tripId)
-    const stop = src?.stops?.[assistDialog.stopIdx]
-    if (!src || !stop) { setAssistDialog(null); return }
+    const src = assistDialog.expectedTrip
+    const stop = src.stops?.[assistDialog.stopIdx]
+    if (!stop) { toast({ title: "ไม่พบงานต้นทาง กรุณาเปิดคันช่วยใหม่", variant: "destructive" }); return }
     if (!allowOrdinaryEdit(src)) return
+    const assistSource = { tripId: assistDialog.tripId, stopIndex: assistDialog.stopIdx, expectedTrip: src }
 
     // copy เฉพาะ field ที่มีค่า — ห้ามมี undefined (Firestore reject ทั้งก้อน)
     const mkCopy = (order: number): TripStop => {
@@ -1386,11 +1387,18 @@ export default function DailySummaryPage() {
       const target = trips.find(t => t.id === assistForm.targetTripId)
       if (!target) { toast({ title: "ไม่พบทริปคันช่วย", variant: "destructive" }); return }
       if (!allowOrdinaryEdit(target)) return
+      if (target.id === src.id || target.tripDate !== src.tripDate || target.status === "Cancelled") {
+        toast({ title: "เลือกคันช่วยที่มีทริปในวันเดียวกัน", variant: "destructive" }); return
+      }
       // ด่านวันลา: คนขับจริงของคันช่วย ตามวันของทริปนั้น · ยกเลิก = dialog ค้างไว้
       if (!(await passLeaveGate(`assist:${src.id}:${assistDialog.stopIdx}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
-      if (!await applyStops(target, [...stops, mkCopy(order)], true)) return
+      if (!await applyStops(target, [...stops, mkCopy(order)], true, {
+        expectedStops: stops,
+        sourceIndexes: [...stops.map((_, index) => index), null],
+        assistSource,
+      })) return
       toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${target.driverName} (${target.vehiclePlate}) ไปช่วย "${stop.siteName}" ของ ${src.driverName}` })
     } else if (assistForm.targetTripId === "__new__") {
       const driver = driversData?.find(d => d.id === assistForm.driverId)
@@ -1408,10 +1416,11 @@ export default function DailySummaryPage() {
         driverId: driver.id, driverName: driver.name,
         departureSiteId: "", stops: [mkCopy(1)], status: "Planned", adhocCreated: true,
       }
-      try { await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }) } catch (e: any) {
+      let saved: Record<string, any>
+      try { saved = await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, undefined, assistSource) } catch (e: any) {
         toast({ title: 'สร้างทริปไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
       }
-      setTrips(prev => [...prev, newTrip])
+      setTrips(prev => [...prev, { ...newTrip, ...saved } as Trip])
       toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
     } else {
       toast({ title: "เลือกคันที่ไปช่วยก่อน", variant: "destructive" })
@@ -1520,7 +1529,7 @@ export default function DailySummaryPage() {
           {/* คันช่วย: copy งานนี้ให้อีกคันไปช่วยขน (งานคันนี้ยังอยู่ — ไม่ใช่โยก) */}
           <button
             type="button"
-            onClick={() => { setAssistForm({ targetTripId: "", driverId: "", vehicleId: "" }); setAssistDialog({ tripId: trip.id, stopIdx: sIdx }) }}
+            onClick={() => { setAssistForm({ targetTripId: "", driverId: "", vehicleId: "" }); setAssistDialog({ tripId: trip.id, stopIdx: sIdx, expectedTrip: { ...trip, stops: trip.stops.map(s => ({ ...s })) } }) }}
             disabled={ordinaryBusy}
             className="flex items-center gap-1 rounded-md border border-teal-500/50 px-2 py-1 text-[11px] font-medium text-teal-300 hover:bg-teal-500/10"
           >
@@ -1576,7 +1585,7 @@ export default function DailySummaryPage() {
 
   // วันของทริปต้นทางใน dialog โยกงานให้คนใหม่ / คันช่วย (ทริปใหม่ใช้วันเดียวกัน) → ป้ายวันลาใน select คนขับ
   const reassignNewSrcDate = reassignNewDialog ? trips.find(t => t.id === reassignNewDialog.tripId)?.tripDate : undefined
-  const assistSrcDate = assistDialog ? trips.find(t => t.id === assistDialog.tripId)?.tripDate : undefined
+  const assistSrcDate = assistDialog?.expectedTrip.tripDate
 
   const shareUrl = selectedTripForShare
     ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`
@@ -2476,7 +2485,7 @@ export default function DailySummaryPage() {
             </DialogTitle>
             <DialogDescription>
               {assistDialog ? (() => {
-                const src = trips.find(t => t.id === assistDialog.tripId)
+                const src = assistDialog.expectedTrip
                 const st = src?.stops?.[assistDialog.stopIdx]
                 return `"${st?.siteName || ""}" ของ ${src?.driverName || ""} (${src?.vehiclePlate || ""}) — เลือกคันที่จะไปช่วยขน ระบบ copy รายละเอียดงานให้ครบ งานคันเดิมยังอยู่`
               })() : ""}
@@ -2492,7 +2501,7 @@ export default function DailySummaryPage() {
                 className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">— เลือกคันที่ไปช่วย —</option>
-                {trips.filter(t => t.id !== assistDialog?.tripId && !isManagedTrip(t)).map(t => (
+                {trips.filter(t => t.id !== assistDialog?.tripId && t.tripDate === assistSrcDate && t.status !== "Cancelled" && !isManagedTrip(t)).map(t => (
                   <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
                 ))}
                 <option value="__new__">➕ คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>

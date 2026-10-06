@@ -196,14 +196,16 @@ service cloud.firestore {
       allow read: if signedIn();
       allow write: if isStaff();
     }
-    // ตั้งใจให้เป็น "เพิ่มได้อย่างเดียว" แต่ยังไม่ได้ยืนยันว่า VehicleDetailsDialog ไม่แก้/ลบ → เปิด write ให้ staff ไว้ก่อน
+    // ประวัติ/หลักฐานใช้เอกสารใหม่ทุกครั้งเพื่อคงรายการเดิมสำหรับตรวจย้อนหลัง
     match /vehicleComplianceHistory/{id} {
       allow read: if signedIn();
-      allow write: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
     }
     match /vehicleComplianceEvidence/{id} {
       allow read: if signedIn();
-      allow write: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
     }
 
     // เขียนเฉพาะฝั่ง server (firebase-admin bypass rules): GPS tracking + ประวัติราคาน้ำมันจาก cron

@@ -48,9 +48,29 @@ import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { createTripWithQueueGuard } from "@/lib/tripQueueGuard"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
+import { requestDestinationFingerprint } from "@/lib/requestDestination"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
+
+const pendingRequestFingerprints = (vr: any): string[] | null => {
+  if (!vr || typeof vr.docId !== "string" || !vr.docId || !Array.isArray(vr.destinations) || vr.destinations.length === 0) return null
+  if (vr.expectedDestinationFingerprints !== undefined) {
+    const expected = vr.expectedDestinationFingerprints
+    return Array.isArray(expected) && expected.length === vr.destinations.length && expected.every(value => typeof value === "string" && value)
+      ? [...expected] : null
+  }
+  const snapshot = vr.requestSnapshot || vr
+  if (!(snapshot.requestId || snapshot.vrId) || snapshot.requestDate !== vr.requestDate ||
+    !["requestedBy", "userId", "createdAt"].every(key => Object.prototype.hasOwnProperty.call(snapshot, key)) ||
+    !Array.isArray(snapshot.destinations) || snapshot.destinations.length !== vr.destinations.length) return null
+  try {
+    const fingerprints = snapshot.destinations.map((_: any, index: number) => requestDestinationFingerprint(snapshot, index))
+    return fingerprints.every((value: string, index: number) => value === requestDestinationFingerprint({ ...snapshot, destinations: vr.destinations }, index)) ? fingerprints : null
+  } catch {
+    return null
+  }
+}
 
 interface StopItem {
   id: string;
@@ -215,7 +235,8 @@ export default function TripPlanPage() {
     if (data) {
       try {
         const vr = JSON.parse(data)
-        setPendingVr(vr)
+        const fingerprints = pendingRequestFingerprints(vr)
+        setPendingVr({ ...vr, expectedDestinationFingerprints: fingerprints })
         setTripDate(vr.requestDate)
         // Set stops
         const newStops: StopItem[] = vr.destinations.map((d: any, idx: number) => ({
@@ -229,9 +250,12 @@ export default function TripPlanPage() {
           dispatcherName: vr.dispatcherName || ""
         }))
         setStops(newStops)
-        toast({ title: "กู้คืนคำขอรถ", description: `กำลังจัดรถสำหรับคำขอ ${vr.vrId}` })
+        toast(fingerprints
+          ? { title: "กู้คืนคำขอรถ", description: `กำลังจัดรถสำหรับคำขอ ${vr.vrId}` }
+          : { title: "ต้องเลือกงานใหม่", description: "ข้อมูลคำขอที่เก็บไว้ไม่ครบ กรุณากลับไปเลือกงานจากหน้าจัดรถใหม่ก่อนบันทึก", variant: "destructive" })
       } catch (e) {
         console.error("Error parsing pendingVR", e)
+        toast({ title: "กู้คืนคำขอไม่สำเร็จ", description: "กรุณากลับไปเลือกงานจากหน้าจัดรถใหม่", variant: "destructive" })
       }
     }
   }, [toast])
@@ -590,6 +614,11 @@ export default function TripPlanPage() {
       toast({ title: "ยังไม่ได้จัดรถ", description: "ใช้วันที่ของใบขอรถและเลือกจุดจากใบขออย่างน้อย 1 จุด หรือกดล้างข้อมูลเพื่อสร้างแผนใหม่", variant: "destructive" })
       return
     }
+    const sourceFingerprints = pendingVr ? pendingRequestFingerprints(pendingVr) : null
+    if (pendingVr && !sourceFingerprints) {
+      toast({ title: "ยังไม่ได้จัดรถ", description: "ข้อมูลจุดหมายต้นฉบับไม่ครบ กรุณากลับไปเลือกงานจากหน้าจัดรถใหม่ก่อนบันทึก", variant: "destructive" })
+      return
+    }
 
     const flight = saveFlightRef.current.begin(() => mountedRef.current && formSigRef.current === formSig)
     if (!flight) return
@@ -668,7 +697,7 @@ export default function TripPlanPage() {
         updatedAt: serverTimestamp(),
         vrReferenceId: pendingVr?.vrId || null
       }, pendingVr ? {
-        assignments: [{ requestId: pendingVr.docId, destinationIndexes }],
+        assignments: [{ requestId: pendingVr.docId, destinationIndexes, expectedDestinationFingerprints: destinationIndexes.map(index => sourceFingerprints![index]) }],
         metadata: {
           approvedBy: user?.email || "system",
           vehiclePlate: selectedVehicle?.licensePlate || "",

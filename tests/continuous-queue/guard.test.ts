@@ -4,6 +4,7 @@ import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/
 import { doc, setDoc, getDoc, deleteField, updateDoc, deleteDoc, setLogLevel, type Firestore } from 'firebase/firestore'
 import { assertFails } from '@firebase/rules-unit-testing'
 import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard } from '@/lib/tripQueueGuard'
+import { requestDestinationFingerprint } from '@/lib/requestDestination'
 
 let env: RulesTestEnvironment
 // Rules test contexts return compat instances; the modular SDK unwraps them.
@@ -89,11 +90,12 @@ it('สร้างทริปพร้อมเพิ่ม version ของ�
 it('จัดจุดของใบขอพร้อมทริปและรักษารายการที่จัดบางส่วนโดยไม่ให้จัดจุดซ้ำ', async () => {
   await env.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'vehicleRequests', 'R1'), { requestId: 'VR-0710-0001', requestDate: '2026-10-07', status: 'in_progress', destinations: [{ siteName: 'A' }, { siteName: 'B' }] }))
   const db = staffDb()
-  await createTripWithQueueGuard(db, 'T1', { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: [{ siteName: 'A' }] }, { assignments: [{ requestId: 'R1', destinationIndexes: [0] }] })
+  const source = { requestId: 'VR-0710-0001', requestDate: '2026-10-07', destinations: [{ siteName: 'A' }, { siteName: 'B' }] }
+  await createTripWithQueueGuard(db, 'T1', { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: [{ siteName: 'A' }] }, { assignments: [{ requestId: 'R1', destinationIndexes: [0], expectedDestinationFingerprints: [requestDestinationFingerprint(source, 0)] }] })
   expect((await getDoc(doc(db, 'vehicleRequests', 'R1'))).data()).toMatchObject({ status: 'partial', assignedDestinations: [0], tripId: null, tripIds: ['T1'] })
   await expect(createTripWithQueueGuard(db, 'T2', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned' }, { assignments: [{ requestId: 'R1', destinationIndexes: [0] }] })).rejects.toThrow('จัดรถแล้ว')
   expect((await getDoc(doc(db, 'trips', 'T2'))).exists()).toBe(false)
-  await updateTripWithQueueGuard(db, 'T1', { stops: [{ siteName: 'A' }, { siteName: 'B' }] }, { assignments: [{ requestId: 'R1', destinationIndexes: [1] }], expected: { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', stops: [{ siteName: 'A' } as any] } })
+  await updateTripWithQueueGuard(db, 'T1', { stops: [{ siteName: 'A' }, { siteName: 'B' }] }, { assignments: [{ requestId: 'R1', destinationIndexes: [1], expectedDestinationFingerprints: [requestDestinationFingerprint(source, 1)] }], expected: { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', stops: [{ siteName: 'A' } as any] } })
   expect((await getDoc(doc(db, 'vehicleRequests', 'R1'))).data()).toMatchObject({ status: 'approved', assignedDestinations: [0, 1], tripId: 'T1', tripIds: ['T1'] })
 })
 

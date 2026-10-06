@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { executeQueueCommand, readQueueSnapshot } from '@/server/continuousQueueService'
 import { createTripWithQueueGuard } from '@/lib/tripQueueGuard'
 import type { ContinuousBooking, QueueCommand, QueueTripInput } from '@/types/continuous-queue'
+import { requestDestinationFingerprint } from '@/lib/requestDestination'
 
 const PROJECT = 'demo-continuous-queue-service'
 const NOW = new Date('2026-10-03T05:00:00Z')
@@ -14,6 +15,8 @@ let db: Firestore
 let env: RulesTestEnvironment
 let op = 0
 const operationId = () => `service-${++op}`
+const sourceRequest = (which: 'A' | 'B') => ({ requestId: which === 'A' ? 'VR-0310-0001' : 'VR-0510-0001', requestDate: which === 'A' ? '2026-10-03' : '2026-10-05', status: 'in_progress', destinations: [{ siteId: `SITE-${which}`, siteName: `ไซต์ ${which}` }] })
+const assignment = (which: 'A' | 'B') => ({ requestId: `REQ-${which}`, destinationIndexes: [0], expectedDestinationFingerprints: [requestDestinationFingerprint(sourceRequest(which), 0)] })
 const tripInput = (date = '2026-10-03', site = 'ไซต์ A'): QueueTripInput => ({
   tripDate: date, driverId: 'D1', driverName: 'ชื่อเก่า', vehicleId: 'V1', vehiclePlate: 'ทะเบียนเก่า',
   stops: [{ siteId: 'SITE-A', siteName: site, order: 1, cargoDetails: 'ประจำไซต์', lat: 13.7, lng: 100.5 }],
@@ -21,13 +24,13 @@ const tripInput = (date = '2026-10-03', site = 'ไซต์ A'): QueueTripInput
 })
 const create = (patch: Partial<Extract<QueueCommand, { action: 'create' }>> = {}) => executeQueueCommand(db, {
   operationId: operationId(), action: 'create', trip: tripInput(), endDate: '2026-10-10',
-  assignments: [{ requestId: 'REQ-A', destinationIndexes: [0] }], ...patch,
+  assignments: [assignment('A')], ...patch,
 }, actor, NOW)
 const booking = async (id: string) => (await db.collection('continuousBookings').doc(id).get()).data() as ContinuousBooking
 const trip = async (id: string) => (await db.collection('trips').doc(id).get()).data()!
 const borrow = (bookingId: string, patch: Partial<Extract<QueueCommand, { action: 'borrow' }>> = {}) => executeQueueCommand(db, {
   operationId: operationId(), action: 'borrow', bookingId, date: '2026-10-05', trip: { ...tripInput('2026-10-05', 'ไซต์ B'), vehicleId: 'V2' },
-  assignments: [{ requestId: 'REQ-B', destinationIndexes: [0] }], borrowDriver: true, borrowVehicle: false,
+  assignments: [assignment('B')], borrowDriver: true, borrowVehicle: false,
   reason: 'ตกลงทางโทรศัพท์แล้ว', compensationRequired: true, ...patch,
 }, actor, NOW)
 
@@ -53,6 +56,29 @@ beforeEach(async () => {
 afterAll(async () => { await env?.cleanup(); await db?.terminate() })
 
 describe('continuous queue service on an isolated Firestore project', () => {
+  it.each(['create', 'borrow'] as const)('stale destination in %s rejects atomically without changing reservations or original booking', async action => {
+    const original = action === 'borrow' ? await create() : null
+    const which = action === 'borrow' ? 'B' : 'A'
+    const before = original ? await booking(original.bookingId) : null
+    const priorTrips = (await db.collection('trips').get()).size
+    await db.collection('vehicleRequests').doc(`REQ-${which}`).update({ destinations: [{ siteId: 'NEW', siteName: 'งานใหม่ที่ index เดิม' }] })
+    await expect(original ? borrow(original.bookingId) : create()).rejects.toThrow('เปลี่ยนระหว่าง')
+    expect((await db.collection('trips').get()).size).toBe(priorTrips)
+    expect((await db.collection('vehicleRequests').doc(`REQ-${which}`).get()).data()?.assignedDestinations).toBeUndefined()
+    if (original) expect(await booking(original.bookingId)).toEqual(before)
+    else { expect((await db.collection('queueResourceDays').get()).empty).toBe(true); expect((await db.collection('continuousBookings').get()).empty).toBe(true) }
+  })
+  it('create from an old tab without fingerprints fails closed', async () => {
+    await expect(create({ assignments: [{ requestId: 'REQ-A', destinationIndexes: [0] }] })).rejects.toThrow('โหลดหน้าใหม่')
+    expect((await db.collection('trips').get()).empty).toBe(true)
+  })
+  it('return supports historical assignments without fingerprints', async () => {
+    const original = await create()
+    await borrow(original.bookingId)
+    await db.collection('continuousBookings').doc(original.bookingId).update({ 'overrides.2026-10-05.assignments': [{ requestId: 'REQ-B', destinationIndexes: [0] }] })
+    await executeQueueCommand(db, { operationId: operationId(), action: 'return', bookingId: original.bookingId, date: '2026-10-05', reason: 'คืนคิวเดิม' }, actor, NOW)
+    expect((await db.collection('vehicleRequests').doc('REQ-B').get()).data()?.assignedDestinations).toEqual([])
+  })
   it('creates every day, keeps human IDs, assigns the source atomically and reserves actual resources', async () => {
     const result = await create()
     const range = await booking(result.bookingId)
@@ -291,7 +317,7 @@ describe('continuous queue service on an isolated Firestore project', () => {
   it('claims the same request destination once even when ordinary and continuous queues choose different resources', async () => {
     const client = env.authenticatedContext(actor.id).firestore() as unknown as ClientFirestore
     const ordinary = { ...tripInput(), driverId: 'D2', vehicleId: 'V2', id: 'NORMAL', tripId: 'NORMAL', status: 'Planned' }
-    const results = await Promise.allSettled([create({ endDate: '2026-10-05' }), createTripWithQueueGuard(client, 'NORMAL', ordinary, { assignments: [{ requestId: 'REQ-A', destinationIndexes: [0] }] })])
+    const results = await Promise.allSettled([create({ endDate: '2026-10-05' }), createTripWithQueueGuard(client, 'NORMAL', ordinary, { assignments: [assignment('A')] })])
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1)
     const request = (await db.collection('vehicleRequests').doc('REQ-A').get()).data()!
@@ -319,7 +345,7 @@ describe('continuous queue service on an isolated Firestore project', () => {
   it.each([
     { name: 'out-of-range index', count: 1, assignments: [{ requestId: 'REQ-A', destinationIndexes: [1] }] },
     { name: 'duplicate index', count: 2, assignments: [{ requestId: 'REQ-A', destinationIndexes: [0, 0] }] },
-    { name: 'duplicate request', count: 2, assignments: [{ requestId: 'REQ-A', destinationIndexes: [0] }, { requestId: 'REQ-A', destinationIndexes: [0] }] },
+    { name: 'duplicate request', count: 2, assignments: [assignment('A'), assignment('A')] },
   ])('rejects $name without partial assignment', async ({ assignments, count }) => {
     const input = tripInput()
     input.stops = Array.from({ length: count }, () => ({ ...input.stops[0] }))

@@ -16,7 +16,7 @@ const trip = z.object({
   tripDate: date, driverId: id, driverName: text, vehicleId: id, vehiclePlate: text, stops: z.array(stop).min(1).max(150),
   vehicleType: text.optional(), sourceVRIds: z.array(id).max(150).optional(), totalDistanceKm: z.number().finite().nonnegative().optional(), totalEstimatedTimeMinutes: z.number().finite().nonnegative().optional(), fuelCost: z.number().finite().nonnegative().optional(), dieselPriceUsed: z.number().finite().nonnegative().optional(), fuelRateUsed: z.number().finite().positive().optional(), departurePoint: text.optional(), originLat: z.number().finite().min(-90).max(90).optional(), originLng: z.number().finite().min(-180).max(180).optional(),
 }).strict()
-const assignments = z.array(z.object({ requestId: id, destinationIndexes: z.array(z.number().int().min(0).max(149)).min(1).max(150) }).strict()).max(150)
+const assignments = z.array(z.object({ requestId: id, destinationIndexes: z.array(z.number().int().min(0).max(149)).min(1).max(150), expectedDestinationFingerprints: z.array(z.string().min(1).max(100_000)).min(1).max(150) }).strict().refine(value => value.destinationIndexes.length === value.expectedDestinationFingerprints.length, 'ข้อมูลจุดหมายต้นฉบับไม่ครบ กรุณาโหลดหน้าใหม่และเลือกงานใหม่')).max(150)
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), operationId, trip, endDate: date, assignments }).strict(),
   z.object({ action: z.literal('extend'), operationId, tripId: id, endDate: date }).strict(),

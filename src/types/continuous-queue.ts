@@ -56,7 +56,7 @@ export interface QueueNotice {
 }
 
 export type QueueTripInput = Pick<Trip, 'tripDate' | 'driverId' | 'driverName' | 'vehicleId' | 'vehiclePlate' | 'stops'> & Partial<Pick<Trip, 'vehicleType' | 'sourceVRIds' | 'totalDistanceKm' | 'totalEstimatedTimeMinutes' | 'fuelCost' | 'dieselPriceUsed' | 'fuelRateUsed' | 'departurePoint' | 'originLat' | 'originLng'>>
-export interface QueueSourceAssignment { requestId: string; destinationIndexes: number[] }
+export interface QueueSourceAssignment { requestId: string; destinationIndexes: number[]; expectedDestinationFingerprints?: string[] }
 
 type Operation = { operationId: string }
 export type QueueCommand = Operation & (

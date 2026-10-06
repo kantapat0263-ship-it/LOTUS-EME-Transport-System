@@ -8,3 +8,12 @@ it('รับคำสั่งคืนคิวพร้อมเหตุผ�
   expect(() => parseQueueCommand({ ...command, date: '2026-02-30' })).toThrow()
   expect(() => parseQueueCommand({ ...command, reason: '  ' })).toThrow()
 })
+
+it('create/borrow ต้องมี snapshot ต้นฉบับครบทุก index', () => {
+  const trip = { tripDate: '2026-10-07', driverId: 'D1', driverName: 'คนขับ', vehicleId: 'V1', vehiclePlate: 'รถ', stops: [{ siteName: 'A', order: 1, cargoDetails: 'ของ' }] }
+  const command = { action: 'create', operationId: 'op-123456', trip, endDate: trip.tripDate, assignments: [{ requestId: 'R1', destinationIndexes: [0], expectedDestinationFingerprints: ['original'] }] }
+  expect(parseQueueCommand(command)).toEqual(command)
+  expect(() => parseQueueCommand({ ...command, assignments: [{ requestId: 'R1', destinationIndexes: [0] }] })).toThrow()
+  expect(() => parseQueueCommand({ ...command, assignments: [{ ...command.assignments[0], expectedDestinationFingerprints: [] }] })).toThrow()
+  expect(() => parseQueueCommand({ ...command, assignments: [{ ...command.assignments[0], expectedDestinationFingerprints: ['one', 'two'] }] })).toThrow()
+})

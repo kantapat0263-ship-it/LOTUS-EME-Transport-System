@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
 import { doc, getDoc, setDoc, updateDoc, setLogLevel, type Firestore, type Transaction } from 'firebase/firestore'
 import { createTripWithQueueGuard, updateTripWithQueueGuard, type TripSourceAllocation } from '@/lib/tripQueueGuard'
+import { requestDestinationFingerprint } from '@/lib/requestDestination'
 
 let env: RulesTestEnvironment
 const probe = vi.hoisted(() => ({ afterRequestRead: null as (() => Promise<void>) | null, attempts: 0 }))
@@ -47,7 +48,7 @@ async function setup() {
   await createTripWithQueueGuard(db, 'T1', ordinary())
   return db
 }
-const withExpected = (value: TripSourceAllocation): TripSourceAllocation => ({ ...value, expected: value.expected || { ...ordinary(), sourceVRIds: [] } })
+const withExpected = (value: TripSourceAllocation, requests: Record<string, any> = { R1: request(), R2: { ...request(), requestId: 'VR-0710-0002' } }): TripSourceAllocation => ({ ...value, assignments: value.assignments.map(item => ({ ...item, expectedDestinationFingerprints: item.destinationIndexes.map(index => requestDestinationFingerprint(requests[item.requestId], index)) })), expected: value.expected || { ...ordinary(), sourceVRIds: [] } })
 const allocation = () => ({ assignments: [{ requestId: 'R1', destinationIndexes: [0], tripStopIndexes: [1] }] })
 const patch = () => ({ stops: [...ordinary().stops, { order: 2, siteId: 'A', siteName: 'A', cargoDetails: '', dispatcherNote: 'ข้อความเก่า', dispatcherName: 'คนเดิม' }] })
 
@@ -71,7 +72,7 @@ it('ห้ามสองจุดของใบเดียวกันหร�
     await updateDoc(doc(context.firestore(), 'vehicleRequests', 'R1'), { destinations: [{ siteName: 'A' }, { siteName: 'B' }] })
     await setDoc(doc(context.firestore(), 'vehicleRequests', 'R2'), { ...request(), requestId: 'VR-0710-0002' })
   })
-  await expect(updateTripWithQueueGuard(db, 'T1', patch(), withExpected({ assignments: [{ requestId: 'R1', destinationIndexes: [0, 1], tripStopIndexes: [1, 1] }] }))).rejects.toThrow('ซ้ำ')
+  await expect(updateTripWithQueueGuard(db, 'T1', patch(), withExpected({ assignments: [{ requestId: 'R1', destinationIndexes: [0, 1], tripStopIndexes: [1, 1] }] }, { R1: { ...request(), destinations: [{ siteName: 'A' }, { siteName: 'B' }] } }))).rejects.toThrow('ซ้ำ')
   await expect(updateTripWithQueueGuard(db, 'T1', patch(), withExpected({ assignments: [
     { requestId: 'R1', destinationIndexes: [0], tripStopIndexes: [1] }, { requestId: 'R2', destinationIndexes: [0], tripStopIndexes: [1] },
   ] }))).rejects.toThrow('หมายเหตุ')
@@ -116,7 +117,7 @@ it('รวมสองใบที่สลับจุดแล้วพกห�
   await updateTripWithQueueGuard(db, 'T1', input, withExpected({ assignments: [
     { requestId: 'R1', destinationIndexes: [2, 0], tripStopIndexes: [1, 3] },
     { requestId: 'R2', destinationIndexes: [1], tripStopIndexes: [2] },
-  ] }))
+  ] }, { R1: { ...request(), destinations: [{ siteName: 'A0' }, { siteName: 'A1' }, { siteName: 'A2' }] }, R2: { ...request(), requestId: 'VR-0710-0002', destinations: [{ siteName: 'B0' }, { siteName: 'B1' }] } }))
   const trip = (await getDoc(doc(db, 'trips', 'T1'))).data()!
   expect(trip.stops.map((s: { dispatcherNote: string }) => s.dispatcherNote)).toEqual(['อย่าเปลี่ยนงานเดิม', 'A2 ล่าสุด', 'B1 ล่าสุด', 'A0 ล่าสุด'])
   expect(trip.stops[0]).toEqual(ordinary().stops[0])

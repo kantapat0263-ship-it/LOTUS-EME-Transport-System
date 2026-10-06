@@ -24,6 +24,7 @@ import {
   setDoc,
   setLogLevel,
   updateDoc,
+  writeBatch,
   where,
   type Firestore,
 } from 'firebase/firestore'
@@ -50,10 +51,56 @@ const as = (uid: Uid | 'noProfile', email = `${uid}@example.com`) =>
 const anon = () => env.unauthenticatedContext().firestore()
 
 beforeAll(async () => {
+  if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080') throw new Error('Use only isolated demo Firestore on localhost8080')
   setLogLevel('silent')
   env = await initializeTestEnvironment({
     projectId: 'demo-lotus-eme',
     firestore: { rules: readFileSync('firestore.rules', 'utf8') },
+  })
+})
+
+describe('ประวัติ/หลักฐานต่ออายุรถเพิ่มได้อย่างเดียว', () => {
+  const collections = ['vehicleComplianceHistory', 'vehicleComplianceEvidence']
+  it.each(['admin', 'dispatcher'] as Uid[])('ผู้มีสิทธิ์ %s ต่ออายุแบบ batch พร้อมหลักฐานได้', async uid => {
+    const db = as(uid), batch = writeBatch(db)
+    batch.set(doc(db, 'vehicles', 'V1'), { licensePlate: 'TEST', taxExpiry: '2027-10-06' }, { merge: true })
+    for (const name of collections) batch.set(doc(db, name, 'NEW'), { vehicleId: 'V1', uploadedBy: uid, recordedAt: '2026-10-06' })
+    await assertSucceeds(batch.commit())
+    for (const name of collections) await assertSucceeds(getDoc(doc(as('viewer'), name, 'NEW')))
+  })
+  it.each(['admin', 'dispatcher'] as Uid[])('ผู้มีสิทธิ์ %s ห้ามแก้/เขียนทับ/ลบประวัติที่มีอยู่', async uid => {
+    await env.withSecurityRulesDisabled(async ctx => {
+      for (const name of collections) await setDoc(doc(ctx.firestore(), name, 'OLD'), { vehicleId: 'V1', legacy: true, value: 'original' })
+    })
+    for (const name of collections) {
+      const ref = doc(as(uid), name, 'OLD')
+      await assertFails(updateDoc(ref, { value: 'changed' }))
+      await assertFails(setDoc(ref, { value: 'overwritten' }))
+      await assertFails(setDoc(ref, { value: 'merged' }, { merge: true }))
+      await assertFails(deleteDoc(ref))
+      await assertSucceeds(getDoc(doc(as('viewer'), name, 'OLD')))
+    }
+  })
+  it.each(['viewer', 'pendingViewer', 'inactiveDispatcher', 'noProfile'] as const)('%s เพิ่มประวัติ/หลักฐานไม่ได้', async uid => {
+    for (const name of collections) await assertFails(setDoc(doc(as(uid), name, 'NEW'), { vehicleId: 'V1' }))
+  })
+  it('คนไม่ล็อกอินอ่าน/เพิ่มไม่ได้ และ batch ที่แก้ประวัติเก่าปฏิเสธทั้งก้อน', async () => {
+    await env.withSecurityRulesDisabled(async ctx => {
+      for (const name of collections) await setDoc(doc(ctx.firestore(), name, 'OLD'), { vehicleId: 'V1', value: 'original' })
+      await setDoc(doc(ctx.firestore(), 'vehicles', 'V1'), { licensePlate: 'TEST', taxExpiry: '2026-10-06' })
+    })
+    for (const name of collections) {
+      await assertFails(getDoc(doc(anon(), name, 'OLD')))
+      await assertFails(setDoc(doc(anon(), name, 'NEW'), { vehicleId: 'V1' }))
+    }
+    const db = as('dispatcher'), batch = writeBatch(db)
+    batch.update(doc(db, 'vehicles', 'V1'), { taxExpiry: '2027-10-06' })
+    batch.update(doc(db, 'vehicleComplianceHistory', 'OLD'), { value: 'changed' })
+    await assertFails(batch.commit())
+    await env.withSecurityRulesDisabled(async ctx => {
+      const snap = await getDoc(doc(ctx.firestore(), 'vehicles', 'V1'))
+      if (snap.data()?.taxExpiry !== '2026-10-06') throw new Error('Denied batch changed the car')
+    })
   })
 })
 
