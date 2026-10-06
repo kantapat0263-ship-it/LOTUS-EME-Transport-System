@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { editStopNote, stopNoteKey, applyNoteEdit, StopNoteConflictError } from './stopNote'
+import { editStopNote, stopNoteKey, applyNoteEdit, StopNoteConflictError, stopFingerprint } from './stopNote'
 
 const stops = [
   { order: 1, siteName: 'CP All - Udon Thani', dispatcherNote: 'ขากลับให้นำรถแค็ป ถส-5964 กลับมา', dispatcherName: 'มนทิรา จงบุรี' },
@@ -43,17 +43,30 @@ describe('stopNote: applyNoteEdit (ใช้ใน transaction — อ่าน�
   ]
 
   it('จุดเดิม (ชื่อ+ลำดับตรง) → แก้เฉพาะจุดนั้น เก็บของที่คนอื่นเพิ่งแก้ในจุดอื่นไว้', () => {
-    const next = applyNoteEdit(live, 0, { siteName: 'CP All - Udon Thani', order: 1 }, 'ใหม่', 'ก')
+    const next = applyNoteEdit(live, 0, stopFingerprint(live[0]), 'ใหม่', 'ก')
     expect(next[0]).toMatchObject({ outcome: 'delivered', dispatcherNote: 'ใหม่', dispatcherName: 'ก' })
     expect(next[1]).toBe(live[1])
   })
 
   it('จุดในทริปสดไม่ใช่จุดเดิม (ถูกลบ/แทรก/สลับไประหว่างเปิดหน้าต่าง) → throw StopNoteConflictError', () => {
-    expect(() => applyNoteEdit(live, 0, { siteName: 'สสวท.', order: 2 }, 'x', 'ก')).toThrow(StopNoteConflictError)
-    expect(() => applyNoteEdit(live, 5, { siteName: 'CP All - Udon Thani', order: 1 }, 'x', 'ก')).toThrow(StopNoteConflictError)
+    expect(() => applyNoteEdit(live, 0, stopFingerprint(live[1]), 'x', 'ก')).toThrow(StopNoteConflictError)
+    expect(() => applyNoteEdit(live, 5, stopFingerprint(live[0]), 'x', 'ก')).toThrow(StopNoteConflictError)
   })
 
   it('ไม่มีชื่อผู้แก้ → throw (กันบันทึกตอนโปรไฟล์ยังไม่โหลด)', () => {
-    expect(() => applyNoteEdit(live, 0, { siteName: 'CP All - Udon Thani', order: 1 }, 'x', '  ')).toThrow()
+    expect(() => applyNoteEdit(live, 0, stopFingerprint(live[0]), 'x', '  ')).toThrow()
+  })
+})
+
+describe('stopNote: stopFingerprint (ตัวระบุจุด — ไม่มี stopId ในระบบ)', () => {
+  it('งานใหม่ที่ชื่อ+ลำดับซ้ำกับงานเดิม แต่เวลาแทรก/รายละเอียดต่าง → ไม่ใช่จุดเดียวกัน', () => {
+    const old = { order: 2, siteName: 'B', adhoc: true, insertedAt: '2026-10-06T09:00:00Z', cargoDetails: 'ของเดิม' }
+    const reinserted = { ...old, insertedAt: '2026-10-06T09:05:00Z', cargoDetails: 'ของใหม่' }
+    expect(stopFingerprint(reinserted)).not.toBe(stopFingerprint(old))
+    expect(() => applyNoteEdit([{ order: 1, siteName: 'A' }, reinserted], 1, stopFingerprint(old), 'x', 'ก')).toThrow(StopNoteConflictError)
+  })
+  it('หมายเหตุ/ผลงานที่เปลี่ยนไม่ทำให้ตัวระบุเปลี่ยน (คนอื่นแก้ผลของจุดเดิมได้)', () => {
+    const a = { order: 1, siteName: 'A', requestTime: '08:30' }
+    expect(stopFingerprint({ ...a, outcome: 'postponed', dispatcherNote: 'x' })).toBe(stopFingerprint(a))
   })
 })

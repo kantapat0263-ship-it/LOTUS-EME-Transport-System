@@ -31,18 +31,29 @@ export class StopNoteConflictError extends Error {
 }
 
 /**
- * ใช้ใน transaction: แก้หมายเหตุจุด sIdx บน stops "สด" ที่เพิ่งอ่านจาก Firestore
- * — ตรวจว่ายังเป็นจุดเดิม (siteName + order) ก่อน · ต้องมีชื่อผู้แก้ (ชื่อจริงจากโปรไฟล์)
+ * ตัวระบุจุดงาน (ระบบไม่มี stopId) — ฟิลด์ที่ตั้งตอนสร้างจุดและไม่เปลี่ยนเมื่อแก้ผลงาน/หมายเหตุ
+ * กันเคสลบจุดแล้วแทรกงานใหม่ชื่อเดิมลำดับเดิมระหว่างเปิดหน้าต่าง (insertedAt/รายละเอียดต่างกัน)
  */
-export function applyNoteEdit<T extends { siteName?: string; order?: number }>(
+export function stopFingerprint(stop: object): string {
+  const s = stop as Record<string, unknown>
+  return JSON.stringify(
+    ["siteName", "order", "requestTime", "requestedBy", "cargoDetails", "address", "insertedAt", "assistForPlate"].map((k) => s[k] ?? null)
+  )
+}
+
+/**
+ * ใช้ใน transaction: แก้หมายเหตุจุด sIdx บน stops "สด" ที่เพิ่งอ่านจาก Firestore
+ * — ตรวจว่ายังเป็นจุดเดิม (stopFingerprint ตอนเปิดหน้าต่าง) ก่อน · ต้องมีชื่อผู้แก้ (ชื่อจริงจากโปรไฟล์)
+ */
+export function applyNoteEdit<T extends object>(
   liveStops: T[],
   sIdx: number,
-  expected: { siteName?: string; order?: number },
+  expectedFingerprint: string,
   text: string,
   author: string
 ): T[] {
-  if (!author.trim()) throw new Error('author name is required')
+  if (!author.trim()) throw new Error("author name is required")
   const cur = liveStops[sIdx]
-  if (!cur || cur.siteName !== expected.siteName || cur.order !== expected.order) throw new StopNoteConflictError()
+  if (!cur || stopFingerprint(cur) !== expectedFingerprint) throw new StopNoteConflictError()
   return editStopNote(liveStops, sIdx, text, author.trim())
 }

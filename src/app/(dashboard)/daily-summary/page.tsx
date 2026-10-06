@@ -53,7 +53,7 @@ import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
-import { applyNoteEdit, stopNoteKey, StopNoteConflictError } from "@/lib/stopNote"
+import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
@@ -100,7 +100,7 @@ export default function DailySummaryPage() {
   //     กันเคสเปิด dialog ค้างแล้วไปแก้จุดอื่น แล้วถูกเขียนทับด้วย stops ก้อนเก่า
   const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
   // แก้หมายเหตุคนจัดรถรายจุด (✏️) หลังจัดคิวแล้ว — เดิมแก้ได้แค่ในหน้าคำขอก่อนจัด
-  const [noteDialog, setNoteDialog] = React.useState<{ tripId: string; stopIdx: number; siteName?: string; order?: number } | null>(null)
+  const [noteDialog, setNoteDialog] = React.useState<{ tripId: string; stopIdx: number; fingerprint: string } | null>(null)
   const [noteDraft, setNoteDraft] = React.useState("")
   const [isSavingNote, setIsSavingNote] = React.useState(false)
   const [postponeDateStr, setPostponeDateStr] = React.useState<string>("")
@@ -573,22 +573,29 @@ export default function DailySummaryPage() {
   const openNoteDialog = (trip: Trip, sIdx: number) => {
     const stop = trip.stops?.[sIdx] as any
     setNoteDraft((trip as any).stopNotes?.[stopNoteKey(sIdx)] || stop?.dispatcherNote || "")
-    setNoteDialog({ tripId: trip.id, stopIdx: sIdx, siteName: stop?.siteName, order: stop?.order })
+    setNoteDialog({ tripId: trip.id, stopIdx: sIdx, fingerprint: stopFingerprint(stop || {}) })
   }
 
   // บันทึกใน transaction: อ่านทริปสด → ตรวจว่ายังเป็นจุดเดิม → แก้เฉพาะหมายเหตุจุดนั้น (ไม่ทับผล/หมายเหตุจุดอื่นที่คนอื่นเพิ่งแก้)
   // เก็บบน stop + ลบ key รุ่นเก่า trip.stopNotes[stop_N] ของจุดนี้ (ไม่งั้นค่ารุ่นเก่ายังแสดงทับ) · แจ้งสำเร็จหลังเขียนผ่านจริงเท่านั้น
   const saveStopNote = async () => {
     if (!noteDialog || !db || !noteAuthor || isSavingNote) return
-    const { tripId, stopIdx, siteName, order } = noteDialog
+    const { tripId, stopIdx, fingerprint } = noteDialog
     const key = stopNoteKey(stopIdx)
     setIsSavingNote(true)
     try {
-      const nextStops = await runTransaction(db, async (tx) => {
+      const omitKey = (m: Record<string, string> | undefined) => {
+        if (!m) return m
+        const { [key]: _drop, ...rest } = m
+        return rest
+      }
+      const live = await runTransaction(db, async (tx) => {
         const ref = doc(db, "trips", tripId)
         const snap = await tx.get(ref)
         if (!snap.exists()) throw new StopNoteConflictError()
-        const clean = applyNoteEdit(((snap.data() as any).stops || []) as TripStop[], stopIdx, { siteName, order }, noteDraft, noteAuthor).map(
+        const data = snap.data() as any
+        if (!Array.isArray(data.stops)) throw new Error("trip.stops is not an array")
+        const clean = applyNoteEdit(data.stops as TripStop[], stopIdx, fingerprint, noteDraft, noteAuthor).map(
           (st) => Object.fromEntries(Object.entries(st).filter(([, v]) => v !== undefined)) as unknown as TripStop
         )
         tx.update(ref, {
@@ -597,20 +604,10 @@ export default function DailySummaryPage() {
           [`stopNoteAuthors.${key}`]: deleteField(),
           updatedAt: serverTimestamp(),
         })
-        return clean
+        // คืนข้อมูลจาก snapshot ที่บันทึกผ่าน (ไม่ใช่ local เดิม) — หมายเหตุรุ่นเก่าของจุดอื่นที่คนอื่นเพิ่งลบจะไม่กลับมาแสดง
+        return { stops: clean, stopNotes: omitKey(data.stopNotes), stopNoteAuthors: omitKey(data.stopNoteAuthors) }
       })
-      const omitKey = (m: Record<string, string> | undefined) => {
-        if (!m) return m
-        const { [key]: _drop, ...rest } = m
-        return rest
-      }
-      setTrips((prev) =>
-        prev.map((t) =>
-          t.id === tripId
-            ? ({ ...t, stops: nextStops, stopNotes: omitKey((t as any).stopNotes), stopNoteAuthors: omitKey((t as any).stopNoteAuthors) } as Trip)
-            : t
-        )
-      )
+      setTrips((prev) => prev.map((t) => (t.id === tripId ? ({ ...t, ...live } as Trip) : t)))
       setNoteDialog(null)
       toast({ title: noteDraft.trim() ? "บันทึกหมายเหตุแล้ว" : "ลบหมายเหตุแล้ว" })
     } catch (e) {
@@ -2066,6 +2063,7 @@ export default function DailySummaryPage() {
           <textarea
             value={noteDraft}
             onChange={(e) => setNoteDraft(e.target.value)}
+            disabled={isSavingNote}
             rows={4}
             placeholder="เช่น ขากลับให้นำรถแค็ป ถส-5694 กลับมา"
             className="w-full rounded-lg bg-background border border-border/50 text-sm p-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"

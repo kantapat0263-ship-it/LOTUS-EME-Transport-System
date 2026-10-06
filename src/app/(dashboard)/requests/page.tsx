@@ -36,7 +36,7 @@ import {
   Info
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
+import { doc, collection, query, updateDoc, serverTimestamp, getDocs, writeBatch, where, setDoc, onSnapshot, runTransaction } from "firebase/firestore"
 import { UserProfile, Site } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -347,7 +347,17 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         [`stopNotesUpdatedBy`]: profileName || "Dispatcher",
         [`stopNotesUpdatedAt`]: new Date().toISOString()
       }
-      await updateDoc(vrRef, updateData)
+      // อ่านใบสดใน transaction: ถ้าจุดนี้เพิ่งถูกจัดเข้าทริป (อีกเครื่อง/snapshot ยังมาไม่ถึง) ไม่เขียน — กันแจ้งสำเร็จทั้งที่ทริปไม่เปลี่ยน
+      const assignedNow = await runTransaction(db, async (tx) => {
+        const fresh = await tx.get(vrRef)
+        if (((fresh.data() as any)?.assignedDestinations || []).includes(stopIndex)) return true
+        tx.update(vrRef, updateData)
+        return false
+      })
+      if (assignedNow) {
+        toast({ title: "จุดนี้เพิ่งถูกจัดเข้าทริป", description: "หมายเหตุยังไม่ถูกบันทึก — แก้ที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)", variant: "destructive" })
+        return
+      }
       // ไม่ mirror ไป trip.stopNotes แล้ว: noteKey คือลำดับจุดใน "ใบขอ" แต่ใบสรุป/ใบงานคนขับอ่านด้วยลำดับจุดใน "ทริป"
       // (ทริปรวมหลายใบ ลำดับไม่ตรงกัน → หมายเหตุไปโผล่ผิดจุด) · จุดที่ยังไม่จัด หมายเหตุติดไปกับ stop ตอนจัดเข้าทริปเอง
       // · จุดที่จัดแล้ว แก้ได้ที่ใบสรุป (แผงปิดผลงาน → ✏️ หมายเหตุ)
