@@ -22,8 +22,8 @@ function arrange(reject = false) {
   const update = reject ? vi.fn().mockRejectedValue(new Error('เปลี่ยนแล้ว')) : vi.fn().mockResolvedValue(saved)
   const toast = vi.fn()
   const recalc = vi.fn()
-  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'recalcTripDistance', `${body('persistTripPatch')}${body('applyStops')}${body('cancelStop')}return cancelStop`)(
-    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, vi.fn(), recalc,
+  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'recalcTripDistance', 'setRefusalDrafts', `${body('persistTripPatch')}${body('applyStops')}${body('cancelStop')}return cancelStop`)(
+    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, vi.fn(), recalc, vi.fn(),
   ) as (trip: unknown, index: number) => Promise<void>
   return { trip, handler, update, toast, recalc, saved, state: () => state }
 }

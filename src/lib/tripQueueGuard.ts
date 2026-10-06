@@ -15,12 +15,21 @@ export interface TripSourceAllocation {
 export interface TripStopEdit {
   expectedStops: Trip['stops']
   sourceIndexes: (number | null)[]
+  supersedeRequest?: { id: string; by: string }
+  createTarget?: { id: string; data: Record<string, any> }
 }
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
   return JSON.stringify(value)
+}
+
+export function assertTripStopsUnchanged(liveStops: Trip['stops'], expectedStops: Trip['stops']): void {
+  const withoutNotes = (stops: Trip['stops']) => stops.map(({ dispatcherNote: _note, dispatcherName: _author, ...stop }) => stop)
+  if (!Array.isArray(liveStops) || !Array.isArray(expectedStops) || canonical(withoutNotes(liveStops)) !== canonical(withoutNotes(expectedStops))) {
+    throw new Error('รายการงานหรือผลปิดงานเปลี่ยนระหว่างแก้ไข กรุณาโหลดข้อมูลใหม่ก่อนบันทึก')
+  }
 }
 
 async function sourceWrites(db: Firestore, tx: Transaction, trip: Trip, tripId: string, sources?: TripSourceAllocation, existingStopCount = 0) {
@@ -103,6 +112,7 @@ export async function createTripWithQueueGuard(db: Firestore, id: string, data: 
 }
 export async function updateTripWithQueueGuard(db: Firestore, id: string, patch: Record<string, any>, sources?: TripSourceAllocation, stopEdit?: TripStopEdit): Promise<Record<string, any>> {
   if ('queueLink' in patch) throw new Error(MANAGED_MESSAGE)
+  if ('stops' in patch && !stopEdit && !sources?.expected) throw new Error('การแก้รายการงานต้องมีข้อมูลต้นฉบับ กรุณาโหลดหน้าใหม่ก่อนบันทึก')
   return runTransaction(db, async tx => {
     const ref = doc(db, 'trips', id)
     const snap = await tx.get(ref)
@@ -112,10 +122,8 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     checkExpected(before, sources)
     let effectivePatch = patch
     if (stopEdit) {
-      const withoutNotes = (stops: Trip['stops']) => stops.map(({ dispatcherNote: _note, dispatcherName: _author, ...stop }) => stop)
-      if (!Array.isArray(before.stops) || !Array.isArray(patch.stops) || !Array.isArray(stopEdit.expectedStops) || !Array.isArray(stopEdit.sourceIndexes) || canonical(withoutNotes(before.stops)) !== canonical(withoutNotes(stopEdit.expectedStops))) {
-        throw new Error('รายการงานเปลี่ยนระหว่างแก้ไข กรุณาโหลดข้อมูลและเลือกใหม่')
-      }
+      assertTripStopsUnchanged(before.stops, stopEdit.expectedStops)
+      if (!Array.isArray(patch.stops) || !Array.isArray(stopEdit.sourceIndexes)) throw new Error('ลำดับรายการงานไม่ถูกต้อง กรุณาโหลดหน้าใหม่')
       effectivePatch = { ...patch, ...remapStopNotes(before, patch.stops, stopEdit.sourceIndexes) }
     }
     const after = { ...before, ...effectivePatch } as Trip
@@ -123,22 +131,38 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     if ('actualDriverId' in patch && typeof patch.actualDriverId !== 'string') delete after.actualDriverId
     const oldKeys = resourceGuardKeys(before)
     const newKeys = resourceGuardKeys(after)
-    const guards = await readGuards(db, tx, [...new Set([...oldKeys, ...newKeys])])
+    const target = stopEdit?.createTarget
+    const targetKeys = target ? resourceGuardKeys(target.data as Trip) : []
+    const targetRef = target ? doc(db, 'trips', target.id) : null
+    if (target && targetRef) {
+      if (target.id === id || target.data.queueLink || !target.data.driverId || !target.data.vehicleId || target.data.tripDate !== after.tripDate || !Array.isArray(target.data.stops) || target.data.stops.length || !after.stops.some(stop => stop.reassignedToTripId === target.id)) throw new Error('ข้อมูลทริปรับโยกไม่ตรงกับงานต้นทาง')
+      if ((await tx.get(targetRef)).exists()) throw new Error('รหัสเที่ยววิ่งถูกใช้แล้ว กรุณาจัดคิวใหม่')
+    }
+    const supersede = stopEdit?.supersedeRequest
+    const oldRequestRef = supersede ? doc(db, 'vehicleRequests', supersede.id) : null
+    const oldRequest = oldRequestRef ? await tx.get(oldRequestRef) : null
+    if (supersede && (!before.stops.some(stop => stop.postponedRequestId === supersede.id) || after.stops.some(stop => stop.postponedRequestId === supersede.id))) throw new Error('ใบที่เลื่อนไว้ไม่ตรงกับจุดงานที่แก้')
+    if (oldRequest?.exists() && ['approved', 'partial'].includes(oldRequest.data().status)) throw new Error('ใบที่เลื่อนไว้ถูกจัดรถแล้ว ต้องนำงานออกจากทริปวันใหม่ก่อนเปลี่ยนผล')
+    const guards = await readGuards(db, tx, [...new Set([...oldKeys, ...newKeys, ...targetKeys])])
     if (after.status !== 'Cancelled') assertAvailable(guards.filter(guard => newKeys.includes(guard.ref.id)))
+    if (target) assertAvailable(guards.filter(guard => targetKeys.includes(guard.ref.id)))
     const requests = await sourceWrites(db, tx, after, id, sources, before.stops?.length || 0)
     touchGuards(tx, guards)
+    if (target && targetRef) tx.set(targetRef, target.data)
+    if (oldRequestRef && oldRequest?.exists()) tx.update(oldRequestRef, { status: 'superseded', supersededAt: serverTimestamp(), supersededByUser: supersede!.by })
     const savedPatch = requests.length ? { ...effectivePatch, ...sourceNotePatch(after, requests), sourceVRIds: [...new Set([...(after.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : effectivePatch
     tx.update(ref, savedPatch)
     for (const request of requests) tx.update(request.ref, request.patch)
     return savedPatch
   })
 }
-export async function deleteTripWithQueueGuard(db: Firestore, id: string): Promise<void> {
+export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops']): Promise<void> {
   await runTransaction(db, async tx => {
     const ref = doc(db, 'trips', id)
     const snap = await tx.get(ref)
     if (!snap.exists()) return
     if (snap.data().queueLink) throw new Error(MANAGED_MESSAGE)
+    if (expectedStops) assertTripStopsUnchanged(snap.data().stops, expectedStops)
     const guards = await readGuards(db, tx, resourceGuardKeys(snap.data() as Trip))
     touchGuards(tx, guards)
     tx.delete(ref)

@@ -60,7 +60,7 @@ import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
 import { QueuePanel } from "@/components/continuous-queue/QueuePanel"
 import { isManagedTrip } from "@/lib/continuousQueue"
-import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard, type TripStopEdit } from "@/lib/tripQueueGuard"
+import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard, assertTripStopsUnchanged, type TripStopEdit } from "@/lib/tripQueueGuard"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
 export default function DailySummaryPage() {
@@ -71,6 +71,7 @@ export default function DailySummaryPage() {
   // Set initial selected date to empty to force user to click
   const [selectedDate, setSelectedDate] = React.useState<string>("")
   const [trips, setTrips] = React.useState<Trip[]>([])
+  const [refusalDrafts, setRefusalDrafts] = React.useState<Record<string, { text: string; trip: Trip }>>({})
   const [isLoading, setIsLoading] = React.useState(false)
   const [ordinaryBusy, setOrdinaryBusy] = React.useState(false)
   const ordinaryFlightRef = React.useRef(createQueueCommandFlight())
@@ -103,9 +104,8 @@ export default function DailySummaryPage() {
   const [copiedMsg, setCopiedMsg] = React.useState(false)
 
   // "เลื่อนงาน" dialog — เลือกวันใหม่แล้วสร้างใบขอรถ rescheduled ให้ไปโผล่ในกองจัดเที่ยววิ่งวันนั้น
-  // #5 เก็บแค่ tripId + stopIdx (ไม่ snapshot ทั้ง trip) → ตอนยืนยันค่อยหยิบทริปสดล่าสุด
-  //     กันเคสเปิด dialog ค้างแล้วไปแก้จุดอื่น แล้วถูกเขียนทับด้วย stops ก้อนเก่า
-  const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  // เก็บ stops ตอนเปิด dialog เพื่อตรวจว่าจุด/ผลเดิมยังตรงกับฐานจริงก่อนสร้างใบใหม่
+  const [postponeDialog, setPostponeDialog] = React.useState<{ tripId: string; stopIdx: number; expectedStops: TripStop[] } | null>(null)
   // แก้หมายเหตุคนจัดรถรายจุด (✏️) หลังจัดคิวแล้ว — เดิมแก้ได้แค่ในหน้าคำขอก่อนจัด
   const [noteDialog, setNoteDialog] = React.useState<{ tripId: string; stopIdx: number; fingerprint: string } | null>(null)
   const [noteDraft, setNoteDraft] = React.useState("")
@@ -117,7 +117,7 @@ export default function DailySummaryPage() {
   const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
   const [siteListOpen, setSiteListOpen] = React.useState(false)
   // โยกงานให้คน/รถที่ยังไม่มีทริปวันนั้น — เลือกคนขับ+รถ แล้วระบบสร้างทริปให้
-  const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
+  const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number; expectedStops: TripStop[] } | null>(null)
   const [reassignNewForm, setReassignNewForm] = React.useState({ driverId: "", vehicleId: "" })
   // "คันช่วย" — copy งานไปให้อีกคันไปช่วยขน (งานต้นทางยังอยู่คันเดิม ไม่ใช่โยก)
   const [assistDialog, setAssistDialog] = React.useState<{ tripId: string; stopIdx: number } | null>(null)
@@ -320,6 +320,7 @@ export default function DailySummaryPage() {
         })
 
       setTrips(results)
+      setRefusalDrafts({}) // โหลดใหม่ = เริ่มจากข้อมูลล่าสุด ไม่ใช้ baseline/เลขแถวของข้อความร่างเก่า
     } catch (error) {
       if (!isLatest()) return
       // โหลดไม่สำเร็จ = ไม่รู้ว่าวันนี้มีทริปอะไร → ล้างทริปที่ค้างจากรอบก่อน (อาจเป็นอีกวัน)
@@ -682,15 +683,22 @@ export default function DailySummaryPage() {
     }
   }
 
-  const applyStops = async (tripId: string, newStops: TripStop[], persist = true, stopEdit?: TripStopEdit) => {
-    if (!allowOrdinaryEdit(trips.find(t => t.id === tripId))) return false
+  const applyStops = async (trip: Trip, newStops: TripStop[], persist = true, stopEdit?: TripStopEdit, keepReasonDrafts = false) => {
+    const tripId = trip.id
+    if (!allowOrdinaryEdit(trip)) return false
     // กัน field = undefined หลุดเข้า Firestore — updateDoc จะ throw ทันที (sync) ทั้งก้อน
     // ทำให้ dialog ค้าง + ข้อมูลเข้าแค่ local (เคยเกิดกับแทรกงานที่ไม่กรอกผู้สั่ง)
     const clean = newStops.map(
       (s) => Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)) as unknown as TripStop
     )
-    if (persist) return persistTripPatch(tripId, { stops: clean }, stopEdit)
-    setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: clean } : t)))
+    if (persist) {
+      if (!await persistTripPatch(tripId, { stops: clean }, stopEdit || {
+        expectedStops: trip.stops,
+        sourceIndexes: clean.map((_, index) => index < trip.stops.length ? index : null),
+      })) return false
+    } else setTrips(prev => prev.map(t => (t.id === tripId ? { ...t, stops: clean } : t)))
+    // การเปลี่ยนงาน/ผลอาจย้ายเลขแถว ล้าง draft ของทริปนี้หลังบันทึกสำเร็จเท่านั้น
+    if (!keepReasonDrafts) setRefusalDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${tripId}:`))))
     return true
   }
 
@@ -895,7 +903,7 @@ export default function DailySummaryPage() {
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
       const newStops = [...stops, mkStop(order)]
-      if (!await applyStops(target.id, newStops, true)) return false
+      if (!await applyStops(target, newStops, true)) return false
       await recalcTripDistance(target, newStops) // ล็อกการปรับเส้นทางจนบันทึกระยะของจุดใหม่เสร็จ
       return true
     }
@@ -977,10 +985,11 @@ export default function DailySummaryPage() {
         `${verb} "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
         `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ ใช่หรือไม่?`
       )) return
-      try { await deleteTripWithQueueGuard(db, trip.id) } catch (e: any) {
+      try { await deleteTripWithQueueGuard(db, trip.id, trip.stops) } catch (e: any) {
         toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
       }
       setTrips(prev => prev.filter(t => t.id !== trip.id))
+      setRefusalDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${trip.id}:`))))
       toast({ title: `${verb}แล้ว`, description: `${trip.vehiclePlate} (${trip.driverName}) — ไม่เหลืองาน ลบทริปทิ้ง` })
       return
     }
@@ -989,7 +998,7 @@ export default function DailySummaryPage() {
       `${verb} "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?\n` +
       `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่`
     )) return
-    if (!await applyStops(trip.id, remaining, true, {
+    if (!await applyStops(trip, remaining, true, {
       expectedStops: trip.stops,
       sourceIndexes: trip.stops.map((_, index) => index).filter(index => index !== sIdx),
     })) return
@@ -1021,7 +1030,7 @@ export default function DailySummaryPage() {
         )
         if (!ok) continue
         const nowIso = new Date().toISOString()
-        if (!await applyStops(own.id, (own.stops || []).map(s =>
+        if (!await applyStops(own, (own.stops || []).map(s =>
           (!s.outcome || s.outcome === 'delivered')
             ? {
                 ...stripOutcome(s),
@@ -1033,7 +1042,10 @@ export default function DailySummaryPage() {
                 outcomeAt: nowIso,
               }
             : s
-        ))) return
+        ))) {
+          toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้โยกงานจากรถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
+          return
+        }
         toast({ title: "🔗 โยกงานให้อัตโนมัติแล้ว", description: `${movable.length} จุดของ ${name} ย้ายมาลงรถ ${target.vehiclePlate}` })
       }
     }
@@ -1045,9 +1057,12 @@ export default function DailySummaryPage() {
         if (moved.length === 0) continue
         const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
         if (!ok) continue
-        if (!await applyStops(own.id, (own.stops || []).map(s =>
+        if (!await applyStops(own, (own.stops || []).map(s =>
           (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
-        ))) return
+        ))) {
+          toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้คืนงานให้รถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
+          return
+        }
         toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
       }
     }
@@ -1081,9 +1096,12 @@ export default function DailySummaryPage() {
     // งานของคันอื่นที่ "โยกเข้ามา" ที่ทริปนี้ เก็บทะเบียนเป็น snapshot → อัปเดตให้ตรงคันใหม่
     for (const other of trips.filter(t => t.id !== tripId && !isManagedTrip(t))) {
       if (!(other.stops || []).some(s => s.reassignedToTripId === tripId)) continue
-      if (!await applyStops(other.id, (other.stops || []).map(s =>
+      if (!await applyStops(other, (other.stops || []).map(s =>
         s.reassignedToTripId === tripId ? { ...s, reassignedToVehiclePlate: v.licensePlate } : s
-      ))) return
+      ))) {
+        toast({ title: "เปลี่ยนรถแล้ว แต่ทะเบียนในงานโยกยังไม่ครบ", description: `ยังไม่ได้แก้ทะเบียนในงานของรถ ${other.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
+        return
+      }
     }
     toast({ title: "🚚 เปลี่ยนรถแล้ว", description: `${trip.driverName}: ${trip.vehiclePlate} → ${v.licensePlate}` })
   }
@@ -1114,51 +1132,18 @@ export default function DailySummaryPage() {
       openPostponeDialog(trip, stopIdx)
       return
     }
-    // ถ้าจุดนี้เคยถูกเลื่อน (มีใบที่สร้างไว้) แล้วเปลี่ยนเป็นผลอื่น → ลบใบที่เลื่อนทิ้ง กันงานงอกค้างในวันใหม่
+    // เปลี่ยนผลและปลดใบที่เคยเลื่อนใน transaction เดียว โดยเก็บใบเก่าไว้ตรวจย้อนหลัง
     const prev = trip.stops?.[stopIdx] as any
-    if (prev?.postponedRequestId && db) {
-      const reqRef = doc(db, "vehicleRequests", prev.postponedRequestId)
-      let reqSnap
-      try {
-        reqSnap = await getDoc(reqRef)
-      } catch (e) {
-        console.error("[chooseOutcome] อ่านใบที่เลื่อนไว้ไม่สำเร็จ", e)
-        toast({ title: "เปลี่ยนผลไม่สำเร็จ", description: "อ่านข้อมูลใบขอของวันที่เลื่อนไปไม่ได้ กรุณาลองใหม่", variant: "destructive" })
-        return
-      }
-      // ใบหายไปแล้ว (โค้ดเก่าลบทิ้ง) = ไม่มีอะไรต้องปลด ข้ามไปทำงานต่อได้เลย
-      if (reqSnap.exists()) {
-        const st = (reqSnap.data() as any).status
-        // #2 ถ้าใบถูกจัดเข้าเที่ยววิ่งวันใหม่ไปแล้ว อย่าปลดเงียบ ๆ (จะเหลือ "จุดผี" ในทริปวันนั้น)
-        if (st === 'approved' || st === 'partial') {
-          toast({
-            title: "เปลี่ยนผลไม่ได้",
-            description: `งานนี้ถูกจัดเข้าเที่ยววิ่งวันที่ ${prev.postponedToDate ? formatThaiDate(prev.postponedToDate) : 'ใหม่'} ไปแล้ว — ต้องไปลบจุดออกจากทริปวันนั้นก่อน แล้วค่อยเปลี่ยนผลตรงนี้`,
-            variant: "destructive",
-          })
-          return
-        }
-        // ติดป้ายแทนการลบ — ใบยังอยู่ให้ตรวจย้อนหลังได้ และไม่หลุดจากประวัติการส่ง
-        // ถ้าปลดไม่สำเร็จต้องหยุด ไม่งั้นใบ "rescheduled" จะลอยค้างในกองของวันนั้นโดยไม่มีจุดงานอ้างถึง
-        try {
-          await updateDoc(reqRef, {
-            status: "superseded",
-            supersededAt: serverTimestamp(),
-            supersededByUser: recordedBy || user?.email || "",
-          })
-        } catch (e) {
-          console.error("[chooseOutcome] ปลดใบที่เลื่อนไว้ไม่สำเร็จ", e)
-          toast({ title: "เปลี่ยนผลไม่สำเร็จ", description: "ยกเลิกใบขอของวันที่เลื่อนไปไม่ได้ — ผลงานยังเป็นเหมือนเดิม กรุณาลองใหม่", variant: "destructive" })
-          return
-        }
-      }
-    }
     const newStops = buildStops(trip, stopIdx, (s) => {
       const base = stripOutcome(s)
       if (outcome === 'delivered') return base // back to "as planned"
       return { ...base, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
     })
-    await applyStops(trip.id, newStops, true)
+    await applyStops(trip, newStops, true, prev?.postponedRequestId ? {
+      expectedStops: trip.stops,
+      sourceIndexes: trip.stops.map((_, index) => index),
+      supersedeRequest: { id: prev.postponedRequestId, by: recordedBy || user?.email || "" },
+    } : undefined)
   }
 
   const tomorrowStr = () => {
@@ -1169,17 +1154,16 @@ export default function DailySummaryPage() {
 
   const openPostponeDialog = (trip: Trip, stopIdx: number) => {
     if (!allowOrdinaryEdit(trip)) return
-    setPostponeDialog({ tripId: trip.id, stopIdx })
+    setPostponeDialog({ tripId: trip.id, stopIdx, expectedStops: trip.stops })
     setPostponeDateStr(tomorrowStr())
     setPostponeWarn("")
   }
 
-  // เลื่อนจริง: (1) สร้างใบขอรถ rescheduled วันใหม่ให้สำเร็จก่อน → (2) ค่อยติดป้าย postponed
-  // (ลำดับสำคัญ: สร้างก่อนติดป้าย ถ้า network หลุดตอนสร้าง งานจะไม่หายจากวันเดิม)
+  // สร้างใบ rescheduled + ปลดใบเก่า + ติดป้าย postponed ใน transaction เดียว
   const handlePostpone = async () => {
     if (!postponeDialog || !db) return
     const { tripId, stopIdx } = postponeDialog
-    // #5 หยิบทริปสดล่าสุดจาก state (ไม่ใช้ snapshot ตอนเปิด dialog) กันเขียนทับการแก้จุดอื่น
+    // หยิบข้อมูลบนจอ แล้วตรวจ snapshot ตอนเปิด dialog เทียบกับฐานจริงใน transaction
     const trip = trips.find(t => t.id === tripId)
     if (!trip) { setPostponeDialog(null); return }
     if (!allowOrdinaryEdit(trip)) return
@@ -1192,8 +1176,7 @@ export default function DailySummaryPage() {
     }
     setIsPostponing(true)
     try {
-      // ถ้าเคยเลื่อนจุดนี้ไว้แล้ว (เปลี่ยนวัน) ต้องปลดใบเก่า — แต่ทำ "หลัง" สร้างใบใหม่สำเร็จเท่านั้น
-      // เดิมลบก่อนสร้าง: ถ้าพังระหว่างทาง ใบเก่าหายถาวรและงานหลุดจากกองทั้งสองวัน
+      // ตรวจเบื้องต้นก่อน และตรวจสถานะใบเก่าซ้ำใน transaction เพื่อกันการจัดรถระหว่างรอ
       const existingReqId = (stop as any).postponedRequestId
       if (existingReqId) {
         // #2 ถ้าใบเดิมถูกจัดเข้าเที่ยววิ่งไปแล้ว เปลี่ยนวันไม่ได้ (จะเหลือจุดผีในทริปนั้น)
@@ -1215,7 +1198,9 @@ export default function DailySummaryPage() {
         const tripSnap = await t.get(tripRef)
         if (!tripSnap.exists()) throw new Error("ไม่พบทริปนี้แล้ว")
         if (isManagedTrip(tripSnap.data() as Trip)) throw new Error('คิวต่อเนื่องต้องปรับด้วยแผงคิวต่อเนื่อง')
+        assertTripStopsUnchanged(tripSnap.data().stops, postponeDialog.expectedStops)
         const oldReqSnap = existingReqId ? await t.get(doc(db, "vehicleRequests", existingReqId)) : null
+        if (oldReqSnap?.exists() && ['approved', 'partial'].includes(oldReqSnap.data().status)) throw new Error('ใบที่เลื่อนไว้ถูกจัดรถแล้ว ต้องนำงานออกจากทริปวันใหม่ก่อนเลื่อนซ้ำ')
         const id = await findFreeRequestId(
           { exists: async (candidate: string) => (await t.get(doc(db, "vehicleRequests", candidate))).exists() },
           requestIdPrefix(newDate),
@@ -1285,17 +1270,17 @@ export default function DailySummaryPage() {
 
       // อัปเดตหน้าจอหลังธุรกรรมสำเร็จเท่านั้น — ข้างในถูกรันซ้ำได้ตอน retry
       setTrips(prev => prev.map(tr => (tr.id === trip.id ? { ...tr, stops: nextStops } : tr)))
+      setRefusalDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${trip.id}:`))))
 
       toast({ title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย (${requestId})` })
       setPostponeDialog(null)
     } catch (e) {
       console.error(e)
-      // ใบใหม่ถูกสร้างก่อนเสมอ ใบเก่าจึงยังอยู่ ณ จุดที่ล้มเหลว — ห้ามบอกว่า "ไม่หาย" ลอย ๆ แบบเดิม
       toast({
         title: "เลื่อนงานไม่สำเร็จ",
         description: e instanceof RequestIdExhaustedError
           ? "ออกรหัสใบขอของวันที่เลือกไม่ได้ (รหัสเต็ม) — เลือกวันอื่นหรือแจ้งผู้ดูแลระบบ"
-          : "ยังไม่ได้เลื่อน งานเดิมยังอยู่ครบ กรุณาลองใหม่",
+          : e instanceof Error ? e.message : "ยังไม่ได้เลื่อน กรุณาโหลดข้อมูลใหม่ก่อนลองอีกครั้ง",
         variant: "destructive",
       })
     } finally {
@@ -1320,10 +1305,10 @@ export default function DailySummaryPage() {
         reassignedToDriverName: target.driverName,
       }
     })
-    await applyStops(trip.id, newStops, true)
+    await applyStops(trip, newStops, true)
   }
 
-  // โยกงานให้คน/รถที่ "ยังไม่มีทริป" วันนั้น — สร้างทริปว่างให้ก่อน แล้วโยกงานไปคันนั้น
+  // สร้างทริปรับโยกพร้อมบันทึกงานต้นทางใน transaction เดียว
   const createReassignTarget = async () => {
     if (!reassignNewDialog) return
     const srcTrip = trips.find(t => t.id === reassignNewDialog.tripId)
@@ -1347,11 +1332,6 @@ export default function DailySummaryPage() {
       driverId: driver.id, driverName: driver.name,
       departureSiteId: "", stops: [], status: "Planned", adhocCreated: true,
     }
-    try { await createTripWithQueueGuard(db, tripId, { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }) } catch (e: any) {
-      toast({ title: 'สร้างทริปไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
-    }
-    setTrips(prev => [...prev, newTrip])
-
     // โยกงานต้นทางไปทริปใหม่ (เก็บ outcome เดิม เช่น reassigned/driver-refused ไว้)
     const newStops = buildStops(srcTrip, reassignNewDialog.stopIdx, (s) => ({
       ...s,
@@ -1359,7 +1339,12 @@ export default function DailySummaryPage() {
       reassignedToVehiclePlate: veh.licensePlate,
       reassignedToDriverName: driver.name,
     }))
-    if (!await applyStops(srcTrip.id, newStops, true)) return
+    if (!await applyStops(srcTrip, newStops, true, {
+      expectedStops: reassignNewDialog.expectedStops,
+      sourceIndexes: srcTrip.stops.map((_, index) => index),
+      createTarget: { id: tripId, data: { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() } },
+    })) return
+    setTrips(prev => [...prev, newTrip])
     toast({ title: "โยกงานให้คนใหม่แล้ว ✅", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
     setReassignNewDialog(null)
     setReassignNewForm({ driverId: "", vehicleId: "" })
@@ -1405,7 +1390,7 @@ export default function DailySummaryPage() {
       if (!(await passLeaveGate(`assist:${src.id}:${assistDialog.stopIdx}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
       const stops = target.stops || []
       const order = stops.length ? Math.max(...stops.map(s => s.order || 0)) + 1 : 1
-      if (!await applyStops(target.id, [...stops, mkCopy(order)], true)) return
+      if (!await applyStops(target, [...stops, mkCopy(order)], true)) return
       toast({ title: "เพิ่มคันช่วยแล้ว 🤝", description: `${target.driverName} (${target.vehiclePlate}) ไปช่วย "${stop.siteName}" ของ ${src.driverName}` })
     } else if (assistForm.targetTripId === "__new__") {
       const driver = driversData?.find(d => d.id === assistForm.driverId)
@@ -1438,8 +1423,19 @@ export default function DailySummaryPage() {
 
   // Reason text: update locally on every keystroke, persist on blur.
   const setRefuseReason = async (trip: Trip, stopIdx: number, reason: string, persist: boolean) => {
-    const newStops = buildStops(trip, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
-    await applyStops(trip.id, newStops, persist)
+    const key = `${trip.id}:${stopIdx}`
+    if (!persist) {
+      setRefusalDrafts(prev => ({ ...prev, [key]: { text: reason, trip: prev[key]?.trip || trip } }))
+      return
+    }
+    const base = refusalDrafts[key]?.trip || trip
+    const newStops = buildStops(base, stopIdx, (s) => ({ ...s, outcomeReason: reason }))
+    if (!await applyStops(base, newStops, true, undefined, true)) return
+    setRefusalDrafts(prev => {
+      if (prev[key] && prev[key].text !== reason) return { ...prev, [key]: { ...prev[key], trip: { ...base, stops: newStops } } }
+      const { [key]: _saved, ...rest } = prev
+      return rest
+    })
   }
 
   // guard 4: เตือน (ไม่ห้าม) ถ้าวันที่เลือกเลื่อนไปมีเที่ยววิ่งจัดไว้แล้ว
@@ -1534,7 +1530,7 @@ export default function DailySummaryPage() {
         {current === 'driver-refused' && (
           <input
             type="text"
-            value={stop.outcomeReason || ''}
+            value={refusalDrafts[`${trip.id}:${sIdx}`]?.text ?? stop.outcomeReason ?? ''}
             placeholder="เหตุผลที่ปฏิเสธ (เช่น บอกไกล ไม่คุ้ม)"
             onChange={(e) => setRefuseReason(trip, sIdx, e.target.value, false)}
             onBlur={(e) => { const value = e.target.value; void runOrdinaryAction(() => setRefuseReason(trip, sIdx, value, true)) }}
@@ -1554,7 +1550,7 @@ export default function DailySummaryPage() {
             onChange={(e) => {
               if (e.target.value === '__new__') {
                 setReassignNewForm({ driverId: "", vehicleId: "" })
-                setReassignNewDialog({ tripId: trip.id, stopIdx: sIdx })
+                setReassignNewDialog({ tripId: trip.id, stopIdx: sIdx, expectedStops: trip.stops })
               } else {
                 const targetId = e.target.value
                 void runOrdinaryAction(() => setReassignTarget(trip, sIdx, targetId))

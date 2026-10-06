@@ -93,7 +93,7 @@ it('จัดจุดของใบขอพร้อมทริปและ�
   expect((await getDoc(doc(db, 'vehicleRequests', 'R1'))).data()).toMatchObject({ status: 'partial', assignedDestinations: [0], tripId: null, tripIds: ['T1'] })
   await expect(createTripWithQueueGuard(db, 'T2', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned' }, { assignments: [{ requestId: 'R1', destinationIndexes: [0] }] })).rejects.toThrow('จัดรถแล้ว')
   expect((await getDoc(doc(db, 'trips', 'T2'))).exists()).toBe(false)
-  await updateTripWithQueueGuard(db, 'T1', { stops: [{ siteName: 'A' }, { siteName: 'B' }] }, { assignments: [{ requestId: 'R1', destinationIndexes: [1] }] })
+  await updateTripWithQueueGuard(db, 'T1', { stops: [{ siteName: 'A' }, { siteName: 'B' }] }, { assignments: [{ requestId: 'R1', destinationIndexes: [1] }], expected: { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', stops: [{ siteName: 'A' } as any] } })
   expect((await getDoc(doc(db, 'vehicleRequests', 'R1'))).data()).toMatchObject({ status: 'approved', assignedDestinations: [0, 1], tripId: 'T1', tripIds: ['T1'] })
 })
 
