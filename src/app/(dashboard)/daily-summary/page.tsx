@@ -54,6 +54,7 @@ import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
 import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
+import { ROUTE_MODES, routePlan, tripRouteMode, type RouteMode } from "@/lib/routeMode"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
@@ -655,35 +656,42 @@ export default function DailySummaryPage() {
   // คิดระยะทางทั้งทริปใหม่จาก stops ที่มีพิกัด (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
   // ใช้ตอนแทรกงานด่วน — ไม่งั้นเลข กม. ในใบสรุป/บอร์ดนักขับจะค้างที่เส้นทางเดิม
   // จุดที่ไม่มีพิกัด (พิมพ์ชื่อเอง) คิดไม่ได้ → ปล่อยตัวเลขเดิมไว้ ไม่ทำให้แทรกงานล้มเหลว
-  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]) => {
+  const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]): Promise<boolean> => {
     try {
-      if (!db) return
+      if (!db) return false
       const coordStops = (stops || []).filter(
         (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
       )
-      if (coordStops.length === 0) return
+      if (coordStops.length === 0) return false
 
       const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""
-      if (!apiKey) return
+      if (!apiKey) return false
       const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
       await loader.load()
       const g = (window as any).google
       const svc = new g.maps.DirectionsService()
 
-      const origin = {
+      const office = {
         lat: (tripDoc as any).originLat ?? 14.0815,
         lng: (tripDoc as any).originLng ?? 100.7129,
       }
-      const waypoints = coordStops.map((s: any) => ({
-        location: new g.maps.LatLng(s.lat, s.lng),
+      // รูปแบบเส้นทาง: ไป-กลับ (ปกติ) / ไปอย่างเดียว / กลับอย่างเดียว — ดู src/lib/routeMode.ts
+      const plan = routePlan(
+        tripRouteMode(tripDoc),
+        office,
+        coordStops.map((s: any) => ({ lat: s.lat as number, lng: s.lng as number }))
+      )
+      if (!plan) return false
+      const waypoints = plan.waypoints.map((p) => ({
+        location: new g.maps.LatLng(p.lat, p.lng),
         stopover: true,
       }))
 
       const result: any = await new Promise((resolve, reject) => {
         svc.route(
           {
-            origin,
-            destination: origin, // round trip กลับคลัง เหมือนตอนสร้างทริป
+            origin: plan.origin,
+            destination: plan.destination,
             waypoints,
             optimizeWaypoints: false, // งานแทรกต่อท้าย ไม่จัดลำดับใหม่
             travelMode: g.maps.TravelMode.DRIVING,
@@ -696,7 +704,7 @@ export default function DailySummaryPage() {
       let meters = 0
       result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
       const km = meters / 1000
-      if (!(km > 0)) return
+      if (!(km > 0)) return false
 
       const fuelRate = (tripDoc as any).fuelRateUsed || 10
       const diesel = (tripDoc as any).dieselPriceUsed || 32.5
@@ -711,10 +719,33 @@ export default function DailySummaryPage() {
         updatedAt: serverTimestamp(),
       })
       setStatsRefreshKey(k => k + 1) // บอร์ดนักขับต้องขยับตามด้วย ไม่ต้องให้ผู้ใช้กดวันที่ใหม่
+      return true
     } catch (e) {
       // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้ (งานแทรกสำเร็จไปแล้ว ห้าม throw ต่อ)
       console.error("[recalcTripDistance]", e)
+      return false
     }
+  }
+
+  // เปลี่ยนรูปแบบเส้นทาง (เคสไม่บ่อย: เอารถไปทิ้งที่ไซต์ / ไปรับรถอีกคันกลับ) → บันทึก แล้วคิด กม./ค่าน้ำมันใหม่
+  const changeRouteMode = async (trip: Trip, mode: RouteMode) => {
+    if (!db || tripRouteMode(trip) === mode) return
+    try {
+      await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, updatedAt: serverTimestamp() })
+    } catch (e) {
+      console.error("[changeRouteMode]", e)
+      toast({ title: "เปลี่ยนรูปแบบเส้นทางไม่สำเร็จ", description: "ลองใหม่อีกครั้ง", variant: "destructive" })
+      return
+    }
+    const updated = { ...trip, routeMode: mode } as Trip
+    setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, routeMode: mode } : t)))
+    const ok = await recalcTripDistance(updated, trip.stops || [])
+    const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
+    toast(
+      ok
+        ? { title: `รูปแบบเส้นทาง: ${label}`, description: "คำนวณระยะทาง/ค่าน้ำมันใหม่แล้ว" }
+        : { title: `รูปแบบเส้นทาง: ${label}`, description: "คำนวณระยะทางใหม่ไม่ได้ (งานไม่มีพิกัด/แผนที่ไม่พร้อม) — ตัวเลข กม. ยังเป็นค่าเดิม", variant: "destructive" }
+    )
   }
 
   // แทรกงานด่วน: เพิ่ม stop ตรงเข้าทริปคันนั้น (ไม่ผ่านกองจัดกลุ่ม = ไม่มี race/จุดผี)
@@ -1975,6 +2006,19 @@ export default function DailySummaryPage() {
                           .map((veh) => (
                             <option key={veh.id} value={veh.id}>{veh.licensePlate} ({veh.type})</option>
                           ))}
+                      </select>
+                    </div>
+                    {/* รูปแบบเส้นทาง — คิดระยะตามแผนใหม่ (ไป-กลับ / ไปอย่างเดียว / กลับอย่างเดียว) */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0">รูปแบบเส้นทาง:</span>
+                      <select
+                        value={tripRouteMode(trip)}
+                        onChange={(e) => void changeRouteMode(trip, e.target.value as RouteMode)}
+                        className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      >
+                        {ROUTE_MODES.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label} · {m.hint}</option>
+                        ))}
                       </select>
                     </div>
                     {(trip as any).vehicleChangedFromPlate && (

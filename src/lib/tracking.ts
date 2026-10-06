@@ -276,6 +276,24 @@ export function trackingDateKey(nowMs = Date.now()): string {
   return new Date(nowMs + (7 - TRACKING_DAY_START_HOUR) * 3600_000).toISOString().slice(0, 10)
 }
 
+/** "HH:MM" เวลาไทยของวันติดตาม dateKey → epoch ms — ก่อนเวลาตัดวัน (ตี 4) = วันถัดไปตามปฏิทิน · รูปแบบผิด = null */
+export function thaiClockToMs(dateKey: string, hhmm: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim())
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return null
+  const h = Number(m[1])
+  const mi = Number(m[2])
+  if (h > 23 || mi > 59) return null
+  const [y, mo, d] = dateKey.split("-").map(Number)
+  const dayOffset = h < TRACKING_DAY_START_HOUR ? 1 : 0
+  return Date.UTC(y, mo - 1, d + dayOffset, h, mi) - 7 * 3600_000
+}
+
+/** epoch ms → "HH:MM" เวลาไทย */
+export function msToThaiClock(ms: number): string {
+  const d = new Date(ms + 7 * 3600_000)
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
+}
+
 /** cron ดึงตำแหน่งช่วง 04:00–21:59 ไทย (ประหยัดโควตา — ผู้ใช้เลือกถึง 4 ทุ่ม) */
 export const CRON_END_HOUR = 22
 /** รอบเก็บตก 10 นาทีก่อนตัดวัน: 03:50–03:59 ไทย — รถที่กลับหลัง 22:00 จะได้จุดในออฟฟิศเข้า "วันเดิม" (ครบเกณฑ์จอด 5 นาที)
@@ -663,4 +681,44 @@ export function computeDailySummary(
     totalKm: Math.round(trailDistanceKm(pts) * 10) / 10,
     stops: timings,
   }
+}
+
+// ---------------------------------------------------------------------------
+// จบการใช้รถของทริป — รถคันเดียวถูกใช้ต่อในวันเดียวกัน (เช่น กลับออฟฟิศแล้วอีกคนเอารถไปนอนที่พัก)
+// GPS ผูกกับ "รถ" ทั้งวัน แต่งานผูกกับ "ทริป" → ตัด trail ของทริปที่เวลาจบ ไม่ให้การวิ่งของคนถัดไปมานับรวม
+// ---------------------------------------------------------------------------
+
+/** trail ของทริปหลังตัดที่เวลาจบการใช้รถ — ไม่ได้ตั้ง = ทั้งหมด (คืน array เดิม) */
+export function cutTrailAt<T extends TrailPoint>(trail: T[], endAt: number | null | undefined): T[] {
+  if (endAt == null) return trail
+  return trail.filter((p) => p.t != null && p.t <= endAt)
+}
+
+/**
+ * เวลาที่ควรเสนอให้ "จบการใช้รถ" = จุดสุดท้ายในออฟฟิศของรอบที่กลับมาจอด (≥ minStayMin) ก่อนรถถูกขับออกไปอีก
+ * — ตัดตรงนี้แล้วยังเห็น "กลับถึงออฟฟิศ" ครบ (มีจุดในออฟฟิศพอให้ผ่านเกณฑ์จอด) · ไม่มีการออกซ้ำหลังกลับ = null
+ */
+export function suggestHandoverTime(
+  trail: TrailPoint[],
+  office: LatLng,
+  opts: { radius?: number; minStayMin?: number } = {}
+): number | null {
+  const radius = opts.radius ?? OFFICE_RADIUS_M
+  const minMs = (opts.minStayMin ?? RETURN_DWELL_MIN) * 60_000
+  const pts = trail.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
+  let best: number | null = null
+  let start: number | null = null
+  let end = 0
+  let leftOnce = false // ต้องเคยออกไปก่อน (รอบจอดตอนเช้าก่อนออกงานไม่ใช่การส่งต่อ)
+  for (const p of pts) {
+    if (haversineMeters(office, p) <= radius) {
+      if (start == null) start = p.t!
+      end = p.t!
+    } else {
+      if (start != null && leftOnce && end - start >= minMs) best = end
+      start = null
+      leftOnce = true
+    }
+  }
+  return best
 }

@@ -33,6 +33,8 @@ export interface TrackingMapProps {
   /** ตัวระบุ "การเลือก" (เช่น id ทริป/วัน) — เปลี่ยนค่านี้ = zoom ให้พอดีใหม่ครั้งเดียว
    *  ค่าเดิม = ไม่แตะซูม (กันแผนที่เด้งออกตอน poll ระหว่างผู้ใช้กำลังซูมดู) */
   fitKey?: string
+  /** รูปแบบเส้นทาง — "return" (กลับอย่างเดียว) วาดจากจุดงาน → ออฟฟิศ · อื่น ๆ วาดจากออฟฟิศ → จุดงาน */
+  routeMode?: "round" | "outbound" | "return"
 }
 
 // โทนแผนที่เข้ม (ชุดเดียวกับ GroupingMap เพื่อความกลมกลืน)
@@ -56,7 +58,7 @@ const validLatLng = (s: { lat?: number; lng?: number }) => s.lat != null && s.ln
  *  - หมุดจุดงาน: เขียว = ถึงแล้ว, ส้ม = เป้าหมายปัจจุบัน, เทา = รอ
  *  - 🚚 = ตำแหน่งรถล่าสุด
  */
-export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, live, fitKey }: TrackingMapProps) {
+export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, live, fitKey, routeMode }: TrackingMapProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const mapRef = React.useRef<google.maps.Map | null>(null)
   const overlaysRef = React.useRef<Array<google.maps.Marker | google.maps.Polyline>>([])
@@ -107,8 +109,8 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
   // คีย์ของเส้นทาง (จุดงาน + ต้นทาง) — ใช้กันคำนวณ Directions ซ้ำตอนตำแหน่งรถอัปเดต
   const routeKey = React.useMemo(() => {
     const s = stops.filter(validLatLng).map((x) => `${x.lat},${x.lng}`).join("|")
-    return `${origin ? `${origin.lat},${origin.lng}` : ""}>${s}`
-  }, [stops, origin])
+    return `${routeMode ?? ""}|${origin ? `${origin.lat},${origin.lng}` : ""}>${s}`
+  }, [stops, origin, routeMode])
 
   // เส้นทางที่ควรวิ่ง (ถนนจริง) — คำนวณเมื่อจุดงาน/ต้นทางเปลี่ยนเท่านั้น
   React.useEffect(() => {
@@ -119,8 +121,9 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
     routeRef.current = null
     if (pts.length < 1) return
 
+    const isReturn = routeMode === "return" && !!origin // กลับอย่างเดียว: จุดงาน → ออฟฟิศ
     const drawStraight = () => {
-      const path = origin ? [origin, ...pts] : pts
+      const path = isReturn ? [...pts, origin!] : origin ? [origin, ...pts] : pts
       if (path.length < 2) return
       routeRef.current = new google.maps.Polyline({
         path,
@@ -131,8 +134,8 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       })
     }
 
-    const originPt = origin ?? pts[0]
-    const rest = origin ? pts : pts.slice(1)
+    const originPt = isReturn ? pts[0] : origin ?? pts[0]
+    const rest = isReturn ? [...pts.slice(1), origin!] : origin ? pts : pts.slice(1)
     if (rest.length === 0) {
       drawStraight()
       return

@@ -25,6 +25,10 @@ import {
   stopTiming,
   isAwaitingDwell,
   STAY_MIN,
+  cutTrailAt,
+  suggestHandoverTime,
+  thaiClockToMs,
+  msToThaiClock,
 } from './tracking'
 
 describe('tracking: เวลาที่จุดงานนับทุกรอบที่จอดจริง ไม่นับรอบที่ขับผ่าน (Codex รอบ 1 ข้อ 3, 5, 7)', () => {
@@ -711,5 +715,45 @@ describe('tracking: จุดแวะประจำนอกจุดงาน
     expect(s.offLunchMin).toBe(210)
     expect(s.distFromOfficeKm).toBeGreaterThan(8)
     expect(s.distFromOfficeKm).toBeLessThan(13)
+  })
+})
+
+describe('tracking: จบการใช้รถของทริป (ส่งต่อรถให้คนอื่นในวันเดียวกัน)', () => {
+  const MIN = 60_000
+  const T0 = Date.parse('2026-10-06T08:00:00+07:00')
+  const office = OFFICE_LOCATION
+  const atOffice = (t: number) => ({ lat: office.lat + 0.0005, lng: office.lng, t }) // ~55 ม.
+  const away = (t: number) => ({ lat: office.lat + 0.05, lng: office.lng, t }) // ~5.5 กม.
+
+  it('cutTrailAt: เก็บเฉพาะจุดที่เวลา ≤ เวลาจบ · ไม่ได้ตั้ง = ทั้งหมด', () => {
+    const trail = [atOffice(T0), away(T0 + 60 * MIN), atOffice(T0 + 120 * MIN)]
+    expect(cutTrailAt(trail, T0 + 60 * MIN)).toEqual(trail.slice(0, 2))
+    expect(cutTrailAt(trail, null)).toBe(trail)
+    expect(cutTrailAt(trail, undefined)).toBe(trail)
+  })
+
+  it('suggestHandoverTime: เวลาที่รถออกจากออฟฟิศอีกรอบหลังกลับมาจอด (จุดสุดท้ายในออฟฟิศของรอบจอดนั้น)', () => {
+    const trail = [
+      atOffice(T0), away(T0 + 30 * MIN), // ออกงาน
+      ...Array.from({ length: 11 }, (_, i) => atOffice(T0 + 540 * MIN + i * 10 * MIN)), // กลับ 17:00 จอดถึง 18:40
+      away(T0 + 660 * MIN), // อีกคนเอารถออก 19:00
+    ]
+    expect(suggestHandoverTime(trail, office)).toBe(T0 + 640 * MIN)
+  })
+
+  it('suggestHandoverTime: ไม่มีการออกซ้ำหลังกลับ หรือจอดไม่ถึง 5 นาที → null', () => {
+    expect(suggestHandoverTime([atOffice(T0), away(T0 + 30 * MIN), atOffice(T0 + 540 * MIN), atOffice(T0 + 560 * MIN)], office)).toBeNull()
+    expect(suggestHandoverTime([away(T0), atOffice(T0 + MIN), away(T0 + 2 * MIN)], office)).toBeNull()
+  })
+
+  it('thaiClockToMs: เวลาไทยของวันติดตาม — ก่อนตี 4 = วันถัดไป · รูปแบบผิด = null', () => {
+    expect(thaiClockToMs('2026-10-06', '18:30')).toBe(Date.parse('2026-10-06T18:30:00+07:00'))
+    expect(thaiClockToMs('2026-10-06', '01:15')).toBe(Date.parse('2026-10-07T01:15:00+07:00'))
+    expect(thaiClockToMs('2026-10-06', '25:00')).toBeNull()
+    expect(thaiClockToMs('2026-10-06', 'abc')).toBeNull()
+  })
+
+  it('msToThaiClock: แสดงเวลาไทย HH:MM', () => {
+    expect(msToThaiClock(Date.parse('2026-10-06T18:30:00+07:00'))).toBe('18:30')
   })
 })

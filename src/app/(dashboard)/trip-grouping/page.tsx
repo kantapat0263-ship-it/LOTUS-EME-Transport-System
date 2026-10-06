@@ -27,6 +27,7 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { useDriverLeaves } from "@/hooks/use-driver-leaves"
 import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
+import { routePlan, tripRouteMode } from "@/lib/routeMode"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -551,20 +552,27 @@ export default function TripGroupingPage() {
       const g = (window as any).google
       const svc = new g.maps.DirectionsService()
 
-      const origin = {
+      const office = {
         lat: trip.originLat ?? settings?.warehouseLatitude ?? 14.0815,
         lng: trip.originLng ?? settings?.warehouseLongitude ?? 100.7129,
       }
-      const waypoints = coordStops.map((s: any) => ({
-        location: new g.maps.LatLng(s.lat, s.lng),
+      // ทริปที่ตั้ง "ไปอย่างเดียว/กลับอย่างเดียว" ไว้ในใบสรุป ต้องไม่เด้งกลับเป็นไป-กลับตอนรวมจุดเข้า
+      const plan = routePlan(
+        tripRouteMode(trip),
+        office,
+        coordStops.map((s: any) => ({ lat: s.lat as number, lng: s.lng as number }))
+      )
+      if (!plan) return
+      const waypoints = plan.waypoints.map((p) => ({
+        location: new g.maps.LatLng(p.lat, p.lng),
         stopover: true,
       }))
 
       const result: any = await new Promise((resolve, reject) => {
         svc.route(
           {
-            origin,
-            destination: origin, // round trip กลับคลัง เหมือนตอนสร้างทริป
+            origin: plan.origin,
+            destination: plan.destination,
             waypoints,
             optimizeWaypoints: false, // จุดใหม่ต่อท้าย ไม่จัดลำดับใหม่
             travelMode: g.maps.TravelMode.DRIVING,
