@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils"
 import { Loader } from "@googlemaps/js-api-loader"
 import { useToast } from "@/hooks/use-toast"
 import { isManagedTrip } from "@/lib/continuousQueue"
+import { tripRouteMode } from "@/lib/routeMode"
 import { updateTripWithQueueGuard } from "@/lib/tripQueueGuard"
 
 // Production URL for public access
@@ -194,9 +195,12 @@ export default function TripDetailPage() {
       const validWaypoints = resolvedWaypoints.filter(w => w.position !== null);
       
       if (validWaypoints.length > 0) {
-        const origin = new google.maps.LatLng(trip.originLat || HEAD_OFFICE.lat, trip.originLng || HEAD_OFFICE.lng);
-        const destination = validWaypoints[validWaypoints.length - 1].position!;
-        const intermediates = validWaypoints.slice(0, -1).map(w => ({
+        const office = new google.maps.LatLng(trip.originLat || HEAD_OFFICE.lat, trip.originLng || HEAD_OFFICE.lng);
+        // กลับอย่างเดียว (ไปรับรถที่ไซต์ขับกลับ) = ไซต์ → … → สำนักงาน ; แบบอื่นวาด สำนักงาน → จุดงาน เหมือนเดิม
+        const isReturn = tripRouteMode(trip) === "return";
+        const origin = isReturn ? validWaypoints[0].position! : office;
+        const destination = isReturn ? office : validWaypoints[validWaypoints.length - 1].position!;
+        const intermediates = (isReturn ? validWaypoints.slice(1) : validWaypoints.slice(0, -1)).map(w => ({
           location: w.position!,
           stopover: true
         }));
@@ -224,9 +228,9 @@ export default function TripDetailPage() {
 
             // Markers
             const startMarker = new google.maps.Marker({
-              position: origin,
+              position: office,
               map,
-              title: trip.departurePoint || "จุดเริ่มต้น (สำนักงาน)",
+              title: isReturn ? "ปลายทาง (สำนักงาน) — กลับอย่างเดียว" : trip.departurePoint || "จุดเริ่มต้น (สำนักงาน)",
               icon: {
                 path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
                 scale: 7,
@@ -262,7 +266,7 @@ export default function TripDetailPage() {
             });
 
             const bounds = new google.maps.LatLngBounds();
-            bounds.extend(origin);
+            bounds.extend(office);
             validWaypoints.forEach(wp => bounds.extend(wp.position!));
             map.fitBounds(bounds);
           }

@@ -25,3 +25,16 @@ export function routePlan<P>(mode: RouteMode, office: P, pts: P[]): { origin: P;
   if (mode === 'return') return { origin: pts[0], destination: office, waypoints: pts.slice(1) }
   return { origin: office, destination: office, waypoints: pts }
 }
+
+/** ระยะ (กม.) + เวลาเดินทาง (นาที) รวมจาก legs ของ Google Directions — ปัดนาทีแบบเดียวกับตอนจัดกลุ่ม (GroupingMap) */
+export function sumRouteLegs(
+  legs: { distance?: { value?: number }; duration?: { value?: number } }[]
+): { km: number; minutes: number } {
+  let meters = 0
+  let seconds = 0
+  for (const leg of legs) {
+    meters += leg.distance?.value || 0
+    seconds += leg.duration?.value || 0
+  }
+  return { km: meters / 1000, minutes: Math.round(seconds / 60) }
+}

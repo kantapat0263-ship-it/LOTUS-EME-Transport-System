@@ -54,7 +54,7 @@ import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
 import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
-import { ROUTE_MODES, routePlan, tripRouteMode, type RouteMode } from "@/lib/routeMode"
+import { ROUTE_MODES, routePlan, sumRouteLegs, tripRouteMode, type RouteMode } from "@/lib/routeMode"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
@@ -697,7 +697,7 @@ export default function DailySummaryPage() {
   const computePlanDistance = async (
     tripDoc: Trip,
     stops: TripStop[]
-  ): Promise<{ km: number; fuelCost: number } | "no-coords" | "failed"> => {
+  ): Promise<{ km: number; fuelCost: number; minutes: number } | "no-coords" | "failed"> => {
     try {
       const coordStops = (stops || []).filter(
         (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
@@ -744,14 +744,12 @@ export default function DailySummaryPage() {
         )
       })
 
-      let meters = 0
-      result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
-      const km = meters / 1000
+      const { km, minutes } = sumRouteLegs(result.routes[0].legs)
       if (!(km > 0)) return "failed"
 
       const fuelRate = (tripDoc as any).fuelRateUsed || 10
       const diesel = (tripDoc as any).dieselPriceUsed || 32.5
-      return { km, fuelCost: (km / fuelRate) * diesel }
+      return { km, fuelCost: (km / fuelRate) * diesel, minutes }
     } catch (e) {
       console.error("[computePlanDistance]", e)
       return "failed"
@@ -771,14 +769,15 @@ export default function DailySummaryPage() {
       const r = await computePlanDistance(tripDoc, stops)
       if (typeof r === "string") return // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้
       if (!isLatestDistGen(tripDoc.id, gen)) return // มีการคิดรอบใหม่กว่าของทริปนี้แล้ว
-      const { km, fuelCost } = r
+      const { km, fuelCost, minutes } = r
 
       setTrips(prev =>
-        prev.map(t => (t.id === tripDoc.id ? { ...t, totalDistanceKm: km, fuelCost } : t))
+        prev.map(t => (t.id === tripDoc.id ? { ...t, totalDistanceKm: km, fuelCost, totalEstimatedTimeMinutes: minutes } : t))
       )
       await updateTripWithQueueGuard(db, tripDoc.id, {
         totalDistanceKm: km,
         fuelCost,
+        totalEstimatedTimeMinutes: minutes, // เวลาเดินทางโดยประมาณต้องตามเส้นทางใหม่ด้วย (หน้าประวัติทริป/ใบงานคนขับ)
         updatedAt: serverTimestamp(),
       })
       setStatsRefreshKey(k => k + 1) // บอร์ดนักขับต้องขยับตามด้วย ไม่ต้องให้ผู้ใช้กดวันที่ใหม่
@@ -818,10 +817,16 @@ export default function DailySummaryPage() {
         return
       }
       // ไม่มีพิกัดเลย = ไม่มีระยะให้คิด → เปลี่ยนแค่โหมด (ป้ายหน้าติดตามรถ) กม. คงเดิม
-      const dist = r === "no-coords" ? {} : { totalDistanceKm: r.km, fuelCost: r.fuelCost }
+      const dist =
+        r === "no-coords" ? {} : { totalDistanceKm: r.km, fuelCost: r.fuelCost, totalEstimatedTimeMinutes: r.minutes }
       nextDistGen(trip.id) // ผลนี้ชนะ — การคิดระยะที่เริ่มก่อนหน้าและยังค้างอยู่ถูกทิ้ง
       // อัปเดตจอก่อนรอฐาน: แทรก/ลบงานระหว่างรอ server จะคิดด้วยโหมดใหม่ (ไม่ได้ กม. ของโหมดเก่ามาทับ)
-      const before = { routeMode: trip.routeMode, totalDistanceKm: trip.totalDistanceKm, fuelCost: trip.fuelCost }
+      const before = {
+        routeMode: trip.routeMode,
+        totalDistanceKm: trip.totalDistanceKm,
+        fuelCost: trip.fuelCost,
+        totalEstimatedTimeMinutes: trip.totalEstimatedTimeMinutes,
+      }
       setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, routeMode: mode, ...dist } : t)))
       try {
         await updateDoc(doc(db, "trips", trip.id), { routeMode: mode, ...dist, updatedAt: serverTimestamp() })

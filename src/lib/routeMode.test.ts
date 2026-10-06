@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { routePlan, tripRouteMode, ROUTE_MODES } from './routeMode'
+import { routePlan, tripRouteMode, ROUTE_MODES, sumRouteLegs } from './routeMode'
 
 const office = 'O'
 const pts = ['A', 'B', 'C']
@@ -33,5 +33,17 @@ describe('routeMode: รูปแบบเส้นทางของทริ�
 
   it('ไม่มีจุดที่มีพิกัด → null (คิดระยะไม่ได้)', () => {
     expect(routePlan('round', office, [])).toBeNull()
+  })
+})
+
+describe('routeMode: sumRouteLegs (ระยะ/เวลารวมจากผล Google Directions)', () => {
+  it('รวม กม. และนาที (ปัดเป็นนาทีแบบเดียวกับตอนจัดกลุ่ม) · ช่วงที่ไม่มีค่า = 0', () => {
+    const legs = [
+      { distance: { value: 12_500 }, duration: { value: 1_200 } },
+      { distance: { value: 7_500 }, duration: { value: 650 } },
+      {},
+    ]
+    expect(sumRouteLegs(legs)).toEqual({ km: 20, minutes: 31 }) // 1850 วิ = 30.8 นาที → 31
+    expect(sumRouteLegs([])).toEqual({ km: 0, minutes: 0 })
   })
 })

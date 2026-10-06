@@ -34,7 +34,7 @@ import { BorrowQueueDialog, type BorrowChoice } from "@/components/continuous-qu
 import { queueDateLabel } from "@/components/continuous-queue/QueueNoticeCard"
 import type { QueueTripInput } from "@/types/continuous-queue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
-import { routePlan, tripRouteMode } from "@/lib/routeMode"
+import { routePlan, sumRouteLegs, tripRouteMode } from "@/lib/routeMode"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -682,9 +682,7 @@ export default function TripGroupingPage() {
         )
       })
 
-      let meters = 0
-      result.routes[0].legs.forEach((leg: any) => { meters += leg.distance?.value || 0 })
-      const km = meters / 1000
+      const { km, minutes } = sumRouteLegs(result.routes[0].legs)
       if (!(km > 0)) return
 
       const fuelRate = trip.fuelRateUsed || settings?.defaultFuelRate || 10
@@ -692,6 +690,7 @@ export default function TripGroupingPage() {
       await updateTripWithQueueGuard(db, trip.id, {
         totalDistanceKm: km,
         fuelCost: (km / fuelRate) * diesel,
+        totalEstimatedTimeMinutes: minutes,
         updatedAt: serverTimestamp(),
       })
     } catch (e) {
