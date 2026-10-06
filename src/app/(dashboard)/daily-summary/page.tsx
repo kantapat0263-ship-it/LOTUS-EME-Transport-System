@@ -719,11 +719,19 @@ export default function DailySummaryPage() {
     }
   }
 
+  // รุ่นการคิดระยะต่อทริป — ผลที่ตอบช้ากว่ารุ่นล่าสุดของทริปเดียวกันทิ้ง ไม่เขียนทับ
+  // (เช่น แทรก/ลบงานระหว่างเปลี่ยนรูปแบบเส้นทาง → ผลของคำสั่งที่เริ่มทีหลังเท่านั้นที่ได้เขียน)
+  const distGenRef = React.useRef<Record<string, number>>({})
+  const nextDistGen = (tripId: string) => (distGenRef.current[tripId] = (distGenRef.current[tripId] ?? 0) + 1)
+  const isLatestDistGen = (tripId: string, gen: number) => distGenRef.current[tripId] === gen
+
   const recalcTripDistance = async (tripDoc: Trip, stops: TripStop[]) => {
     try {
       if (!db) return
+      const gen = nextDistGen(tripDoc.id)
       const r = await computePlanDistance(tripDoc, stops)
       if (typeof r === "string") return // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้
+      if (!isLatestDistGen(tripDoc.id, gen)) return // มีการคิดรอบใหม่กว่าของทริปนี้แล้ว
       const { km, fuelCost } = r
 
       setTrips(prev =>
@@ -750,7 +758,17 @@ export default function DailySummaryPage() {
     setRouteModeBusy(true)
     const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
     try {
+      const gen = nextDistGen(trip.id)
       const r = await computePlanDistance({ ...trip, routeMode: mode } as Trip, trip.stops || [])
+      if (!isLatestDistGen(trip.id, gen)) {
+        // ทริปถูกแก้ (แทรก/ลบงาน) ระหว่างคิด — ผลนี้ใช้จุดชุดเก่า ไม่บันทึก
+        toast({
+          title: "ยังไม่เปลี่ยนรูปแบบเส้นทาง",
+          description: "งานในทริปเปลี่ยนระหว่างคำนวณ — เลือกรูปแบบเส้นทางอีกครั้ง",
+          variant: "destructive",
+        })
+        return
+      }
       if (r === "failed") {
         toast({
           title: "ยังไม่เปลี่ยนรูปแบบเส้นทาง",

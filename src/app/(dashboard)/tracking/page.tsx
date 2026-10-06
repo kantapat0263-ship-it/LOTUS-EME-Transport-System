@@ -443,9 +443,15 @@ export default function TrackingPage() {
       const mKm = position ? mileageKm(position.mileage ?? 0) : 0
 
       // กลับอย่างเดียว: ถึงไซต์ (จุดเริ่ม) ยังไม่ใช่จบงาน — ต้องพารถถึงออฟฟิศก่อน
-      const backAtOffice = dailyDoc?.returnedOfficeAt != null || dailyDoc?.vehicleReturnedAt != null
-      const allDone =
-        totalStops > 0 && arrivedCount >= totalStops && (tripRouteMode(trip) !== "return" || backAtOffice)
+      const isReturnMode = tripRouteMode(trip) === "return"
+      let backAtOffice = dailyDoc?.returnedOfficeAt != null || dailyDoc?.vehicleReturnedAt != null
+      // ย้อนหลังที่ไม่มีสรุป (เช่น สร้างทริปทีหลังวันนั้น sync ไม่ได้เขียน) → ดูจาก trail ว่ารถถึงออฟฟิศหรือยัง
+      // ใช้ตัดสินสถานะอย่างเดียว ไม่เอาไปทับ กม./เวลาที่เก็บไว้
+      if (isReturnMode && !backAtOffice && trail.length >= 2) {
+        const s = computeDailySummary(trail, routeStops, origin)
+        backAtOffice = s.returnedOfficeAt != null || s.vehicleReturnedAt != null
+      }
+      const allDone = totalStops > 0 && arrivedCount >= totalStops && (!isReturnMode || backAtOffice)
       let status: TruckStatus
       if (!deviceId) status = "unmapped"
       else if (!isToday || endAt != null) status = allDone ? "done" : "ok"
@@ -732,10 +738,16 @@ function TruckDetail({
   const routeMode = tripRouteMode(truck.trip)
   const endAt = truck.trip.gpsEndAt ?? null
   // draft ผูกกับทริป — เลือกรถคันอื่นแล้วช่องเวลาของคันก่อนต้องไม่ติดมา (ไม่งั้นกดยืนยันจะไปตัดอีกทริป)
-  const [draftState, setDraftState] = React.useState<{ tripId: string; hhmm: string } | null>(null)
-  const handoverDraft = draftState?.tripId === truck.trip.id ? draftState.hhmm : null // null = ไม่ได้แก้อยู่
+  // baseMs = เวลาตั้งต้นตอนเปิดช่อง (มีวินาที) — ไม่แก้เวลา = บันทึกค่านี้เป๊ะ แม้ข้อเสนอเปลี่ยนระหว่างเปิดค้าง
+  const [draftState, setDraftState] = React.useState<{ tripId: string; hhmm: string; baseMs: number } | null>(null)
+  const ownDraft = draftState?.tripId === truck.trip.id ? draftState : null
+  const handoverDraft = ownDraft?.hhmm ?? null // null = ไม่ได้แก้อยู่
   const setHandoverDraft = (hhmm: string | null) =>
-    setDraftState(hhmm == null ? null : { tripId: truck.trip.id, hhmm })
+    setDraftState((d) => (hhmm == null || !d ? null : { ...d, hhmm }))
+  const openHandoverDraft = () => {
+    const baseMs = truck.handoverSuggestion ?? Date.now()
+    setDraftState({ tripId: truck.trip.id, hhmm: msToThaiClock(baseMs), baseMs })
+  }
   const [savingHandover, setSavingHandover] = React.useState(false)
 
   // จบการใช้รถ: บันทึกเวลาลงทริป (trips subscribe แบบ realtime → หน้าอัปเดตเอง) · ยกเลิก = ลบ field
@@ -976,7 +988,7 @@ function TruckDetail({
                 type="button"
                 disabled={savingHandover}
                 onClick={() => {
-                  const ms = handoverCutMs(truck.trip.tripDate, handoverDraft, truck.handoverSuggestion)
+                  const ms = handoverCutMs(truck.trip.tripDate, handoverDraft, ownDraft?.baseMs)
                   if (ms == null) {
                     toast({ title: "เวลาไม่ถูกต้อง", variant: "destructive" })
                     return
@@ -1014,9 +1026,7 @@ function TruckDetail({
           ) : (
             <button
               type="button"
-              onClick={() =>
-                setHandoverDraft(msToThaiClock(truck.handoverSuggestion ?? Date.now()))
-              }
+              onClick={openHandoverDraft}
               title="รถคันนี้ถูกคนอื่นใช้ต่อหลังจบงาน — ตัด GPS ช่วงหลังออกจากทริปนี้"
               className={
                 "rounded-md border px-2 py-1 hover:bg-violet-500/10 " +
