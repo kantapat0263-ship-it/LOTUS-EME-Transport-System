@@ -16,6 +16,7 @@ import { th } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { todayBangkok } from "@/lib/vehicle-compliance"
+import { dieselHistoryThaiDay } from "@/lib/diesel-price-history"
 
 export default function SettingsPage() {
   const { toast } = useToast()
@@ -37,7 +38,7 @@ export default function SettingsPage() {
   )
   const { data: priceHistory } = useCollection<any>(priceHistoryRef)
   const todayKey = todayBangkok()
-  const ranToday = !!priceHistory?.some((h: any) => h.date === todayKey || h.id === todayKey)
+  const ranToday = !!priceHistory?.some((h: any) => dieselHistoryThaiDay(h) === todayKey)
   
   const [isSaving, setIsSaving] = React.useState(false)
   const [isBackingUp, setIsBackingUp] = React.useState(false)
@@ -325,7 +326,7 @@ export default function SettingsPage() {
               <History className="h-5 w-5 text-accent" /> ประวัติราคาน้ำมันอัตโนมัติ
             </CardTitle>
             <CardDescription>
-              ระบบดึงราคาดีเซล B7 อัตโนมัติทุกวันเวลา 06:00 น. — ตารางนี้คือบันทึกการทำงานย้อนหลัง (14 วันล่าสุด)
+              ระบบดึงราคาดีเซล B7 อัตโนมัติทุกวันช่วง 06:00–07:00 น. — ตารางนี้คือบันทึกการทำงานย้อนหลัง (14 วันล่าสุด)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -337,7 +338,7 @@ export default function SettingsPage() {
             ) : (
               <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-400">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>ยังไม่มีบันทึกของวันนี้ — ระบบจะรันเวลา 06:00 น. (ถ้าไม่เคยมีบันทึกเลย ให้ตรวจว่าตั้งค่า ENV บน Vercel แล้วหรือยัง)</span>
+                <span>ยังไม่มีบันทึกของวันนี้ — ระบบรันช่วง 06:00–07:00 น. (ถ้าไม่เคยมีบันทึกเลย ให้ตรวจว่าตั้งค่า ENV บน Vercel แล้วหรือยัง)</span>
               </div>
             )}
 
@@ -365,7 +366,7 @@ export default function SettingsPage() {
                       const updated = h.status === 'updated'
                       return (
                         <tr key={h.id || h.date} className="border-b border-border/50">
-                          <td className="py-2 pr-3 whitespace-nowrap">{h.date}</td>
+                          <td className="py-2 pr-3 whitespace-nowrap">{dieselHistoryThaiDay(h) ?? '—'}</td>
                           <td className="py-2 pr-3 text-right font-mono">{price != null ? price.toFixed(2) : '—'}</td>
                           <td className="py-2 pr-3 text-right font-mono">
                             {diff === 0 ? (

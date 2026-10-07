@@ -121,3 +121,18 @@ describe('extractB7PriceFromHtml', () => {
     expect(extractB7PriceFromHtml('<p>ดีเซล B7 12.34</p>')).toBeNull()
   })
 })
+it.each([
+  '<nav><ul><li>หน้าแรก</li></ul></nav><p>ดีเซล B7 42.19</p>',
+  '<table><tr><td>วันที่ 7 ตุลาคม 2569</td></tr></table><div>ดีเซล B7 42.19</div>',
+])('supports a bounded diesel row despite unrelated lists or tables: %s', html => {
+  expect(extractB7PriceFromHtml(html)).toBe(42.19)
+})
+
+it.each([
+  '<p>ดีเซล B7 32.94 เบนซิน 40.00</p>',
+  '<li>ดีเซล B7 32.94 ราคาพรุ่งนี้ 33.94</li>',
+  '<p>ดีเซล B7 -32.94</p>',
+  '<li><p>Diesel 49.94</p><span>พรีเมียม</span></li>',
+])('keeps the old price when a row is ambiguous or negative: %s', html => {
+  expect(extractB7PriceFromHtml(html)).toBeNull()
+})

@@ -79,27 +79,30 @@ export function extractB7PriceFromHtml(html: string): number | null {
   const clean = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-  let rows = [...clean.matchAll(/<(tr|li)\b[^>]*>([\s\S]*?)<\/\1>/gi)].map(match => match[2])
-  if (rows.length === 0) {
-    rows = [...clean.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map(match => match[1])
-    if (rows.length === 0) {
-      rows = [...clean.matchAll(/<div\b[^>]*>((?:(?!<\/?div\b)[\s\S])*)<\/div>/gi)]
-        .map(match => match[1])
-        .filter(row => !/<(?:p|li|tr|ul|ol|table)\b/i.test(row))
+  const rowPattern = /<(tr|li)\b[^>]*>([\s\S]*?)<\/\1>/gi
+  // Never revisit children of a rejected row: its premium/B20 badge may be outside a <p>.
+  const legacy = clean.replace(rowPattern, ' ')
+  const groups = [
+    [...clean.matchAll(rowPattern)].map(match => match[2]),
+    [...legacy.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map(match => match[1]),
+    [...legacy.matchAll(/<div\b[^>]*>((?:(?!<\/?div\b)[\s\S])*)<\/div>/gi)]
+      .map(match => match[1]).filter(row => !/<(?:p|li|tr|ul|ol|table)\b/i.test(row)),
+  ]
+  for (const rows of groups) {
+    const candidates: number[] = []
+    for (const row of rows) {
+      const text = row.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ')
+      if (!looksLikeB7(text)) continue
+      // A mixed fuel or historical/future-price row cannot identify today's B7 safely.
+      if (/เบนซิน|แก๊สโซฮอล์|gasohol|gasoline|petrol|\be(?:20|85)\b|พรุ่งนี้|เมื่อวาน|ย้อนหลัง|ก่อนหน้า|tomorrow|previous/i.test(text)) continue
+      for (const match of text.matchAll(/(?<![\d.+-])[+-]?\d+\.\d{2}(?![\d.])/g)) {
+        const price = toSanePrice(Number(match[0]))
+        if (price != null) candidates.push(price)
+      }
     }
+    if (candidates.length === 0) continue
+    candidates.sort((a, b) => a - b)
+    return candidates[Math.floor(candidates.length / 2)]
   }
-
-  const candidates: number[] = []
-  for (const row of rows) {
-    const text = row.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ')
-    if (!looksLikeB7(text)) continue
-    for (const match of text.matchAll(/(?<![\d.])\d+\.\d{2}(?![\d.])/g)) {
-      const price = toSanePrice(match[0])
-      if (price != null) candidates.push(price)
-    }
-  }
-
-  if (candidates.length === 0) return null
-  candidates.sort((a, b) => a - b)
-  return candidates[Math.floor(candidates.length / 2)]
+  return null
 }
