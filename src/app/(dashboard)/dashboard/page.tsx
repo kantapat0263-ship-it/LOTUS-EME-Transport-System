@@ -378,7 +378,7 @@ export default function DashboardPage() {
                 <div key={idx} className={cn("p-3 md:p-4 rounded-lg border", insight.bg, insight.border)}>
                   <h4 className={cn("font-semibold mb-1 text-sm md:text-base", insight.color)}>{insight.title}</h4>
                   <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
-                    "{insight.desc}"
+                    &quot;{insight.desc}&quot;
                   </p>
                 </div>
               ))}

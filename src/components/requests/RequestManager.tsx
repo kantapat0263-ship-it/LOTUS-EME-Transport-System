@@ -257,7 +257,7 @@ export function RequestManager() {
                     <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุเพิ่มเติม
                   </p>
                   <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
-                    "{selectedReq.note}"
+                    &quot;{selectedReq.note}&quot;
                   </div>
                 </div>
               )}

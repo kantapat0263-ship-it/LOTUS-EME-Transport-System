@@ -473,7 +473,7 @@ export default function ReportPage() {
                 <CheckCircle2 className="h-5 w-5 text-accent" /> สรุปผลจริง (Completion)
               </CardTitle>
               <CardDescription>
-                เทียบ "ตามแผน" กับ "ผิดแผน" จากการปิดผลงานจริงรายจุด
+                เทียบ &quot;ตามแผน&quot; กับ &quot;ผิดแผน&quot; จากการปิดผลงานจริงรายจุด
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -727,7 +727,7 @@ export default function ReportPage() {
               <Repeat className="h-5 w-5 text-red-400" /> จุดแวะประจำนอกจุดงาน (รายคนขับ)
             </CardTitle>
             <CardDescription>
-              จับจุดที่รถจอดนอกจุดงาน "ที่เดิมซ้ำ ≥3 วัน" ในช่วงวันที่เลือก — พร้อมเวลารวมและสัดส่วนที่อยู่นอกช่วงพักเที่ยง (12:30–13:30)
+              จับจุดที่รถจอดนอกจุดงาน &quot;ที่เดิมซ้ำ ≥3 วัน&quot; ในช่วงวันที่เลือก — พร้อมเวลารวมและสัดส่วนที่อยู่นอกช่วงพักเที่ยง (12:30–13:30)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -790,7 +790,7 @@ export default function ReportPage() {
                   </div>
                 ))}
                 <p className="text-[11px] text-muted-foreground">
-                  💡 ใช้เป็นข้อมูลประกอบการพูดคุย — จุดที่แวะซ้ำใกล้บ้าน/นอกเวลาพัก จะเห็นชัดจากคอลัมน์ "นอกช่วงพักเที่ยง"
+                  💡 ใช้เป็นข้อมูลประกอบการพูดคุย — จุดที่แวะซ้ำใกล้บ้าน/นอกเวลาพัก จะเห็นชัดจากคอลัมน์ &quot;นอกช่วงพักเที่ยง&quot;
                 </p>
               </div>
             )}

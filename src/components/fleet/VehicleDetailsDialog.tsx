@@ -320,7 +320,7 @@ export function VehicleDetailsDialog({
                             ))}
                           </div>
                         ) : (
-                          <span>กรอกวันที่จดทะเบียนในแท็บ "ข้อมูลประจำรถ" เพื่อให้ระบบเสนอวันครบกำหนดภาษี</span>
+                          <span>กรอกวันที่จดทะเบียนในแท็บ &quot;ข้อมูลประจำรถ&quot; เพื่อให้ระบบเสนอวันครบกำหนดภาษี</span>
                         )}
                       </div>
                     )}
@@ -389,7 +389,7 @@ export function VehicleDetailsDialog({
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                น้ำหนักบรรทุกตามเล่มแยกจาก "น้ำหนักบรรทุกสูงสุด" บนการ์ดที่ใช้จัดรถ ({vehicle.maxLoadCapacityKg?.toLocaleString()} kg) — ไม่เปลี่ยนค่าที่ใช้จัดรถ
+                น้ำหนักบรรทุกตามเล่มแยกจาก &quot;น้ำหนักบรรทุกสูงสุด&quot; บนการ์ดที่ใช้จัดรถ ({vehicle.maxLoadCapacityKg?.toLocaleString()} kg) — ไม่เปลี่ยนค่าที่ใช้จัดรถ
               </p>
               <div className="space-y-1">
                 <Label className="text-xs">{FIELD_LABEL.note}</Label>

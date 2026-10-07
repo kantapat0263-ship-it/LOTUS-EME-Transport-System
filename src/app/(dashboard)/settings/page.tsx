@@ -311,7 +311,7 @@ export default function SettingsPage() {
                   value={formData.overspeedLimitKmh}
                   onChange={(e) => setFormData({...formData, overspeedLimitKmh: parseFloat(e.target.value) || 0})}
                 />
-                <p className="text-xs text-muted-foreground">รถวิ่งเกินค่านี้จะขึ้นเตือน "ความเร็วเกิน" ในเมนูติดตามรถ</p>
+                <p className="text-xs text-muted-foreground">รถวิ่งเกินค่านี้จะขึ้นเตือน &quot;ความเร็วเกิน&quot; ในเมนูติดตามรถ</p>
               </div>
             </div>
           </CardContent>
@@ -392,7 +392,7 @@ export default function SettingsPage() {
               </div>
             )}
             <p className="text-[10px] text-muted-foreground italic">
-              * "ข้าม" = ดึง/แกะราคาไม่สำเร็จ ระบบคงราคาเดิมไว้ (ไม่เขียนทับ) — ดูเหตุผลในช่องหมายเหตุ · ราคาขึ้น = แดง, ราคาลง = เขียว
+              * &quot;ข้าม&quot; = ดึง/แกะราคาไม่สำเร็จ ระบบคงราคาเดิมไว้ (ไม่เขียนทับ) — ดูเหตุผลในช่องหมายเหตุ · ราคาขึ้น = แดง, ราคาลง = เขียว
             </p>
           </CardContent>
         </Card>

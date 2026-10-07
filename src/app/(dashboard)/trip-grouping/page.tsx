@@ -1082,7 +1082,7 @@ export default function TripGroupingPage() {
           <DialogHeader>
             <DialogTitle className="text-lg flex items-center gap-2 text-red-400"><AlertTriangle className="h-5 w-5" /> ยกเลิกใบขอ</DialogTitle>
             <DialogDescription>
-              ยกเลิก "{cancelDialog?.siteName}" ({cancelDialog?.vrId})? งานจะออกจากกองจัดคิว และผู้ขอจะเห็นสถานะ "ถูกปฏิเสธ" พร้อมเหตุผล
+              ยกเลิก &quot;{cancelDialog?.siteName}&quot; ({cancelDialog?.vrId})? งานจะออกจากกองจัดคิว และผู้ขอจะเห็นสถานะ &quot;ถูกปฏิเสธ&quot; พร้อมเหตุผล
             </DialogDescription>
           </DialogHeader>
           <textarea
@@ -1107,7 +1107,7 @@ export default function TripGroupingPage() {
           <DialogHeader>
             <DialogTitle className="text-lg flex items-center gap-2">📅 ย้ายวันใช้รถ</DialogTitle>
             <DialogDescription>
-              "{moveDialog?.siteName}" ({moveDialog?.vrId}) เดิมวันที่ {moveDialog?.currentDate ? moveDialog.currentDate.split('-').reverse().join('/') : '-'}
+              &quot;{moveDialog?.siteName}&quot; ({moveDialog?.vrId}) เดิมวันที่ {moveDialog?.currentDate ? moveDialog.currentDate.split('-').reverse().join('/') : '-'}
               {' '}— เลือกวันใหม่ (วันนี้เป็นต้นไป เว้นวันอาทิตย์) ใบขอจะย้ายไปกองของวันนั้น
             </DialogDescription>
           </DialogHeader>

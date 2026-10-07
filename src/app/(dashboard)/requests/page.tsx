@@ -1305,7 +1305,7 @@ export default function RequestsPage() {
                               <XCircle className="h-3.5 w-3.5" /> ❌ เหตุผลที่ปฏิเสธ:
                             </span>
                             <p style={{ color: '#e2e8f0', marginLeft: '24px', fontSize: '13px', marginTop: '2px' }} className="italic">
-                              "{req.rejectReason}"
+                              &quot;{req.rejectReason}&quot;
                             </p>
                           </div>
                         )}
@@ -1473,7 +1473,7 @@ export default function RequestsPage() {
                     <CalendarIcon className="h-4 w-4" /> รายละเอียดการเลื่อนวัน
                   </p>
                   <p className="text-sm text-foreground font-bold">เลื่อนเป็นวันที่: {formatDateDisplay(viewingUserReq.requestDate)}</p>
-                  <p className="text-sm text-muted-foreground italic mt-1">หมายเหตุ: "{viewingUserReq.rescheduleNote}"</p>
+                  <p className="text-sm text-muted-foreground italic mt-1">หมายเหตุ: &quot;{viewingUserReq.rescheduleNote}&quot;</p>
                   <p className="text-[10px] text-muted-foreground mt-1">ดำเนินการโดย: {viewingUserReq.rescheduledBy}</p>
                 </div>
               )}
@@ -1526,7 +1526,7 @@ export default function RequestsPage() {
                     <MessageSquare className="h-4 w-4 text-accent" /> หมายเหตุเพิ่มเติมจากผู้ขอ
                   </p>
                   <div className="p-3 bg-accent/5 border border-accent/20 rounded-xl text-sm italic text-muted-foreground leading-relaxed">
-                    "{viewingUserReq.note || viewingUserReq.notes}"
+                    &quot;{viewingUserReq.note || viewingUserReq.notes}&quot;
                   </div>
                 </div>
               )}
@@ -1536,7 +1536,7 @@ export default function RequestsPage() {
                   <p className="text-xs text-red-500 font-bold mb-1 uppercase flex items-center gap-2">
                     <XCircle className="h-4 w-4" /> เหตุผลที่ปฏิเสธงาน
                   </p>
-                  <p className="text-sm text-foreground italic">"{viewingUserReq.rejectReason}"</p>
+                  <p className="text-sm text-foreground italic">&quot;{viewingUserReq.rejectReason}&quot;</p>
                 </div>
               )}
 

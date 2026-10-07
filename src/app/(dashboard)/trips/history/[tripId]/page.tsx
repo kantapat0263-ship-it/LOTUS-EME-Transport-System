@@ -447,7 +447,7 @@ export default function TripDetailPage() {
                           {stop.note && (
                             <div className="bg-orange-500/5 p-2 rounded-lg border border-orange-500/10">
                               <p className="text-[10px] font-bold text-orange-400 uppercase mb-0.5">📌 หมายเหตุผู้ขอ:</p>
-                              <p className="text-xs italic text-gray-300">"{stop.note}"</p>
+                              <p className="text-xs italic text-gray-300">&quot;{stop.note}&quot;</p>
                             </div>
                           )}
                         </div>
@@ -593,7 +593,7 @@ export default function TripDetailPage() {
                           👤 ผู้ขอ: <strong>{stop.requestedBy}</strong> {stop.requestedByPhone && <span>(📞 {stop.requestedByPhone})</span>}
                         </div>
                       )}
-                      {stop.note && <div style={{ color: '#666', marginTop: '2px' }}>📌 หมายเหตุ: <em>"{stop.note}"</em></div>}
+                      {stop.note && <div style={{ color: '#666', marginTop: '2px' }}>📌 หมายเหตุ: <em>&quot;{stop.note}&quot;</em></div>}
                       {stop.dispatcherNote && <div style={{ color: '#0056b3', marginTop: '2px' }}>✏️ บันทึกจัดคิว: {stop.dispatcherNote}</div>}
                     </div>
                   </div>

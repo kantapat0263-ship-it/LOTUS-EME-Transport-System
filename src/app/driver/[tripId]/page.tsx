@@ -367,7 +367,7 @@ export default function DriverTripPage() {
                         {(stop as any).note && (
                           <div className="flex gap-2">
                             <Info className="h-3 w-3 text-orange-400 shrink-0 mt-0.5" />
-                            <p className="text-xs text-gray-600 italic">หมายเหตุผู้ขอ: "{(stop as any).note}"</p>
+                            <p className="text-xs text-gray-600 italic">หมายเหตุผู้ขอ: &quot;{(stop as any).note}&quot;</p>
                           </div>
                         )}
                         {dispatcherNote && (

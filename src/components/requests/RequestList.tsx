@@ -151,7 +151,7 @@ export function RequestList() {
                   {req.status === "rejected" && req.rejectReason && (
                     <div className="bg-red-500/5 border border-red-500/20 p-3 rounded-lg">
                       <p className="text-xs text-red-500 font-bold mb-1">เหตุผลที่ไม่นุมัติ:</p>
-                      <p className="text-xs text-muted-foreground">"{req.rejectReason}"</p>
+                      <p className="text-xs text-muted-foreground">&quot;{req.rejectReason}&quot;</p>
                     </div>
                   )}
                 </div>
@@ -166,7 +166,7 @@ export function RequestList() {
           </div>
           <div className="space-y-1">
             <p className="text-foreground font-semibold">ไม่พบรายการคำขอ</p>
-            <p className="text-xs text-muted-foreground">เริ่มส่งคำขอใช้รถใหม่ได้ที่แท็บ "ใบขอใช้รถ"</p>
+            <p className="text-xs text-muted-foreground">เริ่มส่งคำขอใช้รถใหม่ได้ที่แท็บ &quot;ใบขอใช้รถ&quot;</p>
           </div>
         </div>
       )}
