@@ -67,34 +67,36 @@ export function extractB7Price(data: unknown): number | null {
 /**
  * แกะราคา B7 จาก "หน้าเว็บ HTML" (แหล่งที่ไม่ใช่ JSON API เช่น kapook)
  *
- * วิธี: ถอด tag/script/style ออกเหลือข้อความล้วน → หา label ที่สื่อถึงดีเซล
- *   แล้วตามด้วยราคารูปแบบ \d{1,2}\.\d{2} ในระยะใกล้ ๆ (กันไปคว้าเลขคนละคอลัมน์)
- *   - กรอง B20/พรีเมียม ด้วย looksLikeB7, กันค่าหลุดช่วงด้วย toSanePrice
+ * อ่านภายในแถว <li> ของ Kapook / <tr> ของตารางเดิมเท่านั้น
+ *   - ตรวจชื่อ/ประเภททั้งแถว เพื่อไม่ข้ามชนิดน้ำมันหรือทำคำ "พรีเมียม" ตกหล่น
+ *   - รูปแบบข้อความเก่ารองรับเฉพาะ <p> หรือ <div> ที่ไม่มี block ซ้อน
+ *   - อ่านตัวเลขเต็มก่อนตรวจช่วงราคา ไม่ตัดเลขหลักร้อยเหลือสองหลักท้าย
  *   - คืน "มัธยฐาน" ของทุกค่าที่เจอ (กัน outlier บางปั๊ม) — ไม่เจอเลยคืน null
  *
- * reuse logic เดียวกับ extractB7Price (JSON) เพื่อให้พฤติกรรมการกรอง/sanity สอดคล้องกัน
+ * ไม่พบแถวที่ชัดเจน → คืน null ให้ cron คงราคาเดิม
  */
 export function extractB7PriceFromHtml(html: string): number | null {
-  const text = html
+  const clean = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
+  let rows = [...clean.matchAll(/<(tr|li)\b[^>]*>([\s\S]*?)<\/\1>/gi)].map(match => match[2])
+  if (rows.length === 0) {
+    rows = [...clean.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map(match => match[1])
+    if (rows.length === 0) {
+      rows = [...clean.matchAll(/<div\b[^>]*>((?:(?!<\/?div\b)[\s\S])*)<\/div>/gi)]
+        .map(match => match[1])
+        .filter(row => !/<(?:p|li|tr|ul|ol|table)\b/i.test(row))
+    }
+  }
 
   const candidates: number[] = []
-  // หา "ราคา" ทุกตัวก่อน (รูปแบบ \d{1,2}\.\d{2}) แล้วค่อยดูบริบทย้อนหลัง
-  // เหตุผล: anchor ที่ label โดยตรงไม่ได้ เพราะเลข "7" ใน "B7" ไปตัด gap ก่อนถึงราคา
-  const re = /\d{1,2}\.\d{2}/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    const before = text.slice(Math.max(0, m.index - 30), m.index)
-    // เอาข้อความตั้งแต่ "ตัวบ่งชี้ดีเซลตัวแรก" ในบริบทถึงหน้าราคา มาเช็ค
-    // (ครอบทั้ง prefix อย่าง "ดีเซลพรีเมียม" → looksLikeB7 จะตัดทิ้งได้)
-    const label = before.match(/(?:ดีเซล|diesel|b7)[\s\S]*$/i)?.[0]
-    if (!label || !looksLikeB7(label)) continue // ไม่ใช่ดีเซล หรือเป็น B20/พรีเมียม → ข้าม
-    const p = toSanePrice(m[0])
-    if (p != null) candidates.push(p)
+  for (const row of rows) {
+    const text = row.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ')
+    if (!looksLikeB7(text)) continue
+    for (const match of text.matchAll(/(?<![\d.])\d+\.\d{2}(?![\d.])/g)) {
+      const price = toSanePrice(match[0])
+      if (price != null) candidates.push(price)
+    }
   }
 
   if (candidates.length === 0) return null

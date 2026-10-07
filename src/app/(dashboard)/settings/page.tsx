@@ -15,6 +15,7 @@ import { format } from "date-fns"
 import { th } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { todayBangkok } from "@/lib/vehicle-compliance"
 
 export default function SettingsPage() {
   const { toast } = useToast()
@@ -35,7 +36,7 @@ export default function SettingsPage() {
     [db]
   )
   const { data: priceHistory } = useCollection<any>(priceHistoryRef)
-  const todayKey = new Date().toISOString().slice(0, 10) // YYYY-MM-DD (UTC, ตรงกับ key ที่ cron เขียน)
+  const todayKey = todayBangkok()
   const ranToday = !!priceHistory?.some((h: any) => h.date === todayKey || h.id === todayKey)
   
   const [isSaving, setIsSaving] = React.useState(false)

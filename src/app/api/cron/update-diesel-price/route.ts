@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb } from '@/firebase/admin'
 import { extractB7Price, extractB7PriceFromHtml } from '@/lib/diesel-price'
+import { todayBangkok } from '@/lib/vehicle-compliance'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -19,16 +20,17 @@ export const maxDuration = 30
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization')
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
-    }
+  if (!secret) {
+    return NextResponse.json({ ok: false, error: 'not-configured' }, { status: 503 })
+  }
+  const auth = req.headers.get('authorization')
+  if (auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
 
   const sourceUrl =
     process.env.DIESEL_PRICE_SOURCE_URL || 'https://gas.itorbenz.com'
-  const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD (UTC)
+  const today = todayBangkok()
 
   let db
   try {
@@ -45,6 +47,7 @@ export async function GET(req: NextRequest) {
     const res = await fetch(sourceUrl, {
       headers: { accept: 'text/html,application/json' },
       cache: 'no-store',
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) throw new Error(`source HTTP ${res.status}`)
     const raw = await res.text()
@@ -63,72 +66,59 @@ export async function GET(req: NextRequest) {
     console.error('[diesel-cron]', note)
   }
 
-  // 2) อ่านราคาเดิม (ไว้ fallback + เทียบว่าต้องอัปเดตไหม)
+  // ราคาและประวัติต้องยืนยันสำเร็จพร้อมกัน และเทียบกับ settings ล่าสุดใน transaction
   const settingsRef = db.collection('companySettings').doc('default')
-  let current: number | undefined
-  try {
-    const snap = await settingsRef.get()
-    current = snap.exists ? (snap.data()?.dieselPrice as number | undefined) : undefined
-  } catch (e: any) {
-    console.error('[diesel-cron] read settings failed:', e?.message)
-  }
-
+  const historyRef = db.collection('dieselPriceHistory').doc(today)
   const status = fetchedPrice != null ? 'updated' : 'skipped'
-  const changed = fetchedPrice != null && current !== fetchedPrice
-
-  // 3) บันทึกประวัติทุกครั้ง (audit)
+  let result: { current: number | null; changed: boolean }
   try {
-    await db.collection('dieselPriceHistory').doc(today).set(
-      {
+    result = await db.runTransaction(async tx => {
+      const snap = await tx.get(settingsRef)
+      const value: unknown = snap.exists ? snap.data()?.dieselPrice : undefined
+      const current = typeof value === 'number' && Number.isFinite(value) ? value : null
+      const changed = fetchedPrice != null && current !== fetchedPrice
+
+      if (changed) {
+        tx.set(settingsRef, {
+          dieselPrice: fetchedPrice,
+          fuelSettingsUpdatedAt: FieldValue.serverTimestamp(),
+          fuelSettingsUpdatedBy: 'auto:diesel-cron',
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+      }
+      tx.set(historyRef, {
         date: today,
-        price: fetchedPrice ?? current ?? null, // ราคาที่ "มีผล" หลังรอบนี้
-        fetchedPrice: fetchedPrice ?? null,
-        previousPrice: current ?? null,
+        price: fetchedPrice ?? current,
+        fetchedPrice,
+        previousPrice: current,
         changed,
         status,
         note,
         source: sourceUrl,
         createdAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    )
+      }, { merge: true })
+      return { current, changed }
+    })
   } catch (e: any) {
-    console.error('[diesel-cron] write history failed:', e?.message)
+    console.error('[diesel-cron] price/history transaction failed:', e?.message)
+    return NextResponse.json({ ok: false, error: 'write-failed', detail: e?.message }, { status: 500 })
   }
 
-  // 4) แกะไม่ได้ → คงราคาเดิม ไม่เขียนทับ
+  // แกะไม่ได้ → บันทึก skipped โดยคงราคาเดิม
   if (fetchedPrice == null) {
     return NextResponse.json({
       ok: false,
       status: 'skipped',
       note,
-      keptPrice: current ?? null,
+      keptPrice: result.current,
     })
-  }
-
-  // 5) อัปเดตเฉพาะเมื่อราคาเปลี่ยนจริง
-  if (changed) {
-    try {
-      await settingsRef.set(
-        {
-          dieselPrice: fetchedPrice,
-          fuelSettingsUpdatedAt: FieldValue.serverTimestamp(),
-          fuelSettingsUpdatedBy: 'auto:diesel-cron',
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      )
-    } catch (e: any) {
-      console.error('[diesel-cron] write settings failed:', e?.message)
-      return NextResponse.json({ ok: false, error: 'write-failed', detail: e?.message }, { status: 500 })
-    }
   }
 
   return NextResponse.json({
     ok: true,
     status,
     price: fetchedPrice,
-    previous: current ?? null,
-    changed,
+    previous: result.current,
+    changed: result.changed,
   })
 }

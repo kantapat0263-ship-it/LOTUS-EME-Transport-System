@@ -50,6 +50,40 @@ describe('extractB7Price', () => {
 })
 
 describe('extractB7PriceFromHtml', () => {
+  it('does not treat a neighboring gasoline row as a diesel price', () => {
+    expect(extractB7PriceFromHtml('<p>ดีเซล B7 32.94</p><p>เบนซิน 40.00</p>')).toBe(32.94)
+  })
+
+  it('rejects premium even when the qualifier precedes Diesel', () => {
+    expect(extractB7PriceFromHtml('<p>Premium Diesel 49.94</p>')).toBeNull()
+  })
+
+  it('rejects the complete out-of-range number rather than extracting its last two digits', () => {
+    expect(extractB7PriceFromHtml('<p>ดีเซล B7 132.94</p>')).toBeNull()
+  })
+
+  it('keeps a B7 row independent from a preceding B20 row', () => {
+    expect(extractB7PriceFromHtml('<p>ดีเซล B20 25.00</p><p>ดีเซล B7 32.94</p>')).toBe(32.94)
+  })
+
+  it('reads Kapook list rows including the premium category badge and keeps the existing median', () => {
+    const fuel = (name: string, category: string, price: string) => `<li><div><div><p>${name}</p><span>${category}</span></div><div><p>${price}</p><p>บาท/ลิตร</p></div></div></li>`
+    const html = `<section><ul>${[
+      fuel('ดีเซล B7', 'ดีเซล', '32.94'),
+      fuel('ดีเซล B20', 'ดีเซล', '27.94'),
+      fuel('เชลล์ วี-เพาเวอร์ ดีเซล', 'พรีเมียม', '49.94'),
+      fuel('เชลล์ ฟิวเซฟ ดีเซล', 'ดีเซล', '33.94'),
+      fuel('ดีเซล B7', 'ดีเซล', '34.94'),
+      fuel('เบนซิน 95', 'เบนซิน', '40.00'),
+    ].join('')}</ul></section>`
+    expect(extractB7PriceFromHtml(html)).toBe(33.94)
+  })
+
+  it('returns null when diesel and prices have no supported row boundary', () => {
+    expect(extractB7PriceFromHtml('ดีเซล B7 32.94 เบนซิน 40.00')).toBeNull()
+  })
+
+
   it('แกะราคาจากตาราง HTML (kapook-like) — เอามัธยฐาน ตัด B20/พรีเมียมออก', () => {
     const html = `
       <table>
