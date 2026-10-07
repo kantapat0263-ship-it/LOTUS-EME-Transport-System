@@ -49,6 +49,8 @@ import { useToast } from "@/hooks/use-toast"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { tripRouteMode } from "@/lib/routeMode"
 import { updateTripWithQueueGuard } from "@/lib/tripQueueGuard"
+import { TripCoordinateSyncDialog } from "@/components/TripCoordinateSyncDialog"
+import { validCoordinates } from "@/lib/tripCoordinateSync"
 
 // Production URL for public access
 const PRODUCTION_URL = "https://lotus-eme-transport-system.vercel.app"
@@ -181,12 +183,12 @@ export default function TripDetailPage() {
       // Resolve Waypoints: Priority 1 - Trip Stops Saved Lat/Lng, Priority 2 - Master Sites Data
       const resolvedWaypoints = (trip.stops || []).map((s: any) => {
         let position: google.maps.LatLng | null = null;
-        if (s.lat && s.lng) {
+        if (validCoordinates(s.lat, s.lng)) {
           position = new google.maps.LatLng(s.lat, s.lng);
         } else if (s.siteId) {
           const site = allSites.find(site => site.id === s.siteId);
-          if (site?.latitude && site?.longitude) {
-            position = new google.maps.LatLng(site.latitude, site.longitude);
+          if (site && validCoordinates(site.latitude, site.longitude)) {
+            position = new google.maps.LatLng(site.latitude!, site.longitude!);
           }
         }
         return { position, siteName: s.siteName };
@@ -401,7 +403,10 @@ export default function TripDetailPage() {
 
             <Card>
               <CardHeader className="p-4 md:p-6">
-                <CardTitle className="flex items-center gap-2 text-lg"><MapPin className="h-5 w-5 text-accent" /> ลำดับจุดส่งของ</CardTitle>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle className="flex items-center gap-2 text-lg"><MapPin className="h-5 w-5 text-accent" /> ลำดับจุดส่งของ</CardTitle>
+                  {isStaff && profile?.active === true && user && <TripCoordinateSyncDialog key={trip.id} trip={trip} sites={allSites || []} user={user} />}
+                </div>
               </CardHeader>
               <CardContent className="p-4 md:p-6 space-y-4 pt-0">
                 {(trip.stops || []).map((stop: any, index: number) => (

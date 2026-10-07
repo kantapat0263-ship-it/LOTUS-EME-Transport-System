@@ -21,6 +21,7 @@ import {
   Repeat
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { validCoordinates } from "@/lib/tripCoordinateSync"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -385,7 +386,7 @@ export default function DriverTripPage() {
                     </div>
                   ) : (
                   <a
-                    href={(stop as any).lat && (stop as any).lng
+                    href={validCoordinates(stop.lat, stop.lng)
                       ? `https://www.google.com/maps/dir/?api=1&destination=${(stop as any).lat},${(stop as any).lng}&travelmode=driving`
                       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.siteName)}`}
                     target="_blank"

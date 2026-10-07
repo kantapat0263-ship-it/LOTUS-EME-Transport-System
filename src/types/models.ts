@@ -298,6 +298,7 @@ export interface TripEditLog {
     stopsAdded?: string[];
     stopsRemoved?: string[];
     cargoChanged?: boolean;
+    coordinatesUpdated?: { stopIndex: number; siteId: string; siteName: string; from: { lat: number | null; lng: number | null }; to: { lat: number; lng: number } }[];
   };
 }
 
