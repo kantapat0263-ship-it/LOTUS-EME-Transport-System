@@ -21,6 +21,7 @@ export interface TrackingMapStopEvent {
   lng: number
   durationMin: number
   nearJob: boolean
+  kind?: 'office' | 'job' | 'rest' | 'lunch' | 'review'
 }
 
 export interface TrackingMapProps {
@@ -273,18 +274,21 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       hasPoint = true
     }
 
-    // จุดจอดนานผิดสังเกต (⏸ + ระยะเวลา) — นอกจุดงาน = แดง, ที่จุดงาน = ส้ม
+    // จุดจอด: พักปกติ = เทา, ที่จุดงาน = ส้ม, รอตรวจสอบ = แดง
     ;(stopEvents ?? []).forEach((ev) => {
       const pos = { lat: ev.lat, lng: ev.lng }
+      const kind = ev.kind ?? (ev.nearJob ? 'job' : 'review')
+      const description = { office: 'ที่ออฟฟิศ', job: 'ที่จุดงาน', rest: 'พักหลังขับต่อเนื่อง', lunch: 'พักเที่ยง', review: 'นอกจุดงาน · รอตรวจสอบ' }[kind]
+      const color = kind === 'job' ? '#d98a00' : kind === 'review' ? '#d64027' : '#6b7280'
       const marker = new google.maps.Marker({
         position: pos,
         map,
-        title: `จอด ${ev.durationMin} นาที${ev.nearJob ? " (ที่จุดงาน)" : " (นอกจุดงาน)"}`,
+        title: `จอด ${ev.durationMin} นาที (${description})`,
         label: { text: `⏸${ev.durationMin}′`, color: "#fff", fontSize: "11px", fontWeight: "700" },
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: 15,
-          fillColor: ev.nearJob ? "#d98a00" : "#d64027",
+          fillColor: color,
           fillOpacity: 0.95,
           strokeColor: "#fff",
           strokeWeight: 2,
