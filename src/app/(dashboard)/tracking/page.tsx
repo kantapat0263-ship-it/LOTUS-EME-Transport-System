@@ -49,6 +49,7 @@ import {
   handoverTimeError,
 } from "@/lib/tracking"
 import { classifyDriverStops, type DriverStop, type DrivingPoint } from '@/lib/driverStopSummary'
+import { formatDurationMinutes as fmtDur } from '@/lib/formatDuration'
 import { tripRouteMode } from "@/lib/routeMode"
 import { incomingStopsForTrip } from "@/lib/calculations"
 import { TrackingMap, type TrackingMapStop } from "@/components/tracking/TrackingMap"
@@ -766,8 +767,6 @@ function TruckDetail({
   const missionMin = depT && retT ? Math.max(0, Math.round((retT - depT) / 60_000)) : null
   const driveMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.travelMinFromPrev ?? 0), 0)
   const dwellAtJobMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.dwellMin ?? 0), 0)
-  const fmtDur = (m: number) =>
-    m >= 60 ? `${Math.floor(m / 60)} ชม. ${Math.round(m % 60)} นาที` : `${Math.round(m)} นาที`
 
   // แบบ A: ยุบกล่อง "จุดจอดนานผิดสังเกต" — จุดจอด "นอกจุดงาน" แทรกเข้า timeline ตามเวลา
   // (จอด "ที่จุดงาน" เป็นเรื่องปกติ โชว์ใน timeline ที่จุดนั้นอยู่แล้ว ไม่ต้องแยกกล่อง)
@@ -884,7 +883,7 @@ function TruckDetail({
       {offJobStops.length > 0 && (
         <div className="mx-4 mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400">
           🔴 จอดนอกจุดงาน {offJobStops.length} ครั้ง · รวม{" "}
-          {offJobStops.reduce((sum, ev) => sum + ev.durationMin, 0)} นาที — ดูรายละเอียดใน ROOT ด้านล่าง
+          {fmtDur(offJobStops.reduce((sum, ev) => sum + ev.durationMin, 0))} — ดูรายละเอียดใน ROOT ด้านล่าง
         </div>
       )}
 
@@ -1087,7 +1086,7 @@ function TruckDetail({
                   ⏸
                 </div>
                 <div className="flex-1">
-                  <div className={cn('text-sm font-medium', needsReview ? 'text-red-400' : 'text-muted-foreground')}>{label} {Math.round(ev.durationMin)} นาที</div>
+                  <div className={cn('text-sm font-medium', needsReview ? 'text-red-400' : 'text-muted-foreground')}>{label} {fmtDur(ev.durationMin)}</div>
                   {ev.uncertain && <p className="text-xs text-amber-400">GPS ขาดช่วง เวลาจอดและประเภทพักยังยืนยันไม่ได้ครบ</p>}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{thTime(ev.startT)}–{thTime(endT)}</span>
@@ -1140,7 +1139,7 @@ function TruckDetail({
                 const slowHaul = t.travelKmFromPrev != null && t.travelKmFromPrev >= 30 && t.avgSpeedKmh != null && t.avgSpeedKmh < 50
                 return (
                 <div className="flex items-center gap-1 py-0.5 pl-8 text-[11px] text-muted-foreground">
-                  <Navigation className="h-3 w-3 rotate-90 opacity-60" /> เดินทาง {t.travelMinFromPrev} นาที
+                  <Navigation className="h-3 w-3 rotate-90 opacity-60" /> เดินทาง {fmtDur(t.travelMinFromPrev)}
                   {t.travelKmFromPrev != null && <span> · {t.travelKmFromPrev} กม.</span>}
                   {t.avgSpeedKmh != null && (
                     <span className={cn(slowHaul && "font-semibold text-amber-400")}>
@@ -1200,7 +1199,7 @@ function TruckDetail({
                         <Clock className="h-3 w-3" /> ถึง {s.arrivedAt ? thTime(s.arrivedAt) : "แล้ว"}
                         {t?.dwellMin != null && (
                           <span className={cn(longStop && "font-semibold text-amber-400")}>
-                            {" "}· จอด {t.dwellMin} นาที{longStop && " ⚠ นานผิดสังเกต"}
+                            {" "}· จอด {fmtDur(t.dwellMin)}{longStop && " ⚠ นานผิดสังเกต"}
                           </span>
                         )}
                         {t?.dwellMin != null && t.departedAt != null && (

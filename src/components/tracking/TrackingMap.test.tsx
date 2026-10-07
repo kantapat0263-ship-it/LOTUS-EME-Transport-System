@@ -28,6 +28,19 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('TrackingMap stop classifications', () => {
+  it('formats fractional stop minutes on the actual marker label and tooltip', () => {
+    TrackingMap({ apiKey: 'test-only', stops: [], trail: [], stopEvents: [
+      { lat: 13.7, lng: 100.5, durationMin: 229.36666666666667, nearJob: false },
+      { lat: 13.71, lng: 100.51, durationMin: 12.4, nearJob: false },
+      { lat: 13.72, lng: 100.52, durationMin: 119.6, nearJob: false },
+    ] })
+    harness.effects.forEach(effect => effect())
+    const markers = harness.marker.mock.calls.map(([options]) => options)
+    expect(markers.map(marker => marker.label.text)).toEqual(['⏸3ชม.49′', '⏸12′', '⏸2ชม.'])
+    expect(markers[0].title).toContain('จอด 3 ชม. 49 นาที')
+    expect(markers[2].title).toContain('จอด 2 ชม.')
+  })
+
   it('renders permitted rest gray, job orange and review red', () => {
     TrackingMap({ apiKey: 'test-only', stops: [], trail: [], stopEvents: [
       { lat: 13.7, lng: 100.5, durationMin: 30, nearJob: false, kind: 'rest' },

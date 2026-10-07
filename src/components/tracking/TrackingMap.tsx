@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Loader } from "@googlemaps/js-api-loader"
 import { summarizeFlood } from "@/lib/roadFlood"
+import { formatDurationMinutes } from "@/lib/formatDuration"
 import { useRoadFlood } from "@/hooks/use-road-flood"
 import { useFloodMarkers } from "./useFloodMarkers"
 import { FloodStatusBar } from "./FloodStatusBar"
@@ -283,8 +284,8 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
       const marker = new google.maps.Marker({
         position: pos,
         map,
-        title: `จอด ${ev.durationMin} นาที (${description})`,
-        label: { text: `⏸${ev.durationMin}′`, color: "#fff", fontSize: "11px", fontWeight: "700" },
+        title: `จอด ${formatDurationMinutes(ev.durationMin)} (${description})`,
+        label: { text: `⏸${formatDurationMinutes(ev.durationMin, 'compact')}`, color: "#fff", fontSize: "11px", fontWeight: "700" },
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: 15,
