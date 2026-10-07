@@ -863,6 +863,25 @@ describe('tracking: ทริปกลับอย่างเดียวที
   })
 
   const tripDayStart = th('2026-10-07T00:00:00')
+  it('เคสจริง ถส-5694: ถึงจุดเปลี่ยนรถ 19:13 ออก 19:40 (จอด 27 นาที) → ต่อ · จอดแค่ 5 นาที → ไม่ต่อ', () => {
+    const swap = (leaveIso: string) => [
+      at(home, '2026-10-06T13:00:00', 0.2),
+      at(site, '2026-10-06T19:13:00', 0.006), // ลานเปลี่ยนรถ ห่างหมุด ~670 ม.
+      at(site, '2026-10-06T19:25:00', 0.0062),
+      at(site, leaveIso, 0.0061),
+      at(site, '2026-10-06T19:46:00', 0.05),
+      at(home, '2026-10-07T03:56:00'),
+    ]
+    expect(returnTripTrail(swap('2026-10-06T19:40:00'), today, site, { office, tripDayStart })).toMatchObject({ prepended: true, siteDepartAt: th('2026-10-06T19:40:00') })
+    const brief = [at(site, '2026-10-06T19:13:00', 0.006), at(site, '2026-10-06T19:18:00', 0.0061), at(site, '2026-10-06T19:19:00', 0.05), at(home, '2026-10-07T03:56:00')]
+    expect(returnTripTrail(brief, today, site, { office, tripDayStart })).toMatchObject({ prepended: false })
+  })
+
+  it('ขับผ่านพื้นที่ไซต์ช่วงที่ระบบดึง GPS ไม่ได้ 15 นาที (โผล่อีกทีนอกพื้นที่) → ไม่ถือว่าจอด → ไม่ต่อ', () => {
+    const outage = [at(home, '2026-10-06T17:00:00', 0.2), at(site, '2026-10-06T18:00:00', 0.005), at(site, '2026-10-06T18:15:00', 0.05), at(home, '2026-10-07T03:56:00')]
+    expect(returnTripTrail(outage, today, site, { office, tripDayStart })).toMatchObject({ prepended: false })
+  })
+
   it('คลานช้าอยู่ในพื้นที่ไซต์นาน 35 นาที (ไม่ได้หยุดจริง) → ไม่ต่อ', () => {
     const crawl = Array.from({ length: 36 }, (_, i) => ({ lat: site.lat - 0.008 + i * 0.0005, lng: site.lng, t: th('2026-10-06T18:00:00') + i * 60_000 }))
     expect(returnTripTrail([...crawl, at(site, '2026-10-06T18:40:00', 0.05)], today, site, { office, tripDayStart })).toMatchObject({ prepended: false })

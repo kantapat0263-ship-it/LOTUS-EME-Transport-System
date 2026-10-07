@@ -307,8 +307,12 @@ export function clockWithDay(ms: number, viewDate: string): string {
 
 /** รัศมี "พื้นที่ไซต์" ของทริปกลับอย่างเดียว — ใช้หาจังหวะรถออกจากไซต์ (กว้างกว่าเกณฑ์ถึงจุดงาน เพราะหมุดไซต์กับลานจอดจริงห่างกันได้) */
 export const RETURN_SITE_AREA_M = 2000
-/** รถต้อง "จอดรอ" ในพื้นที่ไซต์ต่อเนื่องอย่างน้อยเท่านี้ ถึงจะนับเป็นขารับรถ — ขับผ่านใกล้ไซต์ (ทริปอื่นเมื่อวาน) ไม่นับ */
-export const RETURN_SITE_MIN_STAY_MIN = 30
+/** รถต้อง "หยุดนิ่ง" ในพื้นที่ไซต์อย่างน้อยเท่านี้ ถึงจะนับเป็นขารับรถ — ขับผ่าน/ติดไฟแดงใกล้ไซต์ไม่นับ
+ *  10 นาที (เดิม 30): เคสจริง ถส-5694 ไปถึงจุดเปลี่ยนรถ 19:13 ออก 19:40 = 27 นาที — รถมาถึงแล้วเปลี่ยนคนขับเลย ไม่ได้จอดรอนาน */
+export const RETURN_SITE_MIN_STAY_MIN = 10
+/** GPS เงียบนานเท่านี้แล้วไปโผล่ไกล (นอกรัศมี 300 ม.) ถึงเชื่อว่าช่วงเงียบคือรถจอด — สั้นกว่านี้อาจแค่ระบบดึง GPS ไม่ได้ช่วงที่ขับผ่าน
+ *  ใช้ทั้งหลักฐานจอดรอและเวลาออกจากไซต์ (แยกจาก RETURN_SITE_MIN_STAY_MIN ที่ใช้กับจุดที่อยู่ติดกันในที่เดิม) */
+const RETURN_SITE_SILENT_GAP_MIN = 30
 
 /** รัศมีพื้นที่ไซต์รับรถจริงที่ใช้ — กว้างสุด RETURN_SITE_AREA_M แต่ห้ามครอบออฟฟิศ
  *  (ไซต์ใกล้ออฟฟิศ เช่น อู่ 1 กม. → หดลง เหลือไม่ต่ำกว่าเกณฑ์ถึงจุดงาน 300 ม.) ใช้ชุดเดียวทั้งหน้าติดตามและรายงาน */
@@ -320,13 +324,14 @@ export function pickupAreaRadiusM(site: LatLng, office: LatLng | null | undefine
 
 /** หลักฐานว่ารถ "หยุดนิ่ง" จริงในช่วงจุดที่ให้มา (ไม่ใช่แค่อยู่ในรัศมีนาน — รถคลานช้าในพื้นที่ไม่นับ)
  *  - กลุ่มจุดห่างจุดตั้งต้นไม่เกินระยะแกว่งของ GPS (300 ม.) ต่อเนื่อง ≥ minStayMs หรือ
- *  - GPS เงียบ ≥ minStayMs หลังจุดใดจุดหนึ่ง (เครื่องไม่ส่งตำแหน่งตอนรถจอดดับ — trail ข้ามเวลาซ้ำ)
+ *  - GPS เงียบ ≥ silentGapMs หลังจุดใดจุดหนึ่งแล้วไปโผล่ไกล (เครื่องไม่ส่งตำแหน่งตอนรถจอดดับ — trail ข้ามเวลาซ้ำ)
+ *    ช่วงเงียบที่จุดก่อน-หลังอยู่ในรัศมีเดิม นับด้วยเกณฑ์กลุ่มจุด (minStayMs) อยู่แล้ว
  *  next = จุดแรกหลังช่วงนี้ (ถ้ามี) ใช้วัดเวลาเงียบของจุดสุดท้าย */
-function hasStationaryStay<T extends TrailPoint>(pts: T[], next: T | undefined, minStayMs: number): boolean {
+function hasStationaryStay<T extends TrailPoint>(pts: T[], next: T | undefined, minStayMs: number, silentGapMs: number): boolean {
   const seq = next ? [...pts, next] : pts
   let anchor = 0
   for (let j = 1; j < seq.length; j++) {
-    if (seq[j].t! - seq[j - 1].t! >= minStayMs) return true
+    if (seq[j].t! - seq[j - 1].t! >= silentGapMs) return true
     if (haversineMeters(seq[anchor], seq[j]) <= ARRIVAL_RADIUS_M) {
       if (seq[j].t! - seq[anchor].t! >= minStayMs) return true
     } else anchor = j
@@ -369,6 +374,7 @@ export function returnTripTrail<T extends TrailPoint>(
   if (!site) return { trail: today, prepended: false, siteDepartAt: null, seenAtSite: false }
   const radiusM = opts.radiusM ?? RETURN_SITE_AREA_M
   const minStayMs = (opts.minStayMin ?? RETURN_SITE_MIN_STAY_MIN) * 60_000
+  const silentGapMs = Math.max(minStayMs, RETURN_SITE_SILENT_GAP_MIN * 60_000)
   const office = opts.office
   const officeRadiusM = opts.officeRadiusM ?? OFFICE_RADIUS_M
   const inSite = (p: T) => haversineMeters(site, p) <= radiusM
@@ -388,7 +394,7 @@ export function returnTripTrail<T extends TrailPoint>(
     if (last >= 0) {
       let first = last
       while (first > 0 && inSite(pr[first - 1])) first--
-      const stayed = hasStationaryStay(pr.slice(first, last + 1), pr[last + 1] ?? tod[0], minStayMs)
+      const stayed = hasStationaryStay(pr.slice(first, last + 1), pr[last + 1] ?? tod[0], minStayMs, silentGapMs)
       const officeStay = office
         ? firstOfficeStayStart([...pr.slice(last + 1), ...tod], office, officeRadiusM, RETURN_DWELL_MIN * 60_000)
         : null
@@ -404,7 +410,7 @@ export function returnTripTrail<T extends TrailPoint>(
   if (lastPt && !inSite(lastPt)) {
     for (let i = all.length - 2; i >= 0; i--) {
       if (inSite(all[i]) && !inSite(all[i + 1])) {
-        siteDepartAt = all[i + 1].t! - all[i].t! >= minStayMs ? all[i + 1].t! : all[i].t!
+        siteDepartAt = all[i + 1].t! - all[i].t! >= silentGapMs ? all[i + 1].t! : all[i].t!
         break
       }
     }
