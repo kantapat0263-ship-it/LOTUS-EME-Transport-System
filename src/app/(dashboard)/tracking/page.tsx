@@ -366,7 +366,10 @@ export default function TrackingPage() {
       const todayTrail = cutTrailAt(deviceId ? deviceToTrail[deviceId] ?? [] : [], endAt)
       const ret =
         isReturnMode && deviceId
-          ? returnTripTrail(cutTrailAt(deviceToPrevTrail[deviceId] ?? [], endAt), todayTrail, pickupSite, { office: origin })
+          ? returnTripTrail(cutTrailAt(deviceToPrevTrail[deviceId] ?? [], endAt), todayTrail, pickupSite, {
+              office: origin,
+              tripDayStart: Date.parse(`${selectedDate}T00:00:00+07:00`),
+            })
           : null
       const fullTrail = ret?.trail ?? todayTrail
       const trail = fullTrail

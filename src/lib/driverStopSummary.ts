@@ -100,8 +100,9 @@ export function buildWeeklyStopDays(trips: Trip[], trails: VehicleTrailDoc[], ve
     base.quality = points.length < 2 || base.distanceKm <= 0 || base.observedMin < LONG_DWELL_MIN ? 'missing' : invalid || base.gapMin > 0 ? 'incomplete' : 'sufficient'
     // ทริปกลับอย่างเดียว: ไซต์รับรถ = จุดแรกของงาน (พื้นที่กว้าง) · GPS วันนี้เริ่มนอกทั้งออฟฟิศและไซต์ = ขากลับเริ่มตั้งแต่เมื่อวาน
     // (หน้าติดตามต่อ GPS เมื่อวานให้ แต่รายงานนี้คิดรายวัน) → ข้อมูลไม่ครบช่วง ไม่ใช้เป็นค่าเทียบ
-    const pickup = assigned.filter(t => tripRouteMode(t) === 'return').map(t => weeklyJobLocations(t, active)[0]).find(Boolean)
-    if (pickup && points.length && base.quality === 'sufficient' && haversineMeters(points[0], office) > OFFICE_RADIUS_M && haversineMeters(points[0], pickup) > RETURN_SITE_AREA_M) base.quality = 'incomplete'
+    // เลือกไซต์รับรถตามลำดับจุด (order) แบบเดียวกับหน้าติดตาม · วันนี้ไม่มี GPS ในพื้นที่ไซต์เลย = รับรถก่อนวันนี้ → ไม่ครบช่วง
+    const pickup = assigned.filter(t => tripRouteMode(t) === 'return').map(t => weeklyJobLocations({ ...t, stops: [...(t.stops ?? [])].sort((a, b) => a.order - b.order) }, active)[0]).find(Boolean)
+    if (pickup && base.quality === 'sufficient' && !points.some(p => haversineMeters(p, pickup) <= RETURN_SITE_AREA_M)) base.quality = 'incomplete'
     base.events = classifyDriverStops(points, office, assigned.flatMap(t => weeklyJobLocations(t, active)), { areas: pickup ? [{ ...pickup, radiusM: RETURN_SITE_AREA_M }] : [] }).filter(event => event.kind !== 'office').map(event => ({ ...event, eventId: `${event.startT}-${event.endT}`, review: null }))
     return base
   })

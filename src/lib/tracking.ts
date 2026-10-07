@@ -310,12 +310,43 @@ export const RETURN_SITE_AREA_M = 2000
 /** รถต้อง "จอดรอ" ในพื้นที่ไซต์ต่อเนื่องอย่างน้อยเท่านี้ ถึงจะนับเป็นขารับรถ — ขับผ่านใกล้ไซต์ (ทริปอื่นเมื่อวาน) ไม่นับ */
 export const RETURN_SITE_MIN_STAY_MIN = 30
 
+/** หลักฐานว่ารถ "หยุดนิ่ง" จริงในช่วงจุดที่ให้มา (ไม่ใช่แค่อยู่ในรัศมีนาน — รถคลานช้าในพื้นที่ไม่นับ)
+ *  - กลุ่มจุดห่างจุดตั้งต้นไม่เกินระยะแกว่งของ GPS (300 ม.) ต่อเนื่อง ≥ minStayMs หรือ
+ *  - GPS เงียบ ≥ minStayMs หลังจุดใดจุดหนึ่ง (เครื่องไม่ส่งตำแหน่งตอนรถจอดดับ — trail ข้ามเวลาซ้ำ)
+ *  next = จุดแรกหลังช่วงนี้ (ถ้ามี) ใช้วัดเวลาเงียบของจุดสุดท้าย */
+function hasStationaryStay<T extends TrailPoint>(pts: T[], next: T | undefined, minStayMs: number): boolean {
+  const seq = next ? [...pts, next] : pts
+  let anchor = 0
+  for (let j = 1; j < seq.length; j++) {
+    if (seq[j].t! - seq[j - 1].t! >= minStayMs) return true
+    if (haversineMeters(seq[anchor], seq[j]) <= ARRIVAL_RADIUS_M) {
+      if (seq[j].t! - seq[anchor].t! >= minStayMs) return true
+    } else anchor = j
+  }
+  return false
+}
+
+/** เวลาเริ่มของรอบ "จอดจริง" ในออฟฟิศครั้งแรก (≥ minMs นับถึงจุดถัดไปหลังรอบ — ขับผ่านจุดเดียวไม่นับ) · ไม่มี = null */
+function firstOfficeStayStart<T extends TrailPoint>(pts: T[], office: LatLng, radiusM: number, minMs: number): number | null {
+  for (let i = 0; i < pts.length; i++) {
+    if (haversineMeters(office, pts[i]) > radiusM) continue
+    let j = i
+    while (j + 1 < pts.length && haversineMeters(office, pts[j + 1]) <= radiusM) j++
+    const endT = j + 1 < pts.length ? pts[j + 1].t! : pts[j].t!
+    if (endT - pts[i].t! >= minMs) return pts[i].t!
+    i = j
+  }
+  return null
+}
+
 /**
  * ทริปกลับอย่างเดียว (ไปรับรถที่ไซต์ขับกลับ): คนขับอาจออกจากไซต์ตั้งแต่เย็นวันก่อนแล้วขับข้ามคืน
  * → ต่อ GPS ของวันก่อน ตั้งแต่จุดสุดท้ายที่รถยังอยู่ในพื้นที่ไซต์ เข้ากับ GPS วันนี้ (ทริปลงวันที่วันที่รถถึงออฟฟิศ)
  * - วันนี้ยังมีจุดในพื้นที่ไซต์ (ออกจากไซต์วันนี้) / วันก่อนไม่เคยอยู่ไซต์ / ไม่มีพิกัดไซต์ = ใช้ GPS วันนี้ตามเดิม
- * - ต่อเฉพาะเมื่อวันก่อน "จอดรอ" ที่ไซต์จริง (≥ RETURN_SITE_MIN_STAY_MIN) และหลังออกจากไซต์ยังไม่เข้าออฟฟิศในวันนั้น
- *   (ขับผ่านใกล้ไซต์ / รับรถแล้วกลับถึงออฟฟิศไปตั้งแต่เมื่อวาน = ไม่ใช่ขากลับของทริปนี้)
+ * - ต่อเฉพาะเมื่อวันก่อน "จอดรอ" ที่ไซต์จริง (หยุดนิ่ง ≥ RETURN_SITE_MIN_STAY_MIN — hasStationaryStay)
+ *   และหลังออกจากไซต์ไม่ได้ "จอดจริง" ที่ออฟฟิศก่อนวันของทริป (tripDayStart = 00:00 ไทยของวันที่ทริป)
+ *   (ขับผ่าน/คลานผ่านใกล้ไซต์ หรือรับรถแล้วกลับถึงออฟฟิศไปตั้งแต่วันก่อน = ไม่ใช่ขากลับของทริปนี้
+ *    — ถึงออฟฟิศหลังเที่ยงคืนของวันทริปแต่ก่อนตัดวันตี 4 ยังนับเป็นขากลับของทริปนี้)
  * - ตัด GPS ตาม gpsEndAt ก่อนเรียกฟังก์ชันนี้ (เวลาออกไซต์ต้องมาจาก GPS ที่ยังเป็นของทริป)
  * - siteDepartAt = จุดสุดท้ายในพื้นที่ไซต์ที่ตามด้วยจุดนอกพื้นที่ (ยังไม่ออก = null)
  * - seenAtSite = มีจุดในพื้นที่ไซต์ (ถือว่ารับรถที่ไซต์แล้ว — จุดไซต์ของทริปนี้คือจุดเริ่ม ไม่ใช่ปลายทาง)
@@ -324,7 +355,7 @@ export function returnTripTrail<T extends TrailPoint>(
   prev: T[],
   today: T[],
   site: LatLng | null | undefined,
-  opts: { radiusM?: number; office?: LatLng | null; officeRadiusM?: number; minStayMin?: number } = {}
+  opts: { radiusM?: number; office?: LatLng | null; officeRadiusM?: number; minStayMin?: number; tripDayStart?: number } = {}
 ): { trail: T[]; prepended: boolean; siteDepartAt: number | null; seenAtSite: boolean } {
   if (!site) return { trail: today, prepended: false, siteDepartAt: null, seenAtSite: false }
   const radiusM = opts.radiusM ?? RETURN_SITE_AREA_M
@@ -348,9 +379,12 @@ export function returnTripTrail<T extends TrailPoint>(
     if (last >= 0) {
       let first = last
       while (first > 0 && inSite(pr[first - 1])) first--
-      const stayed = pr[last].t! - pr[first].t! >= minStayMs
-      const backAtOfficeYesterday = !!office && pr.slice(last + 1).some((p) => haversineMeters(office, p) <= officeRadiusM)
-      if (stayed && !backAtOfficeYesterday) {
+      const stayed = hasStationaryStay(pr.slice(first, last + 1), pr[last + 1] ?? tod[0], minStayMs)
+      const officeStay = office
+        ? firstOfficeStayStart([...pr.slice(last + 1), ...tod], office, officeRadiusM, RETURN_DWELL_MIN * 60_000)
+        : null
+      const returnedBeforeTripDay = officeStay != null && officeStay < (opts.tripDayStart ?? Infinity)
+      if (stayed && !returnedBeforeTripDay) {
         all = [...pr.slice(last), ...tod]
         prepended = true
       }

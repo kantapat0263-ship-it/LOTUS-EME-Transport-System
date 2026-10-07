@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { FieldValue, type Firestore, type QuerySnapshot } from 'firebase-admin/firestore'
 import { aggregateWeeklyStops, buildWeeklyStopDays, type StopReview, type WeeklyDay, type WeeklyStopReport } from '@/lib/driverStopSummary'
 import { OFFICE_LOCATION } from '@/lib/tracking'
+import { tripRouteMode } from '@/lib/routeMode'
 import type { Trip, Vehicle, VehicleTrailDoc } from '@/types/models'
 import { parseStopReviewCommand, parseWeekStart, weekDates, type StopReviewCommand } from './weeklyStopValidation'
 export class WeeklyStopError extends Error {
@@ -50,7 +51,7 @@ const sorted = <T extends { id: string }>(data: T[]) => [...data].sort((a, b) =>
 function sourceFingerprint(day: WeeklyDay, trips: Trip[], trails: VehicleTrailDoc[], vehicles: Vehicle[], office: { lat: number; lng: number }) {
   return hash({
     key: day.key, office,
-    trips: sorted(trips.filter(t => t.tripDate === day.date)).map(t => ({ id: t.id, tripDate: t.tripDate, vehiclePlate: t.vehiclePlate, driverId: t.driverId, driverName: t.driverName, actualDriverId: t.actualDriverId, actualDriverName: t.actualDriverName, status: t.status, gpsEndAt: t.gpsEndAt, stops: (t.stops ?? []).map(s => ({ order: s.order, lat: s.lat, lng: s.lng, outcome: s.outcome, reassignedToTripId: s.reassignedToTripId, reassignedToVehiclePlate: s.reassignedToVehiclePlate })) })),
+    trips: sorted(trips.filter(t => t.tripDate === day.date)).map(t => ({ id: t.id, tripDate: t.tripDate, vehiclePlate: t.vehiclePlate, driverId: t.driverId, driverName: t.driverName, actualDriverId: t.actualDriverId, actualDriverName: t.actualDriverName, status: t.status, gpsEndAt: t.gpsEndAt, routeMode: tripRouteMode(t), stops: (t.stops ?? []).map(s => ({ order: s.order, lat: s.lat, lng: s.lng, outcome: s.outcome, reassignedToTripId: s.reassignedToTripId, reassignedToVehiclePlate: s.reassignedToVehiclePlate })) })),
     trails: sorted(trails.filter(t => t.date === day.date)).map(t => ({ id: t.id, date: t.date, licensePlate: t.licensePlate, deviceId: t.deviceId, points: t.points })),
     vehicles: sorted(vehicles).map(v => ({ id: v.id, gpsDeviceId: v.gpsDeviceId, licensePlate: v.licensePlate })),
   })

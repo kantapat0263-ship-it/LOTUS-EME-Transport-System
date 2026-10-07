@@ -860,6 +860,30 @@ describe('tracking: ทริปกลับอย่างเดียวที
   it('จอดรอที่ไซต์จริงแล้วขับข้ามคืนยังไม่ถึงออฟฟิศ → ต่อ (ส่งพิกัดออฟฟิศมาด้วยก็ยังต่อ)', () => {
     expect(returnTripTrail(prev, today, site, { office })).toMatchObject({ prepended: true, siteDepartAt: th('2026-10-06T19:39:00') })
   })
+
+  const tripDayStart = th('2026-10-07T00:00:00')
+  it('คลานช้าอยู่ในพื้นที่ไซต์นาน 35 นาที (ไม่ได้หยุดจริง) → ไม่ต่อ', () => {
+    const crawl = Array.from({ length: 36 }, (_, i) => ({ lat: site.lat - 0.008 + i * 0.0005, lng: site.lng, t: th('2026-10-06T18:00:00') + i * 60_000 }))
+    expect(returnTripTrail([...crawl, at(site, '2026-10-06T18:40:00', 0.05)], today, site, { office, tripDayStart })).toMatchObject({ prepended: false })
+  })
+
+  it('จอดที่ไซต์แต่ GPS เงียบ (มีจุดเดียวก่อนออก) → นับช่วงเงียบเป็นการจอด → ต่อ', () => {
+    const silent = [at(site, '2026-10-06T12:00:00', 0.004), at(site, '2026-10-06T19:45:00', 0.05), at(home, '2026-10-07T03:56:00')]
+    expect(returnTripTrail(silent, today, site, { office, tripDayStart })).toMatchObject({ prepended: true, siteDepartAt: th('2026-10-06T12:00:00') })
+  })
+
+  it('ขับผ่านออฟฟิศจุดเดียว (ไม่ได้จอด) ไม่ถือว่าขากลับจบ → ยังต่อ', () => {
+    const passOffice = [...prev.slice(0, 3), at(office, '2026-10-06T23:00:00'), at(home, '2026-10-06T23:01:00', 0.04), at(home, '2026-10-07T03:56:00')]
+    expect(returnTripTrail(passOffice, today, site, { office, tripDayStart })).toMatchObject({ prepended: true })
+  })
+
+  it('จอดที่ออฟฟิศจริงก่อนวันของทริป = ขากลับจบไปแล้ว → ไม่ต่อ · ถึงออฟฟิศหลังเที่ยงคืนของวันทริป (ก่อนตี 4) → ต่อ', () => {
+    const returnedEvening = [...prev.slice(0, 3), at(office, '2026-10-06T22:00:00'), at(office, '2026-10-06T22:30:00')]
+    expect(returnTripTrail(returnedEvening, today, site, { office, tripDayStart })).toMatchObject({ prepended: false })
+    const returnedAfterMidnight = [...prev.slice(0, 3), at(office, '2026-10-07T03:40:00'), at(office, '2026-10-07T03:59:00')]
+    const todayAtOffice = [at(office, '2026-10-07T04:05:00'), at(office, '2026-10-07T08:00:00')]
+    expect(returnTripTrail(returnedAfterMidnight, todayAtOffice, site, { office, tripDayStart })).toMatchObject({ prepended: true })
+  })
 })
 
 describe('tracking: clockWithDay — เวลาคนละวันกับที่กำลังดูต้องบอกวันที่', () => {

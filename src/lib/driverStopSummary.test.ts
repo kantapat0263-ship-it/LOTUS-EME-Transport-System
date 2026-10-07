@@ -143,4 +143,16 @@ describe('return-mode trips (กลับอย่างเดียว)', () =>
     expect(buildWeeklyStopDays([trip({ routeMode: 'return', stops: [sameDay] })], [trail()], [], office)[0].quality).toBe('sufficient')
     expect(buildWeeklyStopDays([trip({ stops: [far] })], [trail()], [], office)[0].quality).toBe('sufficient')
   })
+  it('also flags a return day that starts at the office without visiting the pickup site (arrived before the day cut)', () => {
+    const far = { siteId: 's1', siteName: 'ไซต์ไกล', cargoDetails: 'รับรถ', order: 1, lat: 16.5, lng: 101 }
+    const fromOffice = drivenThenStop(60, 30).map(p => ({ ...p, lat: p.lat - 1, lng: p.lng - 1 })) // เริ่มที่ออฟฟิศ (14,100)
+    expect(buildWeeklyStopDays([trip({ routeMode: 'return', stops: [far] })], [trail({ points: fromOffice })], [], office)[0].quality).toBe('incomplete')
+  })
+  it('picks the pickup site by stop order, matching the tracking page', () => {
+    const yardStop = (lat: number) => [{ lat, lng: 101, t: time('09:00'), sp: 0 }, { lat, lng: 101, t: time('10:00'), sp: 0 }]
+    const first = { siteId: 'a', siteName: 'ไซต์รับรถ', cargoDetails: '', order: 1, lat: 15, lng: 101 }
+    const second = { siteId: 'b', siteName: 'จุดระหว่างทาง', cargoDetails: '', order: 2, lat: 16.5, lng: 101 }
+    const days = buildWeeklyStopDays([trip({ routeMode: 'return', stops: [second, first] })], [trail({ points: [...drivenThenStop(60, 0), ...yardStop(15.005)] })], [], office)
+    expect(days[0].events.find(e => e.startT === time('09:00'))?.kind).toBe('job')
+  })
 })
