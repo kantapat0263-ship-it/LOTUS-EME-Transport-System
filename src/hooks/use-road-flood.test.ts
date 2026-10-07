@@ -29,7 +29,7 @@ function pending(signal: AbortSignal): Promise<never> {
     signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
   })
 }
-function start(enabled = true) {
+function FloodHookHarness(enabled = true) {
   useRoadFlood(enabled)
   cleanup = harness.effect?.()
 }
@@ -53,7 +53,7 @@ describe('useRoadFlood request lifetime', () => {
   it('a stalled connection times out and the next poll can retry', async () => {
     fetchMock.mockImplementationOnce((_: string, init: RequestInit) => pending(init.signal as AbortSignal))
       .mockResolvedValue(response())
-    start()
+    FloodHookHarness()
     expect(harness.values[1]).toBe('loading')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(harness.values[1]).toBe('error')
@@ -69,7 +69,7 @@ describe('useRoadFlood request lifetime', () => {
         ok: true, json: () => pending(init.signal as AbortSignal),
       }))
       .mockResolvedValue(response())
-    start()
+    FloodHookHarness()
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(POLL + 30_000)
     expect(harness.values[0]).toEqual(snapshot)
@@ -82,7 +82,7 @@ describe('useRoadFlood request lifetime', () => {
 
   it('closing the layer aborts without reporting a failure or leaving poll timers', async () => {
     fetchMock.mockImplementation((_: string, init: RequestInit) => pending(init.signal as AbortSignal))
-    start()
+    FloodHookHarness()
     cleanup?.()
     cleanup = undefined
     await vi.advanceTimersByTimeAsync(POLL * 2)
@@ -93,7 +93,7 @@ describe('useRoadFlood request lifetime', () => {
   })
 
   it('a closed layer makes no request', () => {
-    start(false)
+    FloodHookHarness(false)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(vi.getTimerCount()).toBe(0)
   })
