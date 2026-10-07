@@ -246,6 +246,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 ---
 
 ## Git / Deploy workflow
+- **บทบาท (ผู้ใช้กำหนด 2026-10-07):** Claude = เขียนโค้ด + deploy คนเดียว (ขออนุมัติทุกครั้ง) · Codex = ตรวจหาบั๊กอ่านอย่างเดียว ห้ามแก้/commit/deploy — รายละเอียดใน `AGENTS.md` (repo) และ `../AGENTS.md`
 - พัฒนาบน branch `claude/transport-system-review-QvCtP`
 - **push main = deploy production ทันที** (Vercel) — เป็นระบบจริงที่คนใช้งานอยู่ + กลุ่ม LINE จริง → ยืนยันกับผู้ใช้ก่อนเสมอ
 - อย่าสร้าง PR เว้นแต่ผู้ใช้ขอ
