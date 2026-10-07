@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useFirestore, useMemoFirebase, useDoc } from "@/firebase"
+import { useFirestore, useMemoFirebase, useDoc, useUser } from "@/firebase"
+import { WeeklyStopReportPanel } from '@/components/reports/WeeklyStopReportPanel'
 import { collection, query, where, getDocs, doc } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -33,7 +34,7 @@ import {
   Repeat
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { Trip, CompanySetting } from "@/types/models"
+import { Trip, CompanySetting, UserProfile } from "@/types/models"
 import { computeOutcomeStats, computeDriverReliability } from "@/lib/calculations"
 import { detectStops, cutTrailAt, computeRecurringStops, haversineMeters, OFFICE_LOCATION, OFFICE_RADIUS_M, ARRIVAL_RADIUS_M, type RecurringSpot, type StopEvent } from "@/lib/tracking"
 import { cn } from "@/lib/utils"
@@ -56,6 +57,9 @@ function formatDateDisplay(dateStr: string) {
 export default function ReportPage() {
   const { toast } = useToast()
   const db = useFirestore()
+  const { user } = useUser()
+  const profileRef = useMemoFirebase(() => user ? doc(db, 'users', user.uid) : null, [db, user])
+  const { data: profile } = useDoc<UserProfile>(profileRef)
   
   const [startDate, setStartDate] = React.useState(format(startOfMonth(new Date()), 'yyyy-MM-01'))
   const [endDate, setEndDate] = React.useState(new Date().toISOString().split('T')[0])
@@ -811,6 +815,7 @@ export default function ReportPage() {
       {/* เฉพาะแอดมิน — อยู่ "นอก" #report-content จึงไม่ติดไปในรูป JPEG */}
       {/* หลักการ: จัดการคนอู้แบบส่วนตัว ไม่ประจานในกลุ่ม              */}
       {/* ============================================================ */}
+      <WeeklyStopReportPanel key={user?.uid ?? 'signed-out'} user={user} isAdmin={!!user && profile?.id === user.uid && profile?.role === 'admin' && profile.active === true} />
       {(driverReliability.length > 0 || refusalIncidents.length > 0) && (
         <Card className="border-red-500/30 bg-red-950/10">
           <CardHeader>

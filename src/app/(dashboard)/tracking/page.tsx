@@ -29,7 +29,6 @@ import type {
 import {
   computeStopStatuses,
   computeDailySummary,
-  detectStops,
   haversineMeters,
   isPositionStale,
   isTripNotRun,
@@ -48,8 +47,8 @@ import {
   msToThaiClock,
   handoverCutMs,
   handoverTimeError,
-  type TrailPoint,
 } from "@/lib/tracking"
+import { classifyDriverStops, type DriverStop, type DrivingPoint } from '@/lib/driverStopSummary'
 import { tripRouteMode } from "@/lib/routeMode"
 import { incomingStopsForTrip } from "@/lib/calculations"
 import { TrackingMap, type TrackingMapStop } from "@/components/tracking/TrackingMap"
@@ -64,7 +63,7 @@ interface TruckView {
   trip: Trip
   deviceId?: string
   position?: VehiclePositionDoc
-  trail: TrailPoint[]
+  trail: DrivingPoint[]
   stops: TrackingMapStop[]
   arrivedCount: number
   totalStops: number
@@ -83,11 +82,7 @@ interface TruckView {
   handoverSuggestion: number | null
 }
 
-interface LongStopEvent {
-  lat: number
-  lng: number
-  durationMin: number
-  startT: number
+interface LongStopEvent extends DriverStop {
   /** จอดในรัศมีจุดงานไหม (true = จอดที่จุดงาน, false = จอดนอกจุดงาน = น่าสงสัยกว่า) */
   nearJob: boolean
 }
@@ -263,9 +258,9 @@ export default function TrackingPage() {
     ;(positions ?? []).forEach((p) => {
       deviceToPos[p.deviceId] = p
     })
-    const deviceToTrail: Record<string, TrailPoint[]> = {}
+    const deviceToTrail: Record<string, DrivingPoint[]> = {}
     ;(trails ?? []).forEach((tr) => {
-      deviceToTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t }))
+      deviceToTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp }))
     })
     const deviceToDaily: Record<string, TrackingDailyDoc> = {}
     ;(daily ?? []).forEach((d) => {
@@ -424,17 +419,9 @@ export default function TrackingPage() {
       ).length
 
       // จุดจอดนานผิดสังเกต (ตรวจจาก trail จริง รวมจุดนอกงาน) — ตัดจุดที่จอดที่ออฟฟิศออก
-      const stopEvents: LongStopEvent[] = detectStops(trail, { minMinutes: LONG_DWELL_MIN })
-        .filter((ev) => haversineMeters(ev, origin) > OFFICE_RADIUS_M)
-        .map((ev) => ({
-          lat: ev.lat,
-          lng: ev.lng,
-          durationMin: ev.durationMin,
-          startT: ev.startT,
-          nearJob: routeStops.some(
-            (s) => s.lat != null && s.lng != null && haversineMeters(ev, { lat: s.lat, lng: s.lng }) <= 250
-          ),
-        }))
+      const stopEvents: LongStopEvent[] = classifyDriverStops(trail, origin, routeStops.filter(s => s.lat != null && s.lng != null).map(s => ({ lat: s.lat!, lng: s.lng! })))
+        .filter(ev => ev.kind !== 'office')
+        .map(ev => ({ ...ev, nearJob: ev.kind === 'job' }))
 
       const stale = isToday && endAt == null && (position ? isPositionStale(position.positionTime, now) : true)
 
@@ -1088,17 +1075,20 @@ function TruckDetail({
           // แถวจอดนอกจุดงาน (แทรกตามเวลา) — สีแดง เห็นทันทีว่าหายไปช่วงไหนของวัน
           if (row.kind === "offjob") {
             const ev = row.ev
-            const endT = ev.startT + ev.durationMin * 60_000
+            const endT = ev.endT
+            const needsReview = ev.kind === 'review'
+            const label = ev.kind === 'rest' ? '🅿 พักระหว่างทาง' : ev.kind === 'lunch' ? '🍚 พักเที่ยง' : '🔴 จอดนอกจุดงาน รอตรวจสอบ'
             return (
               <div
                 key={`offjob-${idx}`}
-                className="-mx-2 flex items-center gap-3 rounded-md border-b border-dashed border-border bg-red-500/10 px-2 py-2.5"
+                className={cn('-mx-2 flex items-center gap-3 rounded-md border-b border-dashed border-border px-2 py-2.5', needsReview ? 'bg-red-500/10' : 'bg-muted/40')}
               >
-                <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-red-500 text-xs text-red-400">
+                <div className={cn('flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 text-xs', needsReview ? 'border-red-500 text-red-400' : 'border-muted-foreground text-muted-foreground')}>
                   ⏸
                 </div>
                 <div className="flex-1">
-                  <div className="text-sm font-medium text-red-400">🔴 จอดนอกจุดงาน {ev.durationMin} นาที</div>
+                  <div className={cn('text-sm font-medium', needsReview ? 'text-red-400' : 'text-muted-foreground')}>{label} {Math.round(ev.durationMin)} นาที</div>
+                  {ev.uncertain && <p className="text-xs text-amber-400">GPS ขาดช่วง เวลาจอดและประเภทพักยังยืนยันไม่ได้ครบ</p>}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{thTime(ev.startT)}–{thTime(endT)}</span>
                     <a
