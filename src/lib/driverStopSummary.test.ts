@@ -106,3 +106,26 @@ describe('weekly attribution and normalized review time', () => {
     expect(rows.find(row => row.driverId === 'd2')).toMatchObject({ days: 1, sufficientDays: 0, minutesPer100Km: null })
   })
 })
+describe('overnight stops (จอดค้างคืน)', () => {
+  const at = (iso: string) => Date.parse(`${iso}+07:00`)
+  const parked = (from: string, to: string, place = { lat: 15, lng: 101 }) => [{ ...place, t: at(from), sp: 0 }, { ...place, t: at(to), sp: 0 }]
+  it('classifies a stop overlapping 22:00–05:00 Thai time as overnight, not review', () => {
+    expect(classifyDriverStops(parked('2026-10-06T19:13', '2026-10-07T03:56'), office, [])[0].kind).toBe('overnight')
+    expect(classifyDriverStops(parked('2026-10-07T03:56', '2026-10-07T14:30'), office, [])[0].kind).toBe('overnight')
+    expect(classifyDriverStops(parked('2026-10-06T21:30', '2026-10-06T22:10'), office, [])[0].kind).toBe('overnight')
+  })
+  it('keeps daytime stops and the night window edges unchanged', () => {
+    expect(classifyDriverStops(parked('2026-10-06T08:00', '2026-10-06T09:00'), office, [])[0].kind).toBe('review')
+    expect(classifyDriverStops(parked('2026-10-06T05:00', '2026-10-06T06:00'), office, [])[0].kind).toBe('review')
+    expect(classifyDriverStops(parked('2026-10-06T21:00', '2026-10-06T22:00'), office, [])[0].kind).toBe('review')
+  })
+  it('still reports office and assigned job stops first', () => {
+    expect(classifyDriverStops(parked('2026-10-06T23:00', '2026-10-07T02:00'), { lat: 15, lng: 101 }, [])[0].kind).toBe('office')
+    expect(classifyDriverStops(parked('2026-10-06T23:00', '2026-10-07T02:00'), office, [{ lat: 15, lng: 101 }])[0].kind).toBe('job')
+  })
+  it('does not count overnight minutes as review, rest or lunch in the weekly totals', () => {
+    const event = { ...classifyDriverStops(parked('2026-10-06T19:13', '2026-10-07T03:56'), office, [])[0], eventId: 'x', review: null }
+    const rows = aggregateWeeklyStops([{ key: 'k', date: '2026-10-06', plate: 'p', trailId: 't', tripIds: ['t1'], driverId: 'd1', driverName: 'คนขับ', candidateDrivers: [], quality: 'sufficient', distanceKm: 100, observedMin: 600, gapMin: 0, events: [event], sourceFingerprint: '' }])
+    expect(rows[0]).toMatchObject({ reviewMin: 0, restMin: 0, lunchMin: 0, excludedMin: 0 })
+  })
+})

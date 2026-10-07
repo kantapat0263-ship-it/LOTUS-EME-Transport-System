@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, SINOTRACK_SERVER, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey, computeDailySummary, cutTrailAt, OFFICE_LOCATION, isCronSyncWindow } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary, cutTrailAt, OFFICE_LOCATION } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -43,12 +43,8 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // --- cron: บันทึกเฉพาะช่วง 04:00–21:59 (เวลาไทย) + รอบเก็บตก 03:50–03:59 ประหยัดโควตา ; คนเปิดหน้าดูตอนไหนก็ยังได้ ---
-  // เดิมหยุด 20:00 → รถที่กลับถึงออฟฟิศหลัง 2 ทุ่ม (เคส 1ฒษ-4413 ถึง 20:13) ระบบไม่เห็นจนเช้า เลยขยายถึง 4 ทุ่ม
-  // รอบเก็บตกก่อนตัดวัน 04:00 ดู isCronSyncWindow (กันรถที่กลับหลัง 22:00 ขึ้น "ค้างคืน" ผิด)
-  if (isCron && !isCronSyncWindow()) {
-    return NextResponse.json({ ok: true, skipped: true, reason: 'off-hours' })
-  }
+  // --- เก็บตลอด 24 ชม. (ผู้ใช้เลือก 2026-10-07) — เดิมหยุด 22:00–03:49 เพื่อประหยัดโควตา แต่ขับกลับจากต่างจังหวัดข้ามคืน
+  //     (เคส ถส-5694 ออกจากอุดร 19:40 ถึงบ้าน ~03:56) เส้นทาง/เวลาถึงหายทั้งช่วง · จุดหลังเที่ยงคืนตกวันเดิม (ตัดวัน 04:00)
 
   const user = process.env.SINOTRACK_USER
   const password = process.env.SINOTRACK_PASSWORD

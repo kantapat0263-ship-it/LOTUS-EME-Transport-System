@@ -23,7 +23,7 @@ function monday(date: string) {
 }
 const minutes = (value: number) => Math.round(value * 10) / 10
 const clock = (ms: number) => new Date(ms).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' })
-const kindLabel = { office: 'ออฟฟิศ', job: 'จุดงาน', rest: '🅿 พักระหว่างทาง', lunch: '🍚 พักเที่ยง', review: 'จอดนอกจุดงาน รอตรวจสอบ' }
+const kindLabel = { office: 'ออฟฟิศ', job: 'จุดงาน', overnight: '🌙 จอดค้างคืน', rest: '🅿 พักระหว่างทาง', lunch: '🍚 พักเที่ยง', review: 'จอดนอกจุดงาน รอตรวจสอบ' }
 const qualityLabel = { sufficient: 'คำนวณจาก GPS ที่มี', missing: 'ข้อมูลไม่พอ / ไม่มีระยะวิ่ง', incomplete: 'ข้อมูลไม่พอ / GPS ขาดช่วง', ambiguous: 'ระบุคนขับไม่ได้ / ข้อมูลซ้อนกัน' }
 
 export function WeeklyStopReportPanel({ user, isAdmin }: { user: User | null; isAdmin: boolean }) {

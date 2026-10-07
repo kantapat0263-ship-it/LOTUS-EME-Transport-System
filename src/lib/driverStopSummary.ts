@@ -2,12 +2,26 @@ import { ARRIVAL_RADIUS_M, cutTrailAt, detectStops, haversineMeters, isTripNotRu
 import { incomingStopsForTrip } from '@/lib/calculations'
 import type { Trip, Vehicle, VehicleTrailDoc } from '@/types/models'
 
-export type StopKind = 'office' | 'job' | 'rest' | 'lunch' | 'review'
+export type StopKind = 'office' | 'job' | 'overnight' | 'rest' | 'lunch' | 'review'
 export type DriverStop = StopEvent & { kind: StopKind; confirmedDrivingMin: number; uncertain: boolean }
 export type DrivingPoint = TrailPoint & { sp?: number }
 export const MAX_OBSERVED_GAP_MS = 5 * 60_000
 const validLocation = (p: LatLng) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180
 const validPoint = (p: DrivingPoint) => validLocation(p) && Number.isFinite(p.t) && p.t! > 0
+/** ช่วงกลางคืน (เวลาไทย) 22:00–05:00 — จุดจอดที่คร่อมช่วงนี้ = จอดค้างคืน/พักกลางคืน (เช่น ขับกลับจากต่างจังหวัดถึงบ้านตี 3)
+ *  ไม่ใช่ "จอดนอกจุดงาน รอตรวจสอบ" และไม่นับในนาทีที่ต้องตรวจของสรุปรายสัปดาห์ */
+export const NIGHT_START_HOUR = 22
+export const NIGHT_END_HOUR = 5
+export function overlapsNight(startT: number, endT: number): boolean {
+  const DAY = 86_400_000, TH = 7 * 3_600_000
+  // เริ่มจากคืนก่อนหน้าของวันที่จุดจอดเริ่ม (ช่วงกลางคืนเริ่ม 22:00 ของวันก่อน)
+  for (let midnight = Math.floor((startT + TH) / DAY) * DAY - TH - DAY; midnight <= endT; midnight += DAY) {
+    const nightStart = midnight + NIGHT_START_HOUR * 3_600_000
+    const nightEnd = midnight + DAY + NIGHT_END_HOUR * 3_600_000
+    if (startT < nightEnd && endT > nightStart) return true
+  }
+  return false
+}
 export function classifyDriverStops(trail: DrivingPoint[], office: LatLng, jobs: LatLng[]): DriverStop[] {
   const points = [...trail].filter(validPoint).sort((a, b) => a.t! - b.t!)
   return detectStops(points, { minMinutes: LONG_DWELL_MIN }).filter(event => event.endT - event.startT >= LONG_DWELL_MIN * 60_000).map(event => {
@@ -27,7 +41,8 @@ export function classifyDriverStops(trail: DrivingPoint[], office: LatLng, jobs:
     const nearbyJob = jobs.filter(validLocation).some(job => haversineMeters(event, job) <= ARRIVAL_RADIUS_M)
     const eventPoints = points.filter(point => point.t! >= event.startT && point.t! <= event.endT)
     const uncertain = eventPoints.some((point, i) => i > 0 && point.t! - eventPoints[i - 1].t! > MAX_OBSERVED_GAP_MS)
-    return { ...event, durationMin: (event.endT - event.startT) / 60_000, kind: nearbyOffice ? 'office' : nearbyJob ? 'job' : lunch ? 'lunch' : rest ? 'rest' : 'review', confirmedDrivingMin: drivingMs / 60_000, uncertain }
+    const overnight = overlapsNight(event.startT, event.endT)
+    return { ...event, durationMin: (event.endT - event.startT) / 60_000, kind: nearbyOffice ? 'office' : nearbyJob ? 'job' : overnight ? 'overnight' : lunch ? 'lunch' : rest ? 'rest' : 'review', confirmedDrivingMin: drivingMs / 60_000, uncertain }
   })
 }
 

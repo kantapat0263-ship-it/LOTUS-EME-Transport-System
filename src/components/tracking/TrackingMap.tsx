@@ -22,7 +22,7 @@ export interface TrackingMapStopEvent {
   lng: number
   durationMin: number
   nearJob: boolean
-  kind?: 'office' | 'job' | 'rest' | 'lunch' | 'review'
+  kind?: 'office' | 'job' | 'overnight' | 'rest' | 'lunch' | 'review'
 }
 
 export interface TrackingMapProps {
@@ -279,7 +279,7 @@ export function TrackingMap({ apiKey, stops, truck, trail, origin, stopEvents, l
     ;(stopEvents ?? []).forEach((ev) => {
       const pos = { lat: ev.lat, lng: ev.lng }
       const kind = ev.kind ?? (ev.nearJob ? 'job' : 'review')
-      const description = { office: 'ที่ออฟฟิศ', job: 'ที่จุดงาน', rest: 'พักหลังขับต่อเนื่อง', lunch: 'พักเที่ยง', review: 'นอกจุดงาน · รอตรวจสอบ' }[kind]
+      const description = { office: 'ที่ออฟฟิศ', job: 'ที่จุดงาน', overnight: 'จอดค้างคืน', rest: 'พักหลังขับต่อเนื่อง', lunch: 'พักเที่ยง', review: 'นอกจุดงาน · รอตรวจสอบ' }[kind]
       const color = kind === 'job' ? '#d98a00' : kind === 'review' ? '#d64027' : '#6b7280'
       const marker = new google.maps.Marker({
         position: pos,

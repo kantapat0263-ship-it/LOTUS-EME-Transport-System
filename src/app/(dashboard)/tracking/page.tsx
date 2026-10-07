@@ -47,6 +47,8 @@ import {
   msToThaiClock,
   handoverCutMs,
   handoverTimeError,
+  returnTripTrail,
+  clockWithDay,
 } from "@/lib/tracking"
 import { classifyDriverStops, type DriverStop, type DrivingPoint } from '@/lib/driverStopSummary'
 import { formatDurationMinutes as fmtDur } from '@/lib/formatDuration'
@@ -81,6 +83,8 @@ interface TruckView {
   mileageKm: number
   /** เวลาที่ระบบเสนอให้ "จบการใช้รถ" (รถออกจากออฟฟิศอีกรอบหลังกลับ) — ตั้งไปแล้ว/ไม่มี = null */
   handoverSuggestion: number | null
+  /** ทริปกลับอย่างเดียว: เวลารถออกจากพื้นที่ไซต์ (อาจเป็นเมื่อวาน) — ไม่ใช่ทริปกลับ/ยังไม่ออก/หาไม่เจอ = null */
+  returnDepartAt: number | null
 }
 
 interface LongStopEvent extends DriverStop {
@@ -102,6 +106,8 @@ interface TimelineEntry {
   postponedTo?: string
   /** งานนี้ถูกโยกมาให้คันนี้จากคันอื่น */
   incomingFrom?: { plate: string; refused: boolean }
+  /** ไซต์ที่ไปรับรถของทริปกลับอย่างเดียว (จุดเริ่ม ไม่ใช่ปลายทาง) — departAt = เวลาออกจากไซต์ (ยังไม่ออก = null) */
+  pickup?: { departAt: number | null }
 }
 
 const STATUS_META: Record<TruckStatus, { label: string; cls: string }> = {
@@ -233,6 +239,22 @@ export default function TrackingPage() {
   )
   const trails = useSafeCollection<VehicleTrailDoc>(trailsRef)
 
+  // ทริปกลับอย่างเดียว: คนขับอาจออกจากไซต์ตั้งแต่เย็นวันก่อนแล้วขับข้ามคืน → ใช้ GPS ของวันก่อนด้วย
+  // (ดึงเฉพาะวันที่มีทริปแบบนี้ — วันปกติไม่อ่านเพิ่ม)
+  const hasReturnTrip = (trips ?? []).some((t) => t.status !== "Cancelled" && tripRouteMode(t) === "return")
+  const prevDate = React.useMemo(() => {
+    const [y, m, d] = selectedDate.split("-").map(Number)
+    return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10)
+  }, [selectedDate])
+  const prevTrailsRef = useMemoFirebase(
+    () =>
+      db && user && hasReturnTrip
+        ? query(collection(db, "vehiclePositionTrails"), where("date", "==", prevDate))
+        : null,
+    [db, user, prevDate, hasReturnTrip]
+  )
+  const prevTrails = useSafeCollection<VehicleTrailDoc>(prevTrailsRef)
+
   const dailyRef = useMemoFirebase(
     () =>
       db && user ? query(collection(db, "trackingDaily"), where("date", "==", selectedDate)) : null,
@@ -247,6 +269,8 @@ export default function TrackingPage() {
   const { data: settings } = useDoc<CompanySetting>(settingsRef)
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference
+  // รายละเอียดรถ: เวลาที่อยู่คนละวันกับที่กำลังดู (ขากลับเริ่มเมื่อวาน / กลับหลังเที่ยงคืน) ต่อท้ายวันที่ "(6 ต.ค.)"
+  const thTimeDay = React.useCallback((ms?: number | null) => (ms ? clockWithDay(ms, selectedDate) : "-"), [selectedDate])
   const overspeedLimit = settings?.overspeedLimitKmh || OVERSPEED_KMH
 
   // ---- ประกอบข้อมูลรถแต่ละคันที่มีงานวันนี้ ----
@@ -262,6 +286,10 @@ export default function TrackingPage() {
     const deviceToTrail: Record<string, DrivingPoint[]> = {}
     ;(trails ?? []).forEach((tr) => {
       deviceToTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp }))
+    })
+    const deviceToPrevTrail: Record<string, DrivingPoint[]> = {}
+    ;(prevTrails ?? []).forEach((tr) => {
+      deviceToPrevTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp }))
     })
     const deviceToDaily: Record<string, TrackingDailyDoc> = {}
     ;(daily ?? []).forEach((d) => {
@@ -302,8 +330,6 @@ export default function TrackingPage() {
       // จบการใช้รถ (รถถูกใช้ต่อในวันเดียวกัน): GPS หลังเวลาจบไม่นับเป็นของทริปนี้ + ไม่โชว์ตำแหน่งสดของคนถัดไป
       const endAt = trip.gpsEndAt ?? null
       const position = deviceId && isToday && endAt == null ? deviceToPos[deviceId] : undefined
-      const fullTrail = deviceId ? deviceToTrail[deviceId] ?? [] : []
-      const trail = cutTrailAt(fullTrail, endAt)
 
       const ownSorted = [...(trip.stops ?? [])].sort((a, b) => a.order - b.order)
       const incoming = incomingByTripId[trip.id] ?? []
@@ -322,6 +348,22 @@ export default function TrackingPage() {
         })),
       ]
 
+      // ทริปกลับอย่างเดียว: จุดแรกที่มีพิกัด = ไซต์ที่ไปรับรถ (จุดเริ่ม — ดู routePlan) · รถอาจออกจากไซต์ตั้งแต่เมื่อวาน
+      // → ต่อ GPS เมื่อวานตั้งแต่จุดสุดท้ายในพื้นที่ไซต์ (ทริปลงวันที่วันที่รถถึงออฟฟิศ)
+      const isReturnMode = tripRouteMode(trip) === "return"
+      const pickupStop = isReturnMode ? routeStops.find((s) => s.lat != null && s.lng != null) : undefined
+      const todayTrail = deviceId ? deviceToTrail[deviceId] ?? [] : []
+      const ret =
+        isReturnMode && deviceId
+          ? returnTripTrail(
+              deviceToPrevTrail[deviceId] ?? [],
+              todayTrail,
+              pickupStop ? { lat: pickupStop.lat!, lng: pickupStop.lng! } : null
+            )
+          : null
+      const fullTrail = ret?.trail ?? todayTrail
+      const trail = cutTrailAt(fullTrail, endAt)
+
       // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
       const origin =
         settings?.warehouseLatitude != null && settings?.warehouseLongitude != null
@@ -329,11 +371,24 @@ export default function TrackingPage() {
           : OFFICE_LOCATION
 
       // ส่งออฟฟิศเข้าไปด้วย — จุดงานใกล้ออฟฟิศต้องจอดจริงถึงจะนับว่าถึง (กันขับผ่าน)
-      const statuses = computeStopStatuses(
+      let statuses = computeStopStatuses(
         routeStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng })),
         trail,
         { office: origin }
       )
+      // กลับอย่างเดียว: ไซต์รับรถ = จุดเริ่ม — เคยอยู่ในพื้นที่ไซต์ = รับรถแล้ว
+      // (เกณฑ์ 300 ม. ของจุดงานใช้ไม่ได้ ลานจอดจริงอาจห่างหมุด · ออกจากไซต์ตั้งแต่เมื่อวาน = วันนี้ไม่มีจุดที่ไซต์เลย)
+      if (pickupStop && ret?.seenAtSite) {
+        statuses = statuses.map((st) =>
+          st.order === pickupStop.order
+            ? { ...st, arrived: true, isCurrent: false, arrivedAt: st.arrivedAt ?? trail[0]?.t ?? null }
+            : st
+        )
+        if (!statuses.some((st) => st.isCurrent)) {
+          const next = statuses.find((st) => !st.arrived)
+          if (next) statuses = statuses.map((st) => (st === next ? { ...st, isCurrent: true } : st))
+        }
+      }
       const statusByOrder: Record<number, (typeof statuses)[number]> = {}
       statuses.forEach((st) => (statusByOrder[st.order] = st))
       const arrivedAtByOrder: Record<number, number | null> = {}
@@ -367,6 +422,10 @@ export default function TrackingPage() {
             arrivedAt: st?.arrivedAt ?? null,
             movedTo: moved ? s.reassignedToVehiclePlate : undefined,
             postponedTo: postponed ? s.postponedToDate || "วันอื่น" : undefined,
+            pickup:
+              pickupStop && s.order === pickupStop.order && ret?.seenAtSite
+                ? { departAt: ret.siteDepartAt }
+                : undefined,
           }
         }),
         ...incoming.map((inc, i) => {
@@ -397,9 +456,9 @@ export default function TrackingPage() {
       // ส่วน stored ที่ sync เคยตัดไว้ (gpsEndAtApplied) แต่ตอนนี้ยกเลิกการตัดแล้ว → คิดใหม่จาก trail เต็มให้ค่ากลับมาครบ
       const storedCut = stored?.gpsEndAtApplied ?? null
       // กลับอย่างเดียวย้อนหลังที่ไม่มีสรุปเลย (สร้างทริปทีหลัง sync ไม่ได้เขียน) → คิดจาก trail ไม่มีค่าเก็บไว้ให้รักษา
-      const isReturnMode = tripRouteMode(trip) === "return"
+      // + ต่อ GPS เมื่อวานเข้ามา (ขากลับข้ามคืน) → สรุปที่ server เก็บ (เฉพาะวันนี้) ไม่ครบ ต้องคิดใหม่จาก trail ที่ต่อแล้ว
       const returnNoStored = isReturnMode && !stored && trail.length >= 2
-      if (deviceId && (isToday || endAt != null || storedCut != null || returnNoStored)) {
+      if (deviceId && (isToday || endAt != null || storedCut != null || returnNoStored || !!ret?.prepended)) {
         const sum = computeDailySummary(trail, routeStops, origin)
         dailyDoc = {
           id: "",
@@ -464,9 +523,10 @@ export default function TrackingPage() {
         overspeed,
         mileageKm: mKm,
         handoverSuggestion: endAt == null && origin ? suggestHandoverTime(fullTrail, origin) : null,
+        returnDepartAt: ret?.siteDepartAt ?? null,
       }
     })
-  }, [vehicles, positions, trails, daily, trips, settings, now, isToday, selectedDate, overspeedLimit])
+  }, [vehicles, positions, trails, prevTrails, daily, trips, settings, now, isToday, selectedDate, overspeedLimit])
 
   // เรียง: คันมีปัญหาสำคัญ (ตัดไฟ/ความเร็วเกิน) ขึ้นก่อน แล้วตามสถานะ
   const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
@@ -677,7 +737,7 @@ export default function TrackingPage() {
           </Card>
 
           {/* รายละเอียดคันที่เลือก */}
-          {selected && <TruckDetail truck={selected} apiKey={apiKey} thTime={thTime} isToday={isToday} isStaff={isStaff} />}
+          {selected && <TruckDetail truck={selected} apiKey={apiKey} thTime={thTimeDay} isToday={isToday} isStaff={isStaff} />}
         </div>
       )}
     </div>
@@ -757,8 +817,10 @@ function TruckDetail({
   }
 
   // เวลารวมภารกิจ + สัดส่วนเวลา (ขับ/ที่จุดงาน/นอกจุดงาน) — คำนวณจากข้อมูลที่มีอยู่แล้ว
-  const depT = truck.daily?.departedOfficeAt ?? null
-  const retT = truck.daily?.returnedOfficeAt ?? null
+  // กลับอย่างเดียว: เริ่ม = ออกจากไซต์ (อาจเป็นเมื่อวาน) · ถึง = เข้าออฟฟิศที่อยู่จริงครั้งแรก (ขา "มาคืนรถ" ก็นับ)
+  const isReturnTrip = routeMode === "return"
+  const depT = (isReturnTrip ? truck.returnDepartAt : null) ?? truck.daily?.departedOfficeAt ?? null
+  const retT = truck.daily?.returnedOfficeAt ?? (isReturnTrip ? truck.daily?.vehicleReturnedAt ?? null : null)
   // วันที่จบแล้วแต่รถไม่กลับออฟฟิศ = ค้างคืนนอกพื้นที่ — doc เก่าไม่มี field ก็ดูจากจุดสุดท้ายของ trail ได้
   const lastPt = truck.trail.length ? truck.trail[truck.trail.length - 1] : null
   const endedAway =
@@ -771,6 +833,8 @@ function TruckDetail({
   // แบบ A: ยุบกล่อง "จุดจอดนานผิดสังเกต" — จุดจอด "นอกจุดงาน" แทรกเข้า timeline ตามเวลา
   // (จอด "ที่จุดงาน" เป็นเรื่องปกติ โชว์ใน timeline ที่จุดนั้นอยู่แล้ว ไม่ต้องแยกกล่อง)
   const offJobStops = [...truck.stopEvents].filter((ev) => !ev.nearJob).sort((a, b) => a.startT - b.startT)
+  // 🌙 จอดค้างคืน = ข้อมูล (ขับกลับดึกถึงบ้าน/รถจอดค้างที่ไซต์) — แสดงใน timeline แต่ไม่นับรวม "จอดนอกจุดงาน" สีแดง
+  const offJobCounted = offJobStops.filter((ev) => ev.kind !== "overnight")
   // เรียงจุดงานตาม "เวลาถึงจริง" (คนขับอาจวิ่งสลับลำดับแผน) — จุดที่ยังไม่ถึงคงลำดับแผนต่อท้าย
   const sortedTimeline = [...truck.timeline].sort((a, b) => {
     if (a.arrivedAt != null && b.arrivedAt != null) return a.arrivedAt - b.arrivedAt
@@ -880,10 +944,10 @@ function TruckDetail({
         {isToday && endAt == null && <span className="inline-flex items-center gap-1.5">🚚 ตำแหน่งรถตอนนี้</span>}
       </div>
 
-      {offJobStops.length > 0 && (
+      {offJobCounted.length > 0 && (
         <div className="mx-4 mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400">
-          🔴 จอดนอกจุดงาน {offJobStops.length} ครั้ง · รวม{" "}
-          {fmtDur(offJobStops.reduce((sum, ev) => sum + ev.durationMin, 0))} — ดูรายละเอียดใน ROOT ด้านล่าง
+          🔴 จอดนอกจุดงาน {offJobCounted.length} ครั้ง · รวม{" "}
+          {fmtDur(offJobCounted.reduce((sum, ev) => sum + ev.durationMin, 0))} — ดูรายละเอียดใน ROOT ด้านล่าง
         </div>
       )}
 
@@ -908,15 +972,17 @@ function TruckDetail({
 
       <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
         <span>
-          {truck.daily?.startedAwayFromOffice && !truck.daily?.vehicleReturnedAt
-            ? routeMode === "return" ? "🚩 ออกจากไซต์" : "🌙 ออกจากจุดค้างคืน"
-            : "🏢 ออกออฟฟิศ"}{" "}
-          <b className="text-foreground">{thTime(truck.daily?.departedOfficeAt)}</b>
+          {isReturnTrip
+            ? "🚩 ออกจากไซต์"
+            : truck.daily?.startedAwayFromOffice && !truck.daily?.vehicleReturnedAt
+              ? "🌙 ออกจากจุดค้างคืน"
+              : "🏢 ออกออฟฟิศ"}{" "}
+          <b className="text-foreground">{thTime(isReturnTrip ? depT : truck.daily?.departedOfficeAt)}</b>
         </span>
         <span>
           กลับถึงออฟฟิศ{" "}
-          {truck.daily?.returnedOfficeAt ? (
-            <b className="text-emerald-400">{thTime(truck.daily.returnedOfficeAt)}</b>
+          {retT ? (
+            <b className="text-emerald-400">{thTime(retT)}</b>
           ) : routeMode === "outbound" ? (
             <b className="text-sky-300">ไปอย่างเดียว — รถไม่กลับออฟฟิศ</b>
           ) : !isToday && endedAway ? (
@@ -1028,12 +1094,12 @@ function TruckDetail({
       )}
 
       {/* สัดส่วนเวลาของวัน: ขับ / ทำงานที่จุด / นอกจุดงาน (ตัวเลขโดยประมาณจาก GPS) */}
-      {depT != null && (driveMin > 0 || dwellAtJobMin > 0 || offJobStops.length > 0) && (
+      {depT != null && (driveMin > 0 || dwellAtJobMin > 0 || offJobCounted.length > 0) && (
         <div className="mx-4 mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
           <span>🚗 ขับรถ ~<b className="text-foreground">{fmtDur(driveMin)}</b></span>
           <span>📦 ทำงานที่จุด ~<b className="text-foreground">{fmtDur(dwellAtJobMin)}</b></span>
-          <span className={cn(offJobStops.length > 0 && "font-semibold text-red-400")}>
-            🔴 นอกจุดงาน <b>{fmtDur(offJobStops.reduce((s, e) => s + e.durationMin, 0))}</b>
+          <span className={cn(offJobCounted.length > 0 && "font-semibold text-red-400")}>
+            🔴 นอกจุดงาน <b>{fmtDur(offJobCounted.reduce((s, e) => s + e.durationMin, 0))}</b>
           </span>
         </div>
       )}
@@ -1053,7 +1119,7 @@ function TruckDetail({
               {routeMode === "return" ? "เริ่มจากไซต์ (กลับอย่างเดียว)" : "ออฟฟิศ (จุดเริ่มต้น)"}
             </div>
             <div className="text-xs text-muted-foreground">
-              ออกรถ {thTime(truck.daily?.departedOfficeAt)}
+              ออกรถ {thTime(isReturnTrip ? depT : truck.daily?.departedOfficeAt)}
             </div>
           </div>
         </div>
@@ -1066,7 +1132,7 @@ function TruckDetail({
                 <div className="flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 border-emerald-500 bg-emerald-500/20 text-xs">🏁</div>
                 <div className="flex-1">
                   <div className="text-sm font-medium">กลับถึงออฟฟิศ</div>
-                  <div className="text-xs text-emerald-400">{thTime(truck.daily?.returnedOfficeAt)}</div>
+                  <div className="text-xs text-emerald-400">{thTime(retT)}</div>
                 </div>
               </div>
             )
@@ -1076,7 +1142,7 @@ function TruckDetail({
             const ev = row.ev
             const endT = ev.endT
             const needsReview = ev.kind === 'review'
-            const label = ev.kind === 'rest' ? '🅿 พักระหว่างทาง' : ev.kind === 'lunch' ? '🍚 พักเที่ยง' : '🔴 จอดนอกจุดงาน รอตรวจสอบ'
+            const label = ev.kind === 'overnight' ? '🌙 จอดค้างคืน' : ev.kind === 'rest' ? '🅿 พักระหว่างทาง' : ev.kind === 'lunch' ? '🍚 พักเที่ยง' : '🔴 จอดนอกจุดงาน รอตรวจสอบ'
             return (
               <div
                 key={`offjob-${idx}`}
@@ -1107,12 +1173,17 @@ function TruckDetail({
           const t = truck.daily?.stops?.find((d) => d.order === s.order)
           // งานที่โยกออก/เลื่อนวัน = ไม่ใช่งานคันนี้วันนี้ → แสดงจาง ขีดฆ่า ไม่มีขาเดินทาง/ไฮไลต์แวะนาน
           const off = !!(s.movedTo || s.postponedTo)
-          const longStop = !off && t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
+          // ไซต์รับรถของทริปกลับอย่างเดียว = จุดเริ่ม (รถจอดรอที่ไซต์มาก่อน) — ไม่ใช่ "แวะนาน" ไม่มีขาเดินทางเข้า
+          const longStop = !off && !s.pickup && t?.dwellMin != null && t.dwellMin > LONG_DWELL_MIN
           // รถอยู่ในรัศมีจุดใกล้ออฟฟิศแล้วแต่ยังจอดไม่ครบเกณฑ์ → บอกตามจริงแทน "กำลังไป"
           const awaiting =
             isToday && !truck.stale && !off && !s.arrived && s.lat != null && s.lng != null && !!truck.position &&
             isAwaitingDwell({ lat: s.lat, lng: s.lng }, { lat: truck.position.lat, lng: truck.position.lng }, truck.origin)
-          const tag = s.movedTo
+          const tag = s.pickup
+            ? s.pickup.departAt
+              ? "ออกแล้ว"
+              : "ที่ไซต์"
+            : s.movedTo
             ? "โยกออก"
             : s.postponedTo
               ? "เลื่อน"
@@ -1134,7 +1205,7 @@ function TruckDetail({
                   : "text-muted-foreground"
           return (
             <div key={`${s.order}-${idx}`}>
-              {!off && t?.travelMinFromPrev != null && (() => {
+              {!off && !s.pickup && t?.travelMinFromPrev != null && (() => {
                 // ขายาวแต่เฉลี่ยช้า = น่าสงสัยว่าถ่วงเวลา (ไม่จับขาในเมือง/รถติดที่ช้าปกติ)
                 const slowHaul = t.travelKmFromPrev != null && t.travelKmFromPrev >= 30 && t.avgSpeedKmh != null && t.avgSpeedKmh < 50
                 return (
@@ -1193,6 +1264,10 @@ function TruckDetail({
                     ) : s.postponedTo ? (
                       <span className="text-amber-400">
                         ⏭️ เลื่อนไป {s.postponedTo.split("-").reverse().join("/")} — ไม่ใช่งานวันนี้
+                      </span>
+                    ) : s.pickup ? (
+                      <span className="text-sky-300">
+                        {s.pickup.departAt ? `🚩 ออกจากไซต์ ${thTime(s.pickup.departAt)}` : "รับรถที่ไซต์ — ยังไม่ออก"}
                       </span>
                     ) : s.arrived ? (
                       <>

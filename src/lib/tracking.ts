@@ -294,17 +294,61 @@ export function msToThaiClock(ms: number): string {
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
 }
 
-/** cron ดึงตำแหน่งช่วง 04:00–21:59 ไทย (ประหยัดโควตา — ผู้ใช้เลือกถึง 4 ทุ่ม) */
-export const CRON_END_HOUR = 22
-/** รอบเก็บตก 10 นาทีก่อนตัดวัน: 03:50–03:59 ไทย — รถที่กลับหลัง 22:00 จะได้จุดในออฟฟิศเข้า "วันเดิม" (ครบเกณฑ์จอด 5 นาที)
- *  ไม่งั้นจุดแรกหลังช่วงว่างจะได้ตอน 04:00 = วันใหม่ → วันเดิมจบนอกออฟฟิศ ขึ้น "ค้างคืนนอกพื้นที่" ผิด */
-export const CRON_CATCHUP_START_MIN = TRACKING_DAY_START_HOUR * 60 - 10
+/** เดือนย่อภาษาไทย (ใช้บอกวันที่ของเวลาที่อยู่คนละวันกับหน้าที่กำลังดู) */
+const TH_MONTH_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
 
-/** cron ควรดึงตำแหน่งตอนนี้ไหม (เวลาไทย) */
-export function isCronSyncWindow(nowMs = Date.now()): boolean {
-  const th = new Date(nowMs + 7 * 3600_000)
-  const min = th.getUTCHours() * 60 + th.getUTCMinutes()
-  return min >= CRON_CATCHUP_START_MIN && min < CRON_END_HOUR * 60
+/** "HH:MM" เวลาไทย + "(6 ต.ค.)" เมื่อเวลานั้นเป็นคนละวัน (ปฏิทินไทย) กับวันที่กำลังดู — ทริปข้ามคืน/ขากลับที่เริ่มเมื่อวาน */
+export function clockWithDay(ms: number, viewDate: string): string {
+  const d = new Date(ms + 7 * 3600_000)
+  const clock = msToThaiClock(ms)
+  if (d.toISOString().slice(0, 10) === viewDate) return clock
+  return `${clock} (${d.getUTCDate()} ${TH_MONTH_SHORT[d.getUTCMonth()]})`
+}
+
+/** รัศมี "พื้นที่ไซต์" ของทริปกลับอย่างเดียว — ใช้หาจังหวะรถออกจากไซต์ (กว้างกว่าเกณฑ์ถึงจุดงาน เพราะหมุดไซต์กับลานจอดจริงห่างกันได้) */
+export const RETURN_SITE_AREA_M = 2000
+
+/**
+ * ทริปกลับอย่างเดียว (ไปรับรถที่ไซต์ขับกลับ): คนขับอาจออกจากไซต์ตั้งแต่เย็นวันก่อนแล้วขับข้ามคืน
+ * → ต่อ GPS ของวันก่อน ตั้งแต่จุดสุดท้ายที่รถยังอยู่ในพื้นที่ไซต์ เข้ากับ GPS วันนี้ (ทริปลงวันที่วันที่รถถึงออฟฟิศ)
+ * - วันนี้ยังมีจุดในพื้นที่ไซต์ (ออกจากไซต์วันนี้) / วันก่อนไม่เคยอยู่ไซต์ / ไม่มีพิกัดไซต์ = ใช้ GPS วันนี้ตามเดิม
+ * - siteDepartAt = จุดสุดท้ายในพื้นที่ไซต์ที่ตามด้วยจุดนอกพื้นที่ (ยังไม่ออก = null)
+ * - seenAtSite = มีจุดในพื้นที่ไซต์ (ถือว่ารับรถที่ไซต์แล้ว — จุดไซต์ของทริปนี้คือจุดเริ่ม ไม่ใช่ปลายทาง)
+ */
+export function returnTripTrail<T extends TrailPoint>(
+  prev: T[],
+  today: T[],
+  site: LatLng | null | undefined,
+  radiusM = RETURN_SITE_AREA_M
+): { trail: T[]; prepended: boolean; siteDepartAt: number | null; seenAtSite: boolean } {
+  if (!site) return { trail: today, prepended: false, siteDepartAt: null, seenAtSite: false }
+  const inSite = (p: T) => haversineMeters(site, p) <= radiusM
+  const sorted = (pts: T[]) => pts.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
+  const tod = sorted(today)
+  let all = tod
+  let prepended = false
+  if (!tod.some(inSite)) {
+    const pr = sorted(prev)
+    let last = -1
+    for (let i = pr.length - 1; i >= 0; i--) {
+      if (inSite(pr[i])) {
+        last = i
+        break
+      }
+    }
+    if (last >= 0) {
+      all = [...pr.slice(last), ...tod]
+      prepended = true
+    }
+  }
+  let siteDepartAt: number | null = null
+  for (let i = all.length - 2; i >= 0; i--) {
+    if (inSite(all[i]) && !inSite(all[i + 1])) {
+      siteDepartAt = all[i].t!
+      break
+    }
+  }
+  return { trail: prepended ? all : today, prepended, siteDepartAt, seenAtSite: all.some(inSite) }
 }
 
 /** ระยะรวมของเส้นทางที่วิ่งจริง (กม.) — ผลรวมช่วงต่อช่วง */

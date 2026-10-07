@@ -15,7 +15,6 @@ import {
   minutesOutsideLunch,
   computeRecurringStops,
   trackingDateKey,
-  isCronSyncWindow,
   isTripNotRun,
   OFFICE_LOCATION,
   NEAR_OFFICE_M,
@@ -30,6 +29,9 @@ import {
   thaiClockToMs,
   msToThaiClock,
   handoverCutMs,
+  returnTripTrail,
+  clockWithDay,
+  RETURN_SITE_AREA_M,
   handoverTimeError,
 } from './tracking'
 
@@ -240,21 +242,13 @@ describe('tracking: isTripNotRun (เกณฑ์เดียวกับป้�
   })
 })
 
-describe('tracking: isCronSyncWindow (cron 03:50–21:59 ไทย)', () => {
+describe('tracking: เก็บ GPS ตลอด 24 ชม. — จุดกลางคืนนับเป็นวันติดตามเดิม', () => {
   const th = (iso: string) => Date.parse(`${iso}+07:00`)
-  it('ตี 4 ถึง 21:59 ดึง / 22:00 หยุด', () => {
-    expect(isCronSyncWindow(th('2026-10-01T04:00:00'))).toBe(true)
-    expect(isCronSyncWindow(th('2026-10-01T04:30:00'))).toBe(true) // คนขับออกก่อนตี 5 — ต้องมีจุด
-    expect(isCronSyncWindow(th('2026-10-01T20:13:00'))).toBe(true)
-    expect(isCronSyncWindow(th('2026-10-01T21:59:00'))).toBe(true)
-    expect(isCronSyncWindow(th('2026-10-01T22:00:00'))).toBe(false)
-    expect(isCronSyncWindow(th('2026-10-02T03:00:00'))).toBe(false)
-  })
-  it('รอบเก็บตก 03:50–03:59 ยังเข้าวันเดิม (จุดรถที่กลับหลัง 22:00 ไม่ตกไปวันใหม่)', () => {
-    expect(isCronSyncWindow(th('2026-10-02T03:49:00'))).toBe(false)
-    expect(isCronSyncWindow(th('2026-10-02T03:50:00'))).toBe(true)
-    expect(trackingDateKey(th('2026-10-02T03:50:00'))).toBe('2026-10-01')
+  it('22:00–03:59 ตกวันเดิม (ขับกลับดึก/ถึงบ้านตี 3 อยู่ในทริปวันเดียวกัน) · 04:00 ขึ้นวันใหม่', () => {
+    expect(trackingDateKey(th('2026-10-01T22:30:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-02T03:00:00'))).toBe('2026-10-01')
     expect(trackingDateKey(th('2026-10-02T03:59:00'))).toBe('2026-10-01')
+    expect(trackingDateKey(th('2026-10-02T04:00:00'))).toBe('2026-10-02')
   })
 })
 
@@ -794,5 +788,61 @@ describe('tracking: จบการใช้รถของทริป (ส่�
     expect(handoverTimeError(Date.parse('2026-10-06T16:00:00+07:00'), { departedAt: dep, now })).toBe('future')
     expect(handoverTimeError(Date.parse('2026-10-06T07:30:00+07:00'), { departedAt: dep, now })).toBe('before-departure')
     expect(handoverTimeError(Date.parse('2026-10-06T07:30:00+07:00'), { departedAt: null, now })).toBeNull()
+  })
+})
+
+describe('tracking: ทริปกลับอย่างเดียวที่ออกจากไซต์ตั้งแต่วันก่อน (ขับกลับข้ามคืน)', () => {
+  const th = (iso: string) => Date.parse(`${iso}+07:00`)
+  const site = { lat: 17.4, lng: 102.8 } // ไซต์อุดร
+  const home = { lat: 14.0, lng: 100.6 }
+  const at = (p: { lat: number; lng: number }, iso: string, dLat = 0) => ({ lat: p.lat + dLat, lng: p.lng, t: th(iso) })
+  const prev = [
+    at(site, '2026-10-06T04:00:00'),
+    at(site, '2026-10-06T19:39:00', 0.005), // ลานจอดห่างหมุด ~550 ม. (ยังอยู่ในพื้นที่ไซต์)
+    at(site, '2026-10-06T19:45:00', 0.05), // ออกพ้นพื้นที่ไซต์ (~5.5 กม.)
+    at(home, '2026-10-07T03:56:00'),
+  ]
+  const today = [at(home, '2026-10-07T04:01:00'), at(home, '2026-10-07T14:30:00'), at(home, '2026-10-07T14:40:00', -0.05)]
+
+  it('วันนี้ไม่อยู่ไซต์ แต่เมื่อวานอยู่ → ต่อ GPS เมื่อวานตั้งแต่จุดสุดท้ายในพื้นที่ไซต์ + เวลาออกจากไซต์', () => {
+    const r = returnTripTrail(prev, today, site)
+    expect(r.prepended).toBe(true)
+    expect(r.trail.map((p) => p.t)).toEqual([th('2026-10-06T19:39:00'), th('2026-10-06T19:45:00'), th('2026-10-07T03:56:00'), ...today.map((p) => p.t)])
+    expect(r.siteDepartAt).toBe(th('2026-10-06T19:39:00'))
+    expect(r.seenAtSite).toBe(true)
+  })
+
+  it('ออกจากไซต์วันนี้ (วันนี้ยังมีจุดที่ไซต์) → ไม่ต่อ ใช้ GPS วันนี้ตามเดิม', () => {
+    const todayAtSite = [at(site, '2026-10-07T04:00:00'), at(site, '2026-10-07T08:00:00'), at(site, '2026-10-07T08:10:00', 0.05)]
+    const r = returnTripTrail(prev, todayAtSite, site)
+    expect(r.prepended).toBe(false)
+    expect(r.trail).toBe(todayAtSite)
+    expect(r.siteDepartAt).toBe(th('2026-10-07T08:00:00'))
+  })
+
+  it('เมื่อวานไม่เคยอยู่ไซต์ / ไม่มีพิกัดไซต์ → ไม่ต่อ ไม่มีเวลาออกจากไซต์', () => {
+    const r = returnTripTrail([at(home, '2026-10-06T10:00:00')], today, site)
+    expect(r).toMatchObject({ prepended: false, siteDepartAt: null, seenAtSite: false })
+    expect(r.trail).toBe(today)
+    expect(returnTripTrail(prev, today, null)).toMatchObject({ prepended: false, siteDepartAt: null, seenAtSite: false })
+  })
+
+  it('ยังอยู่ไซต์ไม่ออก → เห็นว่าอยู่ไซต์แต่ยังไม่มีเวลาออก', () => {
+    const r = returnTripTrail([], [at(site, '2026-10-07T09:00:00'), at(site, '2026-10-07T10:00:00')], site)
+    expect(r).toMatchObject({ prepended: false, siteDepartAt: null, seenAtSite: true })
+  })
+
+  it('พื้นที่ไซต์กว้างกว่าเกณฑ์ถึงจุดงาน (หมุดไซต์กับลานจอดจริงห่างกันได้)', () => {
+    expect(RETURN_SITE_AREA_M).toBeGreaterThan(1000)
+  })
+})
+
+describe('tracking: clockWithDay — เวลาคนละวันกับที่กำลังดูต้องบอกวันที่', () => {
+  const th = (iso: string) => Date.parse(`${iso}+07:00`)
+  it('วันเดียวกัน = HH:MM · คนละวัน = HH:MM (วัน เดือนย่อ)', () => {
+    expect(clockWithDay(th('2026-10-07T14:33:00'), '2026-10-07')).toBe('14:33')
+    expect(clockWithDay(th('2026-10-06T19:40:00'), '2026-10-07')).toBe('19:40 (6 ต.ค.)')
+    expect(clockWithDay(th('2026-10-08T00:30:00'), '2026-10-07')).toBe('00:30 (8 ต.ค.)')
+    expect(clockWithDay(th('2026-12-31T23:05:00'), '2027-01-01')).toBe('23:05 (31 ธ.ค.)')
   })
 })
