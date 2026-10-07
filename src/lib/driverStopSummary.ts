@@ -1,4 +1,4 @@
-import { ARRIVAL_RADIUS_M, cutTrailAt, detectStops, haversineMeters, isTripNotRun, LONG_DWELL_MIN, OFFICE_RADIUS_M, RETURN_SITE_AREA_M, type LatLng, type StopEvent, type TrailPoint } from '@/lib/tracking'
+import { ARRIVAL_RADIUS_M, cutTrailAt, detectStops, haversineMeters, isTripNotRun, LONG_DWELL_MIN, OFFICE_RADIUS_M, pickupAreaRadiusM, type LatLng, type StopEvent, type TrailPoint } from '@/lib/tracking'
 import { tripRouteMode } from '@/lib/routeMode'
 import { incomingStopsForTrip } from '@/lib/calculations'
 import type { Trip, Vehicle, VehicleTrailDoc } from '@/types/models'
@@ -102,8 +102,9 @@ export function buildWeeklyStopDays(trips: Trip[], trails: VehicleTrailDoc[], ve
     // (หน้าติดตามต่อ GPS เมื่อวานให้ แต่รายงานนี้คิดรายวัน) → ข้อมูลไม่ครบช่วง ไม่ใช้เป็นค่าเทียบ
     // เลือกไซต์รับรถตามลำดับจุด (order) แบบเดียวกับหน้าติดตาม · วันนี้ไม่มี GPS ในพื้นที่ไซต์เลย = รับรถก่อนวันนี้ → ไม่ครบช่วง
     const pickup = assigned.filter(t => tripRouteMode(t) === 'return').map(t => weeklyJobLocations({ ...t, stops: [...(t.stops ?? [])].sort((a, b) => a.order - b.order) }, active)[0]).find(Boolean)
-    if (pickup && base.quality === 'sufficient' && !points.some(p => haversineMeters(p, pickup) <= RETURN_SITE_AREA_M)) base.quality = 'incomplete'
-    base.events = classifyDriverStops(points, office, assigned.flatMap(t => weeklyJobLocations(t, active)), { areas: pickup ? [{ ...pickup, radiusM: RETURN_SITE_AREA_M }] : [] }).filter(event => event.kind !== 'office').map(event => ({ ...event, eventId: `${event.startT}-${event.endT}`, review: null }))
+    const pickupRadiusM = pickup ? pickupAreaRadiusM(pickup, office) : 0
+    if (pickup && base.quality === 'sufficient' && !points.some(p => haversineMeters(p, pickup) <= pickupRadiusM)) base.quality = 'incomplete'
+    base.events = classifyDriverStops(points, office, assigned.flatMap(t => weeklyJobLocations(t, active)), { areas: pickup ? [{ ...pickup, radiusM: pickupRadiusM }] : [] }).filter(event => event.kind !== 'office').map(event => ({ ...event, eventId: `${event.startT}-${event.endT}`, review: null }))
     return base
   })
 }

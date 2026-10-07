@@ -32,6 +32,7 @@ import {
   returnTripTrail,
   clockWithDay,
   RETURN_SITE_AREA_M,
+  pickupAreaRadiusM,
   handoverTimeError,
 } from './tracking'
 
@@ -867,9 +868,24 @@ describe('tracking: ทริปกลับอย่างเดียวที
     expect(returnTripTrail([...crawl, at(site, '2026-10-06T18:40:00', 0.05)], today, site, { office, tripDayStart })).toMatchObject({ prepended: false })
   })
 
-  it('จอดที่ไซต์แต่ GPS เงียบ (มีจุดเดียวก่อนออก) → นับช่วงเงียบเป็นการจอด → ต่อ', () => {
+  it('จอดที่ไซต์แต่ GPS เงียบ (มีจุดเดียวก่อนออก) → นับช่วงเงียบเป็นการจอด → ต่อ · เวลาออก = จุดแรกหลังเงียบ (ไม่ใช่เวลาที่เริ่มจอด)', () => {
     const silent = [at(site, '2026-10-06T12:00:00', 0.004), at(site, '2026-10-06T19:45:00', 0.05), at(home, '2026-10-07T03:56:00')]
-    expect(returnTripTrail(silent, today, site, { office, tripDayStart })).toMatchObject({ prepended: true, siteDepartAt: th('2026-10-06T12:00:00') })
+    expect(returnTripTrail(silent, today, site, { office, tripDayStart })).toMatchObject({ prepended: true, siteDepartAt: th('2026-10-06T19:45:00') })
+  })
+
+  it('ออกนอกพื้นที่แล้ววนกลับมาจอดที่ไซต์ (จุดล่าสุดอยู่ไซต์) → ยังไม่ออก', () => {
+    const back = [at(site, '2026-10-07T08:00:00'), at(site, '2026-10-07T08:10:00', 0.05), at(site, '2026-10-07T09:00:00')]
+    expect(returnTripTrail([], back, site)).toMatchObject({ siteDepartAt: null, seenAtSite: true })
+  })
+
+  it('pickupAreaRadiusM: ไซต์ไกล = 2 กม. · ไซต์ใกล้ออฟฟิศหดรัศมีไม่ให้ครอบออฟฟิศ (ต่ำสุด 300 ม.)', () => {
+    expect(pickupAreaRadiusM(site, office)).toBe(RETURN_SITE_AREA_M)
+    const nearSite = { lat: office.lat + 0.0108, lng: office.lng } // ~1.2 กม.
+    const r = pickupAreaRadiusM(nearSite, office)
+    expect(r).toBeGreaterThan(500)
+    expect(r).toBeLessThan(1000)
+    expect(pickupAreaRadiusM({ lat: office.lat + 0.0027, lng: office.lng }, office)).toBe(300) // ~300 ม.
+    expect(pickupAreaRadiusM(site, null)).toBe(RETURN_SITE_AREA_M)
   })
 
   it('ขับผ่านออฟฟิศจุดเดียว (ไม่ได้จอด) ไม่ถือว่าขากลับจบ → ยังต่อ', () => {

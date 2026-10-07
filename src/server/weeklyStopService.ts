@@ -50,8 +50,9 @@ const officeFrom = (settings: Record<string, unknown> | undefined) => {
 const sorted = <T extends { id: string }>(data: T[]) => [...data].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 function sourceFingerprint(day: WeeklyDay, trips: Trip[], trails: VehicleTrailDoc[], vehicles: Vehicle[], office: { lat: number; lng: number }) {
   return hash({
+    // routeMode ใส่เฉพาะทริปกลับ (ที่มีผลต่อการคำนวณ) — ใส่ทุกทริปจะทำให้ hash เปลี่ยนทั้งระบบ เหตุผลที่บันทึกไว้ทั้งหมดกลายเป็น stale
     key: day.key, office,
-    trips: sorted(trips.filter(t => t.tripDate === day.date)).map(t => ({ id: t.id, tripDate: t.tripDate, vehiclePlate: t.vehiclePlate, driverId: t.driverId, driverName: t.driverName, actualDriverId: t.actualDriverId, actualDriverName: t.actualDriverName, status: t.status, gpsEndAt: t.gpsEndAt, routeMode: tripRouteMode(t), stops: (t.stops ?? []).map(s => ({ order: s.order, lat: s.lat, lng: s.lng, outcome: s.outcome, reassignedToTripId: s.reassignedToTripId, reassignedToVehiclePlate: s.reassignedToVehiclePlate })) })),
+    trips: sorted(trips.filter(t => t.tripDate === day.date)).map(t => ({ id: t.id, tripDate: t.tripDate, vehiclePlate: t.vehiclePlate, driverId: t.driverId, driverName: t.driverName, actualDriverId: t.actualDriverId, actualDriverName: t.actualDriverName, status: t.status, gpsEndAt: t.gpsEndAt, ...(tripRouteMode(t) === 'return' ? { routeMode: 'return' } : {}), stops: (t.stops ?? []).map(s => ({ order: s.order, lat: s.lat, lng: s.lng, outcome: s.outcome, reassignedToTripId: s.reassignedToTripId, reassignedToVehiclePlate: s.reassignedToVehiclePlate })) })),
     trails: sorted(trails.filter(t => t.date === day.date)).map(t => ({ id: t.id, date: t.date, licensePlate: t.licensePlate, deviceId: t.deviceId, points: t.points })),
     vehicles: sorted(vehicles).map(v => ({ id: v.id, gpsDeviceId: v.gpsDeviceId, licensePlate: v.licensePlate })),
   })

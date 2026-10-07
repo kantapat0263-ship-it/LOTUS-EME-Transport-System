@@ -310,6 +310,14 @@ export const RETURN_SITE_AREA_M = 2000
 /** รถต้อง "จอดรอ" ในพื้นที่ไซต์ต่อเนื่องอย่างน้อยเท่านี้ ถึงจะนับเป็นขารับรถ — ขับผ่านใกล้ไซต์ (ทริปอื่นเมื่อวาน) ไม่นับ */
 export const RETURN_SITE_MIN_STAY_MIN = 30
 
+/** รัศมีพื้นที่ไซต์รับรถจริงที่ใช้ — กว้างสุด RETURN_SITE_AREA_M แต่ห้ามครอบออฟฟิศ
+ *  (ไซต์ใกล้ออฟฟิศ เช่น อู่ 1 กม. → หดลง เหลือไม่ต่ำกว่าเกณฑ์ถึงจุดงาน 300 ม.) ใช้ชุดเดียวทั้งหน้าติดตามและรายงาน */
+export function pickupAreaRadiusM(site: LatLng, office: LatLng | null | undefined): number {
+  if (!office) return RETURN_SITE_AREA_M
+  const room = haversineMeters(site, office) - OFFICE_RADIUS_M - 200
+  return Math.max(ARRIVAL_RADIUS_M, Math.min(RETURN_SITE_AREA_M, room))
+}
+
 /** หลักฐานว่ารถ "หยุดนิ่ง" จริงในช่วงจุดที่ให้มา (ไม่ใช่แค่อยู่ในรัศมีนาน — รถคลานช้าในพื้นที่ไม่นับ)
  *  - กลุ่มจุดห่างจุดตั้งต้นไม่เกินระยะแกว่งของ GPS (300 ม.) ต่อเนื่อง ≥ minStayMs หรือ
  *  - GPS เงียบ ≥ minStayMs หลังจุดใดจุดหนึ่ง (เครื่องไม่ส่งตำแหน่งตอนรถจอดดับ — trail ข้ามเวลาซ้ำ)
@@ -348,7 +356,8 @@ function firstOfficeStayStart<T extends TrailPoint>(pts: T[], office: LatLng, ra
  *   (ขับผ่าน/คลานผ่านใกล้ไซต์ หรือรับรถแล้วกลับถึงออฟฟิศไปตั้งแต่วันก่อน = ไม่ใช่ขากลับของทริปนี้
  *    — ถึงออฟฟิศหลังเที่ยงคืนของวันทริปแต่ก่อนตัดวันตี 4 ยังนับเป็นขากลับของทริปนี้)
  * - ตัด GPS ตาม gpsEndAt ก่อนเรียกฟังก์ชันนี้ (เวลาออกไซต์ต้องมาจาก GPS ที่ยังเป็นของทริป)
- * - siteDepartAt = จุดสุดท้ายในพื้นที่ไซต์ที่ตามด้วยจุดนอกพื้นที่ (ยังไม่ออก = null)
+ * - siteDepartAt = จุดสุดท้ายในพื้นที่ไซต์ที่ตามด้วยจุดนอกพื้นที่ · GPS เงียบ ≥ minStay ก่อนจุดนอกพื้นที่ = ใช้เวลาจุดนอกพื้นที่
+ *   (รถจอดเงียบจนออก — เวลาเริ่มจอดไม่ใช่เวลาออก) · จุดล่าสุดยังอยู่ไซต์ (วนกลับมาจอด/ยังไม่ออก) = null
  * - seenAtSite = มีจุดในพื้นที่ไซต์ (ถือว่ารับรถที่ไซต์แล้ว — จุดไซต์ของทริปนี้คือจุดเริ่ม ไม่ใช่ปลายทาง)
  */
 export function returnTripTrail<T extends TrailPoint>(
@@ -391,10 +400,13 @@ export function returnTripTrail<T extends TrailPoint>(
     }
   }
   let siteDepartAt: number | null = null
-  for (let i = all.length - 2; i >= 0; i--) {
-    if (inSite(all[i]) && !inSite(all[i + 1])) {
-      siteDepartAt = all[i].t!
-      break
+  const lastPt = all[all.length - 1]
+  if (lastPt && !inSite(lastPt)) {
+    for (let i = all.length - 2; i >= 0; i--) {
+      if (inSite(all[i]) && !inSite(all[i + 1])) {
+        siteDepartAt = all[i + 1].t! - all[i].t! >= minStayMs ? all[i + 1].t! : all[i].t!
+        break
+      }
     }
   }
   return { trail: prepended ? all : today, prepended, siteDepartAt, seenAtSite: all.some(inSite) }

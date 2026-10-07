@@ -49,7 +49,8 @@ import {
   handoverTimeError,
   returnTripTrail,
   clockWithDay,
-  RETURN_SITE_AREA_M,
+  pickupAreaRadiusM,
+  ARRIVAL_RADIUS_M,
 } from "@/lib/tracking"
 import { classifyDriverStops, type DriverStop, type DrivingPoint } from '@/lib/driverStopSummary'
 import { formatDurationMinutes as fmtDur } from '@/lib/formatDuration'
@@ -363,12 +364,22 @@ export default function TrackingPage() {
       const isReturnMode = tripRouteMode(trip) === "return"
       const pickupStop = isReturnMode ? routeStops.find((s) => s.lat != null && s.lng != null) : undefined
       const pickupSite = pickupStop ? { lat: pickupStop.lat!, lng: pickupStop.lng! } : null
+      const pickupRadiusM = pickupSite ? pickupAreaRadiusM(pickupSite, origin) : 0
+      // งานหลายใบที่ไซต์รับรถเดียวกัน (ห่างหมุดไม่เกิน 300 ม.) = ไซต์รับรถทั้งหมด
+      const pickupOrders = new Set(
+        pickupSite
+          ? routeStops
+              .filter((s) => s.lat != null && s.lng != null && haversineMeters(pickupSite, { lat: s.lat, lng: s.lng }) <= ARRIVAL_RADIUS_M)
+              .map((s) => s.order)
+          : []
+      )
       const todayTrail = cutTrailAt(deviceId ? deviceToTrail[deviceId] ?? [] : [], endAt)
       const ret =
         isReturnMode && deviceId
           ? returnTripTrail(cutTrailAt(deviceToPrevTrail[deviceId] ?? [], endAt), todayTrail, pickupSite, {
               office: origin,
               tripDayStart: Date.parse(`${selectedDate}T00:00:00+07:00`),
+              radiusM: pickupRadiusM,
             })
           : null
       const fullTrail = ret?.trail ?? todayTrail
@@ -382,9 +393,9 @@ export default function TrackingPage() {
       )
       // กลับอย่างเดียว: ไซต์รับรถ = จุดเริ่ม — เคยอยู่ในพื้นที่ไซต์ = รับรถแล้ว
       // (เกณฑ์ 300 ม. ของจุดงานใช้ไม่ได้ ลานจอดจริงอาจห่างหมุด · ออกจากไซต์ตั้งแต่เมื่อวาน = วันนี้ไม่มีจุดที่ไซต์เลย)
-      if (pickupStop && ret?.seenAtSite) {
+      if (pickupSite && ret?.seenAtSite) {
         statuses = statuses.map((st) =>
-          st.order === pickupStop.order
+          pickupOrders.has(st.order)
             ? { ...st, arrived: true, isCurrent: false, arrivedAt: st.arrivedAt ?? trail[0]?.t ?? null }
             : st
         )
@@ -426,10 +437,7 @@ export default function TrackingPage() {
             arrivedAt: st?.arrivedAt ?? null,
             movedTo: moved ? s.reassignedToVehiclePlate : undefined,
             postponedTo: postponed ? s.postponedToDate || "วันอื่น" : undefined,
-            pickup:
-              pickupStop && s.order === pickupStop.order && ret?.seenAtSite
-                ? { departAt: ret.siteDepartAt }
-                : undefined,
+            pickup: pickupOrders.has(s.order) && ret?.seenAtSite ? { departAt: ret.siteDepartAt } : undefined,
           }
         }),
         ...incoming.map((inc, i) => {
@@ -444,7 +452,7 @@ export default function TrackingPage() {
             isCurrent: st?.isCurrent ?? false,
             arrivedAt: st?.arrivedAt ?? null,
             incomingFrom: { plate: inc.fromPlate, refused: inc.refused },
-            pickup: pickupStop && order === pickupStop.order && ret?.seenAtSite ? { departAt: ret.siteDepartAt } : undefined,
+            pickup: pickupOrders.has(order) && ret?.seenAtSite ? { departAt: ret.siteDepartAt } : undefined,
           }
         }),
       ]
@@ -481,13 +489,13 @@ export default function TrackingPage() {
       }
       // ไซต์รับรถของทริปกลับ = รถจอดรอมาก่อน ไม่ใช่ "แวะนาน"
       const longStops = (dailyDoc?.stops ?? []).filter(
-        (s) => s.order !== pickupStop?.order && s.dwellMin != null && s.dwellMin > LONG_DWELL_MIN
+        (s) => !pickupOrders.has(s.order) && s.dwellMin != null && s.dwellMin > LONG_DWELL_MIN
       ).length
 
       // จุดจอดนานผิดสังเกต (ตรวจจาก trail จริง รวมจุดนอกงาน) — ตัดจุดที่จอดที่ออฟฟิศออก
       // ไซต์รับรถ: ใช้พื้นที่กว้างเดียวกับที่ระบบรู้ว่ารถอยู่ไซต์ (ลานจอดห่างหมุดได้) — จอดในลาน = จุดงาน ไม่ขึ้นแดง
       const stopEvents: LongStopEvent[] = classifyDriverStops(trail, origin, routeStops.filter(s => s.lat != null && s.lng != null).map(s => ({ lat: s.lat!, lng: s.lng! })), {
-        areas: pickupSite ? [{ ...pickupSite, radiusM: RETURN_SITE_AREA_M }] : [],
+        areas: pickupSite ? [{ ...pickupSite, radiusM: pickupRadiusM }] : [],
       })
         .filter(ev => ev.kind !== 'office')
         .map(ev => ({ ...ev, nearJob: ev.kind === 'job' }))
@@ -838,7 +846,11 @@ function TruckDetail({
     (lastPt && truck.origin ? haversineMeters(truck.origin, lastPt) > OFFICE_RADIUS_M : false)
   const missionMin = depT && retT ? Math.max(0, Math.round((retT - depT) / 60_000)) : null
   const driveMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.travelMinFromPrev ?? 0), 0)
-  const dwellAtJobMin = (truck.daily?.stops ?? []).reduce((s, d) => s + (d.dwellMin ?? 0), 0)
+  // ไซต์รับรถของทริปกลับ = รถจอดรอ (อาจข้ามคืน) ไม่ใช่เวลาทำงานที่จุด
+  const pickupOrders = new Set(truck.timeline.filter((e) => e.pickup).map((e) => e.order))
+  const dwellAtJobMin = (truck.daily?.stops ?? [])
+    .filter((d) => !pickupOrders.has(d.order))
+    .reduce((s, d) => s + (d.dwellMin ?? 0), 0)
 
   // แบบ A: ยุบกล่อง "จุดจอดนานผิดสังเกต" — จุดจอด "นอกจุดงาน" แทรกเข้า timeline ตามเวลา
   // (จอด "ที่จุดงาน" เป็นเรื่องปกติ โชว์ใน timeline ที่จุดนั้นอยู่แล้ว ไม่ต้องแยกกล่อง)
