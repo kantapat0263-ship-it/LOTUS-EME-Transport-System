@@ -7,6 +7,8 @@ const withPWA = require('next-pwa')({
   // ข้อมูลน้ำท่วมต้องสด — ห้าม SW คืนชุดเก่าจาก Cache Storage ตอนเน็ตล้ม (กฎแรกที่ตรงชนะ จึงต้องอยู่หน้าชุดเดิม)
   runtimeCaching: [
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/road-events', handler: 'NetworkOnly', method: 'GET' },
+    // รายงานส่วนตัวห้ามคืนแคชของแอดมินเดิมหลัง logout หรือเปลี่ยนบัญชี
+    { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/reports/weekly-stops', handler: 'NetworkOnly', method: 'GET' },
     ...require('next-pwa/cache'),
   ],
 });
