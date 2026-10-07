@@ -247,6 +247,11 @@ describe('ป้ายและเวลา', () => {
     expect(markerKey([a, b])).not.toBe(markerKey([{ ...a, aging: true }, b]))
     expect(markerKey([a, b])).not.toBe(markerKey([{ ...a, depthAtLeast: true, depthCm: 20 }, b]))
   })
+  it('markerKey เปลี่ยนเมื่อพิกัดต้นทางย้าย แม้ระดับน้ำเท่าเดิม', () => {
+    const a: VisibleFloodPoint = { ...pt({ code: 'A' }), aging: false }
+    expect(markerKey([a])).not.toBe(markerKey([{ ...a, lat: a.lat + 0.1 }]))
+    expect(markerKey([a])).not.toBe(markerKey([{ ...a, lng: a.lng + 0.1 }]))
+  })
 })
 
 describe('parseRoadEventsResponse', () => {

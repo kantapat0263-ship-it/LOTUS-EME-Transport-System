@@ -236,7 +236,7 @@ export function formatThaiClock(ms: number): string {
 export function markerKey(visible: VisibleFloodPoint[]): string {
   return [...visible]
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))
-    .map((p) => `${p.code}|${p.level}|${depthLabel(p)}|${p.aging ? 1 : 0}`)
+    .map((p) => `${p.code}|${p.lat}|${p.lng}|${p.level}|${depthLabel(p)}|${p.aging ? 1 : 0}`)
     .join(';')
 }
 

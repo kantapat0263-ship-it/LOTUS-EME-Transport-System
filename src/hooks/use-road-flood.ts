@@ -13,6 +13,7 @@ import { createLatestRequestGuard } from '@/lib/latestRequest'
 
 const POLL_MS = 5 * 60_000
 const TICK_MS = 60_000
+const REQUEST_TIMEOUT_MS = 20_000
 
 /** ไม่ต่อ ?t= — ต้องการให้ CDN cache ทำงาน · ข้อมูลตัวอย่างเปิดได้เฉพาะ dev ด้วย ?floodSample=1 ที่หน้า */
 function endpoint(): string {
@@ -50,15 +51,22 @@ export function useRoadFlood(enabled: boolean): {
       inflight = true
       const isLatest = guard()
       if (!hasSnapshotRef.current) setPhase('loading')
+      const request = new AbortController()
+      const abortRequest = () => request.abort()
+      ctrl.signal.addEventListener('abort', abortRequest, { once: true })
+      const deadline = setTimeout(abortRequest, REQUEST_TIMEOUT_MS)
       let next: RoadFloodSnapshot | null = null
       try {
-        const res = await fetch(endpoint(), { signal: ctrl.signal })
+        const res = await fetch(endpoint(), { signal: request.signal })
         const json: unknown = await res.json().catch(() => null)
         next = res.ok ? parseRoadEventsResponse(json) : null
       } catch {
         next = null
+      } finally {
+        clearTimeout(deadline)
+        ctrl.signal.removeEventListener('abort', abortRequest)
+        inflight = false
       }
-      inflight = false
       if (ctrl.signal.aborted || !isLatest()) return
       setNow(Date.now())
       if (next) {
