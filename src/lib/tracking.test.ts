@@ -835,6 +835,31 @@ describe('tracking: ทริปกลับอย่างเดียวที
   it('พื้นที่ไซต์กว้างกว่าเกณฑ์ถึงจุดงาน (หมุดไซต์กับลานจอดจริงห่างกันได้)', () => {
     expect(RETURN_SITE_AREA_M).toBeGreaterThan(1000)
   })
+
+  const office = { lat: 14.09, lng: 100.69 }
+  it('เมื่อวานแค่ขับผ่านพื้นที่ไซต์ (ไม่ได้จอดรอรับรถ) → ไม่ต่อ', () => {
+    const passBy = [
+      at(home, '2026-10-06T15:00:00'),
+      at(site, '2026-10-06T18:00:00', 0.005),
+      at(site, '2026-10-06T18:01:00', 0.012),
+      at(site, '2026-10-06T18:03:00', 0.05),
+    ]
+    expect(returnTripTrail(passBy, today, site, { office })).toMatchObject({ prepended: false, siteDepartAt: null })
+  })
+
+  it('เมื่อวานรับรถจากไซต์แล้วกลับถึงออฟฟิศไปแล้ว (ขากลับจบเมื่อวาน) → ไม่ต่อ', () => {
+    const backYesterday = [
+      at(site, '2026-10-06T04:00:00'),
+      at(site, '2026-10-06T12:00:00'),
+      at(site, '2026-10-06T12:10:00', 0.05),
+      at(office, '2026-10-06T20:00:00'),
+    ]
+    expect(returnTripTrail(backYesterday, today, site, { office })).toMatchObject({ prepended: false, siteDepartAt: null })
+  })
+
+  it('จอดรอที่ไซต์จริงแล้วขับข้ามคืนยังไม่ถึงออฟฟิศ → ต่อ (ส่งพิกัดออฟฟิศมาด้วยก็ยังต่อ)', () => {
+    expect(returnTripTrail(prev, today, site, { office })).toMatchObject({ prepended: true, siteDepartAt: th('2026-10-06T19:39:00') })
+  })
 })
 
 describe('tracking: clockWithDay — เวลาคนละวันกับที่กำลังดูต้องบอกวันที่', () => {

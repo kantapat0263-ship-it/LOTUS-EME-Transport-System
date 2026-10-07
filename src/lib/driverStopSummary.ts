@@ -1,4 +1,5 @@
-import { ARRIVAL_RADIUS_M, cutTrailAt, detectStops, haversineMeters, isTripNotRun, LONG_DWELL_MIN, OFFICE_RADIUS_M, type LatLng, type StopEvent, type TrailPoint } from '@/lib/tracking'
+import { ARRIVAL_RADIUS_M, cutTrailAt, detectStops, haversineMeters, isTripNotRun, LONG_DWELL_MIN, OFFICE_RADIUS_M, RETURN_SITE_AREA_M, type LatLng, type StopEvent, type TrailPoint } from '@/lib/tracking'
+import { tripRouteMode } from '@/lib/routeMode'
 import { incomingStopsForTrip } from '@/lib/calculations'
 import type { Trip, Vehicle, VehicleTrailDoc } from '@/types/models'
 
@@ -22,7 +23,8 @@ export function overlapsNight(startT: number, endT: number): boolean {
   }
   return false
 }
-export function classifyDriverStops(trail: DrivingPoint[], office: LatLng, jobs: LatLng[]): DriverStop[] {
+/** areas = พื้นที่งานที่กว้างกว่าเกณฑ์ 300 ม. (ไซต์รับรถของทริปกลับอย่างเดียว — ลานจอดจริงอาจห่างหมุด) จอดในนี้ = จอดที่จุดงาน */
+export function classifyDriverStops(trail: DrivingPoint[], office: LatLng, jobs: LatLng[], opts: { areas?: (LatLng & { radiusM: number })[] } = {}): DriverStop[] {
   const points = [...trail].filter(validPoint).sort((a, b) => a.t! - b.t!)
   return detectStops(points, { minMinutes: LONG_DWELL_MIN }).filter(event => event.endT - event.startT >= LONG_DWELL_MIN * 60_000).map(event => {
     const day = Math.floor((event.startT + 7 * 3_600_000) / 86_400_000) * 86_400_000 - 7 * 3_600_000
@@ -38,7 +40,7 @@ export function classifyDriverStops(trail: DrivingPoint[], office: LatLng, jobs:
     }
     const rest = drivingMs >= 120 * 60_000 && event.endT - event.startT <= 45 * 60_000
     const nearbyOffice = haversineMeters(event, office) <= OFFICE_RADIUS_M
-    const nearbyJob = jobs.filter(validLocation).some(job => haversineMeters(event, job) <= ARRIVAL_RADIUS_M)
+    const nearbyJob = jobs.filter(validLocation).some(job => haversineMeters(event, job) <= ARRIVAL_RADIUS_M) || (opts.areas ?? []).filter(validLocation).some(area => haversineMeters(event, area) <= area.radiusM)
     const eventPoints = points.filter(point => point.t! >= event.startT && point.t! <= event.endT)
     const uncertain = eventPoints.some((point, i) => i > 0 && point.t! - eventPoints[i - 1].t! > MAX_OBSERVED_GAP_MS)
     const overnight = overlapsNight(event.startT, event.endT)
@@ -96,7 +98,11 @@ export function buildWeeklyStopDays(trips: Trip[], trails: VehicleTrailDoc[], ve
       }
     }
     base.quality = points.length < 2 || base.distanceKm <= 0 || base.observedMin < LONG_DWELL_MIN ? 'missing' : invalid || base.gapMin > 0 ? 'incomplete' : 'sufficient'
-    base.events = classifyDriverStops(points, office, assigned.flatMap(t => weeklyJobLocations(t, active))).filter(event => event.kind !== 'office').map(event => ({ ...event, eventId: `${event.startT}-${event.endT}`, review: null }))
+    // ทริปกลับอย่างเดียว: ไซต์รับรถ = จุดแรกของงาน (พื้นที่กว้าง) · GPS วันนี้เริ่มนอกทั้งออฟฟิศและไซต์ = ขากลับเริ่มตั้งแต่เมื่อวาน
+    // (หน้าติดตามต่อ GPS เมื่อวานให้ แต่รายงานนี้คิดรายวัน) → ข้อมูลไม่ครบช่วง ไม่ใช้เป็นค่าเทียบ
+    const pickup = assigned.filter(t => tripRouteMode(t) === 'return').map(t => weeklyJobLocations(t, active)[0]).find(Boolean)
+    if (pickup && points.length && base.quality === 'sufficient' && haversineMeters(points[0], office) > OFFICE_RADIUS_M && haversineMeters(points[0], pickup) > RETURN_SITE_AREA_M) base.quality = 'incomplete'
+    base.events = classifyDriverStops(points, office, assigned.flatMap(t => weeklyJobLocations(t, active)), { areas: pickup ? [{ ...pickup, radiusM: RETURN_SITE_AREA_M }] : [] }).filter(event => event.kind !== 'office').map(event => ({ ...event, eventId: `${event.startT}-${event.endT}`, review: null }))
     return base
   })
 }

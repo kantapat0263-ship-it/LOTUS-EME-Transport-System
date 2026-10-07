@@ -129,3 +129,18 @@ describe('overnight stops (จอดค้างคืน)', () => {
     expect(rows[0]).toMatchObject({ reviewMin: 0, restMin: 0, lunchMin: 0, excludedMin: 0 })
   })
 })
+describe('return-mode trips (กลับอย่างเดียว)', () => {
+  it('treats a stop inside the wider pickup-site area as a job stop, not review', () => {
+    const yard = [{ lat: 15.005, lng: 101, t: time('09:00'), sp: 0 }, { lat: 15.005, lng: 101, t: time('10:00'), sp: 0 }]
+    expect(classifyDriverStops(yard, office, [{ lat: 15, lng: 101 }])[0].kind).toBe('review')
+    expect(classifyDriverStops(yard, office, [{ lat: 15, lng: 101 }], { areas: [{ lat: 15, lng: 101, radiusM: 2000 }] })[0].kind).toBe('job')
+  })
+  it('flags a return-trip day whose GPS starts away from both office and pickup site as incomplete (mission began the day before)', () => {
+    const far = { siteId: 's1', siteName: 'ไซต์ไกล', cargoDetails: 'รับรถ', order: 1, lat: 16.5, lng: 101 }
+    const started = buildWeeklyStopDays([trip({ routeMode: 'return', stops: [far] })], [trail()], [], office)
+    expect(started[0].quality).toBe('incomplete')
+    const sameDay = { ...far, lat: 15, lng: 101 } // วันนี้เริ่มที่ไซต์เอง
+    expect(buildWeeklyStopDays([trip({ routeMode: 'return', stops: [sameDay] })], [trail()], [], office)[0].quality).toBe('sufficient')
+    expect(buildWeeklyStopDays([trip({ stops: [far] })], [trail()], [], office)[0].quality).toBe('sufficient')
+  })
+})

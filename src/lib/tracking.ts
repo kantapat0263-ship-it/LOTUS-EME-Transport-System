@@ -307,11 +307,16 @@ export function clockWithDay(ms: number, viewDate: string): string {
 
 /** รัศมี "พื้นที่ไซต์" ของทริปกลับอย่างเดียว — ใช้หาจังหวะรถออกจากไซต์ (กว้างกว่าเกณฑ์ถึงจุดงาน เพราะหมุดไซต์กับลานจอดจริงห่างกันได้) */
 export const RETURN_SITE_AREA_M = 2000
+/** รถต้อง "จอดรอ" ในพื้นที่ไซต์ต่อเนื่องอย่างน้อยเท่านี้ ถึงจะนับเป็นขารับรถ — ขับผ่านใกล้ไซต์ (ทริปอื่นเมื่อวาน) ไม่นับ */
+export const RETURN_SITE_MIN_STAY_MIN = 30
 
 /**
  * ทริปกลับอย่างเดียว (ไปรับรถที่ไซต์ขับกลับ): คนขับอาจออกจากไซต์ตั้งแต่เย็นวันก่อนแล้วขับข้ามคืน
  * → ต่อ GPS ของวันก่อน ตั้งแต่จุดสุดท้ายที่รถยังอยู่ในพื้นที่ไซต์ เข้ากับ GPS วันนี้ (ทริปลงวันที่วันที่รถถึงออฟฟิศ)
  * - วันนี้ยังมีจุดในพื้นที่ไซต์ (ออกจากไซต์วันนี้) / วันก่อนไม่เคยอยู่ไซต์ / ไม่มีพิกัดไซต์ = ใช้ GPS วันนี้ตามเดิม
+ * - ต่อเฉพาะเมื่อวันก่อน "จอดรอ" ที่ไซต์จริง (≥ RETURN_SITE_MIN_STAY_MIN) และหลังออกจากไซต์ยังไม่เข้าออฟฟิศในวันนั้น
+ *   (ขับผ่านใกล้ไซต์ / รับรถแล้วกลับถึงออฟฟิศไปตั้งแต่เมื่อวาน = ไม่ใช่ขากลับของทริปนี้)
+ * - ตัด GPS ตาม gpsEndAt ก่อนเรียกฟังก์ชันนี้ (เวลาออกไซต์ต้องมาจาก GPS ที่ยังเป็นของทริป)
  * - siteDepartAt = จุดสุดท้ายในพื้นที่ไซต์ที่ตามด้วยจุดนอกพื้นที่ (ยังไม่ออก = null)
  * - seenAtSite = มีจุดในพื้นที่ไซต์ (ถือว่ารับรถที่ไซต์แล้ว — จุดไซต์ของทริปนี้คือจุดเริ่ม ไม่ใช่ปลายทาง)
  */
@@ -319,9 +324,13 @@ export function returnTripTrail<T extends TrailPoint>(
   prev: T[],
   today: T[],
   site: LatLng | null | undefined,
-  radiusM = RETURN_SITE_AREA_M
+  opts: { radiusM?: number; office?: LatLng | null; officeRadiusM?: number; minStayMin?: number } = {}
 ): { trail: T[]; prepended: boolean; siteDepartAt: number | null; seenAtSite: boolean } {
   if (!site) return { trail: today, prepended: false, siteDepartAt: null, seenAtSite: false }
+  const radiusM = opts.radiusM ?? RETURN_SITE_AREA_M
+  const minStayMs = (opts.minStayMin ?? RETURN_SITE_MIN_STAY_MIN) * 60_000
+  const office = opts.office
+  const officeRadiusM = opts.officeRadiusM ?? OFFICE_RADIUS_M
   const inSite = (p: T) => haversineMeters(site, p) <= radiusM
   const sorted = (pts: T[]) => pts.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
   const tod = sorted(today)
@@ -337,8 +346,14 @@ export function returnTripTrail<T extends TrailPoint>(
       }
     }
     if (last >= 0) {
-      all = [...pr.slice(last), ...tod]
-      prepended = true
+      let first = last
+      while (first > 0 && inSite(pr[first - 1])) first--
+      const stayed = pr[last].t! - pr[first].t! >= minStayMs
+      const backAtOfficeYesterday = !!office && pr.slice(last + 1).some((p) => haversineMeters(office, p) <= officeRadiusM)
+      if (stayed && !backAtOfficeYesterday) {
+        all = [...pr.slice(last), ...tod]
+        prepended = true
+      }
     }
   }
   let siteDepartAt: number | null = null

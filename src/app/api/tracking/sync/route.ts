@@ -7,9 +7,9 @@ import { trackingDateKey, computeDailySummary, cutTrailAt, OFFICE_LOCATION } fro
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-/** จำนวนจุดสูงสุดที่เก็บใน trail ต่อคันต่อวัน — 1 จุด/นาที × 24 ชม. = 1440 (doc ~43KB ยังเล็ก)
- *  ต้องครอบคลุมช่วงบันทึกทั้งวัน (เช่น 03:50–22:00 = 1090 จุด) ไม่งั้นช่วงเช้าจะถูกตัด */
-const MAX_TRAIL_POINTS = 1440
+/** จำนวนจุดสูงสุดที่เก็บใน trail ต่อคันต่อวัน — เก็บ 24 ชม. และ sync ถี่สุดทุก 45 วิ (cron + หลายหน้าเปิดพร้อมกัน)
+ *  ได้ถึง ~1,920 จุด → ตั้ง 2,880 เผื่อไว้ ไม่งั้นจุดต้นวันถูกตัด (doc ~115KB ยังห่างเพดาน 1MB) */
+const MAX_TRAIL_POINTS = 2880
 
 /** กันยิงถี่เกิน (หลายคนเปิดหน้าติดตามพร้อมกัน) — ถ้าเพิ่ง sync ไปไม่ถึงเวลานี้ ให้ข้าม */
 const MIN_SYNC_INTERVAL_MS = 45_000
