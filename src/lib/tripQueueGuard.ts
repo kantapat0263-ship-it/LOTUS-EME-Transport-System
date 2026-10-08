@@ -100,6 +100,25 @@ async function liveIncoming(db: Firestore, id: string, day: string) {
   return incomingStopsForTrip([...byId.values()].filter(t => t.status !== 'Cancelled' && tripDay(t) === day), id)
 }
 
+/** งานที่ทริปนี้โยกออกไปให้คันที่ยังอยู่ — ลบ/ยกเลิกต้นทางแล้ว แถว "รับโยกงานต่อ" ของคันนั้นหายจากทุกหน้า (ข้อมูลงานอยู่ที่จุดต้นทาง) */
+async function liveOutgoing(db: Firestore, tx: Transaction, trip: Trip, id: string) {
+  const out: { label: string; count: number }[] = []
+  for (const [moveId, count] of moveCounts(trip)) {
+    if (moveId === id) continue
+    const live = (await tx.get(doc(db, 'trips', moveId))).data() as Trip | undefined
+    if (!live || live.status === 'Cancelled') continue
+    const stop = (trip.stops || []).find(s => s.reassignedToTripId === moveId)
+    out.push({ label: [stop?.reassignedToDriverName || live.actualDriverName || live.driverName, stop?.reassignedToVehiclePlate || live.vehiclePlate].filter(Boolean).join(' '), count })
+  }
+  return out
+}
+
+function outgoingMessage(action: string, outgoing: Awaited<ReturnType<typeof liveOutgoing>>) {
+  const to = outgoing.map(o => o.label).join(', ')
+  const n = outgoing.reduce((sum, o) => sum + o.count, 0)
+  return `ทริปนี้มีงานที่โยกไปให้ ${to} (${n} จุด) — ${action}แล้วงานนั้นจะหายจากคันที่รับไปทำ (ทริปที่โยกงานออกหมดถูกซ่อนจากใบสรุปอยู่แล้ว ไม่ต้อง${action}) · ถ้างานนั้นยกเลิกจริง ใช้ปุ่ม "ยกเลิกงาน" ทีละจุด`
+}
+
 function incomingMessage(action: string, incoming: Awaited<ReturnType<typeof liveIncoming>>) {
   const from = [...new Set(incoming.map(job => [job.fromDriverName, job.fromVehiclePlate].filter(Boolean).join(' ')))].join(', ')
   return `ทริปนี้ยังรับงานที่โยกมาจาก ${from} (${incoming.length} จุด) — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อน${action}`
@@ -191,6 +210,8 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     if (patch.status === 'Cancelled' && before.status !== 'Cancelled') {
       const incoming = await liveIncoming(db, id, tripDay(before))
       if (incoming.length) throw new Error(incomingMessage('ยกเลิก', incoming))
+      const outgoing = await liveOutgoing(db, tx, after, id)
+      if (outgoing.length) throw new Error(outgoingMessage('ยกเลิก', outgoing))
     }
     // คันปลายทางของงานที่โยกเพิ่ม (รายจุด) ต้องยังอยู่จริง — แท็บเก่าอาจยังเห็นคันที่ถูกลบ/ยกเลิกไปแล้ว
     // เปิดทริปที่ยกเลิกกลับ = งานโยกออกทั้งหมดกลับมามีผล → แตะคันปลายทางที่ยังอยู่ทุกคัน (คันที่หายแล้วไม่บล็อก แผงขึ้น ⚠️ ให้เลือกใหม่)
@@ -235,6 +256,7 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
  * ลบทริป — ทุกทางที่ลบทริปต้องผ่านตัวนี้ (ใบสรุป/หน้าประวัติ ลบทีละใบ/หลายใบ/ล้างข้อมูลไม่สมบูรณ์)
  * - ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา: pointer อยู่ที่จุดต้นทาง ลบปลายทางแล้วงานหายจากทุกหน้าเงียบ ๆ
  *   (เช็คใน callback หลังอ่านทริปใน transaction — คนโยกเข้าพร้อมกันจะแตะทริปนี้ ทำให้ transaction ชนแล้ว retry มาเจองานโยกเข้า)
+ * - ห้ามลบทริปต้นทางที่ยังมีงานโยกไปให้คันที่ยังอยู่ (ข้อมูลงานอยู่ที่จุดต้นทาง) — ยกเว้นส่ง expectedStops มา (= ปุ่ม "ยกเลิกงาน")
  * - supersede = จุดที่ลบเคยเลื่อนไปวันใหม่ → ปลดใบวันใหม่ในคำสั่งเดียวกัน · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ
  */
 export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops'], supersede?: { id: string; by: string }): Promise<void> {
@@ -245,6 +267,11 @@ export async function deleteTripWithQueueGuard(db: Firestore, id: string, expect
     if (snap.data().queueLink) throw new Error(MANAGED_MESSAGE)
     const incoming = await liveIncoming(db, id, tripDay(snap.data() as Trip))
     if (incoming.length) throw new Error(incomingMessage('ลบ', incoming))
+    // expectedStops = ปุ่ม "ยกเลิกงาน" ลบงานจุดสุดท้ายโดยตั้งใจ (งานนั้นยกเลิกจริงทั้งสองคัน) → ไม่ห้ามเรื่องงานโยกออก
+    if (!expectedStops) {
+      const outgoing = await liveOutgoing(db, tx, snap.data() as Trip, id)
+      if (outgoing.length) throw new Error(outgoingMessage('ลบ', outgoing))
+    }
     if (expectedStops) assertTripStopsUnchanged(snap.data().stops, expectedStops)
     const requestRef = supersede ? doc(db, 'vehicleRequests', supersede.id) : null
     const request = requestRef ? await tx.get(requestRef) : null

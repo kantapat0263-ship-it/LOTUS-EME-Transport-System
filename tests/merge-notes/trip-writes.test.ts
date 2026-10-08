@@ -5,6 +5,7 @@ import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/
 import { collection, query, where, getDocs, runTransaction, doc, getDoc, setDoc, updateDoc, serverTimestamp, setLogLevel, type Firestore, type Transaction } from 'firebase/firestore'
 import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard, assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
 import { findFreeRequestId, requestIdPrefix, RequestIdExhaustedError } from '@/lib/requestId'
+import { isSameOutcome, keepsMoveTarget } from '@/lib/reassign'
 import type { Trip, TripStop } from '@/types/models'
 
 let env: RulesTestEnvironment
@@ -60,8 +61,8 @@ function daily(db: Firestore, trip = original()) {
   let state = [trip]
   const buildStops = (trip: Trip, index: number, change: (stop: TripStop) => TripStop) => trip.stops.map((s, i) => i === index ? change({ ...s }) : s)
   const stripOutcome = (stop: TripStop) => { const { outcome: _o, outcomeReason: _r, postponedRequestId: _p, postponedToDate: _d, ...rest } = stop; return rest }
-  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'buildStops', 'stripOutcome', 'getDoc', 'doc', 'updateDoc', 'recordedBy', 'user', 'formatThaiDate', 'openPostponeDialog', 'setRefusalDrafts', `${body('persistTripPatch')}${body('applyStops')}${body('chooseOutcome')}return chooseOutcome`)(
-    db, [trip], updateTripWithQueueGuard, serverTimestamp, (fn: (prev: Trip[]) => Trip[]) => { state = fn(state) }, toast, () => true, buildStops, stripOutcome, getDoc, doc, updateDoc, 'คนจัดรถ', { email: 'test@example.invalid' }, (value: string) => value, vi.fn(), vi.fn(),
+  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'buildStops', 'stripOutcome', 'getDoc', 'doc', 'updateDoc', 'recordedBy', 'user', 'formatThaiDate', 'openPostponeDialog', 'setRefusalDrafts', 'isSameOutcome', 'keepsMoveTarget', `${body('persistTripPatch')}${body('applyStops')}${body('chooseOutcome')}return chooseOutcome`)(
+    db, [trip], updateTripWithQueueGuard, serverTimestamp, (fn: (prev: Trip[]) => Trip[]) => { state = fn(state) }, toast, () => true, buildStops, stripOutcome, getDoc, doc, updateDoc, 'คนจัดรถ', { email: 'test@example.invalid' }, (value: string) => value, vi.fn(), vi.fn(), isSameOutcome, keepsMoveTarget,
   ) as (trip: Trip, index: number, outcome: string) => Promise<void>
   return { handler, toast, state: () => state }
 }
@@ -70,9 +71,10 @@ it('actual outcome handler เก็บหมายเหตุ/ชื่อท�
   const db = await setup()
   await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'trips', 'T1'), { stops: original().stops.map((s, i) => i === 1 ? { ...s, dispatcherNote: 'ล่าสุด B', dispatcherName: 'คนล่าสุด' } : s) }))
   const ui = daily(db)
-  await ui.handler(original(), 0, 'delivered')
+  // กดผลที่ "เปลี่ยนจริง" — กดตามแผนซ้ำบนจุดที่ตามแผนอยู่แล้วไม่บันทึกอะไร (ตั้งใจ 2026-10-08)
+  await ui.handler(original(), 0, 'driver-refused')
   expect((await stored(db)).stops[1]).toMatchObject({ dispatcherNote: 'ล่าสุด B', dispatcherName: 'คนล่าสุด' })
-  expect((await stored(db)).stops[0].outcome).toBeUndefined()
+  expect((await stored(db)).stops[0].outcome).toBe('driver-refused')
   expect(ui.state()[0].stops[1].dispatcherNote).toBe('ล่าสุด B')
 })
 it('actual outcome handler หยุดเมื่ออีกเครื่องปิดผลงานแล้ว ไม่ทับทั้งจุดอื่นและ local state', async () => {
@@ -80,7 +82,7 @@ it('actual outcome handler หยุดเมื่ออีกเครื่�
   const live = original().stops.map((s, i) => i === 1 ? { ...s, outcome: 'driver-refused' as const, outcomeReason: 'ล่าสุด' } : s)
   await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'trips', 'T1'), { stops: live }))
   const ui = daily(db)
-  await ui.handler(original(), 0, 'delivered')
+  await ui.handler(original(), 0, 'driver-refused')
   expect((await stored(db)).stops).toEqual(live)
   expect(ui.state()[0]).toEqual(original())
   expect(ui.toast.mock.calls.at(-1)?.[0].variant).toBe('destructive')
@@ -137,11 +139,18 @@ it.each(['notes', 'outcome'])('actual outcome handler transaction retry เม�
     await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), path), { stops: live }))
   }
   const ui = daily(db)
-  await ui.handler(original(), 0, 'delivered')
+  await ui.handler(original(), 0, 'driver-refused')
   expect(probe.attempts).toBeGreaterThanOrEqual(2)
-  expect((await stored(db)).stops).toEqual(live)
-  if (change === 'outcome') expect(ui.toast.mock.calls.at(-1)?.[0].description).toContain('โหลดข้อมูลใหม่')
-  else expect(ui.state()[0].stops).toEqual(live)
+  if (change === 'outcome') {
+    expect((await stored(db)).stops).toEqual(live)
+    expect(ui.toast.mock.calls.at(-1)?.[0].description).toContain('โหลดข้อมูลใหม่')
+  } else {
+    // retry แล้วบันทึกผลของจุดแรก โดยเก็บหมายเหตุที่อีกเครื่องเพิ่งแก้ของจุดที่สองไว้
+    const saved = (await stored(db)).stops
+    expect(saved[1]).toEqual(live[1])
+    expect(saved[0]).toMatchObject({ ...live[0], outcome: 'driver-refused' })
+    expect(ui.state()[0].stops).toEqual(saved)
+  }
 })
 function postponed() {
   const trip = original()

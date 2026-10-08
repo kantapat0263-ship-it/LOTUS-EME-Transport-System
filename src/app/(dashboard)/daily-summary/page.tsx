@@ -45,7 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
-import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
+import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
 import { useDriverLeaves } from "@/hooks/use-driver-leaves"
@@ -780,7 +780,8 @@ export default function DailySummaryPage() {
     try {
       if (!db) return
       const gen = nextDistGen(tripDoc.id)
-      const r = await computePlanDistance(tripDoc, stops)
+      // ไม่เหลืองานตัวเอง (เก็บทริปไว้ถืองานโยกเข้าอย่างเดียว) = ระยะ/ค่าน้ำมันตามแผนของตัวเองเป็น 0 — กม.งานโยกเข้าคิดผ่านคันต้นทาง
+      const r = stops.length === 0 ? { km: 0, fuelCost: 0, minutes: 0 } : await computePlanDistance(tripDoc, stops)
       if (typeof r === "string") return // คิดระยะทางไม่ได้ = ปล่อยตัวเลขเดิมไว้
       if (!isLatestDistGen(tripDoc.id, gen)) return // มีการคิดรอบใหม่กว่าของทริปนี้แล้ว
       const { km, fuelCost, minutes } = r
@@ -1168,7 +1169,9 @@ export default function DailySummaryPage() {
     const newStops = buildStops(trip, stopIdx, (s) => {
       const base = stripOutcome(s)
       if (outcome === 'delivered') return base // back to "as planned"
-      return { ...base, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
+      const { reassignedToTripId, reassignedToVehiclePlate, reassignedToDriverName } = s as any
+      const target = keepsMoveTarget(prev?.outcome, outcome) && reassignedToTripId ? { reassignedToTripId, reassignedToVehiclePlate: reassignedToVehiclePlate || "", reassignedToDriverName: reassignedToDriverName || "" } : {}
+      return { ...base, ...target, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
     })
     await applyStops(trip, newStops, true, prev?.postponedRequestId ? {
       expectedStops: trip.stops,

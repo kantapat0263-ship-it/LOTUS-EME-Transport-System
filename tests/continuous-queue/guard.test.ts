@@ -110,15 +110,36 @@ it('ยกเลิกใบขอหรือทริปเปลี่ยน�
   expect((await getDoc(doc(db, 'trips', 'T1'))).data()?.stops).toEqual([])
 })
 
-it('ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา (งานจะหายเงียบ) · ลบได้เมื่อไม่มีงานโยกเข้าแล้ว', async () => {
+it('ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา (งานจะหายเงียบ) · ห้ามลบ/ยกเลิกต้นทางด้วย · คืนงานแล้วลบได้', async () => {
   const db = staffDb()
+  const job = { siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '' }
+  const moved = { ...job, outcome: 'reassigned', reassignedToTripId: 'TB', reassignedToVehiclePlate: 'บี' }
   await createTripWithQueueGuard(db, 'TB', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [] })
-  await createTripWithQueueGuard(db, 'TA', { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: [{ siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '', outcome: 'reassigned', reassignedToTripId: 'TB', reassignedToVehiclePlate: 'บี' }] })
+  await createTripWithQueueGuard(db, 'TA', { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: [moved] })
   await expect(deleteTripWithQueueGuard(db, 'TB')).rejects.toThrow('โยก')
   expect((await getDoc(doc(db, 'trips', 'TB'))).exists()).toBe(true)
-  await updateTripWithQueueGuard(db, 'TA', { status: 'Cancelled' })
+  await expect(deleteTripWithQueueGuard(db, 'TA')).rejects.toThrow('โยกไปให้')
+  await expect(updateTripWithQueueGuard(db, 'TA', { status: 'Cancelled' })).rejects.toThrow('โยกไปให้')
+  expect((await getDoc(doc(db, 'trips', 'TA'))).data()?.status).toBe('Planned')
+  await updateTripWithQueueGuard(db, 'TA', { stops: [job] }, undefined, { expectedStops: [moved] as any, sourceIndexes: [0] })
   await deleteTripWithQueueGuard(db, 'TB')
   expect((await getDoc(doc(db, 'trips', 'TB'))).exists()).toBe(false)
+})
+
+it('ปุ่ม "ยกเลิกงาน" ลบทริปที่เหลือจุดเดียวซึ่งโยกออกไปได้ (ตั้งใจยกเลิกงานจริง) · ต้นทางที่คันปลายทางหาย/ยกเลิกแล้วลบได้', async () => {
+  const db = staffDb()
+  const moved = (to: string) => [{ siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '', outcome: 'reassigned', reassignedToTripId: to, reassignedToVehiclePlate: 'บี' }]
+  await createTripWithQueueGuard(db, 'TB', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [] })
+  await createTripWithQueueGuard(db, 'TX', { tripDate: '2026-10-07', driverId: 'D3', vehicleId: 'V3', status: 'Cancelled', stops: [] })
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'trips', 'TA'), { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: moved('TB') })
+    await setDoc(doc(context.firestore(), 'trips', 'TC'), { tripDate: '2026-10-07', driverId: 'D4', vehicleId: 'V4', status: 'Planned', stops: moved('TX') })
+    await setDoc(doc(context.firestore(), 'trips', 'TD'), { tripDate: '2026-10-07', driverId: 'D5', vehicleId: 'V5', status: 'Planned', stops: moved('GONE') })
+  })
+  await deleteTripWithQueueGuard(db, 'TA', moved('TB') as any)
+  await deleteTripWithQueueGuard(db, 'TC')
+  await deleteTripWithQueueGuard(db, 'TD')
+  for (const id of ['TA', 'TC', 'TD']) expect((await getDoc(doc(db, 'trips', id))).exists()).toBe(false)
 })
 
 it('ลบทริปพร้อมปลดใบที่เลื่อนไปวันใหม่ · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ', async () => {
@@ -190,17 +211,14 @@ it('เปิดทริปที่ยกเลิกกลับ: แตะ�
   const job = { siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '' }
   const moved = (to: string) => [{ ...job, outcome: 'reassigned', reassignedToTripId: to, reassignedToVehiclePlate: 'บี' }]
   await createTripWithQueueGuard(db, 'LIVE', { ...base, driverId: 'D2', vehicleId: 'V2', stops: [] })
-  await createTripWithQueueGuard(db, 'DEAD', { ...base, driverId: 'D3', vehicleId: 'V3', stops: [] })
-  await createTripWithQueueGuard(db, 'A1', { ...base, driverId: 'D1', vehicleId: 'V1', stops: [job] })
-  await updateTripWithQueueGuard(db, 'A1', { stops: moved('LIVE') }, undefined, { expectedStops: [job] as any, sourceIndexes: [0] })
-  const firstTouch = (await getDoc(doc(db, 'trips', 'LIVE'))).data()?.incomingTouchedAt
-  await updateTripWithQueueGuard(db, 'A1', { status: 'Cancelled' })
+  // ทริปต้นทางที่ถูกยกเลิกไว้ก่อนมีกติกาห้ามยกเลิกต้นทาง (ข้อมูลเก่า)
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'trips', 'A1'), { ...base, status: 'Cancelled', driverId: 'D1', vehicleId: 'V1', stops: moved('LIVE') })
+    await setDoc(doc(context.firestore(), 'trips', 'A2'), { ...base, status: 'Cancelled', driverId: 'D4', vehicleId: 'V4', stops: moved('GONE') })
+  })
+  expect((await getDoc(doc(db, 'trips', 'LIVE'))).data()?.incomingTouchedAt).toBeUndefined()
   await updateTripWithQueueGuard(db, 'A1', { status: 'Planned' })
-  expect((await getDoc(doc(db, 'trips', 'LIVE'))).data()?.incomingTouchedAt).not.toEqual(firstTouch)
-  await createTripWithQueueGuard(db, 'A2', { ...base, driverId: 'D4', vehicleId: 'V4', stops: [job] })
-  await updateTripWithQueueGuard(db, 'A2', { stops: moved('DEAD') }, undefined, { expectedStops: [job] as any, sourceIndexes: [0] })
-  await updateTripWithQueueGuard(db, 'A2', { status: 'Cancelled' })
-  await deleteTripWithQueueGuard(db, 'DEAD')
+  expect((await getDoc(doc(db, 'trips', 'LIVE'))).data()?.incomingTouchedAt).toBeTruthy()
   await updateTripWithQueueGuard(db, 'A2', { status: 'Planned' })
   expect((await getDoc(doc(db, 'trips', 'A2'))).data()?.status).toBe('Planned')
 })

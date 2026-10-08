@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { renameMoveTarget } from '../../../lib/reassign'
+import { isSameOutcome, keepsMoveTarget, renameMoveTarget } from '../../../lib/reassign'
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
   let value: ts.Expression | undefined
@@ -118,4 +118,33 @@ it('เปลี่ยนคนขับแทน D2→D3: ทริปที่
   expect(apply.mock.calls.map((call) => call[0].id)).toEqual(['T2', 'T3'])
   expect(apply.mock.calls[0][1]).toEqual([{ siteName: 'x', order: 1 }, moved('คนสาม', 'driver-refused')])
   expect(apply.mock.calls[1][1].map((s: any) => s.reassignedToDriverName)).toEqual(['คนสาม', 'คนสาม'])
+})
+function outcomeUI(stop: any) {
+  const apply = vi.fn().mockResolvedValue(true)
+  const t = { id: 'T1', stops: [stop] }
+  const strip = ({ outcome: _o, outcomeReason: _r, reassignedToTripId: _t, reassignedToVehiclePlate: _p, reassignedToDriverName: _n, ...rest }: any) => rest
+  const deps = { allowOrdinaryEdit: () => true, openPostponeDialog: vi.fn(), isSameOutcome, keepsMoveTarget, buildStops: (original: any, index: number, fn: any) => original.stops.map((s: any, i: number) => i === index ? fn(s) : s), stripOutcome: strip, recordedBy: 'ผู้จัด', applyStops: apply, user: null }
+  const handler = new Function(...Object.keys(deps), `${body('chooseOutcome')}return work`)(...Object.values(deps))
+  return { handler, apply, t }
+}
+it('สลับ โยกงาน → คนขับปฏิเสธ คงคันที่รับงานไว้ (เดิมล้างทิ้ง แถวรับโยกของคันนั้นหายเงียบ)', async () => {
+  const ui = outcomeUI({ siteName: 'A', order: 1, outcome: 'reassigned', reassignedToTripId: 'T2', reassignedToVehiclePlate: 'รถสอง', reassignedToDriverName: 'คนสอง' })
+  await ui.handler(ui.t, 0, 'driver-refused')
+  expect(ui.apply.mock.calls[0][1][0]).toMatchObject({ outcome: 'driver-refused', reassignedToTripId: 'T2', reassignedToVehiclePlate: 'รถสอง', reassignedToDriverName: 'คนสอง' })
+})
+it('"ตามแผน" ล้าง pointer โยกที่ค้างจากข้อมูลเก่าได้ · กด "ตามแผน" ซ้ำบนจุดปกติ = ไม่เขียน', async () => {
+  const leftover = outcomeUI({ siteName: 'A', order: 1, reassignedToTripId: 'T2' })
+  await leftover.handler(leftover.t, 0, 'delivered')
+  expect(leftover.apply.mock.calls[0][1][0]).toEqual({ siteName: 'A', order: 1 })
+  const clean = outcomeUI({ siteName: 'A', order: 1 })
+  await clean.handler(clean.t, 0, 'delivered')
+  expect(clean.apply).not.toHaveBeenCalled()
+})
+it('ไม่เหลืองานตัวเอง (เก็บทริปไว้ถืองานโยกเข้า) = ระยะ/ค่าน้ำมัน/เวลาตามแผนเป็น 0 โดยไม่เรียกคิดเส้นทาง', async () => {
+  const update = vi.fn().mockResolvedValue({}), compute = vi.fn()
+  const deps = { db: {}, nextDistGen: () => 1, isLatestDistGen: () => true, computePlanDistance: compute, setTrips: vi.fn(), updateTripWithQueueGuard: update, serverTimestamp: () => 'ts', setStatsRefreshKey: vi.fn() }
+  const handler = new Function(...Object.keys(deps), `${body('recalcTripDistance')}return work`)(...Object.values(deps))
+  await handler({ id: 'T1', totalDistanceKm: 80, fuelCost: 300 }, [])
+  expect(compute).not.toHaveBeenCalled()
+  expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, fuelCost: 0, totalEstimatedTimeMinutes: 0 })
 })

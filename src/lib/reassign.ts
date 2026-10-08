@@ -39,9 +39,18 @@ export function isEmptyTrip(trip: TripLike, incomingCount: number): boolean {
   return (trip.stops?.length ?? 0) === 0 && incomingCount === 0
 }
 
-/** กดปุ่มผลที่เลือกอยู่แล้ว (ไม่มีผล = ตามแผน) — ต้องไม่ล้างคันปลายทาง/เหตุผลที่บันทึกไว้ */
+/** กดปุ่มผลที่เลือกอยู่แล้ว (ไม่มีผล = ตามแผน) — ต้องไม่ล้างคันปลายทาง/เหตุผลที่บันทึกไว้
+ *  ยกเว้น "ตามแผน" ที่ยังมี pointer โยกค้าง (ข้อมูลเก่า) — กดเพื่อล้างได้ */
 export function isSameOutcome(stop: StopLike | null | undefined, outcome: string): boolean {
+  if (outcome === 'delivered' && stop?.reassignedToTripId) return false
   return (stop?.outcome || 'delivered') === outcome
+}
+
+const MOVE_OUTCOMES = ['reassigned', 'driver-refused']
+
+/** สลับระหว่าง "โยกงาน" ↔ "คนขับปฏิเสธ" = งานยังไปคันเดิม → คงคันปลายทางไว้ (เดิมล้างทิ้ง แถวรับโยกของคันนั้นหายเงียบ) */
+export function keepsMoveTarget(prevOutcome: string | null | undefined, outcome: string): boolean {
+  return MOVE_OUTCOMES.includes(prevOutcome || '') && MOVE_OUTCOMES.includes(outcome)
 }
 
 /** ชื่อคนที่ขับทริปนี้จริง (ขับแทน > คนขับประจำ) */

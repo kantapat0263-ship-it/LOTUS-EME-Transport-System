@@ -369,10 +369,17 @@ export default function TripHistoryPage() {
   }
 
   const confirmBulkDelete = async () => {
-    // ลบทีละใบแบบไม่หยุดทั้งชุด — ใบที่ถูกห้าม (เช่น ยังถืองานที่คันอื่นโยกเข้ามา) แจ้งเหตุผลและคงไว้ในรายการที่เลือก
+    // ลบทีละใบตามลำดับ (ไม่ยิงพร้อมกัน — ทริปคนขับ/รถ/วันเดียวกันแตะเอกสารกันชนชุดเดียวกัน) และไม่หยุดทั้งชุด
+    // ใบที่ถูกห้าม (เช่น ยังถืองานโยกเข้า/มีงานโยกออก) แจ้งเหตุผลและคงไว้ในรายการที่เลือก
     const ids = Array.from(selectedIds)
-    const results = await Promise.allSettled(ids.map(id => deleteTripWithQueueGuard(db, id)))
-    const failed = results.flatMap((r, i) => (r.status === "rejected" ? [{ id: ids[i], reason: (r.reason as any)?.message || "ลบไม่สำเร็จ" }] : []))
+    const failed: { id: string; reason: string }[] = []
+    for (const id of ids) {
+      try {
+        await deleteTripWithQueueGuard(db, id)
+      } catch (e: any) {
+        failed.push({ id, reason: e?.message || "ลบไม่สำเร็จ" })
+      }
+    }
     if (failed.length === 0) {
       toast({ title: "ลบสำเร็จ", description: `ลบทั้งหมด ${ids.length} รายการเรียบร้อยแล้ว` })
       setSelectedIds(new Set())

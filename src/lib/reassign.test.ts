@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { liveMoveTarget, isFullyMovedOutLive, isEmptyTrip, isSameOutcome, renameMoveTarget, tripDriverLabel } from './reassign'
+import { liveMoveTarget, isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, renameMoveTarget, tripDriverLabel } from './reassign'
 
 const trip = (id: string, patch: Record<string, unknown> = {}) => ({ id, driverName: `คนขับ${id}`, vehiclePlate: `รถ${id}`, stops: [] as any[], status: 'Planned', ...patch })
 
@@ -38,6 +38,16 @@ describe('reassign: ทริปเปล่า / ปุ่มผลเดิม
     expect(isSameOutcome({}, 'delivered')).toBe(true)
     expect(isSameOutcome({ outcome: 'reassigned' }, 'driver-refused')).toBe(false)
     expect(isSameOutcome(undefined, 'delivered')).toBe(true)
+    // "ตามแผน" ที่ยังมี pointer โยกค้าง (ข้อมูลเก่า) ต้องกดล้างได้
+    expect(isSameOutcome({ reassignedToTripId: 'B' }, 'delivered')).toBe(false)
+  })
+
+  it('keepsMoveTarget: สลับ โยกงาน ↔ คนขับปฏิเสธ คงคันปลายทาง · อย่างอื่นไม่คง', () => {
+    expect(keepsMoveTarget('reassigned', 'driver-refused')).toBe(true)
+    expect(keepsMoveTarget('driver-refused', 'reassigned')).toBe(true)
+    expect(keepsMoveTarget('customer-cancelled', 'reassigned')).toBe(false)
+    expect(keepsMoveTarget(undefined, 'reassigned')).toBe(false)
+    expect(keepsMoveTarget('reassigned', 'customer-cancelled')).toBe(false)
   })
 
   it('tripDriverLabel: คนขับจริง (ขับแทน) ก่อนคนขับประจำ', () => {
