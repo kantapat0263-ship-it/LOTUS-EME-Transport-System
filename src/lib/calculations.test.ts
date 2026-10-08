@@ -425,3 +425,14 @@ describe('incomingStopsForTrip', () => {
     expect(incomingStopsForTrip(trips, '')).toHaveLength(0)
   })
 })
+
+describe('computeDriverLeaderboard: ทริปเปล่าไม่ได้วันออกงาน', () => {
+  it('ทริปรับโยกที่สร้างแล้วเปลี่ยนใจ (ไม่มีงาน ไม่มีงานโยกเข้า) ไม่นับวัน · ทริปที่ถืองานโยกเข้าอย่างเดียวยังนับ', () => {
+    const src = { id: 'A', tripDate: '2026-10-07', driverId: 'dA', driverName: 'เอ', totalDistanceKm: 40, stops: [{ outcome: 'reassigned', reassignedToTripId: 'B' }] }
+    const holder = { id: 'B', tripDate: '2026-10-07', driverId: 'dB', driverName: 'บี', stops: [] }
+    const empty = { id: 'C', tripDate: '2026-10-07', driverId: 'dC', driverName: 'ซี', stops: [] }
+    const board = computeDriverLeaderboard([src, holder, empty] as LeaderboardTripLike[])
+    expect(board.find((d) => d.driverId === 'dB')).toMatchObject({ workingDays: 1, actualKm: 40 })
+    expect(board.find((d) => d.driverId === 'dC')?.workingDays ?? 0).toBe(0)
+  })
+})

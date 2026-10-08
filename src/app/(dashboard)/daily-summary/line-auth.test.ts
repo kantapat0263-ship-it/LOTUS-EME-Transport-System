@@ -16,8 +16,8 @@ function arrange(user: { getIdToken: () => Promise<string> } | null) {
   const fetchMock = vi.fn().mockResolvedValue({ ok: true })
   const toast = vi.fn()
   const setBusy = vi.fn()
-  const handler = new Function('user', 'trips', 'setIsSendingLine', 'isFullyMovedOut', 'incomingStopsForTrip', 'fetch', 'toast', 'selectedDate', 'formatThaiDate', 'process', 'console', `${compiled}; return send`)(
-    user, [{ id: 'trip-test', tripId: 'T-TEST', driverName: 'คนขับทดสอบ', stops: [] }], setBusy, () => false, () => [], fetchMock, toast, '2026-10-06', () => 'วันที่ทดสอบ', { env: { NEXT_PUBLIC_APP_URL: 'https://transport.example' } }, { error: vi.fn() },
+  const handler = new Function('user', 'trips', 'setIsSendingLine', 'isFullyMovedOut', 'isHiddenFromReport', 'incomingStopsForTrip', 'fetch', 'toast', 'selectedDate', 'formatThaiDate', 'process', 'console', `${compiled}; return send`)(
+    user, [{ id: 'trip-test', tripId: 'T-TEST', driverName: 'คนขับทดสอบ', stops: [] }], setBusy, () => false, () => false, () => [], fetchMock, toast, '2026-10-06', () => 'วันที่ทดสอบ', { env: { NEXT_PUBLIC_APP_URL: 'https://transport.example' } }, { error: vi.fn() },
   ) as () => Promise<void>
   return { handler, fetchMock, toast, setBusy }
 }

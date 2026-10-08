@@ -257,7 +257,9 @@ export function isPositionStale(
  * ยกเลิกการเลื่อน/โยก (ผลกลับเป็นตามแผน) = การ์ดกลับมาเอง เพราะคิดสดจาก trip.stops
  */
 export function isTripNotRun(stops: { outcome?: string }[], incomingCount: number): boolean {
-  if (incomingCount > 0 || stops.length === 0) return false
+  if (incomingCount > 0) return false
+  // ทริปเปล่า (ไม่มีงานตัวเอง ไม่มีงานโยกเข้า — เช่น สร้างทริปรับโยกแล้วเปลี่ยนใจ) = ไม่ได้วิ่ง
+  if (stops.length === 0) return true
   return stops.every((s) => !!s.outcome && s.outcome !== 'delivered')
 }
 

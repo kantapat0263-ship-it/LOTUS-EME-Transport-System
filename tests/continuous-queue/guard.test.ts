@@ -109,3 +109,33 @@ it('ยกเลิกใบขอหรือทริปเปลี่ยน�
   await expect(updateTripWithQueueGuard(db, 'T1', { stops: [{ siteName: 'B' }] }, { assignments: [], expected: { tripDate: ordinary.tripDate, driverId: 'D1', vehicleId: 'V1', stops: [{ siteId: 'A', siteName: 'changed', order: 1, cargoDetails: 'old' }] } })).rejects.toThrow('เปลี่ยนระหว่าง')
   expect((await getDoc(doc(db, 'trips', 'T1'))).data()?.stops).toEqual([])
 })
+
+it('ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา (งานจะหายเงียบ) · ลบได้เมื่อไม่มีงานโยกเข้าแล้ว', async () => {
+  const db = staffDb()
+  await createTripWithQueueGuard(db, 'TB', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [] })
+  await createTripWithQueueGuard(db, 'TA', { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: [{ siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '', outcome: 'reassigned', reassignedToTripId: 'TB', reassignedToVehiclePlate: 'บี' }] })
+  await expect(deleteTripWithQueueGuard(db, 'TB')).rejects.toThrow('โยก')
+  expect((await getDoc(doc(db, 'trips', 'TB'))).exists()).toBe(true)
+  await updateTripWithQueueGuard(db, 'TA', { status: 'Cancelled' })
+  await deleteTripWithQueueGuard(db, 'TB')
+  expect((await getDoc(doc(db, 'trips', 'TB'))).exists()).toBe(false)
+})
+
+it('ลบทริปพร้อมปลดใบที่เลื่อนไปวันใหม่ · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ', async () => {
+  const db = staffDb()
+  const stops = [{ siteId: 'S', siteName: 'งานเลื่อน', order: 1, cargoDetails: '', outcome: 'postponed', postponedRequestId: 'VR-NEW' }]
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'vehicleRequests', 'VR-NEW'), { status: 'rescheduled' })
+    await setDoc(doc(context.firestore(), 'vehicleRequests', 'VR-DONE'), { status: 'approved' })
+  })
+  await createTripWithQueueGuard(db, 'TP', { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops })
+  await deleteTripWithQueueGuard(db, 'TP', stops as any, { id: 'VR-NEW', by: 'คนจัดรถ' })
+  expect((await getDoc(doc(db, 'trips', 'TP'))).exists()).toBe(false)
+  let supersededStatus: unknown
+  await env.withSecurityRulesDisabled(async context => { supersededStatus = (await getDoc(doc(context.firestore(), 'vehicleRequests', 'VR-NEW'))).data()?.status })
+  expect(supersededStatus).toBe('superseded')
+  const doneStops = [{ ...stops[0], postponedRequestId: 'VR-DONE' }]
+  await createTripWithQueueGuard(db, 'TQ', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: doneStops })
+  await expect(deleteTripWithQueueGuard(db, 'TQ', doneStops as any, { id: 'VR-DONE', by: 'คนจัดรถ' })).rejects.toThrow('ถูกจัดรถแล้ว')
+  expect((await getDoc(doc(db, 'trips', 'TQ'))).exists()).toBe(true)
+})

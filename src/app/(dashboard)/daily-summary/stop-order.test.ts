@@ -13,8 +13,8 @@ function body(name: string) {
   if (!value) throw new Error(`Actual handler ${name} missing`)
   return ts.transpileModule(`const ${name} = ${value.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
 }
-function arrange(reject = false) {
-  const trip = { id: 'T1', driverName: 'ทดสอบ', vehiclePlate: 'ทดสอบ', stops: [
+function arrange(reject = false, opts: { stops?: any[]; incoming?: number } = {}) {
+  const trip = { id: 'T1', driverName: 'ทดสอบ', vehiclePlate: 'ทดสอบ', stops: opts.stops ?? [
     { order: 1, siteName: 'A' }, { order: 2, siteName: 'B' }, { order: 3, siteName: 'C' },
   ], stopNotes: { stop_0: 'A', stop_1: 'B', stop_2: 'C' }, stopNoteAuthors: { stop_1: 'ข' } }
   let state: any[] = [structuredClone(trip)]
@@ -22,10 +22,12 @@ function arrange(reject = false) {
   const update = reject ? vi.fn().mockRejectedValue(new Error('เปลี่ยนแล้ว')) : vi.fn().mockResolvedValue(saved)
   const toast = vi.fn()
   const recalc = vi.fn()
-  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'recalcTripDistance', 'setRefusalDrafts', `${body('persistTripPatch')}${body('applyStops')}${body('cancelStop')}return cancelStop`)(
-    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, vi.fn(), recalc, vi.fn(),
+  const remove = vi.fn().mockResolvedValue(undefined)
+  const incoming = vi.fn(() => Array.from({ length: opts.incoming ?? 0 }, () => ({ fromTripId: 'SRC' })))
+  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'recalcTripDistance', 'setRefusalDrafts', 'incomingStopsForTrip', 'recordedBy', 'user', `${body('persistTripPatch')}${body('applyStops')}${body('cancelStop')}return cancelStop`)(
+    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, remove, recalc, vi.fn(), incoming, 'คนจัดรถ', null,
   ) as (trip: unknown, index: number) => Promise<void>
-  return { trip, handler, update, toast, recalc, saved, state: () => state }
+  return { trip, handler, update, toast, recalc, saved, remove, state: () => state }
 }
 
 it('ปุ่มยกเลิกงานส่ง binding ต้นฉบับ [1,2] พร้อม expected stops', async () => {
@@ -46,4 +48,27 @@ it('บันทึกล้มเหลวไม่เปลี่ยน local 
   expect(test.recalc).not.toHaveBeenCalled()
   expect(test.toast).toHaveBeenCalledOnce()
   expect(test.toast.mock.calls[0][0].variant).toBe('destructive')
+})
+
+it('ยกเลิกงานสุดท้ายของคันที่ยังถืองานโยกเข้า = ไม่ลบทริป (เก็บไว้ถืองานที่โยกมา)', async () => {
+  const test = arrange(false, { stops: [{ order: 1, siteName: 'A' }], incoming: 1 })
+  await test.handler(test.trip, 0)
+  expect(test.remove).not.toHaveBeenCalled()
+  expect(test.update).toHaveBeenCalledOnce()
+  expect(test.update.mock.calls[0][2].stops).toEqual([])
+})
+it('ยกเลิกงานสุดท้ายที่ไม่มีงานโยกเข้า = ลบทริปตามเดิม', async () => {
+  const test = arrange(false, { stops: [{ order: 1, siteName: 'A' }] })
+  await test.handler(test.trip, 0)
+  expect(test.remove).toHaveBeenCalledOnce()
+  expect(test.update).not.toHaveBeenCalled()
+})
+it('ยกเลิกงานที่เคยเลื่อนไปวันอื่น = ปลดใบวันใหม่ในคำสั่งเดียวกัน (ทั้งลบจุดและลบทั้งทริป)', async () => {
+  const postponed = { order: 2, siteName: 'B', outcome: 'postponed', postponedRequestId: 'VR-NEW', postponedToDate: '2026-10-09' }
+  const keepTrip = arrange(false, { stops: [{ order: 1, siteName: 'A' }, postponed] })
+  await keepTrip.handler(keepTrip.trip, 1)
+  expect(keepTrip.update.mock.calls[0][4]).toMatchObject({ sourceIndexes: [0], supersedeRequest: { id: 'VR-NEW', by: 'คนจัดรถ' } })
+  const lastStop = arrange(false, { stops: [postponed] })
+  await lastStop.handler(lastStop.trip, 0)
+  expect(lastStop.remove.mock.calls[0][3]).toEqual({ id: 'VR-NEW', by: 'คนจัดรถ' })
 })

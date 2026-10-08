@@ -302,9 +302,13 @@ export function computeDriverLeaderboard(trips: LeaderboardTripLike[]): DriverSt
       }
     }
 
+    // ทริปเปล่า (ไม่มีงานตัวเอง + ไม่มีงานโยกเข้า) = ไม่ได้ออกวิ่ง ไม่ได้วันออกงาน
+    const receivesWork = (id: string | undefined) =>
+      !!id && dayTrips.some((o) => o.id !== id && (o.stops || []).some((s) => s.reassignedToTripId === id && !isDeliveredOutcome(s.outcome)))
     for (const t of dayTrips) {
       const cd0 = creditDriverOf(t)
-      if (cd0.driverId) ensure(cd0.driverId, cd0.driverName).days.add(date)
+      const hasWork = (t.stops || []).length > 0 || receivesWork(t.id)
+      if (cd0.driverId && hasWork) ensure(cd0.driverId, cd0.driverName).days.add(date)
       const share = stopShareKm(t)
       for (const stop of t.stops || []) {
         // Which truck actually performed this stop?

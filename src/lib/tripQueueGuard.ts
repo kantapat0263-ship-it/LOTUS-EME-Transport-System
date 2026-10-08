@@ -1,4 +1,5 @@
-import { doc, runTransaction, serverTimestamp, type Firestore, type Transaction } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where, type Firestore, type Transaction } from 'firebase/firestore'
+import { incomingStopsForTrip } from './calculations'
 import { resourceGuardKeys } from './continuousQueue'
 import type { Trip } from '@/types/models'
 import type { QueueSourceAssignment } from '@/types/continuous-queue'
@@ -186,15 +187,38 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     return savedPatch
   })
 }
-export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops']): Promise<void> {
+/**
+ * ลบทริป — ทุกทางที่ลบทริปต้องผ่านตัวนี้ (ใบสรุป/หน้าประวัติ ลบทีละใบ/หลายใบ/ล้างข้อมูลไม่สมบูรณ์)
+ * - ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา: pointer อยู่ที่จุดต้นทาง ลบปลายทางแล้วงานหายจากทุกหน้าเงียบ ๆ
+ *   (เช็คจากทริปวันเดียวกันก่อนเปิด transaction — transaction ฝั่ง client query ไม่ได้ ยังมีช่องแคบมากถ้ามีคนโยกเข้าพร้อมกัน)
+ * - supersede = จุดที่ลบเคยเลื่อนไปวันใหม่ → ปลดใบวันใหม่ในคำสั่งเดียวกัน · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ
+ */
+export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops'], supersede?: { id: string; by: string }): Promise<void> {
+  const ref = doc(db, 'trips', id)
+  const current = await getDoc(ref)
+  if (!current.exists()) return
+  const tripDate = current.data().tripDate
+  if (tripDate) {
+    const sameDay = await getDocs(query(collection(db, 'trips'), where('tripDate', '==', tripDate)))
+    const live = sameDay.docs.map(d => ({ ...(d.data() as Trip), id: d.id })).filter(t => t.status !== 'Cancelled')
+    const incoming = incomingStopsForTrip(live, id)
+    if (incoming.length) {
+      const from = [...new Set(incoming.map(job => [job.fromDriverName, job.fromVehiclePlate].filter(Boolean).join(' ')))].join(', ')
+      throw new Error(`ทริปนี้ยังรับงานที่โยกมาจาก ${from} (${incoming.length} จุด) — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อนลบ`)
+    }
+  }
   await runTransaction(db, async tx => {
-    const ref = doc(db, 'trips', id)
     const snap = await tx.get(ref)
     if (!snap.exists()) return
     if (snap.data().queueLink) throw new Error(MANAGED_MESSAGE)
     if (expectedStops) assertTripStopsUnchanged(snap.data().stops, expectedStops)
+    const requestRef = supersede ? doc(db, 'vehicleRequests', supersede.id) : null
+    const request = requestRef ? await tx.get(requestRef) : null
+    if (supersede && !(snap.data().stops || []).some((stop: any) => stop.postponedRequestId === supersede.id)) throw new Error('ใบที่เลื่อนไว้ไม่ตรงกับจุดงานที่แก้')
+    if (request?.exists() && ['approved', 'partial'].includes(request.data().status)) throw new Error('ใบที่เลื่อนไว้ถูกจัดรถแล้ว ต้องนำงานออกจากทริปวันใหม่ก่อนเปลี่ยนผล')
     const guards = await readGuards(db, tx, resourceGuardKeys(snap.data() as Trip))
     touchGuards(tx, guards)
+    if (requestRef && request?.exists()) tx.update(requestRef, { status: 'superseded', supersededAt: serverTimestamp(), supersededByUser: supersede!.by })
     tx.delete(ref)
   })
 }

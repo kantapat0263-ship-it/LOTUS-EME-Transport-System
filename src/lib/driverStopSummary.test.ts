@@ -49,7 +49,7 @@ describe('fair classification of observed driver stops', () => {
     expect(classifyDriverStops([...driving, ...afterGap], office, [])[0].kind).toBe('review')
   })
 })
-const trip = (patch: Partial<Trip> = {}): Trip => ({ id: 't1', tripId: 'T-0510-0001', tripDate: '2026-10-05', driverId: 'd1', driverName: 'สมคิด', vehicleId: 'v1', vehiclePlate: '40-1000', departureSiteId: '', stops: [], status: 'Planned', ...patch })
+const trip = (patch: Partial<Trip> = {}): Trip => ({ id: 't1', tripId: 'T-0510-0001', tripDate: '2026-10-05', driverId: 'd1', driverName: 'สมคิด', vehicleId: 'v1', vehiclePlate: '40-1000', departureSiteId: '', stops: [{ siteId: 's0', siteName: 'งานตัวอย่าง (ไม่มีพิกัด)', cargoDetails: '', order: 1 }], status: 'Planned', ...patch })
 const trail = (patch: Partial<VehicleTrailDoc> = {}): VehicleTrailDoc => ({ id: '2026-10-05__gps1', date: '2026-10-05', deviceId: 'gps1', licensePlate: '40-1000', points: drivenThenStop(60, 30), ...patch })
 describe('weekly attribution and normalized review time', () => {
   it('uses the actual driver identity and historical trail plate, then normalizes only review minutes per 100 GPS km', () => {

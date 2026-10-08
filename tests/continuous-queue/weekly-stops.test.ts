@@ -33,7 +33,7 @@ beforeEach(async () => {
   await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${project}/databases/(default)/documents`, { method: 'DELETE' })
   await Promise.all([
     db.doc('users/admin').set({ role: 'admin', active: true, name: 'ชื่อจริง' }),
-    db.doc('trips/t1').set({ tripId: 'T-0510-0001', tripDate: date, driverId: 'd1', driverName: 'สมคิด', vehiclePlate: '40-1000', vehicleId: 'v1', stops: [], status: 'Completed', sourceVRIds: ['VR-0510-0001'], fuelCost: 300, totalDistanceKm: 50 }),
+    db.doc('trips/t1').set({ tripId: 'T-0510-0001', tripDate: date, driverId: 'd1', driverName: 'สมคิด', vehiclePlate: '40-1000', vehicleId: 'v1', stops: [{ siteId: 's0', siteName: 'งานตัวอย่าง (ไม่มีพิกัด)', cargoDetails: '', order: 1 }], status: 'Completed', sourceVRIds: ['VR-0510-0001'], fuelCost: 300, totalDistanceKm: 50 }),
     db.doc(`vehiclePositionTrails/${date}__gps1`).set({ deviceId: 'gps1', licensePlate: '40-1000', date, points }),
   ])
 })

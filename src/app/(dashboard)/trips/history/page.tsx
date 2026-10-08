@@ -369,15 +369,18 @@ export default function TripHistoryPage() {
   }
 
   const confirmBulkDelete = async () => {
-    try {
-      const promises = Array.from(selectedIds).map(id => deleteTripWithQueueGuard(db, id))
-      await Promise.all(promises)
-      toast({ title: "ลบสำเร็จ", description: `ลบทั้งหมด ${selectedIds.size} รายการเรียบร้อยแล้ว` })
+    // ลบทีละใบแบบไม่หยุดทั้งชุด — ใบที่ถูกห้าม (เช่น ยังถืองานที่คันอื่นโยกเข้ามา) แจ้งเหตุผลและคงไว้ในรายการที่เลือก
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(ids.map(id => deleteTripWithQueueGuard(db, id)))
+    const failed = results.flatMap((r, i) => (r.status === "rejected" ? [{ id: ids[i], reason: (r.reason as any)?.message || "ลบไม่สำเร็จ" }] : []))
+    if (failed.length === 0) {
+      toast({ title: "ลบสำเร็จ", description: `ลบทั้งหมด ${ids.length} รายการเรียบร้อยแล้ว` })
       setSelectedIds(new Set())
       setIsBulkDeleteOpen(false)
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถลบบางรายการได้", variant: "destructive" })
+      return
     }
+    setSelectedIds(new Set(failed.map(f => f.id)))
+    toast({ title: `ลบได้ ${ids.length - failed.length} รายการ · ลบไม่ได้ ${failed.length} รายการ`, description: failed[0].reason, variant: "destructive" })
   }
 
   const handleCleanup = async () => {
@@ -389,10 +392,20 @@ export default function TripHistoryPage() {
     }
     
     if (confirm(`พบข้อมูลไม่สมบูรณ์ ${incomplete.length} รายการ ต้องการลบทั้งหมดหรือไม่?`)) {
+      // ทริปที่ไม่มีงานตัวเองแต่ยังถืองานที่คันอื่นโยกเข้ามา = ไม่ใช่ข้อมูลเสีย — ตัวลบกลางปฏิเสธ ข้ามไปพร้อมแจ้ง
+      let skipped = 0
+      let reason = ""
       for (const t of incomplete) {
-        await deleteTripWithQueueGuard(db, t.id);
+        try {
+          await deleteTripWithQueueGuard(db, t.id);
+        } catch (e: any) {
+          skipped++
+          reason = reason || e?.message || ""
+        }
       }
-      toast({ title: `ลบข้อมูลไม่สมบูรณ์ ${incomplete.length} รายการเรียบร้อยแล้ว` });
+      toast(skipped
+        ? { title: `ลบ ${incomplete.length - skipped} รายการ · ข้าม ${skipped} รายการ`, description: reason, variant: "destructive" }
+        : { title: `ลบข้อมูลไม่สมบูรณ์ ${incomplete.length} รายการเรียบร้อยแล้ว` });
     }
   }
 

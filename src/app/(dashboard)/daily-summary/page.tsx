@@ -45,6 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
+import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
 import { useDriverLeaves } from "@/hooks/use-driver-leaves"
@@ -449,7 +450,7 @@ export default function DailySummaryPage() {
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
       // ไม่เคยใช้ imageBase64 เลย การส่ง base64 หลาย MB เสี่ยงชนลิมิต body ของ Vercel (~4.5MB)
       // ทำปุ่มพังทั้งปุ่มในวันที่ทริปเยอะ + ทำให้กดส่งช้าโดยไม่จำเป็น
-      const tripData = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
+      const tripData = trips.filter((t) => !isHiddenFromReport(t)).map((trip: any) => {
         const incoming = incomingStopsForTrip(trips as any, trip.id)
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
         const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
@@ -506,16 +507,16 @@ export default function DailySummaryPage() {
   // รถที่ "โยกงานออกครบทุกจุด" (มีคันปลายทางรองรับ + ไม่มีงานโยกเข้า) = ไม่ได้ออกวิ่ง
   // → ไม่ต้องโชว์ในใบสรุป/ข้อความ LINE เลย (งานไปแสดงเป็นแถว "รับโยกงานต่อ" ใต้คันปลายทางแทน)
   // จุดที่แค่ "เลื่อน" ไม่นับ — การ์ดยังโชว์พร้อมป้าย 🚫 เพื่อคงบันทึกประจำวันไว้
-  const isFullyMovedOut = (trip: Trip): boolean => {
-    const stops = trip.stops || []
-    if (stops.length === 0) return false
-    if (incomingStopsForTrip(trips as any, trip.id).length > 0) return false
-    return stops.every(s => s.outcome && s.outcome !== 'delivered' && (s as any).reassignedToTripId)
-  }
+  // คันปลายทางถูกลบ/ยกเลิก = ห้ามซ่อน (ไม่งั้นงานหายจากใบสรุป/LINE เงียบ ๆ) — แผงจะขึ้นป้ายให้เลือกคันใหม่
+  const isFullyMovedOut = (trip: Trip): boolean =>
+    isFullyMovedOutLive(trip as any, trips as any, incomingStopsForTrip(trips as any, trip.id).length)
+  // ไม่ขึ้นรูป/ข้อความ LINE/คัดลอก/"รวม X เที่ยว": โยกออกครบ หรือทริปเปล่า (สร้างทริปรับโยกแล้วเปลี่ยนใจ)
+  const isHiddenFromReport = (trip: Trip): boolean =>
+    isFullyMovedOut(trip) || isEmptyTrip(trip as any, incomingStopsForTrip(trips as any, trip.id).length)
 
   const buildSummaryText = () => {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
-    const driverLinks = trips.filter((t) => !isFullyMovedOut(t)).map((trip: any) => {
+    const driverLinks = trips.filter((t) => !isHiddenFromReport(t)).map((trip: any) => {
       const incoming = incomingStopsForTrip(trips as any, trip.id)
       const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean)))
       // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
@@ -979,13 +980,19 @@ export default function DailySummaryPage() {
     if (!stop) return
     const verb = (stop as any).adhoc ? "ลบงานแทรก" : "ยกเลิกงาน"
     const remaining = (trip.stops || []).filter((_, i) => i !== sIdx)
+    // งานที่เคยเลื่อนไปวันอื่น → ปลดใบวันใหม่พร้อมกัน (ใบวันใหม่ถูกจัดรถแล้ว = guard ปฏิเสธ ต้องเอางานออกจากทริปวันนั้นก่อน)
+    const postponedReqId = (stop as any).postponedRequestId as string | undefined
+    const supersede = postponedReqId ? { id: postponedReqId, by: recordedBy || user?.email || "" } : undefined
+    const postponedNote = postponedReqId ? `\nใบที่เลื่อนไปวันอื่นของงานนี้จะถูกยกเลิกด้วย` : ""
+    // ยังรับงานที่คันอื่นโยกเข้ามา → ห้ามลบทั้งใบ (งานที่โยกมาจะหายเงียบ) เก็บทริปไว้ถืองานนั้น
+    const incomingCount = incomingStopsForTrip(trips as any, trip.id).length
 
-    if (remaining.length === 0) {
+    if (remaining.length === 0 && incomingCount === 0) {
       if (!window.confirm(
         `${verb} "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
-        `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ ใช่หรือไม่?`
+        `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ ใช่หรือไม่?${postponedNote}`
       )) return
-      try { await deleteTripWithQueueGuard(db, trip.id, trip.stops) } catch (e: any) {
+      try { await deleteTripWithQueueGuard(db, trip.id, trip.stops, supersede) } catch (e: any) {
         toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
       }
       setTrips(prev => prev.filter(t => t.id !== trip.id))
@@ -996,11 +1003,14 @@ export default function DailySummaryPage() {
 
     if (!window.confirm(
       `${verb} "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?\n` +
-      `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่`
+      `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่` +
+      (remaining.length === 0 ? `\nทริปนี้ยังรับงานที่โยกมาจากคันอื่น ${incomingCount} จุด จึงเก็บทริปไว้ (ไม่ลบ)` : "") +
+      postponedNote
     )) return
     if (!await applyStops(trip, remaining, true, {
       expectedStops: trip.stops,
       sourceIndexes: trip.stops.map((_, index) => index).filter(index => index !== sIdx),
+      ...(supersede ? { supersedeRequest: supersede } : {}),
     })) return
     await recalcTripDistance(trip, remaining) // ลบงานแล้ว กม. ต้องลดตามด้วย
     toast({ title: `${verb}แล้ว`, description: `เอา "${stop.siteName}" ออกจากใบสรุปเรียบร้อย` })
@@ -1016,6 +1026,26 @@ export default function DailySummaryPage() {
     // ด่านวันลา: เฉพาะตอนเลือกคนใหม่ (ล้างกลับเป็นคนขับประจำไม่ถาม) · ยกเลิก = ไม่เขียนอะไร select เด้งกลับค่าเดิมเอง
     if (driverId && target && !(await passLeaveGate(`actual:${tripId}:${driverId}`, [{ driverId, date: target.tripDate }]))) return
     if (!await persistTripPatch(tripId, { actualDriverId: driverId, actualDriverName: name })) return
+    const touched = new Set<string>() // ทริปที่แก้ไปแล้วในคำสั่งนี้ (กันเขียนซ้ำด้วยข้อมูลเก่า)
+
+    // ---- ยกเลิก/เปลี่ยนคนขับแทน → เสนอเอางานที่เคยโยกมาอัตโนมัติ กลับคืนทริปเดิมของคนขับแทนคนก่อน ----
+    // (เดิมทำเฉพาะตอนยกเลิก — เปลี่ยนเป็นอีกคนแล้วงานคนก่อนค้างบนรถ และเครดิตไปเข้าคนใหม่)
+    if (prevActualDriverId && prevActualDriverId !== driverId) {
+      for (const own of trips.filter(t => t.id !== tripId && t.driverId === prevActualDriverId && !isManagedTrip(t))) {
+        const moved = (own.stops || []).filter(s => s.outcome === 'reassigned' && s.reassignedToTripId === tripId)
+        if (moved.length === 0) continue
+        const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
+        if (!ok) continue
+        if (!await applyStops(own, (own.stops || []).map(s =>
+          (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
+        ))) {
+          toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้คืนงานให้รถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
+          return
+        }
+        touched.add(own.id)
+        toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
+      }
+    }
 
     // ---- ลิงก์อัตโนมัติ: คนขับแทนมีทริปของตัวเองวันเดียวกัน = ขับสองคันพร้อมกันไม่ได้ ----
     if (driverId && target) {
@@ -1046,24 +1076,21 @@ export default function DailySummaryPage() {
           toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้โยกงานจากรถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
           return
         }
+        touched.add(own.id)
         toast({ title: "🔗 โยกงานให้อัตโนมัติแล้ว", description: `${movable.length} จุดของ ${name} ย้ายมาลงรถ ${target.vehiclePlate}` })
       }
     }
 
-    // ---- ยกเลิกขับแทน → เสนอเอางานที่เคยโยกมาอัตโนมัติ กลับคืนทริปเดิม ----
-    if (!driverId && prevActualDriverId) {
-      for (const own of trips.filter(t => t.id !== tripId && t.driverId === prevActualDriverId && !isManagedTrip(t))) {
-        const moved = (own.stops || []).filter(s => s.outcome === 'reassigned' && s.reassignedToTripId === tripId)
-        if (moved.length === 0) continue
-        const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
-        if (!ok) continue
-        if (!await applyStops(own, (own.stops || []).map(s =>
-          (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
-        ))) {
-          toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้คืนงานให้รถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
+    // ---- ชื่อผู้รับงานในจุดที่คันอื่นโยกมาคันนี้ → เปลี่ยนตามคนขับจริงคนใหม่ (รูป/LINE ขึ้นชื่อคนที่ขับจริง) ----
+    if (target) {
+      const label = name || target.driverName
+      for (const src of trips.filter(t => t.id !== tripId && !touched.has(t.id) && !isManagedTrip(t))) {
+        const renamed = renameMoveTarget(src.stops || [], tripId, label)
+        if (!renamed) continue
+        if (!await applyStops(src, renamed)) {
+          toast({ title: "บันทึกคนขับแล้ว แต่ชื่อในงานที่โยกมายังไม่อัปเดต", description: `รถ ${src.vehiclePlate} — กรุณาโหลดข้อมูลใหม่`, variant: "destructive" })
           return
         }
-        toast({ title: "↩️ คืนงานกลับทริปเดิมแล้ว", description: `${moved.length} จุดกลับไปที่รถ ${own.vehiclePlate}` })
       }
     }
   }
@@ -1134,6 +1161,8 @@ export default function DailySummaryPage() {
     }
     // เปลี่ยนผลและปลดใบที่เคยเลื่อนใน transaction เดียว โดยเก็บใบเก่าไว้ตรวจย้อนหลัง
     const prev = trip.stops?.[stopIdx] as any
+    // กดปุ่มที่เลือกอยู่แล้วซ้ำ = ไม่ทำอะไร (เดิมล้างคันปลายทาง/เหตุผลทิ้ง งานหายจากคันที่รับต่อ)
+    if (isSameOutcome(prev, outcome)) return
     const newStops = buildStops(trip, stopIdx, (s) => {
       const base = stripOutcome(s)
       if (outcome === 'delivered') return base // back to "as planned"
@@ -1302,7 +1331,7 @@ export default function DailySummaryPage() {
         ...s,
         reassignedToTripId: target.id,
         reassignedToVehiclePlate: target.vehiclePlate,
-        reassignedToDriverName: target.driverName,
+        reassignedToDriverName: tripDriverLabel(target), // คนขับจริง (ขับแทน) — ไม่ใช่คนขับประจำที่ลา
       }
     })
     await applyStops(trip, newStops, true)
@@ -1574,10 +1603,15 @@ export default function DailySummaryPage() {
                 : '-- เลือกคันที่รับงานไปทำ (กม. ลงคันนั้น) --'}
             </option>
             {trips.filter(t => t.id !== trip.id && !isManagedTrip(t)).map(t => (
-              <option key={t.id} value={t.id}>{t.driverName} • {t.vehiclePlate}</option>
+              <option key={t.id} value={t.id}>{tripDriverLabel(t)} • {t.vehiclePlate}</option>
             ))}
             <option value="__new__">➕ โยกให้คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>
           </select>
+        )}
+        {(current === 'reassigned' || current === 'driver-refused') && stop.reassignedToTripId && !liveMoveTarget(stop, trips) && (
+          <p className="text-[11px] font-semibold text-red-400">
+            ⚠️ คันปลายทางเดิม{stop.reassignedToVehiclePlate ? ` (${stop.reassignedToVehiclePlate})` : ""} ไม่อยู่แล้ว (ถูกลบ/ยกเลิก) — เลือกคันใหม่ ไม่งั้นงานนี้ไม่มีคนรับ
+          </p>
         )}
       </div>
     )
@@ -1982,7 +2016,7 @@ export default function DailySummaryPage() {
 
                     <div className="mt-8 flex justify-between text-sm">
                       <div className="space-y-1 font-bold">
-                        <p>รวม: {trips.filter((t) => !isFullyMovedOut(t)).length} เที่ยว</p>
+                        <p>รวม: {trips.filter((t) => !isHiddenFromReport(t)).length} เที่ยว</p>
                         <p>ระยะทางรวม (วิ่งจริง): {totalDistance.toFixed(1)} กม.</p>
                         <p>ค่าน้ำมันโดยประมาณ: {totalFuelCost.toLocaleString('th-TH', { maximumFractionDigits: 0 })} บาท</p>
                       </div>
