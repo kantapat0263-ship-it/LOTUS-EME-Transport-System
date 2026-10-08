@@ -993,7 +993,7 @@ export default function DailySummaryPage() {
         `${verb} "${stop.siteName}" — ทริปนี้จะไม่เหลืองาน\n` +
         `ระบบจะลบทริป ${trip.vehiclePlate} (${trip.driverName}) ทิ้งทั้งใบ ใช่หรือไม่?${postponedNote}`
       )) return
-      try { await deleteTripWithQueueGuard(db, trip.id, trip.stops, supersede) } catch (e: any) {
+      try { await deleteTripWithQueueGuard(db, trip.id, trip.stops, supersede, { cancelJob: true }) } catch (e: any) {
         toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
       }
       setTrips(prev => prev.filter(t => t.id !== trip.id))

@@ -71,4 +71,5 @@ it('ยกเลิกงานที่เคยเลื่อนไปวั�
   const lastStop = arrange(false, { stops: [postponed] })
   await lastStop.handler(lastStop.trip, 0)
   expect(lastStop.remove.mock.calls[0][3]).toEqual({ id: 'VR-NEW', by: 'คนจัดรถ' })
+  expect(lastStop.remove.mock.calls[0][4]).toEqual({ cancelJob: true })
 })

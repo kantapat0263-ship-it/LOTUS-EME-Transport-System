@@ -106,7 +106,7 @@ async function liveOutgoing(db: Firestore, tx: Transaction, trip: Trip, id: stri
   for (const [moveId, count] of moveCounts(trip)) {
     if (moveId === id) continue
     const live = (await tx.get(doc(db, 'trips', moveId))).data() as Trip | undefined
-    if (!live || live.status === 'Cancelled') continue
+    if (!live || live.status === 'Cancelled' || tripDay(live) !== tripDay(trip)) continue
     const stop = (trip.stops || []).find(s => s.reassignedToTripId === moveId)
     out.push({ label: [stop?.reassignedToDriverName || live.actualDriverName || live.driverName, stop?.reassignedToVehiclePlate || live.vehiclePlate].filter(Boolean).join(' '), count })
   }
@@ -256,10 +256,11 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
  * ลบทริป — ทุกทางที่ลบทริปต้องผ่านตัวนี้ (ใบสรุป/หน้าประวัติ ลบทีละใบ/หลายใบ/ล้างข้อมูลไม่สมบูรณ์)
  * - ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา: pointer อยู่ที่จุดต้นทาง ลบปลายทางแล้วงานหายจากทุกหน้าเงียบ ๆ
  *   (เช็คใน callback หลังอ่านทริปใน transaction — คนโยกเข้าพร้อมกันจะแตะทริปนี้ ทำให้ transaction ชนแล้ว retry มาเจองานโยกเข้า)
- * - ห้ามลบทริปต้นทางที่ยังมีงานโยกไปให้คันที่ยังอยู่ (ข้อมูลงานอยู่ที่จุดต้นทาง) — ยกเว้นส่ง expectedStops มา (= ปุ่ม "ยกเลิกงาน")
+ * - ห้ามลบทริปต้นทางที่ยังมีงานโยกไปให้คันที่ยังอยู่ (ข้อมูลงานอยู่ที่จุดต้นทาง) — ยกเว้น `cancelJob` (ปุ่ม "ยกเลิกงาน" ลบงานจุดสุดท้ายโดยตั้งใจ)
+ *   และทริปที่ยกเลิกแล้ว (ไม่ถูกนับเป็นงานโยกเข้าของคันไหนอยู่แล้ว ลบไม่ทำให้อะไรหาย)
  * - supersede = จุดที่ลบเคยเลื่อนไปวันใหม่ → ปลดใบวันใหม่ในคำสั่งเดียวกัน · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ
  */
-export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops'], supersede?: { id: string; by: string }): Promise<void> {
+export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops'], supersede?: { id: string; by: string }, options: { cancelJob?: boolean } = {}): Promise<void> {
   const ref = doc(db, 'trips', id)
   await runTransaction(db, async tx => {
     const snap = await tx.get(ref)
@@ -267,8 +268,7 @@ export async function deleteTripWithQueueGuard(db: Firestore, id: string, expect
     if (snap.data().queueLink) throw new Error(MANAGED_MESSAGE)
     const incoming = await liveIncoming(db, id, tripDay(snap.data() as Trip))
     if (incoming.length) throw new Error(incomingMessage('ลบ', incoming))
-    // expectedStops = ปุ่ม "ยกเลิกงาน" ลบงานจุดสุดท้ายโดยตั้งใจ (งานนั้นยกเลิกจริงทั้งสองคัน) → ไม่ห้ามเรื่องงานโยกออก
-    if (!expectedStops) {
+    if (!options.cancelJob && snap.data().status !== 'Cancelled') {
       const outgoing = await liveOutgoing(db, tx, snap.data() as Trip, id)
       if (outgoing.length) throw new Error(outgoingMessage('ลบ', outgoing))
     }

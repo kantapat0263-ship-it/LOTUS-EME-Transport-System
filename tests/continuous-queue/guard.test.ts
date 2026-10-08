@@ -136,10 +136,26 @@ it('ปุ่ม "ยกเลิกงาน" ลบทริปที่เห
     await setDoc(doc(context.firestore(), 'trips', 'TC'), { tripDate: '2026-10-07', driverId: 'D4', vehicleId: 'V4', status: 'Planned', stops: moved('TX') })
     await setDoc(doc(context.firestore(), 'trips', 'TD'), { tripDate: '2026-10-07', driverId: 'D5', vehicleId: 'V5', status: 'Planned', stops: moved('GONE') })
   })
-  await deleteTripWithQueueGuard(db, 'TA', moved('TB') as any)
+  // ส่ง expectedStops อย่างเดียว (กันข้อมูลเปลี่ยน) ไม่ได้แปลว่ายกเลิกงาน → ยังห้าม
+  await expect(deleteTripWithQueueGuard(db, 'TA', moved('TB') as any)).rejects.toThrow('โยกไปให้')
+  await deleteTripWithQueueGuard(db, 'TA', moved('TB') as any, undefined, { cancelJob: true })
   await deleteTripWithQueueGuard(db, 'TC')
   await deleteTripWithQueueGuard(db, 'TD')
   for (const id of ['TA', 'TC', 'TD']) expect((await getDoc(doc(db, 'trips', id))).exists()).toBe(false)
+})
+
+it('ทริปต้นทางที่ยกเลิกไปแล้วลบได้ (ไม่ถูกนับเป็นงานโยกเข้าอยู่แล้ว) · pointer ไปทริปคนละวันไม่บล็อกการลบ', async () => {
+  const db = staffDb()
+  const moved = (to: string) => [{ siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '', outcome: 'reassigned', reassignedToTripId: to, reassignedToVehiclePlate: 'บี' }]
+  await createTripWithQueueGuard(db, 'LIVE', { tripDate: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [] })
+  await createTripWithQueueGuard(db, 'NEXTDAY', { tripDate: '2026-10-08', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [] })
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'trips', 'OLD-CANCELLED'), { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Cancelled', stops: moved('LIVE') })
+    await setDoc(doc(context.firestore(), 'trips', 'CROSS-DAY'), { tripDate: '2026-10-07', driverId: 'D3', vehicleId: 'V3', status: 'Planned', stops: moved('NEXTDAY') })
+  })
+  await deleteTripWithQueueGuard(db, 'OLD-CANCELLED')
+  await deleteTripWithQueueGuard(db, 'CROSS-DAY')
+  for (const id of ['OLD-CANCELLED', 'CROSS-DAY']) expect((await getDoc(doc(db, 'trips', id))).exists()).toBe(false)
 })
 
 it('ลบทริปพร้อมปลดใบที่เลื่อนไปวันใหม่ · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ', async () => {
