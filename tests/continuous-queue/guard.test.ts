@@ -139,3 +139,35 @@ it('ลบทริปพร้อมปลดใบที่เลื่อน�
   await expect(deleteTripWithQueueGuard(db, 'TQ', doneStops as any, { id: 'VR-DONE', by: 'คนจัดรถ' })).rejects.toThrow('ถูกจัดรถแล้ว')
   expect((await getDoc(doc(db, 'trips', 'TQ'))).exists()).toBe(true)
 })
+
+it('โยกงานไปคันที่ไม่อยู่/ยกเลิกแล้ว (แท็บเก่า) = ปฏิเสธ · โยกสำเร็จแตะคันปลายทาง · ยกเลิกคันที่ถืองานโยกเข้า = ปฏิเสธ', async () => {
+  const db = staffDb()
+  const base = { tripDate: '2026-10-07', status: 'Planned' }
+  const job = { siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '' }
+  const moveTo = (to: string) => [{ ...job, outcome: 'reassigned', reassignedToTripId: to, reassignedToVehiclePlate: 'บี' }]
+  const edit = { expectedStops: [job] as any, sourceIndexes: [0] }
+  await createTripWithQueueGuard(db, 'SRC', { ...base, driverId: 'D1', vehicleId: 'V1', stops: [job] })
+  await createTripWithQueueGuard(db, 'DST', { ...base, driverId: 'D2', vehicleId: 'V2', stops: [] })
+  await createTripWithQueueGuard(db, 'DEAD', { ...base, status: 'Cancelled', driverId: 'D3', vehicleId: 'V3', stops: [] })
+  await expect(updateTripWithQueueGuard(db, 'SRC', { stops: moveTo('GONE') }, undefined, edit)).rejects.toThrow('คันปลายทาง')
+  await expect(updateTripWithQueueGuard(db, 'SRC', { stops: moveTo('DEAD') }, undefined, edit)).rejects.toThrow('คันปลายทาง')
+  expect((await getDoc(doc(db, 'trips', 'SRC'))).data()?.stops[0].outcome).toBeUndefined()
+  await updateTripWithQueueGuard(db, 'SRC', { stops: moveTo('DST') }, undefined, edit)
+  expect((await getDoc(doc(db, 'trips', 'DST'))).data()?.incomingTouchedAt).toBeTruthy()
+  await expect(updateTripWithQueueGuard(db, 'DST', { status: 'Cancelled' })).rejects.toThrow('ก่อนยกเลิก')
+  expect((await getDoc(doc(db, 'trips', 'DST'))).data()?.status).toBe('Planned')
+})
+
+it('ทริปเก่าที่ใช้ฟิลด์ date: ลบคันปลายทางที่ยังถืองานโยกเข้าไม่ได้ ทั้งปลายทางหรือต้นทางเป็นแบบ date', async () => {
+  const db = staffDb()
+  const moved = (to: string) => [{ siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '', outcome: 'reassigned', reassignedToTripId: to, reassignedToVehiclePlate: 'บี' }]
+  await env.withSecurityRulesDisabled(async context => {
+    const fs = context.firestore()
+    await setDoc(doc(fs, 'trips', 'OLD-DST'), { date: '2026-10-07', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [] })
+    await setDoc(doc(fs, 'trips', 'NEW-SRC'), { tripDate: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: moved('OLD-DST') })
+    await setDoc(doc(fs, 'trips', 'NEW-DST'), { tripDate: '2026-10-07', driverId: 'D3', vehicleId: 'V3', status: 'Planned', stops: [] })
+    await setDoc(doc(fs, 'trips', 'OLD-SRC'), { date: '2026-10-07', driverId: 'D4', vehicleId: 'V4', status: 'Planned', stops: moved('NEW-DST') })
+  })
+  await expect(deleteTripWithQueueGuard(db, 'OLD-DST')).rejects.toThrow('ก่อนลบ')
+  await expect(deleteTripWithQueueGuard(db, 'NEW-DST')).rejects.toThrow('ก่อนลบ')
+})

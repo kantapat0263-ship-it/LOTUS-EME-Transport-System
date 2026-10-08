@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
+import { renameMoveTarget } from '../../../lib/reassign'
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
   let value: ts.Expression | undefined
@@ -57,7 +58,7 @@ function secondaryUI(name: string, reverting = false) {
   const target = { ...trip(), driverId: 'D1', vehiclePlate: 'รถหนึ่ง', tripDate: '2026-10-07', ...(reverting ? { actualDriverId: 'D2' } : {}) }
   const other = { ...trip(), id: 'T2', driverId: 'D2', driverName: 'คนสอง', vehiclePlate: 'รถสอง', stops: [{ ...trip().stops[0], outcome: reverting ? 'reassigned' : 'delivered', reassignedToTripId: 'T1' }] }
   const toast = vi.fn(), persist = vi.fn().mockResolvedValue(true), apply = vi.fn().mockResolvedValue(false)
-  const deps = { trips: [target, other], driversData: [{ id: 'D2', name: 'คนสอง' }], vehiclesData: [{ id: 'V3', licensePlate: 'รถสาม', type: 'truck' }], allowOrdinaryEdit: () => true, passLeaveGate: async () => true, persistTripPatch: persist, isManagedTrip: () => false, window: { confirm: () => true }, applyStops: apply, stripOutcome: (s: any) => s, recordedBy: 'ผู้จัด', toast, calculateFuelCost: () => 0 }
+  const deps = { trips: [target, other], driversData: [{ id: 'D2', name: 'คนสอง' }], vehiclesData: [{ id: 'V3', licensePlate: 'รถสาม', type: 'truck' }], allowOrdinaryEdit: () => true, passLeaveGate: async () => true, persistTripPatch: persist, isManagedTrip: () => false, window: { confirm: () => true }, applyStops: apply, stripOutcome: (s: any) => s, recordedBy: 'ผู้จัด', toast, calculateFuelCost: () => 0, renameMoveTarget }
   const handler = new Function(...Object.keys(deps), `${body(name)}return work`)(...Object.values(deps))
   return { handler, toast, persist, apply }
 }
@@ -103,4 +104,18 @@ it.each([true, false])('สร้างคันรับโยกจริง�
   expect(apply.mock.calls[0][3]).toMatchObject({ expectedStops: original.stops, sourceIndexes: [0], createTarget: { data: { vehicleId: 'V2', driverId: 'D2', stops: [] } } })
   expect(apply.mock.calls[0][1][0].reassignedToTripId).toBe(apply.mock.calls[0][3].createTarget.id)
   expect(setTrips.mock.calls.length).toBe(saved ? 1 : 0)
+})
+it('เปลี่ยนคนขับแทน D2→D3: ทริปที่คืน/โยกในคำสั่งเดียวกันได้ชื่อผู้รับงานคนใหม่ด้วย (ไม่ค้างชื่อเดิม)', async () => {
+  const moved = (name: string, outcome = 'reassigned') => ({ siteName: 'x', order: 1, outcome, reassignedToTripId: 'T1', reassignedToVehiclePlate: 'รถหนึ่ง', reassignedToDriverName: name })
+  const t1 = { id: 'T1', driverId: 'D1', driverName: 'คนหนึ่ง', actualDriverId: 'D2', vehiclePlate: 'รถหนึ่ง', tripDate: '2026-10-07', stops: [] }
+  const t2 = { id: 'T2', driverId: 'D2', driverName: 'คนสอง', vehiclePlate: 'รถสอง', stops: [moved('คนสอง'), moved('คนสอง', 'driver-refused')] }
+  const t3 = { id: 'T3', driverId: 'D3', driverName: 'คนสาม', vehiclePlate: 'รถสาม', stops: [{ siteName: 'y', order: 1 }, moved('ชื่อเก่า')] }
+  const apply = vi.fn().mockResolvedValue(true)
+  const strip = ({ outcome: _o, reassignedToTripId: _t, reassignedToVehiclePlate: _p, reassignedToDriverName: _n, ...s }: any) => s
+  const deps = { trips: [t1, t2, t3], driversData: [{ id: 'D3', name: 'คนสาม' }], allowOrdinaryEdit: () => true, passLeaveGate: async () => true, persistTripPatch: vi.fn().mockResolvedValue(true), isManagedTrip: () => false, window: { confirm: () => true }, applyStops: apply, stripOutcome: strip, recordedBy: 'ผู้จัด', toast: vi.fn(), renameMoveTarget }
+  const handler = new Function(...Object.keys(deps), `${body('setActualDriver')}return work`)(...Object.values(deps))
+  await handler('T1', 'D3')
+  expect(apply.mock.calls.map((call) => call[0].id)).toEqual(['T2', 'T3'])
+  expect(apply.mock.calls[0][1]).toEqual([{ siteName: 'x', order: 1 }, moved('คนสาม', 'driver-refused')])
+  expect(apply.mock.calls[1][1].map((s: any) => s.reassignedToDriverName)).toEqual(['คนสาม', 'คนสาม'])
 })

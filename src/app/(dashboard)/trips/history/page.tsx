@@ -380,6 +380,7 @@ export default function TripHistoryPage() {
       return
     }
     setSelectedIds(new Set(failed.map(f => f.id)))
+    setIsBulkDeleteOpen(false)
     toast({ title: `ลบได้ ${ids.length - failed.length} รายการ · ลบไม่ได้ ${failed.length} รายการ`, description: failed[0].reason, variant: "destructive" })
   }
 

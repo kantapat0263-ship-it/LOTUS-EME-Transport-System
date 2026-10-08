@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where, type Firestore, type Transaction } from 'firebase/firestore'
+import { collection, doc, getDocs, query, runTransaction, serverTimestamp, where, type Firestore, type Transaction } from 'firebase/firestore'
 import { incomingStopsForTrip } from './calculations'
 import { resourceGuardKeys } from './continuousQueue'
 import type { Trip } from '@/types/models'
@@ -79,6 +79,25 @@ function sourceNotePatch(trip: Trip, requests: Awaited<ReturnType<typeof sourceW
   const updates = new Map(requests.flatMap(request => request.noteUpdates.map(({ stopIndex, ...note }) => [stopIndex, note] as const)))
   if (!updates.size) return {}
   return { stops: trip.stops.map((stop, index) => updates.has(index) ? { ...stop, ...updates.get(index) } : stop) }
+}
+
+const tripDay = (trip: Trip) => trip.tripDate || (trip as Trip & { date?: string }).date || ''
+const isMovedStop = (stop: Trip['stops'][number]) => !!stop.reassignedToTripId && !!stop.outcome && stop.outcome !== 'delivered'
+const moveTargets = (trip: Trip) => new Set((trip.stops || []).filter(isMovedStop).map(stop => stop.reassignedToTripId as string))
+
+/** งานที่คันอื่นโยกเข้าทริป id (ทริปวันเดียวกันที่ยังไม่ยกเลิก — รวมทริปเก่าที่ใช้ฟิลด์ `date`)
+ *  query ฝั่ง client อยู่นอก read set ของ transaction → ต้องเรียกใน callback ให้รันใหม่ทุกครั้งที่ retry
+ *  และการโยกเข้าต้องแตะเอกสารปลายทาง (incomingTouchedAt) ให้ transaction ที่อ่านปลายทางไว้ชนแล้ว retry */
+async function liveIncoming(db: Firestore, id: string, day: string) {
+  if (!day) return []
+  const snaps = await Promise.all(['tripDate', 'date'].map(field => getDocs(query(collection(db, 'trips'), where(field, '==', day)))))
+  const byId = new Map(snaps.flatMap(snap => snap.docs).map(d => [d.id, { ...(d.data() as Trip), id: d.id }]))
+  return incomingStopsForTrip([...byId.values()].filter(t => t.status !== 'Cancelled'), id)
+}
+
+function incomingMessage(action: string, incoming: Awaited<ReturnType<typeof liveIncoming>>) {
+  const from = [...new Set(incoming.map(job => [job.fromDriverName, job.fromVehiclePlate].filter(Boolean).join(' ')))].join(', ')
+  return `ทริปนี้ยังรับงานที่โยกมาจาก ${from} (${incoming.length} จุด) — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อน${action}`
 }
 
 function checkExpected(trip: Trip, sources?: TripSourceAllocation) {
@@ -163,6 +182,18 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
       if (target.id === id || target.data.queueLink || !target.data.driverId || !target.data.vehicleId || target.data.tripDate !== after.tripDate || !Array.isArray(target.data.stops) || target.data.stops.length || !after.stops.some(stop => stop.reassignedToTripId === target.id)) throw new Error('ข้อมูลทริปรับโยกไม่ตรงกับงานต้นทาง')
       if ((await tx.get(targetRef)).exists()) throw new Error('รหัสเที่ยววิ่งถูกใช้แล้ว กรุณาจัดคิวใหม่')
     }
+    // ยกเลิกทริปที่ยังถืองานโยกเข้า = งานหายเงียบเหมือนลบ
+    if (patch.status === 'Cancelled' && before.status !== 'Cancelled') {
+      const incoming = await liveIncoming(db, id, tripDay(before))
+      if (incoming.length) throw new Error(incomingMessage('ยกเลิก', incoming))
+    }
+    // คันปลายทางใหม่ของงานที่โยกออกต้องยังอยู่จริง (แท็บเก่าอาจยังเห็นคันที่ถูกลบ/ยกเลิกไปแล้ว)
+    const beforeTargets = moveTargets(before)
+    const moveRefs = [...moveTargets(after)].filter(moveId => !beforeTargets.has(moveId) && moveId !== id && moveId !== target?.id).map(moveId => doc(db, 'trips', moveId))
+    for (const moveRef of moveRefs) {
+      const live = (await tx.get(moveRef)).data() as Trip | undefined
+      if (!live || live.queueLink || live.status === 'Cancelled' || tripDay(live) !== tripDay(after)) throw new Error('คันปลายทางที่เลือกถูกลบ/ยกเลิก/เปลี่ยนวันไปแล้ว กรุณาโหลดหน้าใหม่แล้วเลือกคันใหม่')
+    }
     const supersede = stopEdit?.supersedeRequest
     const oldRequestRef = supersede ? doc(db, 'vehicleRequests', supersede.id) : null
     const oldRequest = oldRequestRef ? await tx.get(oldRequestRef) : null
@@ -179,6 +210,7 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     }
     const requests = await sourceWrites(db, tx, after, id, sources, before.stops?.length || 0)
     touchGuards(tx, guards)
+    for (const moveRef of moveRefs) tx.update(moveRef, { incomingTouchedAt: serverTimestamp() })
     if (target && targetRef) tx.set(targetRef, target.data)
     if (oldRequestRef && oldRequest?.exists()) tx.update(oldRequestRef, { status: 'superseded', supersededAt: serverTimestamp(), supersededByUser: supersede!.by })
     const savedPatch = requests.length ? { ...effectivePatch, ...sourceNotePatch(after, requests), sourceVRIds: [...new Set([...(after.sourceVRIds || []), ...requests.map(request => request.humanId)])] } : effectivePatch
@@ -190,27 +222,17 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
 /**
  * ลบทริป — ทุกทางที่ลบทริปต้องผ่านตัวนี้ (ใบสรุป/หน้าประวัติ ลบทีละใบ/หลายใบ/ล้างข้อมูลไม่สมบูรณ์)
  * - ห้ามลบทริปที่ยังถืองานที่คันอื่นโยกเข้ามา: pointer อยู่ที่จุดต้นทาง ลบปลายทางแล้วงานหายจากทุกหน้าเงียบ ๆ
- *   (เช็คจากทริปวันเดียวกันก่อนเปิด transaction — transaction ฝั่ง client query ไม่ได้ ยังมีช่องแคบมากถ้ามีคนโยกเข้าพร้อมกัน)
+ *   (เช็คใน callback หลังอ่านทริปใน transaction — คนโยกเข้าพร้อมกันจะแตะทริปนี้ ทำให้ transaction ชนแล้ว retry มาเจองานโยกเข้า)
  * - supersede = จุดที่ลบเคยเลื่อนไปวันใหม่ → ปลดใบวันใหม่ในคำสั่งเดียวกัน · ใบวันใหม่ถูกจัดรถแล้ว = ห้ามลบ
  */
 export async function deleteTripWithQueueGuard(db: Firestore, id: string, expectedStops?: Trip['stops'], supersede?: { id: string; by: string }): Promise<void> {
   const ref = doc(db, 'trips', id)
-  const current = await getDoc(ref)
-  if (!current.exists()) return
-  const tripDate = current.data().tripDate
-  if (tripDate) {
-    const sameDay = await getDocs(query(collection(db, 'trips'), where('tripDate', '==', tripDate)))
-    const live = sameDay.docs.map(d => ({ ...(d.data() as Trip), id: d.id })).filter(t => t.status !== 'Cancelled')
-    const incoming = incomingStopsForTrip(live, id)
-    if (incoming.length) {
-      const from = [...new Set(incoming.map(job => [job.fromDriverName, job.fromVehiclePlate].filter(Boolean).join(' ')))].join(', ')
-      throw new Error(`ทริปนี้ยังรับงานที่โยกมาจาก ${from} (${incoming.length} จุด) — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อนลบ`)
-    }
-  }
   await runTransaction(db, async tx => {
     const snap = await tx.get(ref)
     if (!snap.exists()) return
     if (snap.data().queueLink) throw new Error(MANAGED_MESSAGE)
+    const incoming = await liveIncoming(db, id, tripDay(snap.data() as Trip))
+    if (incoming.length) throw new Error(incomingMessage('ลบ', incoming))
     if (expectedStops) assertTripStopsUnchanged(snap.data().stops, expectedStops)
     const requestRef = supersede ? doc(db, 'vehicleRequests', supersede.id) : null
     const request = requestRef ? await tx.get(requestRef) : null

@@ -1027,6 +1027,9 @@ export default function DailySummaryPage() {
     if (driverId && target && !(await passLeaveGate(`actual:${tripId}:${driverId}`, [{ driverId, date: target.tripDate }]))) return
     if (!await persistTripPatch(tripId, { actualDriverId: driverId, actualDriverName: name })) return
     const touched = new Set<string>() // ทริปที่แก้ไปแล้วในคำสั่งนี้ (กันเขียนซ้ำด้วยข้อมูลเก่า)
+    // ชื่อผู้รับงานในจุดที่โยกมาคันนี้ = คนขับจริงคนใหม่ — รวมเข้ากับทุกการเขียนในคำสั่งนี้ (ทริปที่แก้แล้วไม่ถูกเขียนซ้ำ)
+    const label = name || target?.driverName || ""
+    const withLabel = (stops: Trip["stops"]) => renameMoveTarget(stops, tripId, label) ?? stops
 
     // ---- ยกเลิก/เปลี่ยนคนขับแทน → เสนอเอางานที่เคยโยกมาอัตโนมัติ กลับคืนทริปเดิมของคนขับแทนคนก่อน ----
     // (เดิมทำเฉพาะตอนยกเลิก — เปลี่ยนเป็นอีกคนแล้วงานคนก่อนค้างบนรถ และเครดิตไปเข้าคนใหม่)
@@ -1036,9 +1039,9 @@ export default function DailySummaryPage() {
         if (moved.length === 0) continue
         const ok = window.confirm(`เอางาน ${moved.length} จุดของ ${own.driverName} ที่โยกมาลงรถคันนี้ กลับคืนทริปเดิม (${own.vehiclePlate}) ด้วยไหม?`)
         if (!ok) continue
-        if (!await applyStops(own, (own.stops || []).map(s =>
+        if (!await applyStops(own, withLabel((own.stops || []).map(s =>
           (s.outcome === 'reassigned' && s.reassignedToTripId === tripId) ? stripOutcome(s) : s
-        ))) {
+        )))) {
           toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้คืนงานให้รถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
           return
         }
@@ -1060,7 +1063,7 @@ export default function DailySummaryPage() {
         )
         if (!ok) continue
         const nowIso = new Date().toISOString()
-        if (!await applyStops(own, (own.stops || []).map(s =>
+        if (!await applyStops(own, withLabel((own.stops || []).map(s =>
           (!s.outcome || s.outcome === 'delivered')
             ? {
                 ...stripOutcome(s),
@@ -1072,7 +1075,7 @@ export default function DailySummaryPage() {
                 outcomeAt: nowIso,
               }
             : s
-        ))) {
+        )))) {
           toast({ title: "บันทึกคนขับแล้ว แต่งานที่เกี่ยวข้องยังไม่ครบ", description: `ยังไม่ได้โยกงานจากรถ ${own.vehiclePlate} กรุณาโหลดข้อมูลใหม่และตรวจงานคันนี้`, variant: "destructive" })
           return
         }
@@ -1083,7 +1086,6 @@ export default function DailySummaryPage() {
 
     // ---- ชื่อผู้รับงานในจุดที่คันอื่นโยกมาคันนี้ → เปลี่ยนตามคนขับจริงคนใหม่ (รูป/LINE ขึ้นชื่อคนที่ขับจริง) ----
     if (target) {
-      const label = name || target.driverName
       for (const src of trips.filter(t => t.id !== tripId && !touched.has(t.id) && !isManagedTrip(t))) {
         const renamed = renameMoveTarget(src.stops || [], tripId, label)
         if (!renamed) continue
