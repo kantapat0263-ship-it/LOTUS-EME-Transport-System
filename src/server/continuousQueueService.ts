@@ -4,6 +4,7 @@ import { expandQueueDates, MAX_QUEUE_DAYS, queueNotice, resourceGuardKeys } from
 import type { ContinuousBooking, QueueAuditEvent, QueueCommand, QueueCommandResult, QueueResourceGuard, QueueSnapshot, QueueSourceAssignment, QueueTripInput } from '@/types/continuous-queue'
 import type { Trip } from '@/types/models'
 import { assertRequestDestinationsUnchanged } from '@/lib/requestDestination'
+import { incomingStopsForTrip } from '@/lib/calculations'
 
 const MAX_SNAPSHOT_BOOKINGS = 500
 const MAX_DAY_TRIPS = 500
@@ -247,6 +248,9 @@ class QueueTransaction {
     const stored = await this.read<Trip & { date?: string }>('trips', command.tripId)
     const original = stored ? { ...stored, tripDate: stored.tripDate || stored.date || '' } : undefined
     requireValue(original && !original.queueLink && unstarted(original), 'ขยายได้เฉพาะคิวเดิมที่ยังไม่เริ่มงานและไม่มีการเปลี่ยนคนขับหรือรถ')
+    // ทริปที่ยังถืองานที่คันอื่นโยกเข้ามา ห้ามกลายเป็นคิวต่อเนื่อง — ยืม/คืนคิวจะยกเลิกทริปนี้โดยไม่รู้จักงานโยก งานจะหายเงียบ
+    const incoming = incomingStopsForTrip((await this.trips(original.tripDate)).filter(trip => trip.status !== 'Cancelled'), original.id)
+    requireValue(incoming.length === 0, `ทริปนี้ยังรับงานที่โยกมาจากคันอื่น ${incoming.length} จุด — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อนขยายเป็นคิวต่อเนื่อง`)
     const dates = rangeDates(original.tripDate, command.endDate)
     requireValue(dates[0] >= this.today && dates.length > 1, 'ระบุวันสิ้นสุดหลังวันเริ่ม และห้ามขยายคิวย้อนหลัง')
     const input = await this.resources({ ...original, stops: planningStops(original.stops) })

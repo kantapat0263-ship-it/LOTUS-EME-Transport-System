@@ -83,7 +83,12 @@ function sourceNotePatch(trip: Trip, requests: Awaited<ReturnType<typeof sourceW
 
 const tripDay = (trip: Trip) => trip.tripDate || (trip as Trip & { date?: string }).date || ''
 const isMovedStop = (stop: Trip['stops'][number]) => !!stop.reassignedToTripId && !!stop.outcome && stop.outcome !== 'delivered'
-const moveTargets = (trip: Trip) => new Set((trip.stops || []).filter(isMovedStop).map(stop => stop.reassignedToTripId as string))
+/** จำนวนจุดที่โยกไปแต่ละคันปลายทาง — เทียบรายจุด (โยกจุดที่สองไปคันเดิมก็นับเป็นงานโยกใหม่) */
+const moveCounts = (trip: Trip) => {
+  const counts = new Map<string, number>()
+  for (const stop of (trip.stops || []).filter(isMovedStop)) counts.set(stop.reassignedToTripId as string, (counts.get(stop.reassignedToTripId as string) ?? 0) + 1)
+  return counts
+}
 
 /** งานที่คันอื่นโยกเข้าทริป id (ทริปวันเดียวกันที่ยังไม่ยกเลิก — รวมทริปเก่าที่ใช้ฟิลด์ `date`)
  *  query ฝั่ง client อยู่นอก read set ของ transaction → ต้องเรียกใน callback ให้รันใหม่ทุกครั้งที่ retry
@@ -92,7 +97,7 @@ async function liveIncoming(db: Firestore, id: string, day: string) {
   if (!day) return []
   const snaps = await Promise.all(['tripDate', 'date'].map(field => getDocs(query(collection(db, 'trips'), where(field, '==', day)))))
   const byId = new Map(snaps.flatMap(snap => snap.docs).map(d => [d.id, { ...(d.data() as Trip), id: d.id }]))
-  return incomingStopsForTrip([...byId.values()].filter(t => t.status !== 'Cancelled'), id)
+  return incomingStopsForTrip([...byId.values()].filter(t => t.status !== 'Cancelled' && tripDay(t) === day), id)
 }
 
 function incomingMessage(action: string, incoming: Awaited<ReturnType<typeof liveIncoming>>) {
@@ -179,7 +184,7 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
     const targetKeys = target ? resourceGuardKeys(target.data as Trip) : []
     const targetRef = target ? doc(db, 'trips', target.id) : null
     if (target && targetRef) {
-      if (target.id === id || target.data.queueLink || !target.data.driverId || !target.data.vehicleId || target.data.tripDate !== after.tripDate || !Array.isArray(target.data.stops) || target.data.stops.length || !after.stops.some(stop => stop.reassignedToTripId === target.id)) throw new Error('ข้อมูลทริปรับโยกไม่ตรงกับงานต้นทาง')
+      if (target.id === id || target.data.queueLink || !target.data.driverId || !target.data.vehicleId || tripDay(target.data as Trip) !== tripDay(after) || !Array.isArray(target.data.stops) || target.data.stops.length || !after.stops.some(stop => stop.reassignedToTripId === target.id)) throw new Error('ข้อมูลทริปรับโยกไม่ตรงกับงานต้นทาง')
       if ((await tx.get(targetRef)).exists()) throw new Error('รหัสเที่ยววิ่งถูกใช้แล้ว กรุณาจัดคิวใหม่')
     }
     // ยกเลิกทริปที่ยังถืองานโยกเข้า = งานหายเงียบเหมือนลบ
@@ -187,12 +192,19 @@ export async function updateTripWithQueueGuard(db: Firestore, id: string, patch:
       const incoming = await liveIncoming(db, id, tripDay(before))
       if (incoming.length) throw new Error(incomingMessage('ยกเลิก', incoming))
     }
-    // คันปลายทางใหม่ของงานที่โยกออกต้องยังอยู่จริง (แท็บเก่าอาจยังเห็นคันที่ถูกลบ/ยกเลิกไปแล้ว)
-    const beforeTargets = moveTargets(before)
-    const moveRefs = [...moveTargets(after)].filter(moveId => !beforeTargets.has(moveId) && moveId !== id && moveId !== target?.id).map(moveId => doc(db, 'trips', moveId))
-    for (const moveRef of moveRefs) {
+    // คันปลายทางของงานที่โยกเพิ่ม (รายจุด) ต้องยังอยู่จริง — แท็บเก่าอาจยังเห็นคันที่ถูกลบ/ยกเลิกไปแล้ว
+    // เปิดทริปที่ยกเลิกกลับ = งานโยกออกทั้งหมดกลับมามีผล → แตะคันปลายทางที่ยังอยู่ทุกคัน (คันที่หายแล้วไม่บล็อก แผงขึ้น ⚠️ ให้เลือกใหม่)
+    const reviving = before.status === 'Cancelled' && after.status !== 'Cancelled'
+    const beforeCounts = moveCounts(before)
+    const moveRefs: ReturnType<typeof doc>[] = []
+    for (const [moveId, count] of moveCounts(after)) {
+      const added = count > (beforeCounts.get(moveId) ?? 0)
+      if (moveId === id || moveId === target?.id || !(added || reviving)) continue
+      const moveRef = doc(db, 'trips', moveId)
       const live = (await tx.get(moveRef)).data() as Trip | undefined
-      if (!live || live.queueLink || live.status === 'Cancelled' || tripDay(live) !== tripDay(after)) throw new Error('คันปลายทางที่เลือกถูกลบ/ยกเลิก/เปลี่ยนวันไปแล้ว กรุณาโหลดหน้าใหม่แล้วเลือกคันใหม่')
+      const alive = !!live && !live.queueLink && live.status !== 'Cancelled' && tripDay(live) === tripDay(after)
+      if (added && !alive) throw new Error('คันปลายทางที่เลือกถูกลบ/ยกเลิก/เปลี่ยนวันไปแล้ว กรุณาโหลดหน้าใหม่แล้วเลือกคันใหม่')
+      if (alive) moveRefs.push(moveRef)
     }
     const supersede = stopEdit?.supersedeRequest
     const oldRequestRef = supersede ? doc(db, 'vehicleRequests', supersede.id) : null

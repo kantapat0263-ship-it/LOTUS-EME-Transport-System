@@ -149,6 +149,15 @@ describe('continuous queue service on an isolated Firestore project', () => {
     expect(JSON.stringify(publicView)).not.toContain('ตกลงทางโทรศัพท์แล้ว')
   })
 
+  it('does not extend a trip that still holds jobs moved in from another trip (borrow would cancel it silently)', async () => {
+    await db.collection('trips').doc('HOLDER').set({ ...tripInput(), id: 'HOLDER', tripId: 'HOLDER', status: 'Planned' })
+    await db.collection('trips').doc('SOURCE').set({ ...tripInput(), id: 'SOURCE', tripId: 'SOURCE', driverId: 'D2', vehicleId: 'V2', status: 'Planned',
+      stops: [{ siteId: 'SITE-B', siteName: 'งานที่โยก', order: 1, cargoDetails: '', outcome: 'reassigned', reassignedToTripId: 'HOLDER' }] })
+    await expect(executeQueueCommand(db, { operationId: operationId(), action: 'extend', tripId: 'HOLDER', endDate: '2026-10-06' }, actor, NOW)).rejects.toThrow('งานที่โยกมา')
+    expect((await db.collection('continuousBookings').get()).empty).toBe(true)
+    expect(await trip('HOLDER')).not.toHaveProperty('queueLink')
+  })
+
   it('does not extend an ordinary planned trip after vehicle use has been ended', async () => {
     await db.collection('trips').doc('ENDED').set({ ...tripInput(), id: 'ENDED', tripId: 'ENDED', status: 'Planned', gpsEndAt: NOW.getTime() })
     await expect(executeQueueCommand(db, { operationId: operationId(), action: 'extend', tripId: 'ENDED', endDate: '2026-10-06' }, actor, NOW)).rejects.toThrow('ยังไม่เริ่มงาน')

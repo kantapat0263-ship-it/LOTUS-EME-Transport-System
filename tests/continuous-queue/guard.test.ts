@@ -171,3 +171,52 @@ it('ทริปเก่าที่ใช้ฟิลด์ date: ลบคั
   await expect(deleteTripWithQueueGuard(db, 'OLD-DST')).rejects.toThrow('ก่อนลบ')
   await expect(deleteTripWithQueueGuard(db, 'NEW-DST')).rejects.toThrow('ก่อนลบ')
 })
+
+it('โยกจุดที่สองไปคันที่หายแล้ว = ปฏิเสธ (ตรวจรายจุด) · แก้จุดอื่นโดย pointer เดิมไม่เปลี่ยน = ผ่าน', async () => {
+  const db = staffDb()
+  const base = { siteId: 'S', cargoDetails: '' }
+  const stale = { ...base, siteName: 'งานเก่า', order: 1, outcome: 'reassigned', reassignedToTripId: 'GONE', reassignedToVehiclePlate: 'หาย' }
+  const plain = { ...base, siteName: 'งานสอง', order: 2 }
+  await createTripWithQueueGuard(db, 'SRC', { tripDate: '2026-10-07', status: 'Planned', driverId: 'D1', vehicleId: 'V1', stops: [stale, plain] })
+  const edit = { expectedStops: [stale, plain] as any, sourceIndexes: [0, 1] }
+  await expect(updateTripWithQueueGuard(db, 'SRC', { stops: [stale, { ...plain, outcome: 'reassigned', reassignedToTripId: 'GONE', reassignedToVehiclePlate: 'หาย' }] }, undefined, edit)).rejects.toThrow('คันปลายทาง')
+  await updateTripWithQueueGuard(db, 'SRC', { stops: [stale, { ...plain, cargoDetails: 'แก้ของ' }] }, undefined, edit)
+  expect((await getDoc(doc(db, 'trips', 'SRC'))).data()?.stops[1].cargoDetails).toBe('แก้ของ')
+})
+
+it('เปิดทริปที่ยกเลิกกลับ: แตะคันปลายทางที่ยังอยู่ (ลบที่ชนกันต้อง retry) · คันปลายทางที่หายแล้วไม่บล็อกการเปิดกลับ', async () => {
+  const db = staffDb()
+  const base = { tripDate: '2026-10-07', status: 'Planned' }
+  const job = { siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '' }
+  const moved = (to: string) => [{ ...job, outcome: 'reassigned', reassignedToTripId: to, reassignedToVehiclePlate: 'บี' }]
+  await createTripWithQueueGuard(db, 'LIVE', { ...base, driverId: 'D2', vehicleId: 'V2', stops: [] })
+  await createTripWithQueueGuard(db, 'DEAD', { ...base, driverId: 'D3', vehicleId: 'V3', stops: [] })
+  await createTripWithQueueGuard(db, 'A1', { ...base, driverId: 'D1', vehicleId: 'V1', stops: [job] })
+  await updateTripWithQueueGuard(db, 'A1', { stops: moved('LIVE') }, undefined, { expectedStops: [job] as any, sourceIndexes: [0] })
+  const firstTouch = (await getDoc(doc(db, 'trips', 'LIVE'))).data()?.incomingTouchedAt
+  await updateTripWithQueueGuard(db, 'A1', { status: 'Cancelled' })
+  await updateTripWithQueueGuard(db, 'A1', { status: 'Planned' })
+  expect((await getDoc(doc(db, 'trips', 'LIVE'))).data()?.incomingTouchedAt).not.toEqual(firstTouch)
+  await createTripWithQueueGuard(db, 'A2', { ...base, driverId: 'D4', vehicleId: 'V4', stops: [job] })
+  await updateTripWithQueueGuard(db, 'A2', { stops: moved('DEAD') }, undefined, { expectedStops: [job] as any, sourceIndexes: [0] })
+  await updateTripWithQueueGuard(db, 'A2', { status: 'Cancelled' })
+  await deleteTripWithQueueGuard(db, 'DEAD')
+  await updateTripWithQueueGuard(db, 'A2', { status: 'Planned' })
+  expect((await getDoc(doc(db, 'trips', 'A2'))).data()?.status).toBe('Planned')
+})
+
+it('ทริปเก่าแบบ date: สร้างคันรับโยกใหม่ได้ · ทริปที่ date ค้างคนละวันกับ tripDate ไม่นับเป็นงานโยกเข้า', async () => {
+  const db = staffDb()
+  const job = { siteId: 'S', siteName: 'งานเอ', order: 1, cargoDetails: '' }
+  await env.withSecurityRulesDisabled(async context => {
+    const fs = context.firestore()
+    await setDoc(doc(fs, 'trips', 'OLD'), { date: '2026-10-07', driverId: 'D1', vehicleId: 'V1', status: 'Planned', stops: [job] })
+    await setDoc(doc(fs, 'trips', 'B8'), { tripDate: '2026-10-08', driverId: 'D5', vehicleId: 'V5', status: 'Planned', stops: [] })
+    await setDoc(doc(fs, 'trips', 'MIXED'), { tripDate: '2026-10-09', date: '2026-10-08', driverId: 'D6', vehicleId: 'V6', status: 'Planned', stops: [{ ...job, outcome: 'reassigned', reassignedToTripId: 'B8', reassignedToVehiclePlate: 'บี' }] })
+  })
+  const holder = { tripDate: '2026-10-07', status: 'Planned', driverId: 'D2', vehicleId: 'V2', stops: [] }
+  await updateTripWithQueueGuard(db, 'OLD', { stops: [{ ...job, outcome: 'reassigned', reassignedToTripId: 'HOLD', reassignedToVehiclePlate: 'บี' }] }, undefined, { expectedStops: [job] as any, sourceIndexes: [0], createTarget: { id: 'HOLD', data: holder } })
+  expect((await getDoc(doc(db, 'trips', 'HOLD'))).exists()).toBe(true)
+  await deleteTripWithQueueGuard(db, 'B8')
+  expect((await getDoc(doc(db, 'trips', 'B8'))).exists()).toBe(false)
+})
