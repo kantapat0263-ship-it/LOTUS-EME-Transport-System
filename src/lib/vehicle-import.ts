@@ -2,14 +2,17 @@
  * นำเข้าข้อมูลประจำรถจากตาราง (วางจาก Excel = แท็บคั่น) — pure, มี unit test
  *
  * กติกา (ห้ามเดา):
- *  - จับคู่เฉพาะรถที่มีในระบบ + ทะเบียนตรงแน่นอน · ไม่สร้างรถใหม่
- *  - ทะเบียนซ้ำ (ในตารางหรือในระบบ) / ไม่มีทะเบียน / ไม่เจอในระบบ → ข้ามทั้งแถว
+ *  - จับคู่กับรถในระบบด้วยทะเบียนที่ตรงแน่นอน
+ *  - ทะเบียนไม่มีในระบบ → เสนอเพิ่มเป็นรถใหม่ (ผู้ใช้สั่ง 2026-10-09 "นำเข้าทั้งหมดใน Excel") —
+ *    แถวที่ช่องทะเบียนไม่ใช่รูปทะเบียน (เช่น "รถแบ็คโฮว์") เพิ่มได้ถ้ามีข้อมูลรถจริง โดยใช้ข้อความในช่องนั้นเป็นชื่อ
+ *  - ทะเบียนซ้ำ (ในตารางหรือในระบบ) / ไม่มีทะเบียน → ข้ามทั้งแถว
  *  - จังหวัด/เลขตัวรถ ที่มีอยู่แล้วในระบบไม่ตรงกับตาราง → ไม่มั่นใจว่าคันเดียวกัน → ข้ามทั้งแถว
+ *  - รถใหม่ที่เลขตัวรถตรงกับรถในระบบ → อาจเป็นคันเดิมที่เปลี่ยนทะเบียน → ข้ามทั้งแถว (ไม่สร้างซ้ำ)
  *  - ค่าอ่านไม่ออก / ผิดรูป / เลขตัวรถ-เลขเครื่องซ้ำกันหลายแถว → ข้ามเฉพาะช่องนั้น
  *  - เติมเฉพาะช่องที่ยังว่าง · ช่องที่มีค่าอยู่แล้วแต่ไม่ตรง → รายการรอตรวจสอบ (ไม่เขียนทับ)
- *  - คอลัมน์ "ราคา" ไม่นำเข้า
  */
 import type { Vehicle, VehicleDetails } from '@/types/models'
+import { todayBangkok } from './vehicle-compliance'
 
 export type DetailField = Exclude<keyof VehicleDetails, 'id' | 'updatedAt' | 'updatedBy'>
 
@@ -29,6 +32,7 @@ export const FIELD_LABEL: Record<DetailField, string> = {
   fuelType: 'เชื้อเพลิง',
   bodyType: 'ลักษณะรถ',
   note: 'หมายเหตุ',
+  price: 'ราคา (บาท)',
 }
 
 export const PROVINCES = [
@@ -63,6 +67,11 @@ export function splitPlate(raw: string | undefined): { key: string; province?: s
 /** รูปทะเบียนไทยที่รับ (หลัง normalize): 1กข1234 · กข1234 · 401953 (รถบรรทุก/โดยสาร) */
 export function looksLikePlate(key: string): boolean {
   return /^(\d{0,2}[ก-ฮ]{1,3}\d{1,4}|\d{2}\d{4})$/.test(key)
+}
+
+/** ทะเบียนสำหรับรถใหม่ จาก key ที่ผ่าน looksLikePlate: ใส่ขีดหน้าเลขท้าย "1ฒษ4407" → "1ฒษ-4407", "402050" → "40-2050" */
+export function formatPlate(key: string): string {
+  return key.replace(/^(.*?)(\d{1,4})$/, '$1-$2')
 }
 
 // ─── แปลงค่า ────────────────────────────────────────────────────────────────
@@ -115,6 +124,13 @@ export function parseSeats(raw: string | undefined): number | null {
   return m ? Number(m[1]) : null
 }
 
+/** "738,000.00" / "544000 บาท" → ตัวเลข · ข้อความอื่น เช่น "(ไม่มีสัญญาฯ)" / 0 → null */
+export function parsePrice(raw: string | undefined): number | null {
+  const m = (raw || '').trim().replace(/,/g, '').match(/^(\d+(?:\.\d+)?)\s*(บาท)?$/)
+  const n = m ? Number(m[1]) : NaN
+  return n > 0 ? n : null
+}
+
 /** เลขตัวรถแบบ VIN 17 หลักห้ามมี I/O/Q — เจอ = น่าจะพิมพ์ O แทน 0 (ไม่แก้ให้ ให้คนตรวจ) */
 export function chassisIssue(v: string): string | null {
   const s = v.replace(/\s/g, '')
@@ -124,7 +140,7 @@ export function chassisIssue(v: string): string | null {
 
 // ─── อ่านตาราง ──────────────────────────────────────────────────────────────
 
-type Col = DetailField | 'plate' | 'rowNo' | 'ignore'
+type Col = DetailField | 'plate' | 'rowNo'
 
 function headerToCol(h: string): Col | null {
   const s = h.replace(/\s+/g, '')
@@ -145,7 +161,7 @@ function headerToCol(h: string): Col | null {
   if (s.includes('เชื้อเพลิง')) return 'fuelType'
   if (s.includes('ลักษณะ')) return 'bodyType'
   if (s.includes('หมายเหตุ')) return 'note'
-  if (s.includes('ราคา')) return 'ignore'
+  if (s.includes('ราคา')) return 'price'
   return null
 }
 
@@ -176,17 +192,21 @@ export function parseVehicleTable(text: string): ParseResult {
   const headerIdx = lines.findIndex((l) => l.split('\t').some((c) => headerToCol(c) === 'plate'))
   if (headerIdx < 0) return { rows: [], error: 'ไม่พบแถวหัวตาราง (ต้องมีคอลัมน์ "ทะเบียนรถ") — กรุณาคัดลอกหัวตารางมาด้วย' }
   const cols = lines[headerIdx].split('\t').map(headerToCol)
+  const headerCells = lines[headerIdx].split('\t').map((c) => c.replace(/\s+/g, ''))
 
   const rows: ParsedRow[] = []
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const cells = lines[i].split('\t').map((c) => c.trim())
     if (cells.every((c) => !c)) continue
+    // หัวตารางซ้ำกลางข้อมูล (คัดลอกหลายช่วงมาต่อกัน) = ช่องทะเบียนเหมือนหัวตารางทุกตัวอักษร
+    // (ไม่ใช้แค่ "มีคำว่าทะเบียน" — ชื่อรถอย่าง "รถแบ็คโฮว์ (ไม่มีทะเบียน)" ต้องไม่ถูกข้าม)
+    if (cols.some((col, ci) => col === 'plate' && (cells[ci] ?? '').replace(/\s+/g, '') === headerCells[ci])) continue
     const row: ParsedRow = { line: i + 1, rowNo: '', plateRaw: '', plateKey: '', values: {}, issues: [] }
     let seatsFromPayload: number | null = null
     cols.forEach((col, ci) => {
       const raw = cells[ci] ?? ''
       // "-" ในตาราง = ไม่มีค่า (เช่น รถเก๋ง/รถตู้ไม่มีน้ำหนักบรรทุก) → เว้นว่าง ไม่ใช่ค่าที่อ่านไม่ออก
-      if (!col || col === 'ignore' || !raw || /^[-–—]+$/.test(raw)) return
+      if (!col || !raw || /^[-–—]+$/.test(raw)) return
       if (col === 'rowNo') row.rowNo = raw
       else if (col === 'plate') row.plateRaw = raw
       else if (col === 'province') row.values.province = normalizeProvince(raw)
@@ -207,6 +227,10 @@ export function parseVehicleTable(text: string): ParseResult {
         const n = parseSeats(raw)
         if (n != null) row.values.seats = n
         else row.issues.push({ field: col, value: raw, reason: 'อ่านจำนวนที่นั่งไม่ออก' })
+      } else if (col === 'price') {
+        const n = parsePrice(raw)
+        if (n != null) row.values.price = n
+        else row.issues.push({ field: col, value: raw, reason: 'ราคาไม่ใช่ตัวเลข' })
       } else {
         row.values[col] = raw
       }
@@ -219,6 +243,11 @@ export function parseVehicleTable(text: string): ParseResult {
     row.plateProvince = sp.province
 
     // ตรวจความสมเหตุสมผล (ไม่แก้ให้ — ตัดช่องนั้นทิ้งแล้วแจ้ง)
+    // วันจดทะเบียนในอนาคต → วันหมดอายุที่ตั้งจากวันนี้จะมาก่อนวันจดทะเบียน (ฟอร์มเพิ่มรถก็ไม่รับ)
+    if (typeof row.values.registrationDate === 'string' && row.values.registrationDate > todayBangkok()) {
+      row.issues.push({ field: 'registrationDate', value: row.values.registrationDate, reason: 'วันจดทะเบียนเป็นวันในอนาคต' })
+      delete row.values.registrationDate
+    }
     const regYear = typeof row.values.registrationDate === 'string' ? Number(row.values.registrationDate.slice(0, 4)) : null
     const my = row.values.modelYear as number | undefined
     if (my != null) {
@@ -268,6 +297,20 @@ export interface ImportFill {
   fields: Partial<Record<DetailField, string | number>>
 }
 
+export interface ImportMatch {
+  vehicleId: string
+  licensePlate: string
+}
+
+export interface ImportCreate {
+  rowLabel: string
+  plateKey: string
+  /** ทะเบียนที่จะบันทึก: รูปทะเบียน → แบบมาตรฐาน "1ฒษ-4407" · ไม่ใช่รูปทะเบียน (เช่น รถแบ็คโฮว์) → ข้อความเดิมในช่องทะเบียน */
+  licensePlate: string
+  hasPlate: boolean
+  fields: Partial<Record<DetailField, string | number>>
+}
+
 export interface ImportConflict {
   vehicleId: string
   licensePlate: string
@@ -290,6 +333,10 @@ export interface ImportFieldSkip extends FieldIssue {
 
 export interface ImportPlan {
   fills: ImportFill[]
+  /** รถในระบบที่จับคู่กับแถวในตารางได้ (รวมคันที่ไม่มีช่องให้เติม) — ใช้ตั้งวันหมดอายุจากวันจดทะเบียน */
+  matched: ImportMatch[]
+  /** ทะเบียนที่ยังไม่มีในระบบ → เพิ่มเป็นรถใหม่ (ผู้ใช้ตัดออกได้ในหน้าตรวจสอบ) */
+  creates: ImportCreate[]
   conflicts: ImportConflict[]
   skippedRows: ImportSkip[]
   skippedFields: ImportFieldSkip[]
@@ -302,17 +349,22 @@ function same(a: string | number, b: string | number): boolean {
   return a.replace(/\s+/g, '').toUpperCase() === b.replace(/\s+/g, '').toUpperCase()
 }
 
+const normChassis = (v: string) => v.replace(/[\s-]/g, '').toUpperCase()
+
 export function planImport(
   rows: ParsedRow[],
   vehicles: Pick<Vehicle, 'id' | 'licensePlate'>[],
   detailsById: Record<string, VehicleDetails | undefined>
 ): ImportPlan {
-  const plan: ImportPlan = { fills: [], conflicts: [], skippedRows: [], skippedFields: [], untouchedVehicles: [] }
+  const plan: ImportPlan = { fills: [], matched: [], creates: [], conflicts: [], skippedRows: [], skippedFields: [], untouchedVehicles: [] }
 
   const vehiclesByKey = new Map<string, Pick<Vehicle, 'id' | 'licensePlate'>[]>()
+  const chassisOwner = new Map<string, string>()
   for (const v of vehicles) {
     const k = splitPlate(v.licensePlate).key
     vehiclesByKey.set(k, [...(vehiclesByKey.get(k) ?? []), v])
+    const ch = detailsById[v.id]?.chassisNo
+    if (ch) chassisOwner.set(normChassis(ch), v.licensePlate)
   }
   const rowsByKey = new Map<string, number>()
   for (const r of rows) if (r.plateKey) rowsByKey.set(r.plateKey, (rowsByKey.get(r.plateKey) ?? 0) + 1)
@@ -322,8 +374,11 @@ export function planImport(
     const rowLabel = r.rowNo ? `ที่ ${r.rowNo}` : `บรรทัด ${r.line}`
     const plate = r.plateRaw || '(ไม่มีทะเบียน)'
     const skip = (reason: string) => plan.skippedRows.push({ rowLabel, plate, reason })
+    const noteIssues = () => {
+      for (const iss of r.issues) plan.skippedFields.push({ ...iss, rowLabel, plate })
+    }
 
-    if (!r.plateKey || !looksLikePlate(r.plateKey)) {
+    if (!r.plateKey) {
       skip('ไม่มีเลขทะเบียน หรือรูปแบบทะเบียนไม่ถูกต้อง')
       continue
     }
@@ -332,12 +387,34 @@ export function planImport(
       continue
     }
     const cands = vehiclesByKey.get(r.plateKey) ?? []
-    if (cands.length === 0) {
-      skip('ไม่พบทะเบียนนี้ในระบบ (ไม่สร้างรถใหม่)')
-      continue
-    }
     if (cands.length > 1) {
       skip('ทะเบียนนี้ซ้ำกันในระบบ (มีมากกว่า 1 คัน)')
+      continue
+    }
+    if (cands.length === 0) {
+      // ไม่มีในระบบ → รถใหม่ · ช่องทะเบียนที่ไม่ใช่รูปทะเบียนต้องมีข้อมูลรถจริง (กันบรรทัดสรุป/หัวข้อหลุดมาเป็นรถ)
+      const hasPlate = looksLikePlate(r.plateKey)
+      const hasVehicleData = r.values.brand != null || r.values.chassisNo != null || r.values.registrationDate != null
+      if (!hasPlate && !hasVehicleData) {
+        skip('ไม่มีเลขทะเบียน หรือรูปแบบทะเบียนไม่ถูกต้อง')
+        continue
+      }
+      const ch = r.values.chassisNo
+      const owner = typeof ch === 'string' ? chassisOwner.get(normChassis(ch)) : undefined
+      if (owner) {
+        skip(`เลขตัวรถตรงกับรถ ${owner} ในระบบ — อาจเป็นคันเดิมที่เปลี่ยนทะเบียน (ไม่เพิ่มซ้ำ)`)
+        continue
+      }
+      noteIssues()
+      const fields = { ...r.values }
+      if (fields.province == null && r.plateProvince) fields.province = r.plateProvince
+      plan.creates.push({
+        rowLabel,
+        plateKey: r.plateKey,
+        licensePlate: hasPlate ? formatPlate(r.plateKey) : r.plateRaw,
+        hasPlate,
+        fields,
+      })
       continue
     }
     const v = cands[0]
@@ -354,8 +431,8 @@ export function planImport(
       continue
     }
     matched.add(v.id)
-
-    for (const iss of r.issues) plan.skippedFields.push({ ...iss, rowLabel, plate })
+    plan.matched.push({ vehicleId: v.id, licensePlate: v.licensePlate })
+    noteIssues()
 
     const fields: ImportFill['fields'] = {}
     for (const [f, val] of Object.entries(r.values) as [DetailField, string | number][]) {
@@ -369,4 +446,58 @@ export function planImport(
   }
   plan.untouchedVehicles = vehicles.filter((v) => !matched.has(v.id)).map((v) => v.licensePlate)
   return plan
+}
+
+/**
+ * โครงของแผน = คู่ "รถในระบบ ↔ ทะเบียน" ที่จับคู่ + ทะเบียนรถใหม่ — ใช้เช็กก่อนบันทึกว่าข้อมูลรถยังเหมือนตอนตรวจ
+ * (เทียบเป็นคู่ ไม่ใช่แค่ชุด id — สองคันสลับทะเบียนกันต้องจับได้ ไม่งั้นเติมข้อมูลผิดคัน)
+ */
+export function planShape(p: ImportPlan): string {
+  return JSON.stringify([
+    p.matched.map((m) => JSON.stringify([m.vehicleId, splitPlate(m.licensePlate).key])).sort(),
+    p.creates.map((c) => c.plateKey).sort(),
+  ])
+}
+
+// ─── เดาประเภทรถของรถใหม่ (แค่เติมให้ก่อน คนจัดรถเปลี่ยนได้) ──────────────────
+
+type TypeKind = 'cab' | 'pen' | 'pickup' | 'six-wheel'
+
+const normType = (s: string) => s.toLowerCase().replace(/[\s\-_.]/g, '')
+
+function kindFromBook(bodyType?: string, note?: string): TypeKind | null {
+  const b = normType(bodyType ?? '')
+  if (/แค็ป|แคป/.test(b)) return 'cab'
+  if (b.includes('กระบะ') && /รั้ว|คอก/.test(b + normType(note ?? ''))) return 'pen'
+  if (b.includes('กระบะ') || b.includes('4ประตู')) return 'pickup'
+  if (b.includes('6ล้อ')) return 'six-wheel'
+  return null
+}
+
+function typeFits(kind: TypeKind, typeName: string): boolean {
+  const t = normType(typeName)
+  const cab = /แค็ป|แคป|cab/.test(t)
+  const pen = t.includes('คอก')
+  if (kind === 'cab') return cab
+  if (kind === 'pen') return pen
+  if (kind === 'pickup') return (t.includes('pickup') || t.includes('กระบะ')) && !cab && !pen
+  return t.includes('6wheel') || t.includes('6ล้อ')
+}
+
+/**
+ * ประเภทรถที่น่าจะใช่ จาก "ลักษณะรถ" + "หมายเหตุ" ในเล่ม → ชื่อประเภทที่มีอยู่ในระบบ
+ * หลายชื่อเข้าข่าย → เลือกชื่อที่รถในระบบใช้มากที่สุด (เสมอกัน = ไม่เดา) · ไม่เข้าข่าย = ไม่เดา
+ */
+export function suggestVehicleType(
+  details: Partial<Record<'bodyType' | 'note', string | number>>,
+  typeOptions: string[],
+  vehicles: { type?: unknown }[]
+): string | undefined {
+  const kind = kindFromBook(String(details.bodyType ?? ''), String(details.note ?? ''))
+  if (!kind) return undefined
+  const fits = typeOptions.filter((t) => typeFits(kind, t))
+  if (fits.length <= 1) return fits[0]
+  const used = (t: string) => vehicles.filter((v) => v.type === t).length
+  const [first, second] = [...fits].sort((a, b) => used(b) - used(a))
+  return used(first) > used(second) ? first : undefined
 }

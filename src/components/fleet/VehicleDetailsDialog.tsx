@@ -31,7 +31,7 @@ import { FIELD_LABEL, type DetailField } from "@/lib/vehicle-import"
 import { ComplianceBadge } from "./ComplianceBadge"
 
 const TEXT_FIELDS: DetailField[] = ["province", "brand", "model", "color", "chassisNo", "engineNo", "fuelType", "bodyType"]
-const NUMBER_FIELDS: DetailField[] = ["curbWeightKg", "payloadKg", "grossWeightKg", "seats"]
+const NUMBER_FIELDS: DetailField[] = ["curbWeightKg", "payloadKg", "grossWeightKg", "seats", "price"]
 const KINDS: ComplianceKind[] = ["tax", "act"]
 type DetailFormState = Record<DetailField, string>
 

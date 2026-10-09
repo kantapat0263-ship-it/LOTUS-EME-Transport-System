@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { collection, doc, runTransaction, serverTimestamp } from "firebase/firestore"
+import { doc, runTransaction } from "firebase/firestore"
 import { Loader2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useFirestore } from "@/firebase"
 import type { Vehicle, VehicleCompliance, VehicleDetails } from "@/types/models"
 import { daysBetween, formatThaiDate, nextRegistrationAnniversary } from "@/lib/vehicle-compliance"
+import { writeExpiryFromRegistration } from "./expiryFromRegistration"
 
 /** คันที่ตั้งได้: มีวันจดทะเบียน + ยังไม่มีวันหมดอายุทั้งภาษีและ พ.ร.บ. (มีแล้ว = ไม่แตะ) */
 export function vehiclesToSetFromRegistration(
@@ -68,20 +69,7 @@ export function SetExpiryFromRegistrationDialog({
         ready.forEach((r, i) => {
           const cur = snaps[i].data() as VehicleCompliance | undefined
           if (cur?.tax?.expiry || cur?.act?.expiry) return
-          const item = { expiry: r.expiry, confirmed: true, confirmedBy: by, confirmedAt: nowIso }
-          tx.set(refs[i], { id: r.vehicle.id, tax: item, act: item, updatedAt: serverTimestamp() }, { merge: true })
-          for (const kind of ["tax", "act"] as const) {
-            tx.set(doc(collection(db, "vehicleComplianceHistory")), {
-              vehicleId: r.vehicle.id,
-              licensePlate: r.vehicle.licensePlate,
-              kind,
-              action: "confirm",
-              prevExpiry: null,
-              newExpiry: r.expiry,
-              recordedBy: by,
-              recordedAt: nowIso,
-            })
-          }
+          writeExpiryFromRegistration(tx, db, r.vehicle, r.expiry, by, nowIso)
           written++
         })
       })

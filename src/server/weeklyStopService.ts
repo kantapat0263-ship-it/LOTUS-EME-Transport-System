@@ -48,13 +48,14 @@ const officeFrom = (settings: Record<string, unknown> | undefined) => {
   return settings?.warehouseLatitude != null && settings?.warehouseLongitude != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : OFFICE_LOCATION
 }
 const sorted = <T extends { id: string }>(data: T[]) => [...data].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
-function sourceFingerprint(day: WeeklyDay, trips: Trip[], trails: VehicleTrailDoc[], vehicles: Vehicle[], office: { lat: number; lng: number }) {
+export function sourceFingerprint(day: WeeklyDay, trips: Trip[], trails: VehicleTrailDoc[], vehicles: Vehicle[], office: { lat: number; lng: number }) {
   return hash({
     // routeMode ใส่เฉพาะทริปกลับ (ที่มีผลต่อการคำนวณ) — ใส่ทุกทริปจะทำให้ hash เปลี่ยนทั้งระบบ เหตุผลที่บันทึกไว้ทั้งหมดกลายเป็น stale
     key: day.key, office,
     trips: sorted(trips.filter(t => t.tripDate === day.date)).map(t => ({ id: t.id, tripDate: t.tripDate, vehiclePlate: t.vehiclePlate, driverId: t.driverId, driverName: t.driverName, actualDriverId: t.actualDriverId, actualDriverName: t.actualDriverName, status: t.status, gpsEndAt: t.gpsEndAt, ...(tripRouteMode(t) === 'return' ? { routeMode: 'return' } : {}), stops: (t.stops ?? []).map(s => ({ order: s.order, lat: s.lat, lng: s.lng, outcome: s.outcome, reassignedToTripId: s.reassignedToTripId, reassignedToVehiclePlate: s.reassignedToVehiclePlate })) })),
     trails: sorted(trails.filter(t => t.date === day.date)).map(t => ({ id: t.id, date: t.date, licensePlate: t.licensePlate, deviceId: t.deviceId, points: t.points })),
-    vehicles: sorted(vehicles).map(v => ({ id: v.id, gpsDeviceId: v.gpsDeviceId, licensePlate: v.licensePlate })),
+    // รถไม่มี GPS จับคู่ trail ไม่ได้ (buildWeeklyStopDays ใช้รถแค่แปลง deviceId → ทะเบียน) จึงไม่ใส่ — กันเพิ่มรถ/นำเข้ารถไม่มี GPS แล้วเหตุผลทั้งระบบกลายเป็น stale
+    vehicles: sorted(vehicles.filter(v => v.gpsDeviceId)).map(v => ({ id: v.id, gpsDeviceId: v.gpsDeviceId, licensePlate: v.licensePlate })),
   })
 }
 export function stopReviewId(dayKey: string, eventId: string): string { return hash([dayKey, eventId]) }

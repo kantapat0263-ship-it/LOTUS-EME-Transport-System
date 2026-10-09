@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseThaiDate, parseKg, parseSeats, splitPlate, looksLikePlate, parseVehicleTable, planImport } from './vehicle-import'
+import { parseThaiDate, parseKg, parseSeats, parsePrice, splitPlate, looksLikePlate, formatPlate, parseVehicleTable, planImport, planShape, suggestVehicleType } from './vehicle-import'
 
 // ถอดจากภาพหน้าจอตาราง (แถว 28–37) เพื่อใช้ทดสอบเท่านั้น — ไม่ใช่ข้อมูลที่จะนำเข้าจริง
 const HEADER = ['ที่', 'ทะเบียนรถ', 'จังหวัด', 'ยี่ห้อ', 'แบบ/ชื่อรถ', 'สี', 'เลขตัวรถ', 'เลขเครื่องยนต์', 'วันที่จดทะเบียน', 'รุ่นปี ค.ศ.', 'น้ำหนักรถ', 'น้ำหนักบรรทุก', 'น้ำหนักรวม', 'เชื้อเพลิง', 'ราคา', 'ลักษณะรถ', 'หมายเหตุ']
@@ -29,6 +29,13 @@ describe('value parsers', () => {
     expect(parseKg('(10 คน)')).toBeNull()
     expect(parseSeats('(10 คน)')).toBe(10)
   })
+  it('price: number with commas/decimals; text like "(ไม่มีสัญญาฯ)" → null', () => {
+    expect(parsePrice('738,000.00')).toBe(738000)
+    expect(parsePrice('1057929.12')).toBe(1057929.12)
+    expect(parsePrice('544000 บาท')).toBe(544000)
+    expect(parsePrice('(ไม่มีสัญญาฯ)')).toBeNull()
+    expect(parsePrice('0')).toBeNull()
+  })
   it('plate normalisation', () => {
     expect(splitPlate('1ฒษ-4407')).toEqual({ key: '1ฒษ4407' })
     expect(splitPlate('1ฒษ 4407 กทม.')).toEqual({ key: '1ฒษ4407', province: 'กรุงเทพมหานคร' })
@@ -37,16 +44,28 @@ describe('value parsers', () => {
     expect(looksLikePlate('402050')).toBe(true)
     expect(looksLikePlate('รถแบ็คโฮว์')).toBe(false)
   })
+  it('canonical plate text for new cars: dash before the number', () => {
+    expect(formatPlate('1ฒษ4407')).toBe('1ฒษ-4407')
+    expect(formatPlate('402050')).toBe('40-2050')
+    expect(formatPlate('830018')).toBe('83-0018')
+    expect(formatPlate('ตจ1438')).toBe('ตจ-1438')
+  })
 })
 
 describe('parseVehicleTable', () => {
   const { rows, error } = parseVehicleTable(TSV)
   const byNo = (n: string) => rows.find((r) => r.rowNo === n)!
 
-  it('finds header below a title row; ignores price', () => {
+  it('finds header below a title row; reads price as a number', () => {
     expect(error).toBeUndefined()
     expect(rows).toHaveLength(ROWS.length)
-    expect(Object.values(byNo('28').values)).not.toContain('738,000.00')
+    expect(byNo('28').values.price).toBe(738000)
+  })
+  it('price that is not a number → field skipped with a reason', () => {
+    const t = [HEADER.join('\t'), ['1', 'บธ-7244', 'เพชรบูรณ์', 'NISSAN', 'TGD21SFU5', 'แดง', '', '', ' 16 ม.ค. 38', '1994', '1,400 กก.', '1150 กก.', '2,550 กก.', 'ดีเซล', '(ไม่มีสัญญาฯ)', 'กระบะตอนเดียว', 'ติดตั้งรั้ว'].join('\t')].join('\n')
+    const r = parseVehicleTable(t).rows[0]
+    expect(r.values.price).toBeUndefined()
+    expect(r.issues).toEqual([expect.objectContaining({ field: 'price', value: '(ไม่มีสัญญาฯ)' })])
   })
   it('parses typed values', () => {
     expect(byNo('29').values).toMatchObject({ registrationDate: '2016-09-26', modelYear: 2016, curbWeightKg: 1850, payloadKg: 1060, grossWeightKg: 2910, province: 'กรุงเทพมหานคร' })
@@ -78,6 +97,25 @@ describe('parseVehicleTable', () => {
     expect(r.values.curbWeightKg).toBe(1800)
     expect(r.values.registrationDate).toBe('2001-05-31')
   })
+  it('repeated header line inside the data → ignored (not a car named "ทะเบียนรถ")', () => {
+    const t = [HEADER.join('\t'), ROWS[1].join('\t'), HEADER.join('\t'), ROWS[5].join('\t')].join('\n')
+    const { rows: rs } = parseVehicleTable(t)
+    expect(rs.map((r) => r.plateRaw)).toEqual(['1ฒส-3002', '2ฒร-7169'])
+  })
+  it('car name containing "ทะเบียน" (e.g. "(ไม่มีทะเบียน)") is a real row, not a header', () => {
+    const row = [...ROWS[3]]
+    row[1] = 'รถแบ็คโฮว์ (ไม่มีทะเบียน)'
+    const { rows: rs } = parseVehicleTable([HEADER.join('\t'), row.join('\t')].join('\n'))
+    expect(rs.map((r) => r.plateRaw)).toEqual(['รถแบ็คโฮว์ (ไม่มีทะเบียน)'])
+    expect(planImport(rs, [], {}).creates.map((c) => c.licensePlate)).toEqual(['รถแบ็คโฮว์ (ไม่มีทะเบียน)'])
+  })
+  it('registration date in the future → field skipped (would make expiry before registration)', () => {
+    const row = [...ROWS[1]]
+    row[8] = '23/08/2575' // ค.ศ. 2032
+    const r = parseVehicleTable([HEADER.join('\t'), row.join('\t')].join('\n')).rows[0]
+    expect(r.values.registrationDate).toBeUndefined()
+    expect(r.issues).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'registrationDate', reason: expect.stringMatching(/อนาคต/) })]))
+  })
   it('no header → error', () => {
     expect(parseVehicleTable('a\tb\n1\t2').error).toBeDefined()
   })
@@ -95,18 +133,61 @@ describe('planImport', () => {
     { id: 'vX', licensePlate: '3กข-1111' }, // ไม่มีในตาราง
   ]
 
-  it('fills only confident matches, never creates vehicles, skips with reasons', () => {
+  it('fills only confident matches, skips unsafe rows with reasons', () => {
     const plan = planImport(rows, vehicles, {})
     const filled = plan.fills.map((f) => f.vehicleId).sort()
     expect(filled).toEqual(['v28', 'v29', 'v36'])
+    expect(plan.matched.map((m) => m.vehicleId).sort()).toEqual(['v28', 'v29', 'v36'])
     const reasons = Object.fromEntries(plan.skippedRows.map((s) => [s.plate, s.reason]))
-    expect(reasons['1ฒส-9980']).toMatch(/ไม่พบ/)
-    expect(reasons['รถแบ็คโฮว์']).toMatch(/ไม่มีเลขทะเบียน/)
+    expect(reasons['1ฒส-9980']).toBeUndefined() // ไม่มีในระบบ → เพิ่มเป็นรถใหม่ (ดูเทสต์ถัดไป)
     expect(reasons['ฮอ-5716']).toMatch(/ซ้ำกันในระบบ/)
     expect(reasons['40-2050']).toMatch(/จังหวัดไม่ตรง/)
     expect(plan.untouchedVehicles).toContain('3กข-1111')
     // ช่องที่มีปัญหาของแถวที่จับคู่ได้ ถูกสรุปไว้
     expect(plan.skippedFields.some((s) => s.plate === '2ฒร-7169' && s.field === 'chassisNo')).toBe(true)
+  })
+
+  it('plate not in the system → new car (canonical plate, details from the row)', () => {
+    const plan = planImport(rows, vehicles, {})
+    const c = plan.creates.find((x) => x.plateKey === '1ฒส9980')!
+    expect(c).toMatchObject({ licensePlate: '1ฒส-9980', hasPlate: true, rowLabel: 'ที่ 31' })
+    expect(c.fields).toMatchObject({ registrationDate: '2016-10-28', brand: 'TOYOTA', price: 622080, bodyType: 'กระบะตอนเดียว' })
+    expect(c.fields.chassisNo).toBeUndefined() // ซ้ำกับแถวอื่น → ไม่ใส่
+    // ช่องที่มีปัญหาของรถใหม่ก็ถูกสรุปไว้
+    expect(plan.skippedFields.some((s) => s.plate === '1ฒส-9980' && s.field === 'chassisNo')).toBe(true)
+  })
+
+  it('row without a plate but with vehicle data (backhoe) → new car named by the plate column text', () => {
+    const plan = planImport(rows, vehicles, {})
+    const c = plan.creates.find((x) => x.licensePlate === 'รถแบ็คโฮว์')!
+    expect(c.hasPlate).toBe(false)
+    expect(c.fields).toMatchObject({ brand: 'KUBOTA', registrationDate: '2013-07-05' })
+    expect(plan.skippedRows.find((s) => s.plate === 'รถแบ็คโฮว์')).toBeUndefined()
+  })
+
+  it('re-import: car already added under a non-plate name is matched, not created again', () => {
+    const plan = planImport(rows, [...vehicles, { id: 'vBH', licensePlate: 'รถแบ็คโฮว์' }], {})
+    expect(plan.creates.find((x) => x.licensePlate === 'รถแบ็คโฮว์')).toBeUndefined()
+    expect(plan.fills.find((f) => f.vehicleId === 'vBH')).toBeDefined()
+  })
+
+  it('plate with province suffix → stored plate without province, province kept in details', () => {
+    const t = [HEADER.join('\t'), ['1', '83-0018 ปทุมธานี', '', 'HINO', 'FC9JELA', 'ขาว', 'FC9JELA-15784', 'J05ETCH19162', '30 มิ.ย. 57', '2014', '4,840 กก.', '5,060 กก.', '9,900 กก.', 'ดีเซล', '1497600', 'บรรทุก 6 ล้อดั๊มพ์', ''].join('\t')].join('\n')
+    const plan = planImport(parseVehicleTable(t).rows, [], {})
+    expect(plan.creates[0]).toMatchObject({ licensePlate: '83-0018', fields: expect.objectContaining({ province: 'ปทุมธานี' }) })
+  })
+
+  it('junk line without plate pattern or vehicle data → skipped, not created', () => {
+    const t = [HEADER.join('\t'), ['', 'รวมทั้งหมด', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''].join('\t')].join('\n')
+    const plan = planImport(parseVehicleTable(t).rows, [], {})
+    expect(plan.creates).toEqual([])
+    expect(plan.skippedRows[0].reason).toMatch(/ไม่มีเลขทะเบียน/)
+  })
+
+  it('new plate whose chassis already belongs to a car in the system → not created (maybe re-plated)', () => {
+    const plan = planImport(rows, vehicles, { v29: { id: 'v29', chassisNo: 'D1503-7CW2098' } })
+    expect(plan.creates.find((x) => x.licensePlate === 'รถแบ็คโฮว์')).toBeUndefined()
+    expect(plan.skippedRows.find((s) => s.plate === 'รถแบ็คโฮว์')?.reason).toMatch(/เลขตัวรถตรงกับ.*1ฒส-3002/)
   })
 
   it('never overwrites: existing differing value → conflict; same value → nothing', () => {
@@ -126,5 +207,47 @@ describe('planImport', () => {
     const plan = planImport(rows, vehicles, { v29: { id: 'v29', chassisNo: 'XXX' } })
     expect(plan.fills.find((f) => f.vehicleId === 'v29')).toBeUndefined()
     expect(plan.skippedRows.find((s) => s.plate === '1ฒส-3002')?.reason).toMatch(/เลขตัวรถไม่ตรง/)
+  })
+})
+
+describe('suggestVehicleType (pre-fill only — staff can change)', () => {
+  const OPTIONS = ['Pickup', '4-wheel truck', '6-wheel truck', 'PICK UP', 'PICK UP คอก', 'แคป']
+  const USED = [{ type: 'PICK UP' }, { type: 'PICK UP' }, { type: 'PICK UP คอก' }, { type: 'แคป' }]
+
+  it('maps body type + note to an existing type name', () => {
+    expect(suggestVehicleType({ bodyType: 'แค็ป' }, OPTIONS, USED)).toBe('แคป')
+    expect(suggestVehicleType({ bodyType: 'กระบะตอนเดียว', note: 'ติดตั้งรั้ว' }, OPTIONS, USED)).toBe('PICK UP คอก')
+    expect(suggestVehicleType({ bodyType: 'กระบะตอนเดียว' }, OPTIONS, USED)).toBe('PICK UP')
+    expect(suggestVehicleType({ bodyType: '4 ประตู' }, OPTIONS, USED)).toBe('PICK UP')
+    expect(suggestVehicleType({ bodyType: 'บรรทุก 6 ล้อดั๊มพ์' }, OPTIONS, USED)).toBe('6-wheel truck')
+  })
+  it('unknown body type → no guess', () => {
+    for (const bodyType of ['เก๋ง', 'รถตู้', 'รถโดยสารส่วนบุคคล', 'รถนั่งสองแถว', undefined]) {
+      expect(suggestVehicleType({ bodyType }, OPTIONS, USED)).toBeUndefined()
+    }
+  })
+  it('several matching types and none clearly most used → no guess', () => {
+    expect(suggestVehicleType({ bodyType: 'กระบะตอนเดียว' }, OPTIONS, [])).toBeUndefined()
+  })
+  it('no matching type (e.g. no คอก type) → no guess', () => {
+    expect(suggestVehicleType({ bodyType: 'กระบะตอนเดียว', note: 'ติดตั้งรั้ว' }, ['Pickup', '6-wheel truck'], [])).toBeUndefined()
+  })
+})
+
+describe('planShape (guard: plan still valid right before saving)', () => {
+  const { rows } = parseVehicleTable(TSV)
+  it('same cars and plates → same shape', () => {
+    const vs = [{ id: 'A', licensePlate: '1ฒส-3002' }, { id: 'B', licensePlate: '2ฒร-7169' }]
+    expect(planShape(planImport(rows, vs, {}))).toBe(planShape(planImport(rows, [...vs].reverse(), {})))
+  })
+  it('two matched cars swapped plates in between → different shape (would fill the wrong car)', () => {
+    const before = planImport(rows, [{ id: 'A', licensePlate: '1ฒส-3002' }, { id: 'B', licensePlate: '2ฒร-7169' }], {})
+    const swapped = planImport(rows, [{ id: 'A', licensePlate: '2ฒร-7169' }, { id: 'B', licensePlate: '1ฒส-3002' }], {})
+    expect(planShape(swapped)).not.toBe(planShape(before))
+  })
+  it('a plate that was new is now in the system → different shape', () => {
+    const before = planImport(rows, [], {})
+    const after = planImport(rows, [{ id: 'X', licensePlate: '1ฒส-9980' }], {})
+    expect(planShape(after)).not.toBe(planShape(before))
   })
 })

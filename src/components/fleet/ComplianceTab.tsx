@@ -1,13 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { CalendarCheck, Upload } from "lucide-react"
+import { CalendarCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import type { ComplianceKind, Vehicle, VehicleCompliance, VehicleDetails } from "@/types/models"
 import { complianceStatus, type ComplianceState } from "@/lib/vehicle-compliance"
 import { ComplianceBadge } from "./ComplianceBadge"
-import { VehicleImportDialog } from "./VehicleImportDialog"
 import { SetExpiryFromRegistrationDialog, vehiclesToSetFromRegistration } from "./SetExpiryFromRegistrationDialog"
 
 type Filter = "all" | "due" | "overdue" | "unconfirmed" | "no-data"
@@ -47,7 +46,6 @@ export function ComplianceTab({
   onOpenDetails: (v: Vehicle) => void
 }) {
   const [filter, setFilter] = React.useState<Filter>("all")
-  const [importOpen, setImportOpen] = React.useState(false)
   const [setExpiryOpen, setSetExpiryOpen] = React.useState(false)
   const settableCount = React.useMemo(
     () => vehiclesToSetFromRegistration(vehicles, detailsById, complianceById, today).ready.length,
@@ -82,11 +80,6 @@ export function ComplianceTab({
           {!readOnly && settableCount > 0 && (
             <Button size="sm" className="h-9 bg-accent" onClick={() => setSetExpiryOpen(true)}>
               <CalendarCheck className="mr-1.5 h-4 w-4" /> ตั้งวันหมดอายุจากวันจดทะเบียน ({settableCount} คัน)
-            </Button>
-          )}
-          {!readOnly && (
-            <Button size="sm" variant="outline" className="h-9" onClick={() => setImportOpen(true)}>
-              <Upload className="mr-1.5 h-4 w-4" /> นำเข้าข้อมูลรถจากตาราง
             </Button>
           )}
         </div>
@@ -126,15 +119,6 @@ export function ComplianceTab({
           detailsById={detailsById}
           complianceById={complianceById}
           today={today}
-          userLabel={userLabel}
-        />
-      )}
-      {!readOnly && (
-        <VehicleImportDialog
-          open={importOpen}
-          onOpenChange={setImportOpen}
-          vehicles={vehicles}
-          detailsById={detailsById}
           userLabel={userLabel}
         />
       )}

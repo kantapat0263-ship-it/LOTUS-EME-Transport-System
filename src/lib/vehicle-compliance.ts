@@ -123,6 +123,19 @@ export function nextRegistrationAnniversary(registrationDate: string | undefined
   return thisYear >= today ? thisYear : sameDayMonthInYear(registrationDate, y + 1)
 }
 
+/**
+ * วันหมดอายุที่จะตั้งให้อัตโนมัติจากวันจดทะเบียน (ภาษี + พ.ร.บ. วันเดียวกัน)
+ * ตั้งเฉพาะคันที่ยังไม่มีวันหมดอายุเลยทั้งสองอย่าง — มีอย่างใดอย่างหนึ่งแล้ว = null (ไม่แตะของที่คนกรอก)
+ */
+export function expiryToSetFromRegistration(
+  current: VehicleCompliance | undefined,
+  registrationDate: string | undefined,
+  today: string
+): string | null {
+  if (current?.tax?.expiry || current?.act?.expiry) return null
+  return nextRegistrationAnniversary(registrationDate, today)
+}
+
 /** เสนอวันหมดอายุรอบใหม่ = รอบเดิม + 1 ปี (วัน-เดือนเดิม) — ไม่ใช้วันที่จ่ายเงิน */
 export function suggestRenewedExpiry(prevExpiry: string | null | undefined): string | null {
   if (!prevExpiry || !isIsoDate(prevExpiry)) return null

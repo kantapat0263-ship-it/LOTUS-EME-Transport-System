@@ -54,6 +54,8 @@ export interface VehicleDetails {
   fuelType?: string;
   bodyType?: string;
   note?: string;
+  /** ราคารถ (บาท) — ผู้ใช้อนุญาตให้นำเข้า 2026-10-09 (คนเห็นมีแค่คนจัดรถ/แอดมิน) */
+  price?: number;
   updatedAt?: any;
   updatedBy?: string;
 }

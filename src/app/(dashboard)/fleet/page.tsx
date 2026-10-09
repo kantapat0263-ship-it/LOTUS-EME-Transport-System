@@ -4,7 +4,7 @@ import * as React from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel, FileText, IdCard } from "lucide-react"
+import { Plus, Truck, User, Phone, Weight, MoreHorizontal, Edit, Trash2, Loader2, Fuel, FileText, IdCard, Upload } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
@@ -38,17 +38,19 @@ import {
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useUser, useDoc, setDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from "@/firebase"
-import { collection, doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore"
+import { collection, doc, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore"
 import { useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { useToast } from "@/hooks/use-toast"
 import { Vehicle, Driver, UserProfile, VehiclePositionDoc, VehicleDetails, VehicleCompliance } from "@/types/models"
 import { isPositionStale } from "@/lib/tracking"
-import { attentionLevel, todayBangkok } from "@/lib/vehicle-compliance"
+import { attentionLevel, formatThaiDate, isIsoDate, nextRegistrationAnniversary, todayBangkok } from "@/lib/vehicle-compliance"
 import { ComplianceBadge } from "@/components/fleet/ComplianceBadge"
 import { ComplianceTab } from "@/components/fleet/ComplianceTab"
 import { VehicleDetailsDialog } from "@/components/fleet/VehicleDetailsDialog"
+import { VehicleImportDialog } from "@/components/fleet/VehicleImportDialog"
+import { writeExpiryFromRegistration } from "@/components/fleet/expiryFromRegistration"
 import { EmployeeCodeHint } from "@/components/fleet/EmployeeCodeHint"
 import { isOccasionalDriver, leaveBadgeText } from "@/lib/driverLeave"
 import { driverSchema } from "@/lib/driverFormSchema"
@@ -59,6 +61,11 @@ const vehicleSchema = z.object({
   maxLoadCapacityKg: z.coerce.number().min(1, "กรุณาระบุน้ำหนักบรรทุก"),
   fuelRate: z.union([z.coerce.number(), z.literal("")]).optional().transform(v => v === "" ? undefined : v),
   gpsDeviceId: z.string().optional(),
+  // เฉพาะตอนเพิ่มรถใหม่ — กรอกแล้วตั้งวันภาษี/พ.ร.บ. ให้เลย (แก้ทีหลังที่รายละเอียดรถ)
+  registrationDate: z
+    .string()
+    .optional()
+    .refine((v) => !v || (isIsoDate(v) && v <= todayBangkok()), "วันที่จดทะเบียนไม่ถูกต้อง หรือเป็นวันในอนาคต"),
 })
 
 export default function FleetPage() {
@@ -73,6 +80,8 @@ export default function FleetPage() {
   const [isVehicleDialogOpen, setIsVehicleDialogOpen] = React.useState(false)
   const [isSavingVehicle, setIsSavingVehicle] = React.useState(false)
   const [editingVehicle, setEditingVehicle] = React.useState<Vehicle | null>(null)
+  // รอบของ dialog รถ (ปิดเอง = รอบใหม่) — งานบันทึกที่เสร็จช้าจะไม่ปิด/ล้างฟอร์มที่ผู้ใช้เปิดใหม่ระหว่างรอ
+  const vehicleDialogSession = React.useRef(0)
 
   // รายชื่ออุปกรณ์ GPS จาก SinoTrack (ทำ dropdown จับคู่ — ไม่ต้องพิมพ์เลขเอง)
   const [gpsDevices, setGpsDevices] = React.useState<{ deviceId: string; carNum: string }[]>([])
@@ -153,14 +162,15 @@ export default function FleetPage() {
   // วันนี้ตามเวลาไทย — คำนวณสถานะใหม่ทุกนาทีพร้อม now (ข้ามเที่ยงคืนแล้วเปลี่ยนเอง)
   const today = todayBangkok(new Date(now))
   const [detailsVehicleId, setDetailsVehicleId] = React.useState<string | null>(null)
+  const [isImportOpen, setIsImportOpen] = React.useState(false)
   const detailsVehicle = (vehicles ?? []).find((v) => v.id === detailsVehicleId) ?? null
   const userLabel = profile?.name || user?.email || "ไม่ทราบชื่อ"
   const complianceLevels = (vehicles ?? []).map((v) => attentionLevel(complianceById[v.id], today))
   const complianceCount = complianceLevels.filter(Boolean).length
 
-  // ทะเบียนซ้ำ: normalize (ตัดช่องว่าง/พิมพ์เล็ก) แล้วหาคันที่ทะเบียนตรงกันเกิน 1 คัน
+  // ทะเบียนซ้ำ: normalize (ตัดช่องว่าง/ขีด/จุด, พิมพ์เล็ก — แบบเดียวกับนำเข้า Excel) แล้วหาคันที่ทะเบียนตรงกันเกิน 1 คัน
   // ทะเบียนใช้เป็น key ในหลายระบบ (ติดตาม GPS/โยกงาน) → ซ้ำแล้วชนกัน
-  const normPlate = (p?: string) => (p || "").trim().replace(/\s+/g, "").toLowerCase()
+  const normPlate = (p?: string) => (p || "").trim().replace(/[\s\-.]/g, "").toLowerCase()
   const duplicatePlates = React.useMemo(() => {
     const counts: Record<string, number> = {}
     ;(vehicles ?? []).forEach((v) => {
@@ -172,7 +182,7 @@ export default function FleetPage() {
   
   const vehicleForm = useForm<z.infer<typeof vehicleSchema>>({
     resolver: zodResolver(vehicleSchema),
-    defaultValues: { licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined, gpsDeviceId: "" }
+    defaultValues: { licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined, gpsDeviceId: "", registrationDate: "" }
   })
 
   const [isDriverDialogOpen, setIsDriverDialogOpen] = React.useState(false)
@@ -258,7 +268,7 @@ export default function FleetPage() {
     toast({ title: "ลบแล้ว", description: `ลบประเภทรถ "${name}" แล้ว` })
   }
 
-  function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
+  async function onVehicleSubmit(values: z.infer<typeof vehicleSchema>) {
     if (isViewer) return
 
     // กันทะเบียนซ้ำ: มีรถคันอื่นทะเบียนเดียวกันอยู่แล้วหรือไม่ (ไม่นับคันที่กำลังแก้)
@@ -276,11 +286,15 @@ export default function FleetPage() {
     }
 
     setIsSavingVehicle(true)
+    const session = vehicleDialogSession.current
 
     const data: any = {
       ...values,
       updatedAt: serverTimestamp()
     }
+    // วันจดทะเบียนไม่ได้เก็บใน vehicles — ไปอยู่ vehicleDetails (ดูด้านล่าง)
+    const registrationDate = editingVehicle ? "" : (values.registrationDate ?? "")
+    delete data.registrationDate
     
     // Clean up undefined values before saving to Firestore
     if (data.fuelRate === undefined) {
@@ -299,21 +313,34 @@ export default function FleetPage() {
         toast({ title: "สำเร็จ", description: "แก้ไขข้อมูลรถเรียบร้อยแล้ว" })
       } else {
         const newRef = doc(collection(db, "vehicles"))
-        setDocumentNonBlocking(newRef, { 
-          ...data, 
-          id: newRef.id,
-          createdAt: serverTimestamp(), 
-        }, { merge: true })
-        toast({ title: "สำเร็จ", description: "เพิ่มรถใหม่เรียบร้อยแล้ว" })
+        const expiry = nextRegistrationAnniversary(registrationDate, today)
+        if (expiry) {
+          // มีวันจดทะเบียน → เพิ่มรถ + ข้อมูลเล่ม + วันภาษี/พ.ร.บ. พร้อมกัน (สำเร็จทั้งหมดหรือไม่บันทึกเลย)
+          const b = writeBatch(db)
+          b.set(newRef, { ...data, id: newRef.id, createdAt: serverTimestamp() }, { merge: true })
+          b.set(doc(db, "vehicleDetails", newRef.id), { id: newRef.id, registrationDate, updatedAt: serverTimestamp(), updatedBy: userLabel })
+          writeExpiryFromRegistration(b, db, { id: newRef.id, licensePlate: data.licensePlate }, expiry, `${userLabel} (ตั้งจากวันจดทะเบียน)`, new Date().toISOString())
+          await b.commit()
+          toast({ title: "สำเร็จ", description: `เพิ่มรถใหม่แล้ว · ภาษี/พ.ร.บ. หมดอายุ ${formatThaiDate(expiry)} (แก้ได้ที่รายละเอียดรถ)` })
+        } else {
+          setDocumentNonBlocking(newRef, {
+            ...data,
+            id: newRef.id,
+            createdAt: serverTimestamp(),
+          }, { merge: true })
+          toast({ title: "สำเร็จ", description: "เพิ่มรถใหม่เรียบร้อยแล้ว" })
+        }
       }
-      setIsVehicleDialogOpen(false)
-      setEditingVehicle(null)
-      vehicleForm.reset()
+      if (session === vehicleDialogSession.current) {
+        setIsVehicleDialogOpen(false)
+        setEditingVehicle(null)
+        vehicleForm.reset()
+      }
     } catch (error) {
       console.error(error)
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกข้อมูลได้", variant: "destructive" })
     } finally {
-      setIsSavingVehicle(false)
+      if (session === vehicleDialogSession.current) setIsSavingVehicle(false)
     }
   }
 
@@ -401,12 +428,15 @@ export default function FleetPage() {
 
         <TabsContent value="vehicles" className="space-y-4">
           {!isViewer && (
-            <div className="flex justify-end">
-              <Button 
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" className="w-full sm:w-auto h-11 md:h-10" onClick={() => setIsImportOpen(true)}>
+                <Upload className="mr-2 h-4 w-4" /> นำเข้าจาก Excel
+              </Button>
+              <Button
                 className="bg-primary hover:bg-primary/90 w-full sm:w-auto h-11 md:h-10" 
                 onClick={() => { 
                   setEditingVehicle(null); 
-                  vehicleForm.reset({ licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined, gpsDeviceId: "" });
+                  vehicleForm.reset({ licensePlate: "", type: "", maxLoadCapacityKg: 1500, fuelRate: undefined, gpsDeviceId: "", registrationDate: "" });
                   setIsVehicleDialogOpen(true);
                 }}
               >
@@ -645,10 +675,25 @@ export default function FleetPage() {
         today={today}
       />
 
+      {!isViewer && (
+        <VehicleImportDialog
+          open={isImportOpen}
+          onOpenChange={setIsImportOpen}
+          vehicles={vehicles ?? []}
+          detailsById={detailsById}
+          complianceById={complianceById}
+          typeOptions={vehicleTypeOptions}
+          today={today}
+          userLabel={userLabel}
+        />
+      )}
+
       {/* Vehicle Dialog */}
       <Dialog 
-        open={isVehicleDialogOpen} 
+        open={isVehicleDialogOpen}
         onOpenChange={(open) => {
+          vehicleDialogSession.current += 1;
+          setIsSavingVehicle(false);
           setIsVehicleDialogOpen(open);
           if (!open) {
             setEditingVehicle(null);
@@ -683,6 +728,23 @@ export default function FleetPage() {
               <FormField control={vehicleForm.control} name="maxLoadCapacityKg" render={({ field }) => (
                 <FormItem><FormLabel>น้ำหนักบรรทุกสูงสุด (kg)</FormLabel><FormControl><Input className="h-11" type="number" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
+              {!editingVehicle && (
+                <FormField control={vehicleForm.control} name="registrationDate" render={({ field }) => {
+                  const expiry = nextRegistrationAnniversary(field.value, today)
+                  return (
+                    <FormItem>
+                      <FormLabel>วันที่จดทะเบียน (ถ้ามี)</FormLabel>
+                      <FormControl><Input className="h-11" type="date" {...field} value={field.value ?? ""} /></FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        {expiry
+                          ? `= ${formatThaiDate(field.value)} · ภาษี + พ.ร.บ. จะตั้งเป็น ${formatThaiDate(expiry)} (แก้ทีหลังได้ที่รายละเอียดรถ)`
+                          : "กรอกแล้วระบบตั้งวันหมดอายุภาษี + พ.ร.บ. ให้เลย · ไม่กรอก = แท็บ พ.ร.บ./ภาษี ขึ้น \"ยังไม่มีข้อมูล\""}
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }} />
+              )}
               <FormField control={vehicleForm.control} name="fuelRate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>อัตราสิ้นเปลือง (กม./ลิตร)</FormLabel>

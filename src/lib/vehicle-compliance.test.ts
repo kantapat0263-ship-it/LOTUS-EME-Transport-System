@@ -6,6 +6,7 @@ import {
   attentionLevel,
   suggestTaxExpiryCandidates,
   nextRegistrationAnniversary,
+  expiryToSetFromRegistration,
   suggestRenewedExpiry,
   formatThaiDate,
 } from './vehicle-compliance'
@@ -67,6 +68,15 @@ describe('suggestions (never auto-advance)', () => {
     expect(nextRegistrationAnniversary('2016-09-26', TODAY)).toBe('2026-09-26')
     expect(nextRegistrationAnniversary('2016-02-29', '2027-01-01')).toBe('2027-02-28')
     expect(nextRegistrationAnniversary(undefined, TODAY)).toBeNull()
+  })
+  it('auto-set from registration only when the car has no expiry at all (never overwrites)', () => {
+    expect(expiryToSetFromRegistration(undefined, '2016-10-28', TODAY)).toBe('2026-10-28')
+    expect(expiryToSetFromRegistration({ id: 'v' }, '2016-10-28', TODAY)).toBe('2026-10-28')
+    expect(expiryToSetFromRegistration({ id: 'v', tax: { expiry: '2027-01-01' } }, '2016-10-28', TODAY)).toBeNull()
+    expect(expiryToSetFromRegistration({ id: 'v', act: { expiry: '2027-01-01' } }, '2016-10-28', TODAY)).toBeNull()
+    expect(expiryToSetFromRegistration({ id: 'v', tax: { expiry: null } }, '2016-10-28', TODAY)).toBe('2026-10-28')
+    expect(expiryToSetFromRegistration(undefined, undefined, TODAY)).toBeNull()
+    expect(expiryToSetFromRegistration(undefined, '', TODAY)).toBeNull()
   })
   it('renewal = previous expiry + 1 year (not payment date)', () => {
     expect(suggestRenewedExpiry('2026-08-23')).toBe('2027-08-23')
