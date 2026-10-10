@@ -63,6 +63,8 @@ import { QueuePanel } from "@/components/continuous-queue/QueuePanel"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard, assertTripStopsUnchanged, type TripStopEdit } from "@/lib/tripQueueGuard"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
+import { requestDriverLinks, useDriverLinks } from "@/lib/driverLinks"
+import { DriverLinkQr } from "@/components/DriverLinkQr"
 
 export default function DailySummaryPage() {
   const { toast } = useToast()
@@ -72,6 +74,8 @@ export default function DailySummaryPage() {
   // Set initial selected date to empty to force user to click
   const [selectedDate, setSelectedDate] = React.useState<string>("")
   const [trips, setTrips] = React.useState<Trip[]>([])
+  // ลิงก์ใบงานคนขับ (มี token) ของทริปวันนี้ — เตรียมไว้ก่อน เพราะปุ่มคัดลอกต้องเขียน clipboard ทันที
+  const driverLinks = useDriverLinks(user, trips.map((t) => t.tripId))
   const [refusalDrafts, setRefusalDrafts] = React.useState<Record<string, { text: string; trip: Trip }>>({})
   const [isLoading, setIsLoading] = React.useState(false)
   const [ordinaryBusy, setOrdinaryBusy] = React.useState(false)
@@ -450,7 +454,11 @@ export default function DailySummaryPage() {
       // หมายเหตุ: ไม่แคป/ไม่ส่งรูป A4 แล้ว — server (/api/line/send-summary) ส่งแต่ข้อความ
       // ไม่เคยใช้ imageBase64 เลย การส่ง base64 หลาย MB เสี่ยงชนลิมิต body ของ Vercel (~4.5MB)
       // ทำปุ่มพังทั้งปุ่มในวันที่ทริปเยอะ + ทำให้กดส่งช้าโดยไม่จำเป็น
-      const tripData = trips.filter((t) => !isHiddenFromReport(t)).map((trip: any) => {
+      const visibleTrips = trips.filter((t) => !isHiddenFromReport(t))
+      // ลิงก์ใบงานมี token (server ออกให้คนจัดรถ) — ทริปเดิมได้ลิงก์เดิมทุกครั้งที่ส่งซ้ำ คนขับกดลิงก์ไหนก็เห็นข้อมูลล่าสุด
+      const driverUrls = await requestDriverLinks(user, visibleTrips.map((t) => t.tripId))
+      if (visibleTrips.some((t) => !driverUrls[t.tripId])) throw new Error("missing driver link")
+      const tripData = visibleTrips.map((trip: any) => {
         const incoming = incomingStopsForTrip(trips as any, trip.id)
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
         const outgoing = (trip.stops || []).filter((s: any) => s.reassignedToVehiclePlate && s.outcome && s.outcome !== 'delivered')
@@ -459,7 +467,7 @@ export default function DailySummaryPage() {
           driverName: trip.actualDriverName
             ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
             : trip.driverName,
-          driverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${trip.tripId}`,
+          driverUrl: driverUrls[trip.tripId],
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
           incomingCount: incoming.length,
           incomingFrom: Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean))),
@@ -514,9 +522,11 @@ export default function DailySummaryPage() {
   const isHiddenFromReport = (trip: Trip): boolean =>
     isFullyMovedOut(trip) || isEmptyTrip(trip as any, incomingStopsForTrip(trips as any, trip.id).length)
 
-  const buildSummaryText = () => {
-    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'
-    const driverLinks = trips.filter((t) => !isHiddenFromReport(t)).map((trip: any) => {
+  /** null = ลิงก์ใบงานยังไม่พร้อม (กำลังขอจาก server / ขอไม่สำเร็จ) */
+  const buildSummaryText = (): string | null => {
+    const visibleTrips = trips.filter((t) => !isHiddenFromReport(t))
+    if (visibleTrips.some((t) => !driverLinks.urls[t.tripId])) return null
+    const driverLinkLines = visibleTrips.map((trip: any) => {
       const incoming = incomingStopsForTrip(trips as any, trip.id)
       const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean)))
       // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
@@ -542,17 +552,22 @@ export default function DailySummaryPage() {
         const to = outgoingTo.length > 0 ? ` (ให้ ${outgoingTo.join(', ')})` : ''
         line += `\n🔁 โยกงานไปให้ ${outgoing.length} จุด${to}`
       }
-      return `${line}\n🔗 ${base}/driver/${trip.tripId}`
+      return `${line}\n🔗 ${driverLinks.urls[trip.tripId]}`
     }).join('\n\n')
-    return `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${thaiLongDate(selectedDate)}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinks}`
+    return `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${thaiLongDate(selectedDate)}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinkLines}`
   }
 
   // คัดลอกข้อความเข้า clipboard → คนจัดรถไปวางในกลุ่ม LINE เอง (ไม่กินโควตา OA)
   const handleCopyMessage = exportOnce(copyMessageBusyRef, async () => {
     if (trips.length === 0) return
     // ห้ามมี await ก่อน writeText — Safari/iOS ปฏิเสธการคัดลอกที่ไม่ได้เริ่มภายใน user gesture (ตัดสินใจ 2026-10-04: ปุ่มส่งออกไม่ตรวจวันลา)
+    const summaryText = buildSummaryText()
+    if (summaryText === null) {
+      toast({ title: "ลิงก์ใบงานยังไม่พร้อม", description: driverLinks.error || "กำลังเตรียมลิงก์ใบงานคนขับ ลองกดอีกครั้งในอีกสักครู่", variant: "destructive" })
+      return
+    }
     try {
-      await navigator.clipboard.writeText(buildSummaryText())
+      await navigator.clipboard.writeText(summaryText)
       setCopiedMsg(true)
       setTimeout(() => setCopiedMsg(false), 2500)
       toast({ title: "คัดลอกข้อความแล้ว ✅", description: "เปิดกลุ่ม LINE แล้ววาง (Paste) ส่งได้เลย — ไม่กินโควตา" })
@@ -567,7 +582,11 @@ export default function DailySummaryPage() {
 
   const handleCopyLink = () => {
     if (!selectedTripForShare) return
-    const url = `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`;
+    const url = driverLinks.urls[selectedTripForShare.tripId]
+    if (!url) {
+      toast({ title: "ลิงก์ใบงานยังไม่พร้อม", description: driverLinks.error || "กำลังเตรียมลิงก์ ลองกดอีกครั้งในอีกสักครู่", variant: "destructive" })
+      return
+    }
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -1626,9 +1645,7 @@ export default function DailySummaryPage() {
   const reassignNewSrcDate = reassignNewDialog ? trips.find(t => t.id === reassignNewDialog.tripId)?.tripDate : undefined
   const assistSrcDate = assistDialog?.expectedTrip.tripDate
 
-  const shareUrl = selectedTripForShare
-    ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://lotus-eme-transport-system.vercel.app'}/driver/${selectedTripForShare.tripId}`
-    : '';
+  const shareUrl = selectedTripForShare ? driverLinks.urls[selectedTripForShare.tripId] || '' : '';
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -2256,8 +2273,8 @@ export default function DailySummaryPage() {
             <div className="space-y-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Link สำหรับคนขับ</p>
               <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/50">
-                <p className="text-sm font-medium truncate flex-1 text-blue-400">{shareUrl}</p>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 hover:bg-blue-500/10" onClick={handleCopyLink}>
+                <p className="text-sm font-medium truncate flex-1 text-blue-400">{shareUrl || driverLinks.error || "กำลังสร้างลิงก์ใบงาน…"}</p>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 hover:bg-blue-500/10" onClick={handleCopyLink} disabled={!shareUrl}>
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4 text-blue-500" />}
                 </Button>
               </div>
@@ -2266,11 +2283,7 @@ export default function DailySummaryPage() {
             <div className="flex flex-col items-center gap-4 py-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">QR Code</p>
               <div className="bg-white p-4 rounded-2xl shadow-inner border border-gray-100">
-                <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareUrl)}`}
-                  alt="Trip QR Code"
-                  className="w-40 h-40"
-                />
+                <DriverLinkQr url={shareUrl} className="w-40 h-40" />
               </div>
             </div>
           </div>

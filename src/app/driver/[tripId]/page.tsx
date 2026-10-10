@@ -6,6 +6,7 @@ import { initializeFirebase } from "@/firebase"
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore"
 import { Trip, Driver } from "@/types/models"
 import { computeDriverLeaderboard, monthRange, incomingStopsForTrip, computeOutcomeStats, type DriverStat, type IncomingJob } from "@/lib/calculations"
+import type { DriverTicket } from "@/server/driverTicket"
 import {
   MapPin,
   Truck,
@@ -41,68 +42,95 @@ export default function DriverTripPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   // Monthly motivation stats (positive-only; refusals never shown to the driver)
-  const [myStat, setMyStat] = React.useState<DriverStat | null>(null)
+  const [myStat, setMyStat] = React.useState<Pick<DriverStat, "rank" | "actualKm" | "completedStops" | "workingDays"> | null>(null)
   const [boardSize, setBoardSize] = React.useState(0)
   const [topKm, setTopKm] = React.useState(0)
   // Jobs other trucks handed to this driver today (public-safe: shown as "รับงานต่อ")
-  const [incoming, setIncoming] = React.useState<IncomingJob[]>([])
+  const [incoming, setIncoming] = React.useState<Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName">[]>([])
   // Actual km for this trip after work moved in/out (null = fall back to planned)
   const [actualKm, setActualKm] = React.useState<number | null>(null)
 
   React.useEffect(() => {
+    // ลิงก์ใบงานแบบเดิม (ไม่มี ?t=) อ่าน Firestore ตรง — ใช้ได้เฉพาะช่วงเปลี่ยนผ่านก่อน publish rules ที่ปิดการอ่านแบบไม่ล็อกอิน
+    // หลังจากนั้นจะโดนปฏิเสธ → ขึ้นข้อความให้ขอลิงก์ใหม่ (ลบส่วนนี้ได้เมื่อไม่มีลิงก์เก่าค้างแล้ว)
+    async function fetchLegacyTrip() {
+      const { firestore } = initializeFirebase()
+      const docRef = doc(firestore, "trips", tripId)
+      const docSnap = await getDoc(docRef)
+
+      if (docSnap.exists()) {
+        const tripData = { ...docSnap.data(), id: docSnap.id } as Trip
+        setTrip(tripData)
+      
+        // Fetch driver phone — คนขับจริง (ขับแทน) ถ้ามี ไม่งั้นคนขับประจำ
+        const phoneDriverId = tripData.actualDriverId || tripData.driverId
+        if (phoneDriverId) {
+          const dRef = doc(firestore, "drivers", phoneDriverId)
+          const dSnap = await getDoc(dRef)
+          if (dSnap.exists()) {
+            setDriverPhone(dSnap.data().phoneNumber || "")
+          }
+        }
+
+        // Best-effort monthly leaderboard (this driver's own stats + rank)
+        try {
+          if (tripData.tripDate && tripData.driverId) {
+            const { start, end } = monthRange(tripData.tripDate)
+            const mSnap = await getDocs(query(
+              collection(firestore, "trips"),
+              where("tripDate", ">=", start),
+              where("tripDate", "<=", end),
+            ))
+            // #3 ไม่นับทริปที่ยกเลิก (Cancelled) เข้าอันดับ leaderboard
+            const monthTrips = mSnap.docs
+              .map(d => ({ ...d.data(), id: d.id }) as any)
+              .filter(t => t.status !== 'Cancelled')
+            const board = computeDriverLeaderboard(monthTrips)
+            // สถิติของ "คนที่ขับจริง" (ขับแทน) ถ้ามี — คนเปิดลิงก์คือคนขับจริง
+            const statDriverId = tripData.actualDriverId || tripData.driverId
+            setMyStat(board.find(b => b.driverId === statDriverId) || null)
+            setBoardSize(board.length)
+            setTopKm(board[0]?.actualKm || 0)
+            // Surface jobs reassigned *into* this trip (the destination half)
+            setIncoming(incomingStopsForTrip(monthTrips, tripData.id))
+            // Actual km after work moved in/out (own delivered + รับต่อ − โยกออก)
+            setActualKm(computeOutcomeStats(monthTrips).actualKmByTrip[tripData.id] ?? null)
+          }
+        } catch (statErr) {
+          console.error("stats unavailable", statErr)
+        }
+      } else {
+        setError(`ไม่พบข้อมูลเที่ยววิ่ง ${tripId}`)
+      }
+    }
+
     async function fetchTrip() {
       try {
-        const { firestore } = initializeFirebase()
-        const docRef = doc(firestore, "trips", tripId)
-        const docSnap = await getDoc(docRef)
-
-        if (docSnap.exists()) {
-          const tripData = { ...docSnap.data(), id: docSnap.id } as Trip
-          setTrip(tripData)
-          
-          // Fetch driver phone — คนขับจริง (ขับแทน) ถ้ามี ไม่งั้นคนขับประจำ
-          const phoneDriverId = tripData.actualDriverId || tripData.driverId
-          if (phoneDriverId) {
-            const dRef = doc(firestore, "drivers", phoneDriverId)
-            const dSnap = await getDoc(dRef)
-            if (dSnap.exists()) {
-              setDriverPhone(dSnap.data().phoneNumber || "")
-            }
-          }
-
-          // Best-effort monthly leaderboard (this driver's own stats + rank)
-          try {
-            if (tripData.tripDate && tripData.driverId) {
-              const { start, end } = monthRange(tripData.tripDate)
-              const mSnap = await getDocs(query(
-                collection(firestore, "trips"),
-                where("tripDate", ">=", start),
-                where("tripDate", "<=", end),
-              ))
-              // #3 ไม่นับทริปที่ยกเลิก (Cancelled) เข้าอันดับ leaderboard
-              const monthTrips = mSnap.docs
-                .map(d => ({ ...d.data(), id: d.id }) as any)
-                .filter(t => t.status !== 'Cancelled')
-              const board = computeDriverLeaderboard(monthTrips)
-              // สถิติของ "คนที่ขับจริง" (ขับแทน) ถ้ามี — คนเปิดลิงก์คือคนขับจริง
-              const statDriverId = tripData.actualDriverId || tripData.driverId
-              setMyStat(board.find(b => b.driverId === statDriverId) || null)
-              setBoardSize(board.length)
-              setTopKm(board[0]?.actualKm || 0)
-              // Surface jobs reassigned *into* this trip (the destination half)
-              setIncoming(incomingStopsForTrip(monthTrips, tripData.id))
-              // Actual km after work moved in/out (own delivered + รับต่อ − โยกออก)
-              setActualKm(computeOutcomeStats(monthTrips).actualKmByTrip[tripData.id] ?? null)
-            }
-          } catch (statErr) {
-            console.error("stats unavailable", statErr)
-          }
-        } else {
-          setError(`ไม่พบข้อมูลเที่ยววิ่ง ${tripId}`)
+        const token = new URLSearchParams(window.location.search).get("t")
+        if (!token) {
+          await fetchLegacyTrip()
+          return
         }
+        // ลิงก์ใหม่: server ตรวจ token ของทริปนี้แล้วคืนเฉพาะข้อมูลที่ใบงานแสดง (สถิติคำนวณที่ server)
+        const res = await fetch(`/api/driver-ticket/${encodeURIComponent(tripId)}?t=${encodeURIComponent(token)}`, { cache: "no-store" })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setError(typeof body?.error === "string" ? body.error : "เกิดข้อผิดพลาดในการโหลดข้อมูล")
+          return
+        }
+        const ticket = body as DriverTicket
+        setTrip(ticket.trip as unknown as Trip)
+        setDriverPhone(ticket.driverPhone)
+        setMyStat(ticket.stats)
+        setBoardSize(ticket.boardSize)
+        setTopKm(ticket.topKm)
+        setIncoming(ticket.incoming)
+        setActualKm(ticket.actualKm)
       } catch (err) {
         console.error(err)
-        setError("เกิดข้อผิดพลาดในการโหลดข้อมูล")
+        setError((err as { code?: string })?.code === "permission-denied"
+          ? "ลิงก์ใบงานนี้หมดอายุแล้ว — ขอลิงก์ใหม่จากคนจัดรถ"
+          : "เกิดข้อผิดพลาดในการโหลดข้อมูล")
       } finally {
         setIsLoading(false)
       }

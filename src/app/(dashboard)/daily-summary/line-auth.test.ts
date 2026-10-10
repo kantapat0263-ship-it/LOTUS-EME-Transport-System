@@ -16,10 +16,11 @@ function arrange(user: { getIdToken: () => Promise<string> } | null) {
   const fetchMock = vi.fn().mockResolvedValue({ ok: true })
   const toast = vi.fn()
   const setBusy = vi.fn()
-  const handler = new Function('user', 'trips', 'setIsSendingLine', 'isFullyMovedOut', 'isHiddenFromReport', 'incomingStopsForTrip', 'fetch', 'toast', 'selectedDate', 'formatThaiDate', 'process', 'console', `${compiled}; return send`)(
-    user, [{ id: 'trip-test', tripId: 'T-TEST', driverName: 'คนขับทดสอบ', stops: [] }], setBusy, () => false, () => false, () => [], fetchMock, toast, '2026-10-06', () => 'วันที่ทดสอบ', { env: { NEXT_PUBLIC_APP_URL: 'https://transport.example' } }, { error: vi.fn() },
+  const requestDriverLinks = vi.fn().mockResolvedValue({ 'T-TEST': 'https://transport.example/driver/T-TEST?t=test-token' })
+  const handler = new Function('user', 'trips', 'setIsSendingLine', 'isFullyMovedOut', 'isHiddenFromReport', 'incomingStopsForTrip', 'fetch', 'toast', 'selectedDate', 'formatThaiDate', 'process', 'console', 'requestDriverLinks', `${compiled}; return send`)(
+    user, [{ id: 'trip-test', tripId: 'T-TEST', driverName: 'คนขับทดสอบ', stops: [] }], setBusy, () => false, () => false, () => [], fetchMock, toast, '2026-10-06', () => 'วันที่ทดสอบ', { env: { NEXT_PUBLIC_APP_URL: 'https://transport.example' } }, { error: vi.fn() }, requestDriverLinks,
   ) as () => Promise<void>
-  return { handler, fetchMock, toast, setBusy }
+  return { handler, fetchMock, toast, setBusy, requestDriverLinks }
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -27,15 +28,16 @@ afterEach(() => vi.restoreAllMocks())
 describe('actual daily-summary LINE click handler', () => {
   it('gets a Firebase token before sending the existing summary payload', async () => {
     const getIdToken = vi.fn().mockResolvedValue('test-user-id-token')
-    const { handler, fetchMock, setBusy } = arrange({ getIdToken })
+    const { handler, fetchMock, setBusy, requestDriverLinks } = arrange({ getIdToken })
     await handler()
+    expect(requestDriverLinks).toHaveBeenCalledWith({ getIdToken }, ['T-TEST'])
     expect(getIdToken).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(getIdToken.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0])
     const [url, request] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/line/send-summary')
     expect(request.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'Bearer test-user-id-token' })
-    expect(JSON.parse(request.body)).toEqual({ trips: [{ driverName: 'คนขับทดสอบ', driverUrl: 'https://transport.example/driver/T-TEST', incomingCount: 0, incomingFrom: [], outgoingCount: 0, outgoingTo: [] }], dateStr: 'วันที่ทดสอบ', selectedDate: '2026-10-06' })
+    expect(JSON.parse(request.body)).toEqual({ trips: [{ driverName: 'คนขับทดสอบ', driverUrl: 'https://transport.example/driver/T-TEST?t=test-token', incomingCount: 0, incomingFrom: [], outgoingCount: 0, outgoingTo: [] }], dateStr: 'วันที่ทดสอบ', selectedDate: '2026-10-06' })
     expect(setBusy).toHaveBeenLastCalledWith(false)
   })
 

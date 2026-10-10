@@ -21,7 +21,8 @@ import {
   X,
   FileText,
   ClipboardList,
-  Info
+  Info,
+  RefreshCw
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -51,9 +52,10 @@ import { tripRouteMode } from "@/lib/routeMode"
 import { updateTripWithQueueGuard } from "@/lib/tripQueueGuard"
 import { TripCoordinateSyncDialog } from "@/components/TripCoordinateSyncDialog"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
+import { requestDriverLinks, useDriverLinks } from "@/lib/driverLinks"
+import { DriverLinkQr } from "@/components/DriverLinkQr"
 
 // Production URL for public access
-const PRODUCTION_URL = "https://lotus-eme-transport-system.vercel.app"
 
 // LOTUS GROUP Head Office Coordinates (Default)
 const HEAD_OFFICE = { lat: 14.0815, lng: 100.7129 }
@@ -93,6 +95,7 @@ export default function TripDetailPage() {
   // Share Dialog States
   const [isShareOpen, setIsShareOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
+  const [isRotatingLink, setIsRotatingLink] = React.useState(false)
 
   const formatDurationFormatted = (minutes: number) => {
     if (minutes <= 0) return "-";
@@ -289,9 +292,32 @@ export default function TripDetailPage() {
     } catch (e: any) { toast({ title: 'เปลี่ยนสถานะไม่สำเร็จ', description: e.message, variant: 'destructive' }) }
   }
 
-  const driverUrl = `${PRODUCTION_URL}/driver/${trip?.tripId}`;
+  // ลิงก์ใบงานมี token — ขอจาก server ตอนเปิดหน้าต่าง "ส่งให้คนขับ" (คนจัดรถ/แอดมินเท่านั้น)
+  const driverLinks = useDriverLinks(isShareOpen && isStaff ? user : null, trip?.tripId ? [trip.tripId] : [])
+  const driverUrl = trip?.tripId ? driverLinks.urls[trip.tripId] || "" : ""
+  const driverUrlPlaceholder = !isStaff
+    ? "เฉพาะคนจัดรถหรือผู้ดูแลเท่านั้นที่สร้างลิงก์ใบงานได้"
+    : driverLinks.error || "กำลังสร้างลิงก์ใบงาน…"
+
+  // ลิงก์หลุด/ส่งผิดคน → ออกลิงก์ใหม่ ลิงก์เดิมใช้ไม่ได้ทันที (ทริปที่ยกเลิก/ลบ ลิงก์ใช้ไม่ได้อยู่แล้ว)
+  const handleRotateLink = async () => {
+    if (!user || !trip?.tripId || isRotatingLink) return
+    if (!window.confirm("สร้างลิงก์ใหม่และยกเลิกลิงก์เดิมของทริปนี้?\nคนขับที่ถือลิงก์เดิมจะเปิดใบงานไม่ได้ ต้องส่งลิงก์ใหม่ให้")) return
+    setIsRotatingLink(true)
+    try {
+      const urls = await requestDriverLinks(user, [trip.tripId], true)
+      if (!urls[trip.tripId]) throw new Error("ทริปนี้ถูกยกเลิกแล้ว สร้างลิงก์ไม่ได้")
+      driverLinks.replace(trip.tripId, urls[trip.tripId])
+      toast({ title: "สร้างลิงก์ใหม่แล้ว", description: "ลิงก์เดิมใช้ไม่ได้แล้ว — คัดลอกลิงก์ใหม่ส่งให้คนขับ" })
+    } catch (e) {
+      toast({ title: "สร้างลิงก์ใหม่ไม่สำเร็จ", description: e instanceof Error ? e.message : "ลองใหม่อีกครั้ง", variant: "destructive" })
+    } finally {
+      setIsRotatingLink(false)
+    }
+  }
 
   const handleCopyLink = () => {
+    if (!driverUrl) return
     navigator.clipboard.writeText(driverUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -515,21 +541,23 @@ export default function TripDetailPage() {
             <div className="space-y-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Link สำหรับคนขับ</p>
               <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/50 group">
-                <p className="text-sm font-medium truncate flex-1 text-blue-400">{driverUrl}</p>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 hover:bg-blue-500/10" onClick={handleCopyLink}>
+                <p className="text-sm font-medium truncate flex-1 text-blue-400">{driverUrl || driverUrlPlaceholder}</p>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 hover:bg-blue-500/10" onClick={handleCopyLink} disabled={!driverUrl}>
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4 text-blue-500" />}
                 </Button>
               </div>
+              {isStaff && (
+                <Button variant="outline" size="sm" className="w-full" onClick={handleRotateLink} disabled={!driverUrl || isRotatingLink}>
+                  {isRotatingLink ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                  สร้างลิงก์ใหม่ (ยกเลิกลิงก์เดิม)
+                </Button>
+              )}
             </div>
 
             <div className="flex flex-col items-center gap-4 py-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">QR Code สำหรับสแกน</p>
               <div className="bg-white p-4 rounded-2xl shadow-inner border border-gray-100">
-                <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(driverUrl)}`}
-                  alt="Trip QR Code"
-                  className="w-48 h-48"
-                />
+                <DriverLinkQr url={driverUrl} className="w-48 h-48" />
               </div>
               <p className="text-[10px] text-muted-foreground italic">(สแกนเพื่อเปิดใบงานในโทรศัพท์มือถือ)</p>
             </div>
