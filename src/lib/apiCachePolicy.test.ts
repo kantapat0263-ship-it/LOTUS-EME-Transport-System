@@ -54,6 +54,10 @@ describe('service worker API isolation', () => {
     expect(firstGetRule('/manifest.json')?.handler).toBe('NetworkOnly')
   })
 
+  it('driver ticket pages (URL carries the link token) are never cached', () => {
+    expect(firstGetRule('/driver/T-1010-0013?t=abc')?.handler).toBe('NetworkOnly')
+  })
+
   // Firestore/Firebase Auth/แผนที่ = API ส่วนตัวข้ามโดเมน — ห้ามมีกฎใดดัก (เดิมกฎ "cross-origin" NetworkFirst เก็บลงแคช
   // ไม่แยกบัญชี และทำสตรีม Listen ของ Firestore พัง) → ไม่มีกฎตรง = เบราว์เซอร์ส่งเน็ตตรง ไม่ผ่าน SW
   it.each([

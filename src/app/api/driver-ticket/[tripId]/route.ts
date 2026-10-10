@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminDb } from '@/firebase/admin'
 import { monthRange } from '@/lib/calculations'
 import { thaiToday } from '@/lib/driverLeave'
-import { DRIVER_LINK_TOKEN_PATTERN, isDriverLinkExpired, isSafeTripId, isValidDriverLinkToken } from '@/server/driverLinkToken'
+import { DRIVER_LINK_TOKEN_PATTERN, isDriverLinkExpired, isSafeTripId, isValidDriverLinkToken, tripCreatedKey } from '@/server/driverLinkToken'
 import { buildDriverTicket } from '@/server/driverTicket'
 
 export const dynamic = 'force-dynamic'
@@ -13,7 +13,7 @@ const EXPIRED = { error: 'ลิงก์ใบงานนี้หมดอา
 
 /**
  * ใบงานคนขับจากลิงก์ LINE (ไม่ต้องล็อกอิน) — ตรวจ token ของทริปนี้ที่ server แล้วคืนเฉพาะข้อมูลที่ใบงานแสดง
- * token ผิด/ของทริปอื่น/ถูกยกเลิก = 403 · ทริปถูกยกเลิก/ลบ/เกิน 7 วันหลังวันทริป = 410
+ * token ผิด/ของทริปอื่น/ถูกยกเลิก/ทริปถูกลบ (หรือสร้างใหม่ด้วย ID เดิม) = 403 · ทริปยกเลิก/เกิน 7 วันหลังวันทริป = 410
  */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ tripId: string }> }) {
   const { tripId } = await params
@@ -21,12 +21,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!isSafeTripId(tripId) || !DRIVER_LINK_TOKEN_PATTERN.test(token)) return json(INVALID, 403)
   try {
     const db = getAdminDb()
-    const version = (await db.doc(`driverLinks/${tripId}`).get()).data()?.version
-    if (typeof version !== 'number' || !isValidDriverLinkToken(tripId, version, token)) return json(INVALID, 403)
-
-    const snap = await db.doc(`trips/${tripId}`).get()
+    const [link, snap] = await Promise.all([db.doc(`driverLinks/${tripId}`).get(), db.doc(`trips/${tripId}`).get()])
+    const version = link.data()?.version
+    const createdKey = tripCreatedKey(snap.createTime)
     const data = snap.data()
-    if (!data || data.status === 'Cancelled') return json(EXPIRED, 410)
+    // ทริปถูกลบ = ตรวจ token ไม่ได้ → ตอบเหมือน token ผิด (ไม่บอกว่ามีทริปนี้หรือไม่)
+    if (!data || !createdKey || typeof version !== 'number' || !isValidDriverLinkToken(tripId, version, createdKey, token)) return json(INVALID, 403)
+    if (data.status === 'Cancelled') return json(EXPIRED, 410)
     const tripDate = data.tripDate || data.date
     if (isDriverLinkExpired(tripDate, thaiToday())) return json(EXPIRED, 410)
     const trip = { ...data, id: snap.id }

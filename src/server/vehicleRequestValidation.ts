@@ -22,6 +22,8 @@ const destination = z.object({
 }).strict().refine(d => d.category === 'custom' ? d.customName.trim() !== '' : d.siteId !== '')
 
 const command = z.object({
+  /** รหัสการกดส่งครั้งนี้ (ฟอร์มใช้รหัสเดิมตอนกดซ้ำ) — กันใบซ้ำเมื่อบันทึกสำเร็จแต่คำตอบหาย */
+  operationId: z.string().uuid(),
   requestDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(isRealDate),
   requestTime: time,
   requestedBy: text(120),

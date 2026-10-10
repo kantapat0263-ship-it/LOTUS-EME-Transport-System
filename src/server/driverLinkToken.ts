@@ -3,7 +3,8 @@ import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto'
 /**
  * token ของลิงก์ใบงานคนขับ (/driver/{tripId}?t=...) — server-only
  *
- * token = HMAC-SHA256(key, tripId + รุ่นลิงก์) → คาดเดาไม่ได้ และผูกกับทริปเดียว (ใช้ข้ามไปเปิดทริปอื่นไม่ได้)
+ * token = HMAC-SHA256(key, tripId + รุ่นลิงก์ + เวลาสร้างเอกสารทริป) → คาดเดาไม่ได้ และผูกกับทริปเดียว (ใช้ข้ามไปเปิดทริปอื่นไม่ได้)
+ * เวลาสร้างเอกสาร (createTime) กันกรณีลบทริปแล้วออก Trip ID เดิมซ้ำ (T-DDMM-NNNd ไล่จากจำนวนทริป) — token ของทริปเก่าใช้กับทริปใหม่ไม่ได้
  * ฐานข้อมูลเก็บแค่ "รุ่น" ต่อทริป (driverLinks/{tripId}.version) ไม่เก็บ token → ข้อมูลรั่วก็ประกอบลิงก์ไม่ได้
  * - ส่งลิงก์ซ้ำ (อัปเดตใบสรุปแล้วส่งใหม่) = รุ่นเดิม → ลิงก์เดิม คนขับไม่งง และเห็นข้อมูลล่าสุดเสมอ
  * - "สร้างลิงก์ใหม่ (ยกเลิกลิงก์เดิม)" = เลื่อนรุ่น → ลิงก์เก่าใช้ไม่ได้ทันที
@@ -20,13 +21,18 @@ function linkKey(): Buffer {
 
 export const DRIVER_LINK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
-export function driverLinkToken(tripId: string, version: number): string {
-  return createHmac('sha256', linkKey()).update(`${tripId}\n${version}`).digest('base64url')
+/** เวลาสร้างเอกสารทริปแบบละเอียดถึงนาโนวินาที (DocumentSnapshot.createTime ของ firebase-admin) */
+export function tripCreatedKey(createTime: { seconds: number; nanoseconds: number } | undefined): string | null {
+  return createTime ? `${createTime.seconds}.${String(createTime.nanoseconds).padStart(9, '0')}` : null
 }
 
-export function isValidDriverLinkToken(tripId: string, version: number, token: string): boolean {
+export function driverLinkToken(tripId: string, version: number, createdKey: string): string {
+  return createHmac('sha256', linkKey()).update(`${tripId}\n${version}\n${createdKey}`).digest('base64url')
+}
+
+export function isValidDriverLinkToken(tripId: string, version: number, createdKey: string, token: string): boolean {
   if (!DRIVER_LINK_TOKEN_PATTERN.test(token)) return false
-  const expected = Buffer.from(driverLinkToken(tripId, version))
+  const expected = Buffer.from(driverLinkToken(tripId, version, createdKey))
   const actual = Buffer.from(token)
   return expected.length === actual.length && timingSafeEqual(expected, actual)
 }

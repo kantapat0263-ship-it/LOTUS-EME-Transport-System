@@ -13,6 +13,8 @@ const withPWA = require('next-pwa')({
     // ไม่แยกตามบัญชี → เครื่องร่วมกัน staff → logout → offline/เน็ตช้าเกิน 10 วิ ได้ข้อมูล staff เก่า (SEC-06)
     // แคช "apis" เก่าถูกล้างตอน SW ใหม่ activate (worker/index.js) และตอนออกจากระบบ (lib/privateCache.ts)
     { urlPattern: ({ url }: { url: URL }) => url.origin === self.origin && url.pathname.startsWith('/api/'), handler: 'NetworkOnly', method: 'GET' },
+    // หน้าใบงานคนขับ /driver/{tripId}?t=token — ไม่เก็บ URL ที่มี token ลงแคช (กฎ "others" เดิมเป็น NetworkFirst)
+    { urlPattern: ({ url }: { url: URL }) => url.origin === self.origin && url.pathname.startsWith('/driver/'), handler: 'NetworkOnly', method: 'GET' },
     // manifest ไม่ผ่านแคช (กฎ .json เดิมของ next-pwa เป็น NetworkFirst ที่ยังเก็บสำเนา)
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/manifest.json', handler: 'NetworkOnly', method: 'GET' },
     // ตัดกฎ "cross-origin" (NetworkFirst ทุกคำขอข้ามโดเมน) ของชุดเดิมออก — มันดัก Firestore/Firebase Auth ซึ่งเป็น API ส่วนตัว

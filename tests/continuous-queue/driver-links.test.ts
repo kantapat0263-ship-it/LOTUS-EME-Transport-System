@@ -157,6 +157,14 @@ it('"สร้างลิงก์ใหม่" ทำให้ลิงก์�
   const { [id('B')]: tokenB } = await tokensFor([id('B')])
   await getAdminDb().doc(`trips/${id('B')}`).update({ status: 'Cancelled' })
   expect((await open(id('B'), tokenB)).status).toBe(410)
+  const tripA = (await getAdminDb().doc(`trips/${id('A')}`).get()).data()!
   await getAdminDb().doc(`trips/${id('A')}`).delete()
-  expect((await open(id('A'), newToken)).status).toBe(410)
+  expect((await open(id('A'), newToken)).status).toBe(403)
+
+  // ลบแล้วออก Trip ID เดิมซ้ำ (เลขไล่จากจำนวนทริปของวัน) → ลิงก์ของทริปเก่าต้องเปิดทริปใหม่ไม่ได้
+  await getAdminDb().doc(`trips/${id('A')}`).set({ ...tripA, driverName: 'คนขับคนใหม่' })
+  expect((await open(id('A'), newToken)).status).toBe(403)
+  const { [id('A')]: recreatedToken } = await tokensFor([id('A')])
+  expect(recreatedToken).not.toBe(newToken)
+  expect((await open(id('A'), recreatedToken)).status).toBe(200)
 })

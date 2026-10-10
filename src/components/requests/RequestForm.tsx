@@ -155,6 +155,10 @@ export function RequestForm() {
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
+  // รหัสการส่งใบนี้ — กดส่งซ้ำ (เช่น ครั้งก่อนเน็ตหลุดหลังบันทึกสำเร็จ) ใช้รหัสเดิม server จึงคืนใบเดิม ไม่สร้างใบซ้ำ
+  // แก้ข้อมูลในฟอร์มเมื่อไร = การส่งใหม่ ได้รหัสใหม่
+  const operationIdRef = React.useRef<string | null>(null)
+  React.useEffect(() => { operationIdRef.current = null }, [destinations, note, selectedDate, requestedBy])
 
   const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
   const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
@@ -327,6 +331,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${await user.getIdToken()}` },
         body: JSON.stringify({
+          operationId: (operationIdRef.current ??= crypto.randomUUID()),
           requestDate: selectedDate,
           requestTime: destinations[0]?.requestTime || "08:30",
           requestedBy,
@@ -351,6 +356,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         unsavedNames.length ? `เก็บเฉพาะในใบขอรถ: ${unsavedNames.join(', ')}` : '',
       ].filter(Boolean).join(' · ')
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}${siteResults ? ` · ${siteResults}` : ''}` })
+      operationIdRef.current = null
 
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
@@ -359,7 +365,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
       toast({
         title: "ส่งคำขอไม่สำเร็จ ❌",
-        description: serverMessage || "ยังไม่ได้บันทึกคำขอ ข้อมูลที่กรอกไว้ยังอยู่ กรุณากดส่งอีกครั้ง",
+        description: serverMessage || "ยังยืนยันผลการบันทึกไม่ได้ ข้อมูลที่กรอกไว้ยังอยู่ กดส่งอีกครั้งได้ (ระบบจะไม่สร้างใบซ้ำ)",
         variant: "destructive",
       })
     } finally {

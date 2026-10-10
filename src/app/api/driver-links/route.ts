@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { z } from 'zod'
 import { getAdminDb, verifyActiveUserToken } from '@/firebase/admin'
-import { driverLinkToken, isSafeTripId } from '@/server/driverLinkToken'
+import { driverLinkToken, isSafeTripId, tripCreatedKey } from '@/server/driverLinkToken'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -37,7 +37,8 @@ export async function POST(request: NextRequest) {
       tripIds.forEach((id, i) => {
         const trip = snaps[i]
         const link = snaps[tripIds.length + i]
-        if (!trip.exists || trip.data()?.status === 'Cancelled') return
+        const createdKey = tripCreatedKey(trip.createTime)
+        if (!trip.exists || !createdKey || trip.data()?.status === 'Cancelled') return
         const current = link.data()?.version
         let version = typeof current === 'number' ? current : 0
         if (rotate) {
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
           version = 1
           t.set(linkRefs[i], { tripId: id, version, createdAt: FieldValue.serverTimestamp(), createdBy: user.uid })
         }
-        out[id] = driverLinkToken(id, version)
+        out[id] = driverLinkToken(id, version, createdKey)
       })
       return out
     })

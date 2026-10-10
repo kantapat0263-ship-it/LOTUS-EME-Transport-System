@@ -33,11 +33,13 @@ export default function LoginPage() {
 
   const ADMIN_EMAIL = "ownchang@hotmail.com"
 
+  // ระหว่างกดเข้าสู่ระบบ/สมัคร (isLoading) ให้ handler ตรวจ/ตั้งโปรไฟล์ให้เสร็จแล้วพาไปเอง
+  // — ไม่งั้น dashboard อาจเห็นโปรไฟล์เดิม (ไม่มี/ยังไม่ active) ก่อน bootstrap admin เขียนเสร็จ แล้วพาออกจากระบบ
   React.useEffect(() => {
-    if (!isUserLoading && user) {
+    if (!isUserLoading && user && !isLoading) {
       router.push("/dashboard")
     }
-  }, [user, isUserLoading, router])
+  }, [user, isUserLoading, isLoading, router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()

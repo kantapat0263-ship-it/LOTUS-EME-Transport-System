@@ -75,7 +75,7 @@ export default function DailySummaryPage() {
   const [selectedDate, setSelectedDate] = React.useState<string>("")
   const [trips, setTrips] = React.useState<Trip[]>([])
   // ลิงก์ใบงานคนขับ (มี token) ของทริปวันนี้ — เตรียมไว้ก่อน เพราะปุ่มคัดลอกต้องเขียน clipboard ทันที
-  const driverLinks = useDriverLinks(user, trips.map((t) => t.tripId))
+  const driverLinks = useDriverLinks(user, trips.map((t) => t.id))
   const [refusalDrafts, setRefusalDrafts] = React.useState<Record<string, { text: string; trip: Trip }>>({})
   const [isLoading, setIsLoading] = React.useState(false)
   const [ordinaryBusy, setOrdinaryBusy] = React.useState(false)
@@ -456,8 +456,8 @@ export default function DailySummaryPage() {
       // ทำปุ่มพังทั้งปุ่มในวันที่ทริปเยอะ + ทำให้กดส่งช้าโดยไม่จำเป็น
       const visibleTrips = trips.filter((t) => !isHiddenFromReport(t))
       // ลิงก์ใบงานมี token (server ออกให้คนจัดรถ) — ทริปเดิมได้ลิงก์เดิมทุกครั้งที่ส่งซ้ำ คนขับกดลิงก์ไหนก็เห็นข้อมูลล่าสุด
-      const driverUrls = await requestDriverLinks(user, visibleTrips.map((t) => t.tripId))
-      if (visibleTrips.some((t) => !driverUrls[t.tripId])) throw new Error("missing driver link")
+      const driverUrls = await requestDriverLinks(user, visibleTrips.map((t) => t.id))
+      if (visibleTrips.some((t) => !driverUrls[t.id])) throw new Error("missing driver link")
       const tripData = visibleTrips.map((trip: any) => {
         const incoming = incomingStopsForTrip(trips as any, trip.id)
         // public-safe: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
@@ -467,7 +467,7 @@ export default function DailySummaryPage() {
           driverName: trip.actualDriverName
             ? `${trip.actualDriverName} (ขับแทน ${trip.driverName})`
             : trip.driverName,
-          driverUrl: driverUrls[trip.tripId],
+          driverUrl: driverUrls[trip.id],
           // public-safe: บอกแค่ว่ามีงาน "รับต่อ" เพิ่ม — ไม่มีคำว่าปฏิเสธ
           incomingCount: incoming.length,
           incomingFrom: Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean))),
@@ -525,7 +525,7 @@ export default function DailySummaryPage() {
   /** null = ลิงก์ใบงานยังไม่พร้อม (กำลังขอจาก server / ขอไม่สำเร็จ) */
   const buildSummaryText = (): string | null => {
     const visibleTrips = trips.filter((t) => !isHiddenFromReport(t))
-    if (visibleTrips.some((t) => !driverLinks.urls[t.tripId])) return null
+    if (visibleTrips.some((t) => !driverLinks.urls[t.id])) return null
     const driverLinkLines = visibleTrips.map((trip: any) => {
       const incoming = incomingStopsForTrip(trips as any, trip.id)
       const incomingFrom = Array.from(new Set(incoming.map((j) => j.fromDriverName || j.fromVehiclePlate).filter(Boolean)))
@@ -552,7 +552,7 @@ export default function DailySummaryPage() {
         const to = outgoingTo.length > 0 ? ` (ให้ ${outgoingTo.join(', ')})` : ''
         line += `\n🔁 โยกงานไปให้ ${outgoing.length} จุด${to}`
       }
-      return `${line}\n🔗 ${driverLinks.urls[trip.tripId]}`
+      return `${line}\n🔗 ${driverLinks.urls[trip.id]}`
     }).join('\n\n')
     return `📋 ใบคิวรถประจำวัน LOTUS GROUP\n📅 วันที่ปฏิบัติงาน: ${thaiLongDate(selectedDate)}\n\n🔗 รายการลิงก์ใบงานดิจิทัลสำหรับคนขับ:\n\n${driverLinkLines}`
   }
@@ -582,7 +582,7 @@ export default function DailySummaryPage() {
 
   const handleCopyLink = () => {
     if (!selectedTripForShare) return
-    const url = driverLinks.urls[selectedTripForShare.tripId]
+    const url = driverLinks.urls[selectedTripForShare.id]
     if (!url) {
       toast({ title: "ลิงก์ใบงานยังไม่พร้อม", description: driverLinks.error || "กำลังเตรียมลิงก์ ลองกดอีกครั้งในอีกสักครู่", variant: "destructive" })
       return
@@ -1645,7 +1645,7 @@ export default function DailySummaryPage() {
   const reassignNewSrcDate = reassignNewDialog ? trips.find(t => t.id === reassignNewDialog.tripId)?.tripDate : undefined
   const assistSrcDate = assistDialog?.expectedTrip.tripDate
 
-  const shareUrl = selectedTripForShare ? driverLinks.urls[selectedTripForShare.tripId] || '' : '';
+  const shareUrl = selectedTripForShare ? driverLinks.urls[selectedTripForShare.id] || '' : '';
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">

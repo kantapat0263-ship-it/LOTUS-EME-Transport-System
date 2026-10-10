@@ -1,6 +1,6 @@
-import { FieldValue, type Firestore } from 'firebase-admin/firestore'
+import { FieldValue, type DocumentData, type Firestore } from 'firebase-admin/firestore'
 import type { ActiveTokenUser } from '@/firebase/admin'
-import { createRequestWithUniqueId, requestIdPrefix } from '@/lib/requestId'
+import { findFreeRequestId, requestIdPrefix } from '@/lib/requestId'
 import { planCustomSites, type SavedPlace } from '@/lib/customSite'
 import { thaiToday } from '@/lib/driverLeave'
 import type { VehicleRequestCommand } from './vehicleRequestValidation'
@@ -9,26 +9,68 @@ export class VehicleRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message) }
 }
 
+export interface VehicleRequestResult {
+  requestId: string
+  createdNames: string[]
+  reusedNames: string[]
+  unsavedNames: string[]
+}
+
 const addDays = (day: string, days: number) => {
   const d = new Date(`${day}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
 }
 
+/** ชั่วโมงจาก "HH:MM" ในตั้งค่าบริษัท — ตรรกะเดียวกับฟอร์ม (ไม่มีค่า = ค่าเริ่มต้น) */
+const settingHour = (value: unknown, fallback: number) => Number(String(value ?? '').split(':')[0] || fallback)
+
+/** ผลที่บันทึกไว้ของคำสั่งนี้ (ส่งซ้ำหลังบันทึกสำเร็จแล้ว = คืนผลเดิม ไม่สร้างใบใหม่) */
+function storedResult(data: DocumentData | undefined, uid: string): VehicleRequestResult | null {
+  if (!data) return null
+  if (data.userId !== uid) throw new VehicleRequestError('ข้อมูลใบขอรถไม่ถูกต้อง กรุณาโหลดหน้าใหม่แล้วส่งอีกครั้ง', 409)
+  return { requestId: data.requestId, createdNames: data.createdNames ?? [], reusedNames: data.reusedNames ?? [], unsavedNames: data.unsavedNames ?? [] }
+}
+
+/**
+ * กติกาวันที่ของผู้ขอทั่วไป (เดิมตรวจแค่ในฟอร์ม): นอกเวลารับคำขอต้องขอล่วงหน้า 2 วัน
+ * เว้นแต่ขอ "พรุ่งนี้" ที่ Dispatcher อนุมัติเร่งด่วนแล้ว — staff ไม่ติดกติกานี้
+ */
+async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate: string, now: Date) {
+  const today = thaiToday(now)
+  const tomorrow = addDays(today, 1)
+  if (requestDate < tomorrow) throw new VehicleRequestError('ต้องขอล่วงหน้าอย่างน้อย 1 วัน', 400)
+  const settings = (await db.doc('companySettings/default').get()).data() ?? {}
+  const hour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours()
+  const isOutsideHours = hour >= settingHour(settings.requestCloseTime, 16) || hour < settingHour(settings.requestOpenTime, 8)
+  if (requestDate >= addDays(today, isOutsideHours ? 2 : 1)) return
+  if (requestDate !== tomorrow) throw new VehicleRequestError('วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่', 400)
+  const approved = await db.collection('urgentRequests')
+    .where('userId', '==', uid).where('requestedDate', '==', requestDate).where('status', '==', 'approved').limit(1).get()
+  if (approved.empty) throw new VehicleRequestError('กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้', 400)
+}
+
 /**
  * สร้างใบขอรถ + สถานที่ใหม่ที่ผู้ขอเลือก "บันทึกไว้ใช้ครั้งต่อไป" ในธุรกรรมเดียว (เดิมทำฝั่ง client)
  * ย้ายมา server เพราะการออกเลข VR ต้องนับ/อ่านใบของทุกคนในวันนั้น — client ของ viewer จะอ่านใบคนอื่นไม่ได้แล้ว
  * รูปแบบเลข + กันชนใช้ lib/requestId เดิม · status ตัดสินจาก role ที่ตรวจจาก token (ไม่เชื่อ client)
+ * operationId: ฟอร์มส่งรหัสเดิมตอนกดซ้ำ — ถ้าครั้งก่อนบันทึกสำเร็จแต่คำตอบหาย จะได้ผลเดิม ไม่เกิดใบซ้ำ
  */
-export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser, command: VehicleRequestCommand, now = new Date()) {
+export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser, command: VehicleRequestCommand, now = new Date()): Promise<VehicleRequestResult> {
+  const operationRef = db.doc(`vehicleRequestOperations/${command.operationId}`)
+  const replay = storedResult((await operationRef.get()).data(), user.uid)
+  if (replay) return replay
+
   const isStaff = user.role !== 'viewer'
   const { requestDate } = command
   if (new Date(`${requestDate}T00:00:00Z`).getUTCDay() === 0) {
     throw new VehicleRequestError('วันอาทิตย์ปิดรับคำขอ กรุณาเลือกวันจันทร์–เสาร์', 400)
   }
-  // ตรงกับฟอร์ม: staff เร็วสุด "วันนี้", ผู้ขอทั่วไปเร็วสุด "พรุ่งนี้" (เวลาไทย)
-  if (requestDate < addDays(thaiToday(now), isStaff ? 0 : 1)) {
-    throw new VehicleRequestError(isStaff ? 'เลือกวันย้อนหลังไม่ได้' : 'ต้องขอล่วงหน้าอย่างน้อย 1 วัน', 400)
+  // ตรงกับฟอร์ม: staff เร็วสุด "วันนี้", ผู้ขอทั่วไปตามกติกาเวลารับคำขอ/อนุมัติเร่งด่วน (เวลาไทย)
+  if (isStaff) {
+    if (requestDate < thaiToday(now)) throw new VehicleRequestError('เลือกวันย้อนหลังไม่ได้', 400)
+  } else {
+    await assertViewerBookingWindow(db, user.uid, requestDate, now)
   }
 
   const profile = (await db.doc(`users/${user.uid}`).get()).data() ?? {}
@@ -44,6 +86,11 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
       })
     : []
   const sitePlan = planCustomSites(command.destinations, knownSites, () => db.collection('sites').doc().id)
+  const names = {
+    createdNames: [...new Set(sitePlan.createdNames)],
+    reusedNames: [...new Set(sitePlan.reusedNames)],
+    unsavedNames: [...new Set(sitePlan.unsavedNames)],
+  }
 
   const destinations = sitePlan.destinations.map(d => {
     const [lat, lng] = d.coordinates.split(',').map(s => parseFloat(s.trim()))
@@ -75,28 +122,23 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
     createdAt: FieldValue.serverTimestamp(),
   }
 
-  const requestId = await createRequestWithUniqueId(
-    fn => db.runTransaction(t => fn({
-      // อ่านผ่านธุรกรรม เพื่อให้ Firestore จดไว้ว่าเราพึ่งพา "รหัสนี้ยังว่าง"
-      exists: async id => (await t.get(db.doc(`vehicleRequests/${id}`))).exists,
-      create: (id, data) => {
-        for (const site of sitePlan.newSites) {
-          t.create(db.doc(`sites/${site.id}`), {
-            ...site, address: '', status: 'Active', isUserAdded: true,
-            addedBy: user.email, addedByName: profileName || user.email,
-            createdAt: FieldValue.serverTimestamp(),
-          })
-        }
-        t.create(db.doc(`vehicleRequests/${id}`), data as Record<string, unknown>)
-      },
-    })),
-    { prefix: requestIdPrefix(requestDate), startSeq, buildData: id => ({ ...requestData, id, requestId: id }) },
-  )
-
-  return {
-    requestId,
-    createdNames: [...new Set(sitePlan.createdNames)],
-    reusedNames: [...new Set(sitePlan.reusedNames)],
-    unsavedNames: [...new Set(sitePlan.unsavedNames)],
-  }
+  return db.runTransaction(async t => {
+    // อ่านให้ครบก่อนเขียน: คำสั่งนี้เคยสำเร็จหรือยัง → หาเลขว่าง (อ่านผ่านธุรกรรม = Firestore จดว่าเราพึ่งพา "รหัสนี้ยังว่าง")
+    const replayInTx = storedResult((await t.get(operationRef)).data(), user.uid)
+    if (replayInTx) return replayInTx
+    const requestId = await findFreeRequestId(
+      { exists: async id => (await t.get(db.doc(`vehicleRequests/${id}`))).exists },
+      requestIdPrefix(requestDate), startSeq,
+    )
+    for (const site of sitePlan.newSites) {
+      t.create(db.doc(`sites/${site.id}`), {
+        ...site, address: '', status: 'Active', isUserAdded: true,
+        addedBy: user.email, addedByName: profileName || user.email,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+    }
+    t.create(db.doc(`vehicleRequests/${requestId}`), { ...requestData, id: requestId, requestId })
+    t.create(operationRef, { userId: user.uid, requestId, ...names, createdAt: FieldValue.serverTimestamp() })
+    return { requestId, ...names }
+  })
 }

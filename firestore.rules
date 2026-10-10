@@ -95,8 +95,9 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
 
-    // token ลิงก์ใบงานคนขับ (รุ่นต่อทริป) — server เท่านั้น
+    // token ลิงก์ใบงานคนขับ (รุ่นต่อทริป) และรหัสการส่งใบขอรถ (กันใบซ้ำ) — server เท่านั้น
     match /driverLinks/{tripId} { allow read, write: if false; }
+    match /vehicleRequestOperations/{operationId} { allow read, write: if false; }
 
     match /queueResourceDays/{key} {
       allow read: if isStaff();
@@ -178,18 +179,36 @@ service cloud.firestore {
       return value == null || (value is number && value >= -limit && value <= limit);
     }
     // ชื่อ/ที่อยู่สถานที่แสดงในหลายหน้า (รวมหมุดแผนที่) — คุมชนิดและความยาวที่ฝั่ง rules ด้วย ไม่พึ่งแค่ฟอร์ม
+    function validSiteName(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200;
+    }
+    function validSiteAddress(data) {
+      return data.get('address', '') is string && data.get('address', '').size() <= 1000;
+    }
+    function validSiteTag(data) {
+      return data.get('projectTypeTag', '') is string && data.get('projectTypeTag', '').size() <= 60;
+    }
     function validSite(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() <= 200
-        && data.get('address', '') is string && data.get('address', '').size() <= 1000
-        && data.get('projectTypeTag', '') is string && data.get('projectTypeTag', '').size() <= 60
+      return validSiteName(data) && validSiteAddress(data) && validSiteTag(data)
         && optionalCoordinate(data.get('latitude', null), 90)
         && optionalCoordinate(data.get('longitude', null), 180);
+    }
+    // แก้สถานที่: ตรวจเฉพาะฟิลด์ที่เปลี่ยน — ข้อมูลเก่าที่ไม่ตรงรูปแบบ (ก่อนมีกฎนี้) ยังแก้ฟิลด์อื่นได้
+    function validSiteChanges() {
+      let data = request.resource.data;
+      let changed = data.diff(resource.data).affectedKeys();
+      return (!changed.hasAny(['name']) || validSiteName(data))
+        && (!changed.hasAny(['address']) || validSiteAddress(data))
+        && (!changed.hasAny(['projectTypeTag']) || validSiteTag(data))
+        && (!changed.hasAny(['latitude']) || optionalCoordinate(data.get('latitude', null), 90))
+        && (!changed.hasAny(['longitude']) || optionalCoordinate(data.get('longitude', null), 180));
     }
 
     match /sites/{siteId} {
       allow read: if isActiveUser();
       // ผู้ขอทั่วไปเพิ่มสถานที่ผ่านฟอร์มขอรถ → POST /api/vehicle-requests (server ตรวจข้อมูลแล้วบันทึกพร้อมใบ)
-      allow create, update: if isStaff() && validSite(request.resource.data);
+      allow create: if isStaff() && validSite(request.resource.data);
+      allow update: if isStaff() && validSiteChanges();
       allow delete: if isStaff();
     }
 

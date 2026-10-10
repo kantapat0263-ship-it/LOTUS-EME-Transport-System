@@ -9,8 +9,7 @@ type Raw = Record<string, unknown>
 
 const STOP_TEXT_FIELDS = [
   'siteName', 'requestTime', 'cargoDetails', 'requestedBy', 'requestedByPhone', 'note',
-  'dispatcherNote', 'dispatcherName', 'outcome', 'reassignedToVehiclePlate', 'reassignedToDriverName',
-  'assistForPlate', 'assistForDriver',
+  'reassignedToVehiclePlate', 'reassignedToDriverName', 'assistForPlate', 'assistForDriver',
 ] as const
 
 const TRIP_TEXT_FIELDS = ['tripId', 'tripDate', 'departureTime', 'driverName', 'actualDriverName', 'vehiclePlate'] as const
@@ -24,16 +23,33 @@ function pickText<K extends string>(source: Raw, keys: readonly K[]): Partial<Re
   return out
 }
 
-/** stopNotes / stopNoteAuthors: { stop_0: "..." } — เก็บเฉพาะคีย์รูปแบบนี้ที่เป็นข้อความ */
-function stopTextMap(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  return Object.fromEntries(Object.entries(value as Raw).filter(([key, text]) => /^stop_\d+$/.test(key) && typeof text === 'string')) as Record<string, string>
+const asRaw = (value: unknown) => (value && typeof value === 'object' ? value : {}) as Raw
+const text = (value: unknown) => (typeof value === 'string' ? value : '')
+
+/**
+ * หมายเหตุคนจัดรถที่ใบงานแสดงจริงของแต่ละจุด: trip.stopNotes (ตัวหลัก) ไม่มีก็ใช้ stop.dispatcherNote (รุ่นเก่า)
+ * — ตรรกะเดียวกับหน้าใบงาน แต่ส่งเฉพาะค่าที่ชนะ และเฉพาะจุดที่มีอยู่จริง (ไม่ส่งหมายเหตุค้างของจุดที่ถูกลบ)
+ */
+function effectiveStopNotes(trip: Raw, stops: Raw[]) {
+  const notes: Record<string, string> = {}
+  const authors: Record<string, string> = {}
+  const tripNotes = asRaw(trip.stopNotes)
+  const tripAuthors = asRaw(trip.stopNoteAuthors)
+  stops.forEach((stop, index) => {
+    const key = `stop_${index}`
+    const note = text(tripNotes[key]) || text(stop.dispatcherNote)
+    const author = text(tripAuthors[key]) || text(stop.dispatcherName)
+    if (note) notes[key] = note
+    if (author) authors[key] = author
+  })
+  return { stopNotes: notes, stopNoteAuthors: authors }
 }
 
-function projectStop(stop: unknown) {
-  const s = (stop && typeof stop === 'object' ? stop : {}) as Raw
+function projectStop(s: Raw) {
   return {
     ...pickText(s, STOP_TEXT_FIELDS),
+    // ใบงานใช้ผลแค่ "ส่งแล้ว/ยังไม่ส่ง" เพื่อขึ้นป้ายงานที่โยกไปแล้ว — ไม่ส่งเหตุผลภายใน (เช่น driver-refused)
+    ...(typeof s.outcome === 'string' && s.outcome ? { outcome: s.outcome === 'delivered' ? 'delivered' : 'not-delivered' } : {}),
     ...(isNum(s.lat) ? { lat: s.lat } : {}),
     ...(isNum(s.lng) ? { lng: s.lng } : {}),
   }
@@ -42,13 +58,13 @@ function projectStop(stop: unknown) {
 export interface DriverTicketStats { rank: number; actualKm: number; completedStops: number; workingDays: number }
 
 export function buildDriverTicket(trip: Raw & { id: string }, monthTrips: (Raw & { id: string })[], driverPhone: string) {
+  const stops = Array.isArray(trip.stops) ? trip.stops.map(asRaw) : []
   const projected = {
     id: trip.id,
     ...pickText(trip, TRIP_TEXT_FIELDS),
     ...Object.fromEntries(TRIP_NUMBER_FIELDS.filter(k => isNum(trip[k])).map(k => [k, trip[k]])),
-    stopNotes: stopTextMap(trip.stopNotes),
-    stopNoteAuthors: stopTextMap(trip.stopNoteAuthors),
-    stops: Array.isArray(trip.stops) ? trip.stops.map(projectStop) : [],
+    ...effectiveStopNotes(trip, stops),
+    stops: stops.map(projectStop),
   }
 
   let stats: DriverTicketStats | null = null

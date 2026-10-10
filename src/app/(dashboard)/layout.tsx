@@ -23,6 +23,15 @@ type ProfileState =
   | { uid: string; status: "ready"; profile: UserProfile }
   | { uid: string; status: "missing" | "error"; profile: null }
 
+const VIEWER_RESTRICTED_PATHS = ["/trips/plan", "/sites", "/fleet", "/settings", "/trip-grouping", "/daily-summary", "/report"]
+
+/** หน้าที่ role นี้เข้าไม่ได้ → ปลายทางที่จะพาไป (null = เข้าได้) */
+function restrictedRedirect(role: string | undefined, pathname: string): string | null {
+  if (role === "viewer" && VIEWER_RESTRICTED_PATHS.some(p => pathname.startsWith(p))) return "/requests"
+  if (role === "dispatcher" && pathname.startsWith("/settings/users")) return "/dashboard"
+  return null
+}
+
 export default function DashboardLayout({
   children,
 }: {
@@ -102,17 +111,8 @@ export default function DashboardLayout({
     }
 
     if (profile && isApproved) {
-      const viewerRestrictedPaths = ["/trips/plan", "/sites", "/fleet", "/settings", "/trip-grouping", "/daily-summary", "/report"]
-      if (profile.role === "viewer") {
-        const isRestricted = viewerRestrictedPaths.some(p => pathname.startsWith(p))
-        if (isRestricted) {
-          router.push("/requests")
-        }
-      }
-
-      if (profile.role === "dispatcher" && pathname.startsWith("/settings/users")) {
-        router.push("/dashboard")
-      }
+      const target = restrictedRedirect(profile.role, pathname)
+      if (target) router.push(target)
     }
   }, [user, isUserLoading, profile, isApproved, router, pathname])
 
@@ -132,7 +132,8 @@ export default function DashboardLayout({
     )
   }
 
-  if (!isApproved) {
+  // ยังไม่อนุมัติ หรือเปิดหน้าที่ role นี้เข้าไม่ได้ (รอ redirect) → ไม่ render หน้าลูก = ไม่เริ่ม listener ที่ rules จะปฏิเสธ
+  if (!isApproved || restrictedRedirect(profile?.role, pathname)) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-4">

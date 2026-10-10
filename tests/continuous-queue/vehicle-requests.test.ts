@@ -1,11 +1,13 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto'
-import { beforeAll, afterAll, expect, it, vi } from 'vitest'
+import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import { initializeApp, deleteApp, type FirebaseApp } from 'firebase/app'
 import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth } from 'firebase/auth'
 import { NextRequest } from 'next/server'
 import { getAdminDb } from '@/firebase/admin'
 import { thaiToday } from '@/lib/driverLeave'
 import { POST as createRequest } from '@/app/api/vehicle-requests/route'
+import { createVehicleRequest, VehicleRequestError } from '@/server/vehicleRequestService'
+import { parseVehicleRequestCommand } from '@/server/vehicleRequestValidation'
 
 let app: FirebaseApp
 let uid: string
@@ -40,7 +42,7 @@ const siteDest = (overrides: Record<string, unknown> = {}) => ({
   jobDescription: 'ส่งท่อ 10 เส้น', saveAsSite: false, locationType: 'ไซต์งาน', requestTime: '08:30', ...overrides,
 })
 const body = (requestDate: string, destinations: unknown[] = [siteDest()], extra: Record<string, unknown> = {}) =>
-  ({ requestDate, requestTime: '08:30', requestedBy: 'ผู้ขอทดสอบ', note: '', destinations, ...extra })
+  ({ operationId: randomUUID(), requestDate, requestTime: '08:30', requestedBy: 'ผู้ขอทดสอบ', note: '', destinations, ...extra })
 
 const post = (payload: unknown, auth = header) => createRequest(new NextRequest('http://localhost/api/vehicle-requests', {
   method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -128,4 +130,42 @@ it('สถานที่ใหม่ (markup ในชื่อ) ถูกบ�
   expect((await conflict.json()).error).toContain('ตรงกับ')
   const bad = await post(body(workday(3), [{ ...custom, customName: 'พิกัดผิด', coordinates: '13.8' }]))
   expect(bad.status).toBe(400)
+})
+
+it('กดส่งซ้ำด้วยรหัสการส่งเดิม (คำตอบครั้งแรกหาย) → ได้ใบเดิม ไม่สร้างใบซ้ำ · รหัสของคนอื่นใช้ไม่ได้', async () => {
+  await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
+  const day = workday(6)
+  const payload = body(day)
+  const first = await (await post(payload)).json()
+  const again = await post(payload)
+  expect(again.status).toBe(200)
+  expect((await again.json()).requestId).toBe(first.requestId)
+  expect((await getAdminDb().collection('vehicleRequests').where('requestDate', '==', day).get()).size).toBe(1)
+
+  const foreign = randomUUID()
+  await getAdminDb().doc(`vehicleRequestOperations/${foreign}`).set({ userId: 'someone-else', requestId: 'VR-0000-0011' })
+  expect((await post(body(day, [siteDest()], { operationId: foreign }))).status).toBe(409)
+  expect((await post(body(day, [siteDest()], { operationId: 'not-a-uuid' }))).status).toBe(400)
+})
+
+describe('กติกาเวลารับคำขอของผู้ขอทั่วไป (ตรวจที่ server เหมือนฟอร์ม)', () => {
+  // วันจันทร์ในอนาคต — พรุ่งนี้ (อังคาร) และมะรืน (พุธ) ไม่ใช่วันอาทิตย์
+  const MONDAY = '2030-01-07'
+  const at = (bangkokHour: number) => new Date(`${MONDAY}T${String(bangkokHour - 7).padStart(2, '0')}:00:00Z`)
+  const viewer = () => ({ uid, name: 'สมชาย', role: 'viewer' as const, email: 'viewer@test.local' })
+  const command = (requestDate: string) => parseVehicleRequestCommand(body(requestDate))
+
+  it('นอกเวลา: ขอพรุ่งนี้ต้องได้อนุมัติเร่งด่วนก่อน · มะรืนขอได้ · ในเวลาขอพรุ่งนี้ได้ · staff ไม่ติดกติกานี้', async () => {
+    await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
+    await getAdminDb().doc('companySettings/default').set({ requestOpenTime: '08:00', requestCloseTime: '16:00' }, { merge: true })
+    const db = getAdminDb()
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toThrow('ขออนุมัติจาก Dispatcher')
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toBeInstanceOf(VehicleRequestError)
+    expect((await createVehicleRequest(db, viewer(), command('2030-01-09'), at(20))).requestId).toMatch(/^VR-0901-\d{4}$/)
+    expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), at(10))).requestId).toMatch(/^VR-0801-\d{4}$/)
+    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-08', status: 'approved' })
+    expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).requestId).toMatch(/^VR-0801-\d{4}$/)
+    expect((await createVehicleRequest(db, { ...viewer(), role: 'dispatcher' }, command('2030-01-07'), at(20))).requestId).toMatch(/^VR-0701-\d{4}$/)
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-07'), at(10))).rejects.toThrow('ล่วงหน้าอย่างน้อย 1 วัน')
+  })
 })

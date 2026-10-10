@@ -293,21 +293,21 @@ export default function TripDetailPage() {
   }
 
   // ลิงก์ใบงานมี token — ขอจาก server ตอนเปิดหน้าต่าง "ส่งให้คนขับ" (คนจัดรถ/แอดมินเท่านั้น)
-  const driverLinks = useDriverLinks(isShareOpen && isStaff ? user : null, trip?.tripId ? [trip.tripId] : [])
-  const driverUrl = trip?.tripId ? driverLinks.urls[trip.tripId] || "" : ""
+  const driverLinks = useDriverLinks(isShareOpen && isStaff ? user : null, trip?.id ? [trip.id] : [])
+  const driverUrl = trip?.id ? driverLinks.urls[trip.id] || "" : ""
   const driverUrlPlaceholder = !isStaff
     ? "เฉพาะคนจัดรถหรือผู้ดูแลเท่านั้นที่สร้างลิงก์ใบงานได้"
     : driverLinks.error || "กำลังสร้างลิงก์ใบงาน…"
 
   // ลิงก์หลุด/ส่งผิดคน → ออกลิงก์ใหม่ ลิงก์เดิมใช้ไม่ได้ทันที (ทริปที่ยกเลิก/ลบ ลิงก์ใช้ไม่ได้อยู่แล้ว)
   const handleRotateLink = async () => {
-    if (!user || !trip?.tripId || isRotatingLink) return
+    if (!user || !trip?.id || isRotatingLink) return
     if (!window.confirm("สร้างลิงก์ใหม่และยกเลิกลิงก์เดิมของทริปนี้?\nคนขับที่ถือลิงก์เดิมจะเปิดใบงานไม่ได้ ต้องส่งลิงก์ใหม่ให้")) return
     setIsRotatingLink(true)
     try {
-      const urls = await requestDriverLinks(user, [trip.tripId], true)
-      if (!urls[trip.tripId]) throw new Error("ทริปนี้ถูกยกเลิกแล้ว สร้างลิงก์ไม่ได้")
-      driverLinks.replace(trip.tripId, urls[trip.tripId])
+      const urls = await requestDriverLinks(user, [trip.id], true)
+      if (!urls[trip.id]) throw new Error("ทริปนี้ถูกยกเลิกแล้ว สร้างลิงก์ไม่ได้")
+      driverLinks.replace(trip.id, urls[trip.id])
       toast({ title: "สร้างลิงก์ใหม่แล้ว", description: "ลิงก์เดิมใช้ไม่ได้แล้ว — คัดลอกลิงก์ใหม่ส่งให้คนขับ" })
     } catch (e) {
       toast({ title: "สร้างลิงก์ใหม่ไม่สำเร็จ", description: e instanceof Error ? e.message : "ลองใหม่อีกครั้ง", variant: "destructive" })

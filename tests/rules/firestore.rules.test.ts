@@ -346,7 +346,7 @@ describe('ตารางสิทธิ์อ่าน: ไม่ล็อก�
     ['companySettings', ACTIVE], ['vehiclePositions', ACTIVE], ['vehiclePositionTrails', ACTIVE], ['trackingDaily', ACTIVE],
     ['vehicleDetails', STAFF], ['vehicleCompliance', STAFF], ['vehicleComplianceHistory', STAFF],
     ['vehicleComplianceEvidence', STAFF], ['dieselPriceHistory', STAFF], ['queueResourceDays', STAFF],
-    ['trackingMeta', []], ['driverLinks', []], ['continuousBookings', []],
+    ['trackingMeta', []], ['driverLinks', []], ['vehicleRequestOperations', []], ['continuousBookings', []],
   ]
 
   beforeEach(async () => {
@@ -416,5 +416,15 @@ describe('sites — ตรวจชนิด/ความยาว/พิกั�
     ]) await assertFails(setDoc(doc(d, 'sites', 'S-BAD'), site(bad)))
     await assertSucceeds(setDoc(doc(d, 'sites', 'S-OK'), site()))
     await assertFails(updateDoc(doc(d, 'sites', 'S-OK'), { name: 'ก'.repeat(201) }))
+  })
+
+  it('สถานที่เก่าที่ข้อมูลไม่ตรงรูปแบบ ยังแก้ฟิลด์อื่นได้ แต่ใส่ค่าผิดรูปแบบใหม่ไม่ได้', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'sites', 'S-LEGACY'), site({ latitude: 200, projectTypeTag: 'x'.repeat(80) })))
+    const d = as('dispatcher')
+    await assertSucceeds(updateDoc(doc(d, 'sites', 'S-LEGACY'), { name: 'ชื่อใหม่', address: 'ที่อยู่ใหม่', updatedAt: serverTimestamp() }))
+    await assertSucceeds(setDoc(doc(d, 'sites', 'S-LEGACY'), { name: 'ชื่อใหม่', status: 'Active' }, { merge: true }))
+    await assertSucceeds(updateDoc(doc(d, 'sites', 'S-LEGACY'), { latitude: 13.7 }))
+    await assertFails(updateDoc(doc(d, 'sites', 'S-LEGACY'), { longitude: 999 }))
+    await assertFails(updateDoc(doc(d, 'sites', 'S-LEGACY'), { name: '' }))
   })
 })
