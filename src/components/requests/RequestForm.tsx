@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, doc, setDoc, serverTimestamp, getDocs, query, where, runTransaction } from "firebase/firestore"
+import { collection, doc, setDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -32,8 +32,7 @@ import {
 Save
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { requestIdPrefix, createRequestWithUniqueId, RequestIdExhaustedError, type RequestIdTx } from "@/lib/requestId"
-import { editCustomDestination, matchCustomSite, planCustomSites, CustomSiteError } from "@/lib/customSite"
+import { editCustomDestination, matchCustomSite } from "@/lib/customSite"
 import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -320,88 +319,39 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
 
     setIsSubmitting(true)
+    let serverMessage = ""
     try {
-      // ลำดับเริ่มต้นเป็นแค่ "ตัวตั้ง" — ตัวจริงถูกจัดสรรในธุรกรรมอีกที กันสองคนส่งพร้อมกันแล้วทับกัน
-      const datePrefix = requestIdPrefix(selectedDate)
-      const qRequests = query(collection(db, "vehicleRequests"), where("requestDate", "==", selectedDate));
-      const snapRequests = await getDocs(qRequests);
-      const startSeq = snapRequests.size + 1;
-
-      // Recheck the current list at submit time, then save new places with the request.
-      const needsSiteLookup = validDestinations.some(d => d.category === 'custom' && d.saveAsSite && !d.siteId && d.coordinates.trim())
-      const knownSites = needsSiteLookup
-        ? (await getDocs(collection(db, 'sites'))).docs.map(s => ({ ...s.data(), id: s.id } as Site))
-        : sites || []
-      const sitePlan = planCustomSites(validDestinations, knownSites, () => doc(collection(db, 'sites')).id)
-
-      const parsedDestinations = []
-
-      for (const d of sitePlan.destinations) {
-        const [lat, lng] = d.coordinates.split(',').map(s => parseFloat(s.trim()))
-        const latVal = isNaN(lat) ? 0 : lat
-        const lngVal = isNaN(lng) ? 0 : lng
-        const finalName = d.category === "custom" ? d.customName : d.siteName
-
-        parsedDestinations.push({
-          type: d.category === "custom" ? "other" : "site",
-          siteId: d.siteId || null,
-          siteName: finalName,
-          customName: d.category === "custom" ? d.customName : null,
-          lat: latVal,
-          lng: lngVal,
-          jobDescription: d.jobDescription,
-          requestTime: d.requestTime || "08:30"
-        })
-      }
-
-      const requestData = {
-        requestDate: selectedDate,
-        requestTime: destinations[0]?.requestTime || "08:30",
-        requestedBy: requestedBy || profile?.name || user?.displayName || user?.email || "Unknown",
-        requestedByEmail: user.email,
-        requestedByPhone: (profile as any)?.phone || "",
-        userId: user.uid,
-        userEmail: user.email,
-        destinations: parsedDestinations,
-        note,
-        // ผู้ขอทั่วไป → pending รอคนจัดรถกด "รับเรื่อง"
-        // คนจัดรถ/แอดมินสร้างเอง → ถือว่ารับเรื่องแล้วในตัว ใบจึงเข้ากองจัดคิวทันที
-        // (หน้าจัดคิวโหลดเฉพาะ in_progress/partial/rescheduled — ถ้าเป็น pending ใบจะค้างไม่มีใครเห็น)
-        status: isViewer ? "pending" : "in_progress",
-        ...(isViewer ? {} : { acknowledgedBy: profile?.name || user.email || "Dispatcher", acknowledgedAt: new Date().toISOString() }),
-        createdAt: serverTimestamp(),
-      }
-
-      const runTx = <T,>(fn: (tx: RequestIdTx) => Promise<T>) =>
-        runTransaction(db, (t) =>
-          fn({
-            // อ่านผ่านธุรกรรม เพื่อให้ Firestore จดไว้ว่าเราพึ่งพา "รหัสนี้ยังว่าง"
-            exists: async (id) => (await t.get(doc(db, "vehicleRequests", id))).exists(),
-            create: (id, data) => {
-              for (const site of sitePlan.newSites) {
-                t.set(doc(db, 'sites', site.id), {
-                  ...site, address: '', status: 'Active', isUserAdded: true,
-                  addedBy: user.email, addedByName: profile?.name || user.email,
-                  createdAt: serverTimestamp(),
-                })
-              }
-              t.set(doc(db, "vehicleRequests", id), data as any)
-            },
-          })
-        )
-
-      const requestId = await createRequestWithUniqueId(runTx, {
-        prefix: datePrefix,
-        startSeq,
-        buildData: (id) => ({ ...requestData, id, requestId: id }),
+      // ออกเลข VR + บันทึกใบ + สถานที่ใหม่ ทำที่ server ในธุรกรรมเดียว (api/vehicle-requests)
+      // เพราะการนับ/เช็กเลขซ้ำต้องอ่านใบของทุกคนในวันนั้น ซึ่ง client ของผู้ขอทั่วไปอ่านไม่ได้แล้ว
+      const response = await fetch("/api/vehicle-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${await user.getIdToken()}` },
+        body: JSON.stringify({
+          requestDate: selectedDate,
+          requestTime: destinations[0]?.requestTime || "08:30",
+          requestedBy,
+          note,
+          destinations: validDestinations.map(d => ({
+            category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
+            coordinates: d.coordinates, jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
+            ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
+            locationType: d.locationType, requestTime: d.requestTime,
+          })),
+        }),
       })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        serverMessage = typeof result?.error === "string" ? result.error : ""
+        throw new Error(`vehicle-requests ${response.status}`)
+      }
+      const { requestId, createdNames = [], reusedNames = [], unsavedNames = [] } = result as { requestId: string; createdNames?: string[]; reusedNames?: string[]; unsavedNames?: string[] }
       const siteResults = [
-        sitePlan.createdNames.length ? `เพิ่มสถานที่ไว้ใช้ครั้งต่อไป: ${[...new Set(sitePlan.createdNames)].join(', ')}` : '',
-        sitePlan.reusedNames.length ? `ใช้สถานที่เดิม: ${[...new Set(sitePlan.reusedNames)].join(', ')}` : '',
-        sitePlan.unsavedNames.length ? `เก็บเฉพาะในใบขอรถ: ${[...new Set(sitePlan.unsavedNames)].join(', ')}` : '',
+        createdNames.length ? `เพิ่มสถานที่ไว้ใช้ครั้งต่อไป: ${createdNames.join(', ')}` : '',
+        reusedNames.length ? `ใช้สถานที่เดิม: ${reusedNames.join(', ')}` : '',
+        unsavedNames.length ? `เก็บเฉพาะในใบขอรถ: ${unsavedNames.join(', ')}` : '',
       ].filter(Boolean).join(' · ')
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}${siteResults ? ` · ${siteResults}` : ''}` })
-      
+
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
     } catch (error) {
@@ -409,9 +359,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
       toast({
         title: "ส่งคำขอไม่สำเร็จ ❌",
-        description: error instanceof CustomSiteError ? error.message : error instanceof RequestIdExhaustedError
-          ? "ออกรหัสใบขอของวันนี้ไม่ได้ (รหัสเต็ม) — แจ้งผู้ดูแลระบบ"
-          : "ยังไม่ได้บันทึกคำขอ ข้อมูลที่กรอกไว้ยังอยู่ กรุณากดส่งอีกครั้ง",
+        description: serverMessage || "ยังไม่ได้บันทึกคำขอ ข้อมูลที่กรอกไว้ยังอยู่ กรุณากดส่งอีกครั้ง",
         variant: "destructive",
       })
     } finally {

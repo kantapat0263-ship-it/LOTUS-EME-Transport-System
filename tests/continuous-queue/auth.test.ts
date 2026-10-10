@@ -28,7 +28,7 @@ afterAll(async () => { if (app) await deleteApp(app); vi.unstubAllEnvs() })
 
 it('ผู้ขอที่ active อ่าน notice ได้ แต่ไม่ผ่านสิทธิ์ staff', async () => {
   await getAdminDb().doc(`users/${uid}`).set({ name: 'ผู้ขอ', role: 'viewer', active: true })
-  expect(await verifyActiveUserToken(header)).toEqual({ uid, name: 'ผู้ขอ', role: 'viewer' })
+  expect(await verifyActiveUserToken(header)).toEqual({ uid, name: 'ผู้ขอ', role: 'viewer', email: expect.stringMatching(/@test\.local$/) })
   expect(await verifyStaffToken(header)).toBeNull()
 })
 

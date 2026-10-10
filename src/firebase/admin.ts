@@ -62,7 +62,7 @@ export function identityToolkitLookupUrl(apiKey: string, emulatorHost?: string):
  * ใช้ Firebase REST (identitytoolkit accounts:lookup) แทน firebase-admin/auth
  * เพราะ firebase-admin/auth ดึง `jose` (ESM) ที่ require() ไม่ได้บน Vercel Node → 500
  */
-export interface ActiveTokenUser { uid: string; name: string; role: 'admin' | 'dispatcher' | 'viewer' }
+export interface ActiveTokenUser { uid: string; name: string; role: 'admin' | 'dispatcher' | 'viewer'; email: string | null }
 
 export async function verifyActiveUserToken(authHeader: string | null): Promise<ActiveTokenUser | null> {
   if (!authHeader?.startsWith('Bearer ')) return null
@@ -80,12 +80,13 @@ export async function verifyActiveUserToken(authHeader: string | null): Promise<
     const data = await res.json()
     const uid: string | undefined = data?.users?.[0]?.localId
     if (!uid) return null
+    const email: string | null = typeof data.users[0].email === 'string' ? data.users[0].email : null
     const snap = await getAdminDb().collection('users').doc(uid).get()
     const profile = snap.exists ? snap.data() : undefined
     const role = profile?.role as string | undefined
     // ต้องตรงกับ isStaff() ใน firestore.rules: role staff + บัญชียังเปิดใช้งาน (ถูกระงับ = ไม่ผ่าน)
     return (role === 'admin' || role === 'dispatcher' || role === 'viewer') && profile?.active === true
-      ? { uid, role, name: typeof profile?.name === 'string' ? profile.name : uid } : null
+      ? { uid, role, name: typeof profile?.name === 'string' ? profile.name : uid, email } : null
   } catch {
     return null
   }
