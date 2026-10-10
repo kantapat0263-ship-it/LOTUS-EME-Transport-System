@@ -4,9 +4,14 @@ const withPWA = require('next-pwa')({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === 'development',
+  // manifest.json ห้ามผ่านแคชของ SW (เดิม precache = cache-first) — เครื่องที่ติดตั้งแอปไว้จะเห็น manifest ใหม่
+  // (เช่น launch_handler) ช้าไปอีกรอบ เพราะ Chrome ตรวจ manifest ราววันละครั้ง · ค่าแรกคือค่าเริ่มต้นของ next-pwa
+  publicExcludes: ['!noprecache/**/*', '!manifest.json'],
   // ข้อมูลน้ำท่วมต้องสด — ห้าม SW คืนชุดเก่าจาก Cache Storage ตอนเน็ตล้ม (กฎแรกที่ตรงชนะ จึงต้องอยู่หน้าชุดเดิม)
   runtimeCaching: [
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/road-events', handler: 'NetworkOnly', method: 'GET' },
+    // manifest ไม่ผ่านแคช (กฎ .json เดิมของ next-pwa เป็น NetworkFirst ที่ยังเก็บสำเนา)
+    { urlPattern: ({ url }: { url: URL }) => url.pathname === '/manifest.json', handler: 'NetworkOnly', method: 'GET' },
     // รายงานส่วนตัวห้ามคืนแคชของแอดมินเดิมหลัง logout หรือเปลี่ยนบัญชี
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/reports/weekly-stops', handler: 'NetworkOnly', method: 'GET' },
     ...require('next-pwa/cache'),

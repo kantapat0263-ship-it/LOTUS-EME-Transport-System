@@ -2,6 +2,8 @@ import type {Metadata, Viewport} from 'next';
 import './globals.css';
 import {Toaster} from '@/components/ui/toaster';
 import { FirebaseClientProvider } from '@/firebase';
+import { RelaunchNotice } from '@/components/layout/RelaunchNotice';
+import { LAUNCH_SCRIPT } from '@/lib/launchFocus';
 
 export const metadata: Metadata = {
   title: 'LOTUS GROUP Transport Management',
@@ -38,6 +40,8 @@ export default function RootLayout({
               '(function(){function c(m){m=String(m||"");return /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported|Importing a module script failed|dynamically imported module/i.test(m)}function r(){try{var k="chunkReloadAt",l=+(sessionStorage.getItem(k)||0);if(Date.now()-l>1e4){sessionStorage.setItem(k,String(Date.now()));location.reload()}}catch(e){location.reload()}}window.addEventListener("error",function(e){var t=e&&e.target;if(t&&t.tagName==="SCRIPT"&&t.src&&t.src.indexOf("/_next/static/")>-1){r()}else if(c(e&&e.message)){r()}},true);window.addEventListener("unhandledrejection",function(e){var x=e&&e.reason;if(c(x&&(x.message||x))){r()}})})();',
           }}
         />
+        {/* กดไอคอนแอปซ้ำ → ดึงหน้าต่างเดิม (manifest launch_handler) — ต้อง setConsumer ก่อน React render (lib/launchFocus.ts) */}
+        <script dangerouslySetInnerHTML={{ __html: LAUNCH_SCRIPT }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -51,6 +55,7 @@ export default function RootLayout({
         <FirebaseClientProvider>
           {children}
           <Toaster />
+          <RelaunchNotice />
         </FirebaseClientProvider>
       </body>
     </html>

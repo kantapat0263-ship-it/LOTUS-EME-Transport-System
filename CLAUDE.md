@@ -208,6 +208,16 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 
 ---
 
+## กดไอคอนแอปซ้ำ → ดึงหน้าต่างเดิม (PWA launch_handler — 2026-10-10)
+
+- **ปัญหา:** กดไอคอนบน Desktop/Taskbar ขณะแอปเปิดอยู่ → เปิดหน้าต่างใหม่ซ้อนเรื่อยๆ · **แก้:** `manifest.json` `launch_handler.client_mode = ["focus-existing","auto"]` (Chrome/Edge บนคอมฯ เท่านั้น · ห้าม navigate-existing — โหลดหน้าเริ่มต้นทับ งานค้างหาย)
+- สคริปต์ inline ใน `<head>` (`LAUNCH_SCRIPT` ใน `src/lib/launchFocus.ts`) `setConsumer` ก่อน React → ข้าม LaunchParams ที่มาก่อน `load` หรือภายใน 1000 ms หลัง load (ค่าของการเปิดเอง + Chromium ส่งซ้ำตอน reload) → ยิง `lotus:relaunch` → `RelaunchNotice` แสดง toast "ระบบ LOTUS GROUP Transport เปิดอยู่แล้ว — ใช้หน้าต่างนี้ได้เลย" 5 วิ อยู่หน้าเดิมเสมอ (manifest ไม่มี shortcuts — ถ้าจะเพิ่มต้องออกแบบการพาไปหน้าอื่น + กันฟอร์มค้าง ระบบยังไม่มีกลไกเช็กฟอร์มที่ยังไม่บันทึก)
+- **บั๊กเดิมที่เจอระหว่างทำ:** คลิก toast ตอนมี dialog เปิด → dialog ปิด ข้อมูลที่กรอกหาย (Radix toast ใช้ dismissable-layer 1.1.5 แต่ dialog ใช้ 1.1.11 คนละสำเนา → dialog ไม่รู้ว่ากล่อง toast เป็น branch) → `DialogContent` (`ui/dialog.tsx`) กัน `onInteractOutside` เมื่อคลิกอยู่ในกล่อง toast (`isToastTarget`, viewport มี `data-app-toast-viewport`) · Sheet (เมนูมือถือ) ไม่ได้แก้ — ปิดตามไม่มีข้อมูลหาย
+- SW: `manifest.json` ไม่ precache แล้ว (`publicExcludes`) + `NetworkOnly` — เดิม precache = cache-first เครื่องที่ติดตั้งแล้วจะเห็น manifest ใหม่ช้า
+- **ทดสอบจริงไม่ได้ในเครื่องมือ:** การกดไอคอนของแอปที่ติดตั้งจริง · เครื่องที่ติดตั้งไว้แล้วได้ผลหลังเบราว์เซอร์อัปเดตข้อมูลแอป (1–2 วันที่เปิดใช้) หรือถอน/ติดตั้งใหม่ได้ผลทันที · หน้าต่างที่ซ้อนอยู่แล้วต้องปิดเองหนึ่งครั้ง
+
+---
+
 ## ราคาน้ำมัน: freeze ต่อทริป + อัปเดตอัตโนมัติ (เฟส 1+2)
 
 ### ปัญหา

@@ -9,12 +9,23 @@ import { cn } from "@/lib/utils"
 
 const ToastProvider = ToastPrimitives.Provider
 
+/**
+ * คลิกนี้อยู่ในกล่อง toast ไหม — Dialog ใช้กันตัวเองปิด: Radix ของ toast เป็นคนละสำเนากับของ dialog
+ * (dismissable-layer 1.1.5 vs 1.1.11) dialog จึงไม่รู้ว่ากล่อง toast เป็น "branch" ของมัน
+ * → กดปิด toast ตอนมี dialog เปิด = นับเป็นคลิกนอก dialog → dialog ปิด ข้อมูลที่กรอกค้างหาย
+ */
+export function isToastTarget(target: EventTarget | null): boolean {
+  const el = target as Element | null
+  return typeof el?.closest === "function" && el.closest("[data-app-toast-viewport]") !== null
+}
+
 const ToastViewport = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Viewport>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Viewport>
 >(({ className, ...props }, ref) => (
   <ToastPrimitives.Viewport
     ref={ref}
+    data-app-toast-viewport=""
     className={cn(
       "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
       className
