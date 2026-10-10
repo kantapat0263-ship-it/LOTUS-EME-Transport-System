@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
@@ -16,6 +16,7 @@ export function FirebaseErrorListener() {
   const [error, setError] = useState<FirestorePermissionError | null>(null);
   const auth = useAuth();
   const db = useFirestore();
+  const recovering = useRef(false);
 
   useEffect(() => {
     // The callback now expects a strongly-typed error, matching the event payload.
@@ -23,19 +24,26 @@ export function FirebaseErrorListener() {
       // บัญชีถูกระงับ/ลบโปรไฟล์ระหว่างใช้งาน → listener ข้อมูลธุรกิจโดน rules ปฏิเสธ
       // ไม่ใช่บั๊กของหน้า — ออกจากระบบ (ล้างแคช API) แล้วกลับหน้า login แทนการ throw ทั้งแอป
       const user = auth.currentUser;
-      if (user) {
-        try {
-          const profile = await getDoc(doc(db, 'users', user.uid));
-          if (!profile.exists() || profile.data()?.active !== true) {
-            await clearPrivateApiCache();
-            await auth.signOut();
-            window.location.assign('/login');
-            return;
-          }
-        } catch {
-          // ตรวจโปรไฟล์ไม่ได้ → ทำแบบเดิม
-        }
+      // ไม่มีบัญชีแล้ว = listener ที่ค้างตอนออกจากระบบโดนปฏิเสธ — ไม่ใช่ข้อผิดพลาดของหน้า
+      if (!user) return;
+      if (recovering.current) return; // หลาย listener โดนพร้อมกัน — จัดการครั้งเดียว
+      recovering.current = true;
+      let inactive = false;
+      try {
+        const profile = await getDoc(doc(db, 'users', user.uid));
+        inactive = !profile.exists() || profile.data()?.active !== true;
+      } catch {
+        // ตรวจโปรไฟล์ไม่ได้ → ทำแบบเดิม (throw)
       }
+      // ระหว่างรอ อาจออกจากระบบ/สลับบัญชีไปแล้ว — ห้ามไปกระทบบัญชีใหม่
+      if (auth.currentUser?.uid !== user.uid) { recovering.current = false; return; }
+      if (inactive) {
+        await clearPrivateApiCache();
+        await auth.signOut();
+        window.location.assign('/login');
+        return;
+      }
+      recovering.current = false;
       // Set error in state to trigger a re-render.
       setError(error);
     };

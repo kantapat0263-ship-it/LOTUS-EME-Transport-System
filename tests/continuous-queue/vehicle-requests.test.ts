@@ -163,8 +163,12 @@ describe('กติกาเวลารับคำขอของผู้ข�
     await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toBeInstanceOf(VehicleRequestError)
     expect((await createVehicleRequest(db, viewer(), command('2030-01-09'), at(20))).requestId).toMatch(/^VR-0901-\d{4}$/)
     expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), at(10))).requestId).toMatch(/^VR-0801-\d{4}$/)
-    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-08', status: 'approved' })
+    const { Timestamp } = await import('firebase-admin/firestore')
+    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-08', status: 'approved', createdAt: Timestamp.fromMillis(1_000) })
     expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).requestId).toMatch(/^VR-0801-\d{4}$/)
+    // ขออนุมัติใหม่อีกใบแล้วถูกปฏิเสธ → ใบล่าสุดชนะ (เหมือนฟอร์ม) ใบเก่าที่เคยอนุมัติใช้ไม่ได้
+    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-08', status: 'rejected', createdAt: Timestamp.fromMillis(2_000) })
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toThrow('ขออนุมัติจาก Dispatcher')
     expect((await createVehicleRequest(db, { ...viewer(), role: 'dispatcher' }, command('2030-01-07'), at(20))).requestId).toMatch(/^VR-0701-\d{4}$/)
     await expect(createVehicleRequest(db, viewer(), command('2030-01-07'), at(10))).rejects.toThrow('ล่วงหน้าอย่างน้อย 1 วัน')
   })

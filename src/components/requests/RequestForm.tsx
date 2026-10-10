@@ -155,10 +155,9 @@ export function RequestForm() {
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
-  // รหัสการส่งใบนี้ — กดส่งซ้ำ (เช่น ครั้งก่อนเน็ตหลุดหลังบันทึกสำเร็จ) ใช้รหัสเดิม server จึงคืนใบเดิม ไม่สร้างใบซ้ำ
-  // แก้ข้อมูลในฟอร์มเมื่อไร = การส่งใหม่ ได้รหัสใหม่
-  const operationIdRef = React.useRef<string | null>(null)
-  React.useEffect(() => { operationIdRef.current = null }, [destinations, note, selectedDate, requestedBy])
+  // รหัสการส่งใบ ผูกกับ "เนื้อหาที่ส่งจริง" — กดส่งซ้ำด้วยเนื้อหาเดิม (เช่น ครั้งก่อนเน็ตหลุดหลังบันทึกสำเร็จ) ใช้รหัสเดิม
+  // server จึงคืนใบเดิม ไม่สร้างใบซ้ำ · เนื้อหาเปลี่ยน (ไม่นับช่องค้นหา) = การส่งใหม่ ได้รหัสใหม่
+  const pendingOperationRef = React.useRef<{ key: string; id: string } | null>(null)
 
   const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
   const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
@@ -322,6 +321,22 @@ const handleSubmit = async (e: React.FormEvent) => {
       return
     }
 
+    const payload = {
+      requestDate: selectedDate,
+      requestTime: destinations[0]?.requestTime || "08:30",
+      requestedBy,
+      note,
+      destinations: validDestinations.map(d => ({
+        category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
+        coordinates: d.coordinates, jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
+        ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
+        locationType: d.locationType, requestTime: d.requestTime,
+      })),
+    }
+    const payloadKey = JSON.stringify(payload)
+    if (pendingOperationRef.current?.key !== payloadKey) pendingOperationRef.current = { key: payloadKey, id: crypto.randomUUID() }
+    const operationId = pendingOperationRef.current.id
+
     setIsSubmitting(true)
     let serverMessage = ""
     try {
@@ -330,19 +345,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       const response = await fetch("/api/vehicle-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${await user.getIdToken()}` },
-        body: JSON.stringify({
-          operationId: (operationIdRef.current ??= crypto.randomUUID()),
-          requestDate: selectedDate,
-          requestTime: destinations[0]?.requestTime || "08:30",
-          requestedBy,
-          note,
-          destinations: validDestinations.map(d => ({
-            category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
-            coordinates: d.coordinates, jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
-            ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
-            locationType: d.locationType, requestTime: d.requestTime,
-          })),
-        }),
+        body: JSON.stringify({ operationId, ...payload }),
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) {
@@ -356,7 +359,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         unsavedNames.length ? `เก็บเฉพาะในใบขอรถ: ${unsavedNames.join(', ')}` : '',
       ].filter(Boolean).join(' · ')
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}${siteResults ? ` · ${siteResults}` : ''}` })
-      operationIdRef.current = null
+      if (pendingOperationRef.current?.id === operationId) pendingOperationRef.current = null
 
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
@@ -365,7 +368,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
       toast({
         title: "ส่งคำขอไม่สำเร็จ ❌",
-        description: serverMessage || "ยังยืนยันผลการบันทึกไม่ได้ ข้อมูลที่กรอกไว้ยังอยู่ กดส่งอีกครั้งได้ (ระบบจะไม่สร้างใบซ้ำ)",
+        description: serverMessage || "ยังยืนยันผลการบันทึกไม่ได้ — ดูที่แท็บ \"คำขอของฉัน\" ก่อน ถ้ายังไม่มีใบนี้ กดส่งอีกครั้งได้ (ข้อมูลที่กรอกไว้ยังอยู่ และระบบจะไม่สร้างใบซ้ำ)",
         variant: "destructive",
       })
     } finally {

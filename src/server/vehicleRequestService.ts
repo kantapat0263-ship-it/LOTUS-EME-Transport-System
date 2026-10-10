@@ -45,9 +45,11 @@ async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate
   const isOutsideHours = hour >= settingHour(settings.requestCloseTime, 16) || hour < settingHour(settings.requestOpenTime, 8)
   if (requestDate >= addDays(today, isOutsideHours ? 2 : 1)) return
   if (requestDate !== tomorrow) throw new VehicleRequestError('วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่', 400)
-  const approved = await db.collection('urgentRequests')
-    .where('userId', '==', uid).where('requestedDate', '==', requestDate).where('status', '==', 'approved').limit(1).get()
-  if (approved.empty) throw new VehicleRequestError('กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้', 400)
+  // ใช้ผลของคำขออนุมัติ "ล่าสุด" เหมือนฟอร์ม (urgentStatus) — ใบเก่าที่เคยอนุมัติไม่ชนะใบใหม่ที่ถูกปฏิเสธ/รออยู่
+  const urgent = await db.collection('urgentRequests').where('userId', '==', uid).where('requestedDate', '==', requestDate).get()
+  const latest = urgent.docs.map(d => d.data())
+    .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0))[0]
+  if (latest?.status !== 'approved') throw new VehicleRequestError('กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้', 400)
 }
 
 /**
