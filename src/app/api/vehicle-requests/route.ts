@@ -25,6 +25,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof CustomSiteError) return json({ error: error.message }, 400)
     if (error instanceof RequestIdExhaustedError) return json({ error: 'ออกรหัสใบขอของวันนี้ไม่ได้ (รหัสเต็ม) — แจ้งผู้ดูแลระบบ' }, 409)
     console.error('vehicle-requests: create failed', error)
-    return json({ error: 'ยังยืนยันผลการบันทึกไม่ได้ — ดูที่แท็บ "คำขอของฉัน" ก่อน ถ้ายังไม่มีใบนี้ กดส่งอีกครั้งได้ (ข้อมูลที่กรอกไว้ยังอยู่ และระบบจะไม่สร้างใบซ้ำ)' }, 503)
+    return json({ error: 'ยังยืนยันผลการบันทึกไม่ได้ ข้อมูลที่กรอกไว้ยังอยู่ — กดส่งอีกครั้งได้เลย ระบบจะไม่สร้างใบซ้ำ' }, 503)
   }
 }

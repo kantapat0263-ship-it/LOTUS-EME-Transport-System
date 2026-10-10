@@ -66,6 +66,13 @@ const CATEGORIES = [
   { id: 'custom', label: 'กำหนดเอง', icon: MapPin, types: [] },
 ] as const;
 
+/**
+ * รหัสการส่งใบที่ยังไม่ยืนยันผล ผูกกับ "เนื้อหาที่ส่งจริง" — กดส่งซ้ำด้วยเนื้อหาเดิม (เช่น ครั้งก่อนเน็ตหลุดหลังบันทึกสำเร็จ)
+ * ใช้รหัสเดิม server จึงคืนใบเดิม ไม่สร้างใบซ้ำ · เนื้อหาเปลี่ยน (ไม่นับช่องค้นหา) = การส่งใหม่ ได้รหัสใหม่
+ * เก็บระดับโมดูล (ไม่ใช่ state ของฟอร์ม) เพราะสลับแท็บ "คำขอของฉัน" แล้วฟอร์มถูกถอด — กรอกเนื้อหาเดิมกลับมาส่งยังได้รหัสเดิม
+ */
+let pendingOperation: { key: string; id: string } | null = null
+
 export function RequestForm() {
   const { toast } = useToast()
   const db = useFirestore()
@@ -155,9 +162,6 @@ export function RequestForm() {
   const [destinations, setDestinations] = React.useState<DestinationRequest[]>([
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
-  // รหัสการส่งใบ ผูกกับ "เนื้อหาที่ส่งจริง" — กดส่งซ้ำด้วยเนื้อหาเดิม (เช่น ครั้งก่อนเน็ตหลุดหลังบันทึกสำเร็จ) ใช้รหัสเดิม
-  // server จึงคืนใบเดิม ไม่สร้างใบซ้ำ · เนื้อหาเปลี่ยน (ไม่นับช่องค้นหา) = การส่งใหม่ ได้รหัสใหม่
-  const pendingOperationRef = React.useRef<{ key: string; id: string } | null>(null)
 
   const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
   const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
@@ -334,8 +338,8 @@ const handleSubmit = async (e: React.FormEvent) => {
       })),
     }
     const payloadKey = JSON.stringify(payload)
-    if (pendingOperationRef.current?.key !== payloadKey) pendingOperationRef.current = { key: payloadKey, id: crypto.randomUUID() }
-    const operationId = pendingOperationRef.current.id
+    if (pendingOperation?.key !== payloadKey) pendingOperation = { key: payloadKey, id: crypto.randomUUID() }
+    const operationId = pendingOperation.id
 
     setIsSubmitting(true)
     let serverMessage = ""
@@ -359,7 +363,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         unsavedNames.length ? `เก็บเฉพาะในใบขอรถ: ${unsavedNames.join(', ')}` : '',
       ].filter(Boolean).join(' · ')
       toast({ title: "ส่งคำขอรถสำเร็จ", description: `รหัสอ้างอิง: ${requestId}${siteResults ? ` · ${siteResults}` : ''}` })
-      if (pendingOperationRef.current?.id === operationId) pendingOperationRef.current = null
+      if (pendingOperation?.id === operationId) pendingOperation = null
 
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
@@ -368,7 +372,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
       toast({
         title: "ส่งคำขอไม่สำเร็จ ❌",
-        description: serverMessage || "ยังยืนยันผลการบันทึกไม่ได้ — ดูที่แท็บ \"คำขอของฉัน\" ก่อน ถ้ายังไม่มีใบนี้ กดส่งอีกครั้งได้ (ข้อมูลที่กรอกไว้ยังอยู่ และระบบจะไม่สร้างใบซ้ำ)",
+        description: serverMessage || "ยังยืนยันผลการบันทึกไม่ได้ ข้อมูลที่กรอกไว้ยังอยู่ — กดส่งอีกครั้งได้เลย ระบบจะไม่สร้างใบซ้ำ",
         variant: "destructive",
       })
     } finally {

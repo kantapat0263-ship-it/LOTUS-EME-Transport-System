@@ -39,6 +39,8 @@ export function FirebaseErrorListener() {
       if (auth.currentUser?.uid !== user.uid) { recovering.current = false; return; }
       if (inactive) {
         await clearPrivateApiCache();
+        // ล้างแคชแล้ว ตรวจอีกรอบว่ายังเป็นบัญชีเดิมก่อนสั่งออก
+        if (auth.currentUser?.uid !== user.uid) { recovering.current = false; return; }
         await auth.signOut();
         window.location.assign('/login');
         return;
