@@ -54,8 +54,22 @@ describe('service worker API isolation', () => {
     expect(firstGetRule('/manifest.json')?.handler).toBe('NetworkOnly')
   })
 
-  it('another origin\'s /api/ path is not affected by the same-origin rule', () => {
-    expect(firstGetRule('https://maps.example.com/api/x')?.handler).not.toBe('NetworkOnly')
+  // Firestore/Firebase Auth/แผนที่ = API ส่วนตัวข้ามโดเมน — ห้ามมีกฎใดดัก (เดิมกฎ "cross-origin" NetworkFirst เก็บลงแคช
+  // ไม่แยกบัญชี และทำสตรีม Listen ของ Firestore พัง) → ไม่มีกฎตรง = เบราว์เซอร์ส่งเน็ตตรง ไม่ผ่าน SW
+  it.each([
+    'https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?VER=8',
+    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=x',
+    'https://securetoken.googleapis.com/v1/token?key=x',
+    'http://127.0.0.1:8080/google.firestore.v1.Firestore/Listen/channel',
+    'https://maps.googleapis.com/maps/api/js?key=x',
+    'https://maps.example.com/api/x',
+  ])('cross-origin request %s matches no caching rule', href => {
+    expect(firstGetRule(href)).toBeUndefined()
+  })
+
+  it('Google Fonts keep their own caches', () => {
+    expect(firstGetRule('https://fonts.gstatic.com/s/x.woff2')?.handler).toBe('CacheFirst')
+    expect(firstGetRule('https://fonts.googleapis.com/css2?family=Sarabun')?.handler).toBe('StaleWhileRevalidate')
   })
 })
 

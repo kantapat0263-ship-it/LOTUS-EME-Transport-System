@@ -56,6 +56,16 @@ export default function DashboardLayout({
   const isApproved = profile?.active === true
   const isRejected = current?.status === "missing" || (current?.status === "ready" && !isApproved)
 
+  // โหลดโปรไฟล์ไม่ได้นานเกินไป (เน็ตหลุดตั้งแต่เปิดแอป) → ขึ้นปุ่มลองใหม่ ไม่หมุนค้าง และไม่ปล่อยเข้าหน้าลูกโดยยังไม่รู้สิทธิ์
+  const hasProfileState = !!current
+  const [isProfileSlow, setIsProfileSlow] = React.useState(false)
+  React.useEffect(() => {
+    setIsProfileSlow(false)
+    if (!user || hasProfileState) return
+    const timer = setTimeout(() => setIsProfileSlow(true), 15000)
+    return () => clearTimeout(timer)
+  }, [user, hasProfileState])
+
   const [currentDate, setCurrentDate] = React.useState<string | null>(null)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false)
 
@@ -111,7 +121,7 @@ export default function DashboardLayout({
     setIsMobileMenuOpen(false)
   }, [pathname])
 
-  if (current?.status === "error") {
+  if (current?.status === "error" || (user && !current && isProfileSlow)) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground p-6">
         <div className="flex flex-col items-center gap-4 text-center">

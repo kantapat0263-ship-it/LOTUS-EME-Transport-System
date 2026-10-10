@@ -15,7 +15,10 @@ const withPWA = require('next-pwa')({
     { urlPattern: ({ url }: { url: URL }) => url.origin === self.origin && url.pathname.startsWith('/api/'), handler: 'NetworkOnly', method: 'GET' },
     // manifest ไม่ผ่านแคช (กฎ .json เดิมของ next-pwa เป็น NetworkFirst ที่ยังเก็บสำเนา)
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/manifest.json', handler: 'NetworkOnly', method: 'GET' },
-    ...require('next-pwa/cache'),
+    // ตัดกฎ "cross-origin" (NetworkFirst ทุกคำขอข้ามโดเมน) ของชุดเดิมออก — มันดัก Firestore/Firebase Auth ซึ่งเป็น API ส่วนตัว
+    // (เก็บคำตอบลงแคชไม่แยกบัญชี และทำสตรีม Listen ของ Firestore พังเมื่อ SW ทำงาน) → คำขอข้ามโดเมนไปเน็ตตรง ไม่ผ่านแคช
+    // ฟอนต์ Google ยังแคชตามกฎของมันเอง
+    ...require('next-pwa/cache').filter((rule: { options?: { cacheName?: string } }) => rule.options?.cacheName !== 'cross-origin'),
   ],
 });
 

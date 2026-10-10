@@ -47,6 +47,7 @@ import { format } from "date-fns"
 import { createTripWithQueueGuard } from "@/lib/tripQueueGuard"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { requestDestinationFingerprint } from "@/lib/requestDestination"
+import { buildSitePopupContent } from "@/lib/sitePopup"
 
 const DEFAULT_WAREHOUSE_LAT = 14.094126450195006
 const DEFAULT_WAREHOUSE_LNG = 100.6893810570115
@@ -502,29 +503,8 @@ const [isSaving, setIsSaving] = React.useState(false)
           setPinnedSiteId(null)
         } else {
           setPinnedSiteId(site.id)
-          // ชื่อ/ที่อยู่สถานที่มาจากผู้ใช้ — ใส่ผ่าน textContent เท่านั้น (เคยต่อ innerHTML = stored XSS)
-          const content = document.createElement("div")
-          content.className = "p-2 min-w-[200px] text-foreground"
-          const nameEl = document.createElement("div")
-          nameEl.className = "font-bold text-accent mb-1 text-xs"
-          nameEl.textContent = site.name ?? ""
-          const addressEl = document.createElement("div")
-          addressEl.className = "text-[10px] text-muted-foreground mb-3"
-          addressEl.textContent = site.address ?? ""
-          content.append(nameEl, addressEl)
-          if (!isSelected) {
-            const btn = document.createElement("button")
-            btn.type = "button"
-            btn.className = "w-full bg-accent text-white text-[10px] py-2 px-2 rounded hover:bg-accent/80 transition-colors h-10"
-            btn.textContent = "+ เพิ่มเป็นจุดส่ง"
-            btn.addEventListener("click", () => addStopBySiteId(site.id))
-            content.append(btn)
-          } else {
-            const selectedEl = document.createElement("div")
-            selectedEl.className = "text-[10px] font-bold text-blue-500"
-            selectedEl.textContent = `✓ เลือกเป็นจุดส่งที่ ${stopIndex + 1} แล้ว`
-            content.append(selectedEl)
-          }
+          // ชื่อ/ที่อยู่สถานที่มาจากผู้ใช้ — สร้างด้วย textContent เท่านั้น (เคยต่อ innerHTML = stored XSS)
+          const content = buildSitePopupContent(document, site, { isSelected, stopIndex, onAdd: () => addStopBySiteId(site.id) })
           infoWindow.setContent(content)
           infoWindow.open(map, marker)
         }

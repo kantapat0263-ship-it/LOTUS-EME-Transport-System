@@ -2269,7 +2269,7 @@ export default function DailySummaryPage() {
               Trip ID: <span className="font-bold text-gray-900">{selectedTripForShare?.tripId}</span>
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-6 py-4">
+          <div className="space-y-6 py-4 min-w-0">
             <div className="space-y-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Link สำหรับคนขับ</p>
               <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/50">
