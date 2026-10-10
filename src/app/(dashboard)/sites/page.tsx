@@ -57,12 +57,14 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { cn } from "@/lib/utils"
 
 const siteSchema = z.object({
-  name: z.string().min(2, "กรุณาระบุชื่อสถานที่"),
-  address: z.string().optional().default(""),
+  // ความยาว/ช่วงพิกัดตรงกับ validSite() ใน firestore.rules — ให้ฟอร์มเตือนก่อน ไม่ใช่ไปโดนปฏิเสธตอนบันทึก
+  name: z.string().min(2, "กรุณาระบุชื่อสถานที่").max(200, "ชื่อสถานที่ยาวเกิน 200 ตัวอักษร"),
+  address: z.string().max(1000, "ที่อยู่ยาวเกิน 1000 ตัวอักษร").optional().default(""),
   coordinates: z.string().min(1, "กรุณาระบุพิกัด").refine((val) => {
     if (!val) return true;
     const parts = val.split(',').map(s => s.trim());
-    return parts.length === 2 && !isNaN(parseFloat(parts[0])) && !isNaN(parseFloat(parts[1]));
+    const [lat, lng] = parts.map(parseFloat);
+    return parts.length === 2 && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
   }, "พิกัดต้องอยู่ในรูปแบบ lat, lng (เช่น 13.7563, 100.5018)"),
   projectTypeTag: z.string().min(1, "กรุณาเลือกประเภท"),
 })

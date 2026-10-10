@@ -1,10 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // หลักการ (2026-10-03):
-    // - อ่าน: เท่าเดิม (login แล้วอ่านได้; trips/drivers อ่านได้แบบ public) ยกเว้น users = ตัวเองหรือ staff
-    //   ยังไม่รัดอ่านด้วย active เพราะ listener ที่โดนปฏิเสธจะทำ FirebaseErrorListener throw ทั้งแอป
-    //   และ layout render หน้าลูกให้บัญชีรออนุมัติชั่วครู่ก่อนเด้งกลับ login
+    // หลักการ (2026-10-10 รัดสิทธิ์อ่าน):
+    // - อ่าน: ต้องเป็นบัญชีที่ admin อนุมัติแล้ว (active == true) — ไม่ล็อกอิน/รออนุมัติ/ไม่มีโปรไฟล์ อ่านข้อมูลธุรกิจไม่ได้
+    //   (dashboard layout ไม่ render หน้าลูก/เมนูจนกว่าโปรไฟล์ active จึงไม่มี listener ที่โดนปฏิเสธจนแอป throw)
+    //   ข้อมูลรถ/พ.ร.บ./ภาษี/ราคาน้ำมัน = staff · ใบขอรถ/ขออนุมัติเร่งด่วน = staff หรือเจ้าของใบ
+    //   ใบงานคนขับจากลิงก์ LINE อ่านผ่าน /api/driver-ticket (ตรวจ token ที่ server) — ไม่เปิด trips/drivers แบบ public แล้ว
+    //   users = ตัวเองหรือ staff (บัญชีรออนุมัติอ่านโปรไฟล์ตัวเองได้ เพื่อตรวจสถานะ)
     // - เขียน: ต้องเป็นบัญชีที่ admin อนุมัติแล้ว (active == true) และ role ถึง
     //   staff = admin/dispatcher; viewer ทำได้เฉพาะงานของตัวเอง (ขอรถ/ยกเลิกใบตัวเอง/ขออนุมัติเร่งด่วน/เพิ่มสถานที่)
     // - role/active/pending ใน users แก้ได้เฉพาะ admin (เดิม user แก้ role ตัวเองเป็น admin ได้)
@@ -62,15 +64,16 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // เจ้าของเอกสาร (ฟิลด์ userId) — query ฝั่งผู้ขอต้องกรอง where("userId", "==", uid) เสมอ
+    function isActiveOwner(data) {
+      return isActiveUser() && data.get('userId', '') == request.auth.uid;
+    }
+
     match /vehicleRequests/{requestId} {
-      // ฟอร์มขอรถฝั่ง viewer นับใบทั้งวัน (where requestDate ==) เพื่อออกเลข VR + t.get() เช็กเลขซ้ำ
-      // → รัดอ่านเป็นเจ้าของ/staff ไม่ได้จนกว่าจะย้ายการออกเลขไปฝั่ง server
-      allow read: if signedIn();
-      allow create: if isStaff() || (
-        isActiveUser()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.status == 'pending'
-      );
+      // ผู้ขอทั่วไปเห็นเฉพาะใบตัวเอง · การออกเลข VR (ต้องนับใบทุกคนในวัน) ย้ายไป POST /api/vehicle-requests แล้ว
+      allow read: if isStaff() || isActiveOwner(resource.data);
+      // ผู้ขอทั่วไปส่งใบผ่าน server เท่านั้น (ออกเลข VR ใน transaction ฝั่ง server)
+      allow create: if isStaff();
       // เจ้าของทำได้อย่างเดียวคือยกเลิกใบตัวเอง (requests/page.tsx handleCancelRequest)
       allow update: if isStaff() || (
         isActiveUser()
@@ -82,7 +85,7 @@ service cloud.firestore {
     }
 
     match /urgentRequests/{urgentId} {
-      allow read: if signedIn();
+      allow read: if isStaff() || isActiveOwner(resource.data);
       allow create: if isStaff() || (
         isActiveUser()
         && request.resource.data.userId == request.auth.uid
@@ -92,7 +95,9 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
 
-    // ใบงานคนขับ /driver/[tripId] เปิดได้โดยไม่ login → trips/drivers อ่านแบบ public
+    // token ลิงก์ใบงานคนขับ (รุ่นต่อทริป) — server เท่านั้น
+    match /driverLinks/{tripId} { allow read, write: if false; }
+
     match /queueResourceDays/{key} {
       allow read: if isStaff();
       allow create: if isStaff()
@@ -137,7 +142,8 @@ service cloud.firestore {
     }
 
     match /trips/{tripId} {
-      allow read: if true;
+      // หน้าประวัติ/แดชบอร์ด/ติดตามรถของผู้ขอยังใช้ trips อยู่ → บัญชีที่อนุมัติแล้วทุก role
+      allow read: if isActiveUser();
       allow create: if isStaff() && ordinaryTrip(request.resource.data)
         && request.resource.data.tripDate is string && request.resource.data.tripDate.size() == 10
         && validTripAllocation(request.resource.data)
@@ -152,81 +158,95 @@ service cloud.firestore {
         ));
       allow delete: if isStaff() && ordinaryTrip(resource.data) && tripGuardsTouched(resource.data, false);
 
+      // ไม่มีโค้ดใช้ subcollection นี้ (จุดส่งอยู่ในฟิลด์ trips.stops) — ปิดไว้
       match /stops/{stopId} {
-        allow read: if true;
-        allow write: if isStaff();
+        allow read, write: if false;
       }
       match /editLogs/{logId} {
-        allow read: if signedIn();
+        allow read: if isActiveUser();
         allow write: if isStaff();
       }
     }
 
+    // ผู้ขอเห็นชื่อ/เบอร์คนขับของใบตัวเอง (หน้าคำขอ/ประวัติทริป) → บัญชีที่อนุมัติแล้วทุก role
     match /drivers/{driverId} {
-      allow read: if true;
+      allow read: if isActiveUser();
       allow write: if isStaff();
+    }
+
+    function optionalCoordinate(value, limit) {
+      return value == null || (value is number && value >= -limit && value <= limit);
+    }
+    // ชื่อ/ที่อยู่สถานที่แสดงในหลายหน้า (รวมหมุดแผนที่) — คุมชนิดและความยาวที่ฝั่ง rules ด้วย ไม่พึ่งแค่ฟอร์ม
+    function validSite(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.get('address', '') is string && data.get('address', '').size() <= 1000
+        && data.get('projectTypeTag', '') is string && data.get('projectTypeTag', '').size() <= 60
+        && optionalCoordinate(data.get('latitude', null), 90)
+        && optionalCoordinate(data.get('longitude', null), 180);
     }
 
     match /sites/{siteId} {
-      allow read: if signedIn();
-      // viewer เพิ่มสถานที่ใหม่ได้ผ่านฟอร์มขอรถ (RequestForm ติด isUserAdded: true) แต่แก้/ลบไม่ได้
-      allow create: if isStaff() || (isActiveUser() && request.resource.data.isUserAdded == true);
-      allow update, delete: if isStaff();
+      allow read: if isActiveUser();
+      // ผู้ขอทั่วไปเพิ่มสถานที่ผ่านฟอร์มขอรถ → POST /api/vehicle-requests (server ตรวจข้อมูลแล้วบันทึกพร้อมใบ)
+      allow create, update: if isStaff() && validSite(request.resource.data);
+      allow delete: if isStaff();
     }
 
     match /vehicles/{vehicleId} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if isStaff();
     }
     match /vehicleTypes/{typeId} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if isStaff();
     }
     match /companySettings/{id} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if isStaff();
     }
 
-    // ข้อมูลประจำรถ + พ.ร.บ./ภาษี — แก้เฉพาะ staff
+    // ข้อมูลประจำรถ + พ.ร.บ./ภาษี (ราคา/เลขตัวถัง ฯลฯ) — ใช้เฉพาะเมนูยานพาหนะของ staff
     match /vehicleDetails/{vehicleId} {
-      allow read: if signedIn();
+      allow read: if isStaff();
       allow write: if isStaff();
     }
     match /vehicleCompliance/{vehicleId} {
-      allow read: if signedIn();
+      allow read: if isStaff();
       allow write: if isStaff();
     }
     // ประวัติ/หลักฐานใช้เอกสารใหม่ทุกครั้งเพื่อคงรายการเดิมสำหรับตรวจย้อนหลัง
     match /vehicleComplianceHistory/{id} {
-      allow read: if signedIn();
+      allow read: if isStaff();
       allow create: if isStaff();
       allow update, delete: if false;
     }
     match /vehicleComplianceEvidence/{id} {
-      allow read: if signedIn();
+      allow read: if isStaff();
       allow create: if isStaff();
       allow update, delete: if false;
     }
 
     // เขียนเฉพาะฝั่ง server (firebase-admin bypass rules): GPS tracking + ประวัติราคาน้ำมันจาก cron
+    // เมนูติดตามรถเปิดให้ทุก role ที่อนุมัติแล้ว
     match /vehiclePositions/{deviceId} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if false;
     }
     match /vehiclePositionTrails/{id} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if false;
     }
     match /trackingDaily/{id} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if false;
     }
+    // สถานะภายในของ cron — ไม่มีหน้าไหนอ่าน
     match /trackingMeta/{id} {
-      allow read: if signedIn();
-      allow write: if false;
+      allow read, write: if false;
     }
     match /dieselPriceHistory/{dateId} {
-      allow read: if signedIn();
+      allow read: if isStaff();
       allow write: if false;
     }
 

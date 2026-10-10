@@ -66,7 +66,10 @@ describe('ประวัติ/หลักฐานต่ออายุรถ
     batch.set(doc(db, 'vehicles', 'V1'), { licensePlate: 'TEST', taxExpiry: '2027-10-06' }, { merge: true })
     for (const name of collections) batch.set(doc(db, name, 'NEW'), { vehicleId: 'V1', uploadedBy: uid, recordedAt: '2026-10-06' })
     await assertSucceeds(batch.commit())
-    for (const name of collections) await assertSucceeds(getDoc(doc(as('viewer'), name, 'NEW')))
+    for (const name of collections) {
+      await assertSucceeds(getDoc(doc(as(uid), name, 'NEW')))
+      await assertFails(getDoc(doc(as('viewer'), name, 'NEW'))) // ข้อมูลรถ/พ.ร.บ. = staff เท่านั้น
+    }
   })
   it.each(['admin', 'dispatcher'] as Uid[])('ผู้มีสิทธิ์ %s ห้ามแก้/เขียนทับ/ลบประวัติที่มีอยู่', async uid => {
     await env.withSecurityRulesDisabled(async ctx => {
@@ -78,7 +81,7 @@ describe('ประวัติ/หลักฐานต่ออายุรถ
       await assertFails(setDoc(ref, { value: 'overwritten' }))
       await assertFails(setDoc(ref, { value: 'merged' }, { merge: true }))
       await assertFails(deleteDoc(ref))
-      await assertSucceeds(getDoc(doc(as('viewer'), name, 'OLD')))
+      await assertSucceeds(getDoc(ref))
     }
   })
   it.each(['viewer', 'pendingViewer', 'inactiveDispatcher', 'noProfile'] as const)('%s เพิ่มประวัติ/หลักฐานไม่ได้', async uid => {
@@ -235,29 +238,22 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
     userId, destinations: [], note: '', status, createdAt: serverTimestamp(),
   })
 
-  it('viewer ทำ flow ส่งใบขอรถได้ครบ: นับใบทั้งวัน + เช็กเลขซ้ำใน transaction + สร้างใบ + สถานที่ใหม่', async () => {
+  it('viewer อ่านใบคนอื่น / นับใบทั้งวัน / เช็กเลข VR ของคนอื่นไม่ได้ (การออกเลขอยู่ที่ server แล้ว)', async () => {
     const db = as('viewer')
-    // RequestForm: นับใบของวันนั้นทั้งหมดเพื่อออกเลข VR
-    await assertSucceeds(getDocs(query(collection(db, 'vehicleRequests'), where('requestDate', '==', '2026-10-05'))))
-    // RequestForm: ธุรกรรมเช็กเลขว่าง + สร้างสถานที่ใหม่ + สร้างใบ
-    await assertSucceeds(runTransaction(db, async (t) => {
-      const snap = await t.get(doc(db, 'vehicleRequests', 'VR-NEW'))
-      if (snap.exists()) throw new Error('id taken')
-      for (const id of ['S-NEW-1', 'S-NEW-2']) {
-        t.set(doc(db, 'sites', id), {
-          name: id, latitude: 14, longitude: 100, address: '', status: 'Active',
-          isUserAdded: true, addedBy: 'viewer@example.com', createdAt: serverTimestamp(),
-        })
-      }
-      t.set(doc(db, 'vehicleRequests', 'VR-NEW'), { ...newRequest('viewer'), id: 'VR-NEW', requestId: 'VR-NEW' })
-    }))
+    await assertFails(getDocs(query(collection(db, 'vehicleRequests'), where('requestDate', '==', '2026-10-05'))))
+    await assertFails(getDoc(doc(db, 'vehicleRequests', 'VR-OTHER')))
+    await assertFails(getDocs(collection(db, 'vehicleRequests')))
   })
 
-  it('viewer อ่าน "คำขอของฉัน" (where userId ==) ได้', async () => {
-    await assertSucceeds(getDocs(query(collection(as('viewer'), 'vehicleRequests'), where('userId', '==', 'viewer'))))
+  it('viewer อ่าน "คำขอของฉัน" (where userId ==) และใบตัวเองได้', async () => {
+    const db = as('viewer')
+    await assertSucceeds(getDocs(query(collection(db, 'vehicleRequests'), where('userId', '==', 'viewer'))))
+    await assertSucceeds(getDocs(query(collection(db, 'vehicleRequests'), where('userId', '==', 'viewer'), where('status', '==', 'pending'))))
+    await assertSucceeds(getDoc(doc(db, 'vehicleRequests', 'VR-MINE')))
   })
 
-  it('viewer สร้างใบในชื่อคนอื่น หรือสร้างแบบข้ามคิว (in_progress) ไม่ได้', async () => {
+  it('viewer สร้างใบตรงจาก client ไม่ได้ทุกกรณี (ต้องผ่าน /api/vehicle-requests)', async () => {
+    await assertFails(setDoc(doc(as('viewer'), 'vehicleRequests', 'VR-X'), newRequest('viewer')))
     await assertFails(setDoc(doc(as('viewer'), 'vehicleRequests', 'VR-X'), newRequest('otherViewer')))
     await assertFails(setDoc(doc(as('viewer'), 'vehicleRequests', 'VR-X'), newRequest('viewer', 'in_progress')))
   })
@@ -297,22 +293,35 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
     await assertSucceeds(updateDoc(doc(as('dispatcher'), 'urgentRequests', 'U1'), { status: 'approved' }))
   })
 
-  it('viewer แก้/ลบสถานที่ หรือสร้างสถานที่แบบ "ทางการ" (ไม่ติด isUserAdded) ไม่ได้', async () => {
+  it('viewer อ่านขออนุมัติเร่งด่วนของคนอื่นไม่ได้', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'urgentRequests', 'U-OTHER'), { userId: 'otherViewer', requestedDate: '2026-10-04', status: 'pending' }))
+    await assertFails(getDoc(doc(as('viewer'), 'urgentRequests', 'U-OTHER')))
+    await assertFails(getDocs(query(collection(as('viewer'), 'urgentRequests'), where('status', '==', 'pending'))))
+    await assertSucceeds(getDocs(query(collection(as('dispatcher'), 'urgentRequests'), where('status', '==', 'pending'))))
+  })
+
+  it('viewer สร้าง/แก้/ลบสถานที่จาก client ไม่ได้ (สถานที่ใหม่จากฟอร์มขอรถไปทาง server)', async () => {
     const db = as('viewer')
     await assertFails(setDoc(doc(db, 'sites', 'S-OFFICIAL'), { name: 'x', status: 'Active' }))
+    await assertFails(setDoc(doc(db, 'sites', 'S-USER'), { name: 'ร้านใหม่', latitude: 14, longitude: 100, isUserAdded: true }))
     await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'sites', 'S1'), { name: 'คลัง' }))
     await assertFails(updateDoc(doc(db, 'sites', 'S1'), { name: 'y' }))
     await assertFails(deleteDoc(doc(db, 'sites', 'S1')))
   })
 })
 
-describe('ใบงานคนขับแบบ public (ไม่ login)', () => {
-  it('anonymous อ่าน trips (doc + query ทั้งเดือน) และ drivers ได้', async () => {
+describe('ใบงานคนขับจากลิงก์ LINE ไม่ใช้การอ่าน Firestore แบบ public แล้ว (ผ่าน /api/driver-ticket)', () => {
+  it('anonymous อ่าน trips (doc / query รายเดือน / ทั้ง collection), stops และ drivers ไม่ได้', async () => {
     const db = anon()
-    await assertSucceeds(getDoc(doc(db, 'trips', 'TRIP-1')))
-    await assertSucceeds(getDocs(query(collection(db, 'trips'),
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'trips', 'TRIP-1', 'stops', 'S0'), { siteName: 'x' }))
+    await assertFails(getDoc(doc(db, 'trips', 'TRIP-1')))
+    await assertFails(getDocs(query(collection(db, 'trips'),
       where('tripDate', '>=', '2026-10-01'), where('tripDate', '<=', '2026-10-31'))))
-    await assertSucceeds(getDoc(doc(db, 'drivers', 'D1')))
+    await assertFails(getDocs(collection(db, 'trips')))
+    await assertFails(getDoc(doc(db, 'trips', 'TRIP-1', 'stops', 'S0')))
+    await assertFails(getDocs(collection(db, 'trips', 'TRIP-1', 'stops')))
+    await assertFails(getDoc(doc(db, 'drivers', 'D1')))
+    await assertFails(getDocs(collection(db, 'drivers')))
   })
 
   it('anonymous เขียน trips/drivers หรืออ่านข้อมูลภายในไม่ได้', async () => {
@@ -321,5 +330,91 @@ describe('ใบงานคนขับแบบ public (ไม่ login)', () 
     await assertFails(setDoc(doc(db, 'drivers', 'D9'), { name: 'x' }))
     await assertFails(getDoc(doc(db, 'vehicleRequests', 'VR-MINE')))
     await assertFails(getDoc(doc(db, 'users', 'admin')))
+  })
+})
+
+describe('ตารางสิทธิ์อ่าน: ไม่ล็อกอิน / รออนุมัติ / ไม่มีโปรไฟล์ / viewer / dispatcher / admin', () => {
+  type Who = 'anon' | 'pendingViewer' | 'inactiveDispatcher' | 'noProfile' | 'viewer' | 'dispatcher' | 'admin'
+  const db = (who: Who) => who === 'anon' ? anon() : as(who)
+  const ACTIVE: Who[] = ['viewer', 'dispatcher', 'admin']
+  const STAFF: Who[] = ['dispatcher', 'admin']
+  const EVERYONE: Who[] = ['anon', 'pendingViewer', 'inactiveDispatcher', 'noProfile', 'viewer', 'dispatcher', 'admin']
+
+  // collection → ใครอ่านได้ (ทั้ง get และ list)
+  const MATRIX: [string, Who[]][] = [
+    ['trips', ACTIVE], ['drivers', ACTIVE], ['sites', ACTIVE], ['vehicles', ACTIVE], ['vehicleTypes', ACTIVE],
+    ['companySettings', ACTIVE], ['vehiclePositions', ACTIVE], ['vehiclePositionTrails', ACTIVE], ['trackingDaily', ACTIVE],
+    ['vehicleDetails', STAFF], ['vehicleCompliance', STAFF], ['vehicleComplianceHistory', STAFF],
+    ['vehicleComplianceEvidence', STAFF], ['dieselPriceHistory', STAFF], ['queueResourceDays', STAFF],
+    ['trackingMeta', []], ['driverLinks', []], ['continuousBookings', []],
+  ]
+
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (const [name] of MATRIX) await setDoc(doc(ctx.firestore(), name, 'X1'), { name: 'ทดสอบ', userId: 'viewer' })
+      await setDoc(doc(ctx.firestore(), 'trips', 'TRIP-1', 'editLogs', 'L1'), { by: 'admin' })
+      await setDoc(doc(ctx.firestore(), 'trips', 'TRIP-1', 'stops', 'S0'), { siteName: 'x' })
+    })
+  })
+
+  for (const [name, allowed] of MATRIX) {
+    it.each(EVERYONE)(`${name}: %s`, async (who) => {
+      const expectRead = allowed.includes(who) ? assertSucceeds : assertFails
+      await expectRead(getDoc(doc(db(who), name, 'X1')))
+      await expectRead(getDocs(collection(db(who), name)))
+    })
+  }
+
+  it.each(EVERYONE)('trips/{id}/editLogs อ่านได้เฉพาะบัญชีที่อนุมัติแล้ว · stops ไม่มีใครอ่าน: %s', async (who) => {
+    const expectRead = ACTIVE.includes(who) ? assertSucceeds : assertFails
+    await expectRead(getDocs(collection(db(who), 'trips', 'TRIP-1', 'editLogs')))
+    await assertFails(getDocs(collection(db(who), 'trips', 'TRIP-1', 'stops')))
+  })
+
+  it.each(EVERYONE)('vehicleRequests: staff อ่านทั้งหมด · viewer เฉพาะของตัวเอง · ที่เหลืออ่านไม่ได้: %s', async (who) => {
+    const all = () => getDocs(collection(db(who), 'vehicleRequests'))
+    const mine = () => getDocs(query(collection(db(who), 'vehicleRequests'), where('userId', '==', who)))
+    if (STAFF.includes(who)) { await assertSucceeds(all()); await assertSucceeds(mine()) }
+    else if (who === 'viewer') { await assertFails(all()); await assertSucceeds(mine()) }
+    else { await assertFails(all()); await assertFails(mine()) }
+  })
+
+  it.each(['anon', 'pendingViewer', 'inactiveDispatcher', 'noProfile'] as Who[])('%s สร้าง/แก้รายการธุรกิจไม่ได้', async (who) => {
+    const d = db(who)
+    await assertFails(setDoc(doc(d, 'vehicleRequests', 'VR-P'), { userId: who, status: 'pending' }))
+    await assertFails(setDoc(doc(d, 'urgentRequests', 'U-P'), { userId: who, status: 'pending' }))
+    await assertFails(setDoc(doc(d, 'sites', 'S-P'), { name: 'x', isUserAdded: true }))
+    await assertFails(updateDoc(doc(d, 'vehicleRequests', 'VR-MINE'), { status: 'cancelled' }))
+    await assertFails(setDoc(doc(d, 'trips', 'T-P'), { tripDate: '2026-10-05', driverId: 'D1', status: 'Planned' }))
+  })
+
+  it('บัญชีรออนุมัติอ่านได้แค่โปรไฟล์ตัวเอง และเปิด active / ยก role ตัวเองไม่ได้', async () => {
+    const d = as('pendingViewer')
+    await assertSucceeds(getDoc(doc(d, 'users', 'pendingViewer')))
+    await assertFails(getDoc(doc(d, 'users', 'viewer')))
+    await assertFails(updateDoc(doc(d, 'users', 'pendingViewer'), { active: true }))
+    await assertFails(updateDoc(doc(d, 'users', 'pendingViewer'), { role: 'admin' }))
+    await assertFails(updateDoc(doc(as('inactiveDispatcher'), 'users', 'inactiveDispatcher'), { active: true }))
+  })
+})
+
+describe('sites — ตรวจชนิด/ความยาว/พิกัดที่ rules (ไม่พึ่งแค่ฟอร์ม)', () => {
+  const site = (extra: Record<string, unknown> = {}) => ({ name: 'ไซต์ทดสอบ', address: 'ถนนทดสอบ', latitude: 13.75, longitude: 100.5, projectTypeTag: 'ไซต์งาน', status: 'Active', ...extra })
+
+  it('staff บันทึกชื่อภาษาไทย/ที่อยู่/พิกัด และชื่อที่มี markup (เก็บเป็นข้อความ) ได้', async () => {
+    const d = as('dispatcher')
+    await assertSucceeds(setDoc(doc(d, 'sites', 'S-TH'), site()))
+    await assertSucceeds(setDoc(doc(d, 'sites', 'S-XSS'), site({ name: '<img src=x onerror=alert(1)>' })))
+    await assertSucceeds(updateDoc(doc(d, 'sites', 'S-TH'), { address: 'ที่อยู่ใหม่', latitude: -12.5 }))
+  })
+
+  it('ชื่อว่าง/ยาวเกิน/ไม่ใช่ข้อความ, ที่อยู่ยาวเกิน, พิกัดนอกช่วงหรือไม่ใช่ตัวเลข → ปฏิเสธ', async () => {
+    const d = as('admin')
+    for (const bad of [
+      { name: '' }, { name: 'ก'.repeat(201) }, { name: 123 }, { address: 'x'.repeat(1001) },
+      { latitude: 91 }, { longitude: -181 }, { latitude: '13.7' }, { projectTypeTag: 'x'.repeat(61) },
+    ]) await assertFails(setDoc(doc(d, 'sites', 'S-BAD'), site(bad)))
+    await assertSucceeds(setDoc(doc(d, 'sites', 'S-OK'), site()))
+    await assertFails(updateDoc(doc(d, 'sites', 'S-OK'), { name: 'ก'.repeat(201) }))
   })
 })
