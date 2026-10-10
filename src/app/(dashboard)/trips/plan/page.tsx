@@ -8,8 +8,7 @@ import {
   Navigation, 
   Trash2, 
   GripVertical, 
-  Sparkles,
-  Truck,
+Truck,
   User,
   Calendar as CalendarIcon,
   Route as RouteIcon,
@@ -35,7 +34,6 @@ import {
   SelectValue 
 } from "@/components/ui/select"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { useCollection, useFirestore, useMemoFirebase, useDoc, useUser } from "@/firebase"
@@ -126,8 +124,7 @@ export default function TripPlanPage() {
   }, [])
 
   // UI State
-  const [isLoadingAi, setIsLoadingAi] = React.useState<string | null>(null)
-  const [isSaving, setIsSaving] = React.useState(false)
+const [isSaving, setIsSaving] = React.useState(false)
   const [isApiLoaded, setIsApiLoaded] = React.useState(false)
   const [isAutoCalculating, setIsAutoCalculating] = React.useState(false)
 
@@ -505,23 +502,31 @@ export default function TripPlanPage() {
           setPinnedSiteId(null)
         } else {
           setPinnedSiteId(site.id)
+          // ชื่อ/ที่อยู่สถานที่มาจากผู้ใช้ — ใส่ผ่าน textContent เท่านั้น (เคยต่อ innerHTML = stored XSS)
           const content = document.createElement("div")
           content.className = "p-2 min-w-[200px] text-foreground"
-          content.innerHTML = `
-            <div class="font-bold text-accent mb-1 text-xs">${site.name}</div>
-            <div class="text-[10px] text-muted-foreground mb-3">${site.address}</div>
-            ${!isSelected ? `
-              <button id="btn-add-${site.id}" class="w-full bg-accent text-white text-[10px] py-2 px-2 rounded hover:bg-accent/80 transition-colors h-10">
-                + เพิ่มเป็นจุดส่ง
-              </button>
-            ` : `<div class="text-[10px] font-bold text-blue-500">✓ เลือกเป็นจุดส่งที่ ${stopIndex+1} แล้ว</div>`}
-          `
+          const nameEl = document.createElement("div")
+          nameEl.className = "font-bold text-accent mb-1 text-xs"
+          nameEl.textContent = site.name ?? ""
+          const addressEl = document.createElement("div")
+          addressEl.className = "text-[10px] text-muted-foreground mb-3"
+          addressEl.textContent = site.address ?? ""
+          content.append(nameEl, addressEl)
+          if (!isSelected) {
+            const btn = document.createElement("button")
+            btn.type = "button"
+            btn.className = "w-full bg-accent text-white text-[10px] py-2 px-2 rounded hover:bg-accent/80 transition-colors h-10"
+            btn.textContent = "+ เพิ่มเป็นจุดส่ง"
+            btn.addEventListener("click", () => addStopBySiteId(site.id))
+            content.append(btn)
+          } else {
+            const selectedEl = document.createElement("div")
+            selectedEl.className = "text-[10px] font-bold text-blue-500"
+            selectedEl.textContent = `✓ เลือกเป็นจุดส่งที่ ${stopIndex + 1} แล้ว`
+            content.append(selectedEl)
+          }
           infoWindow.setContent(content)
           infoWindow.open(map, marker)
-          setTimeout(() => {
-            const btn = document.getElementById(`btn-add-${site.id}`)
-            if (btn) btn.onclick = () => addStopBySiteId(site.id)
-          }, 100)
         }
       })
 
@@ -584,23 +589,7 @@ export default function TripPlanPage() {
     setStops(stops.map(s => s.id === id ? { ...s, [field]: value } : s))
   }
 
-  const handleAiDescription = async (stopId: string, currentDescription: string) => {
-    if (!currentDescription) {
-      toast({ title: "แจ้งเตือน", description: "กรุณาระบุคำอธิบายเบื้องต้น", variant: "destructive" })
-      return
-    }
-    setIsLoadingAi(stopId)
-    try {
-      const result = await intelligentCargoDescriptionAssistant({ highLevelDescription: currentDescription })
-      updateStop(stopId, 'cargo', result.detailedDescription)
-    } catch (error) {
-      toast({ title: "AI Error", description: "ไม่สามารถสร้างรายการสินค้าได้", variant: "destructive" })
-    } finally {
-      setIsLoadingAi(null)
-    }
-  }
-
-  const handleSaveTrip = async () => {
+const handleSaveTrip = async () => {
     if (saveFlightRef.current.isPending()) return
     const hasValidStops = stops.some(s => s.siteId !== "");
     if (!vehicleId || !driverId || !tripDate || !hasValidStops) {
@@ -846,10 +835,7 @@ export default function TripPlanPage() {
                       </div>
                       <div className="relative">
                         <Textarea placeholder="รายละเอียดของที่ส่ง..." className="min-h-[80px] bg-background/50 resize-none border-dashed text-sm" value={stop.cargo} onChange={(e) => updateStop(stop.id, 'cargo', e.target.value)} />
-                        <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-accent h-8 w-8" onClick={() => handleAiDescription(stop.id, stop.cargo)} disabled={isLoadingAi === stop.id}>
-                          <Sparkles className={cn("h-4 w-4", isLoadingAi === stop.id && "animate-pulse")} />
-                        </Button>
-                      </div>
+</div>
                     </div>
                   </CardContent>
                 </Card>

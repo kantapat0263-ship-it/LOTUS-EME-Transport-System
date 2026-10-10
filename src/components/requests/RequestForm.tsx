@@ -29,8 +29,7 @@ import {
   Calendar as CalendarIcon,
   Trash2,
   Info,
-  Sparkles,
-  Save
+Save
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { requestIdPrefix, createRequestWithUniqueId, RequestIdExhaustedError, type RequestIdTx } from "@/lib/requestId"
@@ -41,7 +40,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
-import { intelligentCargoDescriptionAssistant } from "@/ai/flows/cargo-description-assistant-flow"
 import { useContinuousQueues } from "@/hooks/use-continuous-queues"
 import { QueueNoticeCard } from "@/components/continuous-queue/QueueNoticeCard"
 
@@ -239,22 +237,7 @@ export function RequestForm() {
     }))
   }
 
-  const handleAiDescription = async (destId: string, currentDescription: string) => {
-    if (!currentDescription) {
-      toast({ title: "แจ้งเตือน", description: "กรุณาระบุลักษณะงานเบื้องต้น", variant: "destructive" })
-      return
-    }
-    toast({ title: "กำลังประมวลผล", description: "AI กำลังช่วยคุณแยกรายการสินค้า..." })
-    try {
-      const result = await intelligentCargoDescriptionAssistant({ highLevelDescription: currentDescription })
-      updateDest(destId, { jobDescription: result.detailedDescription })
-      toast({ title: "สำเร็จ", description: "AI แยกรายการสินค้าให้เรียบร้อยแล้ว" })
-    } catch (error) {
-      toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถเรียกใช้งาน AI ได้ในขณะนี้", variant: "destructive" })
-    }
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedDate || !user) {
       toast({ title: "ข้อมูลไม่ครบ", description: "กรุณาระบุวันที่", variant: "destructive" })
@@ -877,17 +860,7 @@ export function RequestForm() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>ลักษณะงานที่ต้องทำ</Label>
-                            <Button 
-                              type="button"
-                              variant="ghost" 
-                              size="sm" 
-                              className="h-7 text-[10px] text-accent hover:bg-accent/10 gap-1.5"
-                              onClick={() => handleAiDescription(dest.id, dest.jobDescription)}
-                              disabled={!dest.jobDescription}
-                            >
-                              <Sparkles className="h-3 w-3" /> ให้ AI ช่วยแยกรายการ
-                            </Button>
-                          </div>
+</div>
                           <Textarea 
                             placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ" 
                             className="min-h-[80px] bg-background/30"
