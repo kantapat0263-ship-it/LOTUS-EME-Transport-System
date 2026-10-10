@@ -7,16 +7,20 @@ const withPWA = require('next-pwa')({
   // manifest.json ห้ามผ่านแคชของ SW (เดิม precache = cache-first) — เครื่องที่ติดตั้งแอปไว้จะเห็น manifest ใหม่
   // (เช่น launch_handler) ช้าไปอีกรอบ เพราะ Chrome ตรวจ manifest ราววันละครั้ง · ค่าแรกคือค่าเริ่มต้นของ next-pwa
   publicExcludes: ['!noprecache/**/*', '!manifest.json'],
-  // ข้อมูลน้ำท่วมต้องสด — ห้าม SW คืนชุดเก่าจาก Cache Storage ตอนเน็ตล้ม (กฎแรกที่ตรงชนะ จึงต้องอยู่หน้าชุดเดิม)
+  // กฎแรกที่ตรงชนะ จึงต้องอยู่หน้าชุดเดิมของ next-pwa
   runtimeCaching: [
-    { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/road-events', handler: 'NetworkOnly', method: 'GET' },
+    // API ทุกตัวของเรา (ส่วนตัว/ต้องล็อกอิน/ต้องสด) ห้ามมีสำเนาใน Cache Storage — เดิม next-pwa เก็บ /api/* แบบ NetworkFirst 24 ชม.
+    // ไม่แยกตามบัญชี → เครื่องร่วมกัน staff → logout → offline/เน็ตช้าเกิน 10 วิ ได้ข้อมูล staff เก่า (SEC-06)
+    // แคช "apis" เก่าถูกล้างตอน SW ใหม่ activate (worker/index.js) และตอนออกจากระบบ (lib/privateCache.ts)
+    { urlPattern: ({ url }: { url: URL }) => url.origin === self.origin && url.pathname.startsWith('/api/'), handler: 'NetworkOnly', method: 'GET' },
     // manifest ไม่ผ่านแคช (กฎ .json เดิมของ next-pwa เป็น NetworkFirst ที่ยังเก็บสำเนา)
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/manifest.json', handler: 'NetworkOnly', method: 'GET' },
-    // รายงานส่วนตัวห้ามคืนแคชของแอดมินเดิมหลัง logout หรือเปลี่ยนบัญชี
-    { urlPattern: ({ url }: { url: URL }) => url.pathname === '/api/reports/weekly-stops', handler: 'NetworkOnly', method: 'GET' },
     ...require('next-pwa/cache'),
   ],
 });
+
+/** API ที่คืนข้อมูลส่วนตัวแต่ไม่ได้ตั้ง Cache-Control เอง — กัน browser/proxy เก็บ (road-events ตั้งแคช CDN เอง ห้ามใส่ที่นี่) */
+const PRIVATE_API_SOURCES = ['/api/tracking/:path*', '/api/cron/:path*', '/api/driver-leaves', '/api/line/:path*', '/api/line-webhook']
 
 /**
  * รหัสเวอร์ชันของ build นี้ — ถูกฝังทั้งใน bundle ฝั่ง client และอ่านได้จาก /api/version
@@ -29,6 +33,9 @@ const nextConfig: NextConfig = {
   /* config options here */
   env: {
     NEXT_PUBLIC_BUILD_ID: BUILD_ID,
+  },
+  async headers() {
+    return PRIVATE_API_SOURCES.map((source) => ({ source, headers: [{ key: 'Cache-Control', value: 'private, no-store' }] }))
   },
   // firebase-admin เป็น Node-only — อย่า bundle เข้า build (ใช้เฉพาะใน API route)
   serverExternalPackages: ['firebase-admin'],

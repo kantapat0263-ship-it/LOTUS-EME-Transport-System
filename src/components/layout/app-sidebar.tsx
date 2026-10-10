@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/badge"
 import { UserRole, VehicleCompliance } from "@/types/models"
 import { attentionLevel, todayBangkok } from "@/lib/vehicle-compliance"
 import { collection, query, where, onSnapshot } from "firebase/firestore"
+import { clearPrivateApiCache } from "@/lib/privateCache"
 
 interface AppSidebarProps {
   userRole: UserRole;
@@ -131,6 +132,8 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   }, [db, user, userRole])
 
   const handleLogout = async () => {
+    // ล้างสำเนา API ส่วนตัวในเครื่องก่อน — คนถัดไปที่ใช้เครื่องนี้ต้องไม่ได้ข้อมูลของบัญชีเรา (SEC-06)
+    await clearPrivateApiCache()
     await auth.signOut()
     router.push("/login")
   }
