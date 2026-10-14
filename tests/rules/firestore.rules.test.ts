@@ -32,7 +32,8 @@ import { updateTripWithQueueGuard } from '../../src/lib/tripQueueGuard'
 
 let env: RulesTestEnvironment
 
-const ADMIN_EMAIL = 'ownchang@hotmail.com'
+// อีเมลที่เคยฝังในแอปให้ตั้งตัวเองเป็นแอดมินได้ — ถอดแล้ว ต้องตั้งไม่ได้
+const FORMER_BOOTSTRAP_EMAIL = 'ownchang@hotmail.com'
 
 // บัญชีตัวอย่าง (uid → users doc)
 const PROFILES = {
@@ -185,10 +186,12 @@ describe('users — ห้ามยกระดับสิทธิ์ตัว
     await assertFails(setDoc(ref, { role: 'viewer', active: true }))
   })
 
-  it('อีเมลแอดมินที่ hardcode ในแอป สร้าง/กู้ users doc ตัวเองเป็น admin ได้', async () => {
-    const db = env.authenticatedContext('ownerUid', { email: ADMIN_EMAIL }).firestore()
-    await assertSucceeds(setDoc(doc(db, 'users', 'ownerUid'), { role: 'admin', active: true }))
-    await assertSucceeds(updateDoc(doc(db, 'users', 'ownerUid'), { role: 'admin', active: true }))
+  it('ไม่มีอีเมลไหนตั้งตัวเองเป็น admin ได้ (รวมอีเมลที่เคยฝังในแอป) · admin เดิมยังเป็น admin', async () => {
+    const db = env.authenticatedContext('ownerUid', { email: FORMER_BOOTSTRAP_EMAIL }).firestore()
+    await assertFails(setDoc(doc(db, 'users', 'ownerUid'), { role: 'admin', active: true }))
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'users', 'ownerUid'), { role: 'viewer', active: false, pending: true }))
+    await assertFails(updateDoc(doc(db, 'users', 'ownerUid'), { role: 'admin', active: true }))
+    await assertSucceeds(updateDoc(doc(as('admin'), 'users', 'viewer'), { name: 'แอดมินยังแก้ได้' }))
   })
 })
 
@@ -291,6 +294,16 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
     await assertFails(updateDoc(doc(db, 'urgentRequests', 'U1'), { status: 'approved' }))
     await assertFails(setDoc(doc(db, 'urgentRequests', 'U2'), { userId: 'viewer', status: 'approved' }))
     await assertSucceeds(updateDoc(doc(as('dispatcher'), 'urgentRequests', 'U1'), { status: 'approved' }))
+  })
+
+  it('viewer แนบปลายทาง/งาน/เบอร์กับคำขออนุมัติพิเศษได้ แต่ข้อความยาวเกินหรือไม่ใช่ข้อความถูกปฏิเสธ', async () => {
+    const db = as('viewer')
+    const base = { userId: 'viewer', requestedDate: '2026-10-15', status: 'pending', destination: 'ไซต์บางนา', jobSummary: 'ส่งท่อ 10 เส้น', contactPhone: '081-234-5678' }
+    await assertSucceeds(setDoc(doc(db, 'urgentRequests', 'U-OK'), base))
+    await assertSucceeds(setDoc(doc(db, 'urgentRequests', 'U-OLD'), { userId: 'viewer', requestedDate: '2026-10-15', status: 'pending' }))
+    for (const bad of [{ destination: 'x'.repeat(201) }, { jobSummary: 'x'.repeat(501) }, { contactPhone: '0'.repeat(31) }, { contactPhone: 812345678 }]) {
+      await assertFails(setDoc(doc(db, 'urgentRequests', 'U-BAD'), { ...base, ...bad }))
+    }
   })
 
   it('viewer อ่านขออนุมัติเร่งด่วนของคนอื่นไม่ได้', async () => {

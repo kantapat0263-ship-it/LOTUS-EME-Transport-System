@@ -3,6 +3,7 @@ import type { ActiveTokenUser } from '@/firebase/admin'
 import { findFreeRequestId, requestIdPrefix } from '@/lib/requestId'
 import { planCustomSites, type SavedPlace } from '@/lib/customSite'
 import { thaiToday } from '@/lib/driverLeave'
+import { isOutsideRequestHours } from '@/lib/requestWindow'
 import type { VehicleRequestCommand } from './vehicleRequestValidation'
 
 export class VehicleRequestError extends Error {
@@ -22,8 +23,6 @@ const addDays = (day: string, days: number) => {
   return d.toISOString().slice(0, 10)
 }
 
-/** ชั่วโมงจาก "HH:MM" ในตั้งค่าบริษัท — ตรรกะเดียวกับฟอร์ม (ไม่มีค่า = ค่าเริ่มต้น) */
-const settingHour = (value: unknown, fallback: number) => Number(String(value ?? '').split(':')[0] || fallback)
 
 /** ผลที่บันทึกไว้ของคำสั่งนี้ (ส่งซ้ำหลังบันทึกสำเร็จแล้ว = คืนผลเดิม ไม่สร้างใบใหม่) */
 function storedResult(data: DocumentData | undefined, uid: string): VehicleRequestResult | null {
@@ -42,7 +41,7 @@ async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate
   if (requestDate < tomorrow) throw new VehicleRequestError('ต้องขอล่วงหน้าอย่างน้อย 1 วัน', 400)
   const settings = (await db.doc('companySettings/default').get()).data() ?? {}
   const hour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours()
-  const isOutsideHours = hour >= settingHour(settings.requestCloseTime, 16) || hour < settingHour(settings.requestOpenTime, 8)
+  const isOutsideHours = isOutsideRequestHours(hour, settings)
   if (requestDate >= addDays(today, isOutsideHours ? 2 : 1)) return
   if (requestDate !== tomorrow) throw new VehicleRequestError('วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่', 400)
   // ใช้ผลของคำขออนุมัติ "ล่าสุด" เหมือนฟอร์ม (urgentStatus) — ใบเก่าที่เคยอนุมัติไม่ชนะใบใหม่ที่ถูกปฏิเสธ/รออยู่

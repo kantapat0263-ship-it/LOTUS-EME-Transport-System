@@ -39,11 +39,6 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    // ADMIN_EMAIL ที่ hardcode ใน src/app/login/page.tsx — แอปตั้ง users doc ของอีเมลนี้เป็น admin เองตอนสมัคร/ล็อกอิน
-    function isBootstrapAdmin(userId) {
-      return isSelf(userId) && request.auth.token.email == 'ownchang@hotmail.com';
-    }
-
     function changesOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -52,13 +47,14 @@ service cloud.firestore {
       // ตัวเองอ่านได้เสมอ (หน้า login ต้องอ่านเพื่อเช็ก active) / list ทั้งหมดใช้แค่หน้า admin
       allow read: if isSelf(userId) || isStaff();
       // สมัครเอง = viewer ที่ยังไม่ active เท่านั้น (รอ admin เปิดสวิตช์ที่หน้าจัดการผู้ใช้)
-      allow create: if isAdmin() || isBootstrapAdmin(userId) || (
+      // ไม่มีอีเมลไหนตั้งตัวเองเป็นแอดมินได้แล้ว (เดิม isBootstrapAdmin ฝังอีเมลเจ้าของ) — กู้สิทธิ์ทำที่ Firebase Console
+      allow create: if isAdmin() || (
         isSelf(userId)
         && request.resource.data.role == 'viewer'
         && request.resource.data.active == false
       );
       // แก้ของตัวเองได้แค่ชื่อ/เบอร์ (หน้า profile)
-      allow update: if isAdmin() || isBootstrapAdmin(userId) || (
+      allow update: if isAdmin() || (
         isSelf(userId) && changesOnly(['name', 'phone', 'updatedAt'])
       );
       allow delete: if isAdmin();
@@ -84,12 +80,21 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // ข้อความสั้นที่ผู้ขอแนบกับคำขอส่งใบหลังเวลาปิดรับ — ไม่มีก็ได้ (คำขอเก่า) แต่ถ้ามีต้องเป็นข้อความไม่ยาวเกิน
+    function optionalText(data, key, max) {
+      return !data.keys().hasAny([key]) || (data[key] is string && data[key].size() <= max);
+    }
+
     match /urgentRequests/{urgentId} {
       allow read: if isStaff() || isActiveOwner(resource.data);
+      // ความยาวตรงกับ URGENT_DETAIL_LIMITS ใน src/lib/urgentRequest.ts
       allow create: if isStaff() || (
         isActiveUser()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == 'pending'
+        && optionalText(request.resource.data, 'destination', 200)
+        && optionalText(request.resource.data, 'jobSummary', 500)
+        && optionalText(request.resource.data, 'contactPhone', 30)
       );
       // อนุมัติ/ปฏิเสธ = คนจัดรถ
       allow update, delete: if isStaff();

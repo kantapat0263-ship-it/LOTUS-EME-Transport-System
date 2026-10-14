@@ -95,7 +95,7 @@ it('คนจัดรถ: ใบเข้ากองจัดคิวทั�
 
 it('ส่งพร้อมกัน 8 ใบในวันเดียว → ได้เลขไม่ซ้ำ และบันทึกครบทุกใบ', async () => {
   await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
-  const day = workday(5)
+  const day = workday(40) // วันที่เทสต์อื่นไม่ใช้ — เทสต์นี้นับจำนวนใบของวัน
   const responses = await Promise.all(Array.from({ length: 8 }, () => post(body(day))))
   expect(responses.map(r => r.status)).toEqual(Array(8).fill(200))
   const ids = await Promise.all(responses.map(async r => (await r.json()).requestId as string))
@@ -134,7 +134,7 @@ it('สถานที่ใหม่ (markup ในชื่อ) ถูกบ�
 
 it('กดส่งซ้ำด้วยรหัสการส่งเดิม (คำตอบครั้งแรกหาย) → ได้ใบเดิม ไม่สร้างใบซ้ำ · รหัสของคนอื่นใช้ไม่ได้', async () => {
   await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
-  const day = workday(6)
+  const day = workday(50) // วันที่เทสต์อื่นไม่ใช้ — เทสต์นี้นับจำนวนใบของวัน
   const payload = body(day)
   const first = await (await post(payload)).json()
   const again = await post(payload)

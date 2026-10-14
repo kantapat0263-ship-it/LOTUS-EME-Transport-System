@@ -133,6 +133,20 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   ), [db])
   const { data: urgentRequests } = useCollection<any>(urgentRef)
 
+  // เบอร์/อีเมลจากโปรไฟล์ผู้ขอ — สำรองให้คำขอที่ส่งมาก่อนมีช่องเบอร์ติดต่อ (คนจัดรถต้องติดต่อกลับได้)
+  const [urgentContacts, setUrgentContacts] = React.useState<Record<string, { phone?: string; email?: string }>>({})
+  const urgentUserKey = [...new Set((urgentRequests ?? []).map((u: any) => u.userId).filter(Boolean))].sort().join(",")
+  React.useEffect(() => {
+    if (!urgentUserKey) return
+    let cancelled = false
+    Promise.all(urgentUserKey.split(",").map(async (uid) => {
+      const snap = await getDoc(doc(db, "users", uid)).catch(() => null)
+      const data = snap?.data() as { phone?: string; email?: string } | undefined
+      return [uid, { phone: data?.phone, email: data?.email }] as const
+    })).then((entries) => { if (!cancelled) setUrgentContacts(Object.fromEntries(entries)) })
+    return () => { cancelled = true }
+  }, [db, urgentUserKey])
+
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
 
   const requests = React.useMemo(() => {
@@ -309,7 +323,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       })
       toast({ 
         title: "อนุมัติแล้ว", 
-        description: `${requestedBy} สามารถขอรถวันที่ ${requestedDate} ได้แล้ว` 
+        description: `${requestedBy} สามารถขอรถวันที่ ${/^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? format(new Date(requestedDate + "T00:00:00"), "dd/MM/yyyy") : requestedDate} ได้แล้ว`
       })
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
@@ -565,15 +579,37 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       {urgentRequests && urgentRequests.length > 0 && (
         <div className="mb-4 p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 space-y-2">
           <p className="text-xs font-bold text-orange-400 flex items-center gap-2">
-            🔔 คำขออนุมัติพิเศษ ({urgentRequests.length} รายการ)
+            🔔 คำขอส่งใบขอรถหลังเวลาปิดรับ ({urgentRequests.length} รายการ)
           </p>
-          {urgentRequests.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between bg-background/50 p-2 rounded-lg">
-              <div>
+          <p className="text-[10px] text-muted-foreground">
+            ยังไม่ใช่ใบขอรถ — อนุมัติแล้วผู้ขอจะกรอกใบขอรถเอง แล้วการ์ด VR จะตามมาให้จัดคิว
+          </p>
+          {urgentRequests.map((u: any) => {
+            const contact = urgentContacts[u.userId] ?? {}
+            const phone = u.contactPhone || contact.phone
+            const email = u.requestedByEmail || contact.email
+            const requestedAt = u.createdAt?.toDate?.() as Date | undefined
+            return (
+            <div key={u.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-background/50 p-2 rounded-lg">
+              <div className="min-w-0 space-y-0.5">
                 <p className="text-xs font-bold text-white">{u.requestedBy}</p>
-                <p className="text-[10px] text-muted-foreground">ขอรถวันที่: {u.requestedDate}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  ขอรถวันที่: {/^\d{4}-\d{2}-\d{2}$/.test(u.requestedDate || "") ? format(new Date(u.requestedDate + "T00:00:00"), "dd/MM/yyyy") : u.requestedDate}
+                  {requestedAt ? ` · ส่งคำขอ ${format(requestedAt, "HH:mm")} น.` : ""}
+                </p>
+                {(phone || email) && (
+                  <p className="text-[11px] flex flex-wrap items-center gap-x-3">
+                    {phone && <a href={`tel:${phone}`} className="font-bold text-blue-400 hover:underline">📞 {phone}</a>}
+                    {email && <span className="text-muted-foreground break-all">{email}</span>}
+                  </p>
+                )}
+                {u.destination && <p className="text-[11px] text-white break-words">📍 {u.destination}</p>}
+                {u.jobSummary && <p className="text-[11px] text-white whitespace-pre-wrap break-words">📦 {u.jobSummary}</p>}
+                {!u.destination && !u.jobSummary && (
+                  <p className="text-[10px] text-muted-foreground italic">ไม่มีรายละเอียดงาน (ส่งมาก่อนมีช่องให้กรอก) — โทรถามผู้ขอได้</p>
+                )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
                 <Button
                   size="sm"
                   className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
@@ -590,7 +626,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 </Button>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">

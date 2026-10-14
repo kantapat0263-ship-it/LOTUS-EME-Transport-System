@@ -41,6 +41,9 @@ import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { useContinuousQueues } from "@/hooks/use-continuous-queues"
 import { QueueNoticeCard } from "@/components/continuous-queue/QueueNoticeCard"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
+import { URGENT_DETAIL_LIMITS, urgentDetailsError, urgentPrefill, type UrgentDetails } from "@/lib/urgentRequest"
 
 interface DestinationRequest {
   id: string;
@@ -120,8 +123,7 @@ export function RequestForm() {
 
   const minDateStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-    const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
-    const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+    const { closeHour, openHour } = requestHours(settings)
     const currentHour = bangkokNow.getUTCHours()
     const daysToAdd = !isViewer ? 1 : (currentHour >= closeHour || currentHour < openHour) ? 2 : 1
     bangkokNow.setUTCDate(bangkokNow.getUTCDate() + daysToAdd)
@@ -154,6 +156,8 @@ export function RequestForm() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
   const [isSendingUrgent, setIsSendingUrgent] = React.useState(false)
+  // หน้าต่างกรอกรายละเอียดสั้น ๆ ตอนขออนุมัติพิเศษ (null = ปิด)
+  const [urgentDetails, setUrgentDetails] = React.useState<UrgentDetails | null>(null)
   const [requestedBy, setRequestedBy] = React.useState("")
   const [selectedDate, setSelectedDate] = React.useState("")
   const continuousQueues = useContinuousQueues(selectedDate)
@@ -164,8 +168,7 @@ export function RequestForm() {
   ])
 
   const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
-  const isOutsideHours = bangkokHour >= (Number(settings?.requestCloseTime?.split(':')?.[0]) || 16) || 
-                        bangkokHour < (Number(settings?.requestOpenTime?.split(':')?.[0]) || 8);
+  const isOutsideHours = isOutsideRequestHours(bangkokHour, settings)
   
   const isSelectingTomorrow = selectedDate === tomorrowStr
   const isSelectingToday = !isViewer && selectedDate === todayStr
@@ -187,7 +190,7 @@ export function RequestForm() {
     }
   }, [profile, user])
 
-  const handleRequestUrgentApproval = async () => {
+  const handleRequestUrgentApproval = () => {
     if (!user || !selectedDate) return
 
     if (urgentStatus === 'pending') {
@@ -196,6 +199,17 @@ export function RequestForm() {
     }
     if (urgentStatus === 'approved') {
       toast({ title: "ได้รับอนุมัติแล้ว", description: "กรอกใบขอรถได้เลยครับ" })
+      return
+    }
+    // ให้คนจัดรถรู้ว่าไปไหน/ทำอะไร และติดต่อกลับได้ — เติมจากที่กรอกในฟอร์มไว้แล้ว
+    setUrgentDetails(urgentPrefill(destinations, (profile as any)?.phone))
+  }
+
+  const submitUrgentApproval = async () => {
+    if (!user || !selectedDate || !urgentDetails) return
+    const error = urgentDetailsError(urgentDetails)
+    if (error) {
+      toast({ title: "ข้อมูลไม่ครบ", description: error, variant: "destructive" })
       return
     }
 
@@ -208,9 +222,13 @@ export function RequestForm() {
         requestedByEmail: user.email,
         userId: user.uid,
         requestedDate: selectedDate,
+        destination: urgentDetails.destination.trim(),
+        jobSummary: urgentDetails.jobSummary.trim(),
+        contactPhone: urgentDetails.contactPhone.trim(),
         status: "pending",
         createdAt: serverTimestamp()
       })
+      setUrgentDetails(null)
       setUrgentApprovalRequested(true)
       toast({ 
         title: "ส่งคำขออนุมัติแล้ว", 
@@ -273,8 +291,7 @@ const handleSubmit = async (e: React.FormEvent) => {
 
     if (isViewer) {
       const bangkokSubmitTime = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-      const closeHour = Number(settings?.requestCloseTime?.split(':')?.[0] || 16)
-      const openHour = Number(settings?.requestOpenTime?.split(':')?.[0] || 8)
+      const { closeHour, openHour } = requestHours(settings)
       const currentBangkokHour = bangkokSubmitTime.getUTCHours()
       const isNowOutsideHours = currentBangkokHour >= closeHour || currentBangkokHour < openHour
       const daysToAdd = isNowOutsideHours ? 2 : 1
@@ -495,6 +512,41 @@ const handleSubmit = async (e: React.FormEvent) => {
                               {isSendingUrgent ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : "🔔"}
                               ขออนุมัติพิเศษจาก Dispatcher
                             </Button>
+                            <Dialog open={!!urgentDetails} onOpenChange={(open) => { if (!open && !isSendingUrgent) setUrgentDetails(null) }}>
+                              <DialogContent className="sm:max-w-md rounded-2xl">
+                                <DialogHeader>
+                                  <DialogTitle>ขออนุมัติส่งใบขอรถหลังเวลาปิดรับ</DialogTitle>
+                                  <DialogDescription>
+                                    บอกคนจัดรถสั้น ๆ ว่าจะไปไหน ทำอะไร — ได้รับอนุมัติแล้วค่อยกรอกใบขอรถเต็ม
+                                  </DialogDescription>
+                                </DialogHeader>
+                                {urgentDetails && (
+                                  <div className="space-y-3">
+                                    <div className="space-y-1">
+                                      <Label htmlFor="urgent-destination">ไปที่ไหน</Label>
+                                      <Input id="urgent-destination" value={urgentDetails.destination} maxLength={URGENT_DETAIL_LIMITS.destination}
+                                        placeholder="เช่น ไซต์งานบางนา" onChange={(e) => setUrgentDetails({ ...urgentDetails, destination: e.target.value })} />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <Label htmlFor="urgent-job">งาน / ของที่จะขน</Label>
+                                      <Textarea id="urgent-job" value={urgentDetails.jobSummary} maxLength={URGENT_DETAIL_LIMITS.jobSummary} rows={3}
+                                        placeholder="เช่น ส่งท่อ PVC 10 เส้น" onChange={(e) => setUrgentDetails({ ...urgentDetails, jobSummary: e.target.value })} />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <Label htmlFor="urgent-phone">เบอร์ติดต่อ</Label>
+                                      <Input id="urgent-phone" type="tel" inputMode="tel" value={urgentDetails.contactPhone} maxLength={URGENT_DETAIL_LIMITS.contactPhone}
+                                        placeholder="08x-xxx-xxxx" onChange={(e) => setUrgentDetails({ ...urgentDetails, contactPhone: e.target.value })} />
+                                    </div>
+                                  </div>
+                                )}
+                                <DialogFooter className="gap-2">
+                                  <Button type="button" variant="outline" onClick={() => setUrgentDetails(null)} disabled={isSendingUrgent}>ยกเลิก</Button>
+                                  <Button type="button" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={submitUrgentApproval} disabled={isSendingUrgent}>
+                                    {isSendingUrgent ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : "🔔"} ส่งคำขออนุมัติ
+                                  </Button>
+                                </DialogFooter>
+                              </DialogContent>
+                            </Dialog>
                           </>
                         )}
                       </div>

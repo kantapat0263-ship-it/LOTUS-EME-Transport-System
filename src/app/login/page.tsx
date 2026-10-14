@@ -8,7 +8,7 @@ import {
   createUserWithEmailAndPassword,
   updateProfile 
 } from "firebase/auth"
-import { doc, setDoc, serverTimestamp, getDoc, updateDoc } from "firebase/firestore"
+import { doc, setDoc, serverTimestamp, getDoc } from "firebase/firestore"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -31,10 +31,8 @@ export default function LoginPage() {
   const [phone, setPhone] = React.useState("")
   const [showPassword, setShowPassword] = React.useState(false)
 
-  const ADMIN_EMAIL = "ownchang@hotmail.com"
-
   // ระหว่างกดเข้าสู่ระบบ/สมัคร (isLoading) ให้ handler ตรวจ/ตั้งโปรไฟล์ให้เสร็จแล้วพาไปเอง
-  // — ไม่งั้น dashboard อาจเห็นโปรไฟล์เดิม (ไม่มี/ยังไม่ active) ก่อน bootstrap admin เขียนเสร็จ แล้วพาออกจากระบบ
+  // — ไม่งั้น dashboard อาจเห็นโปรไฟล์เดิม (ไม่มี/ยังไม่ active) ก่อน handler เขียนโปรไฟล์เสร็จ แล้วพาออกจากระบบ
   React.useEffect(() => {
     if (!isUserLoading && user && !isLoading) {
       router.push("/dashboard")
@@ -51,57 +49,39 @@ export default function LoginPage() {
       const userRef = doc(db, "users", loggedUser.uid)
       const userDoc = await getDoc(userRef)
       
-      if (loggedUser.email === ADMIN_EMAIL) {
-        if (userDoc.exists()) {
-          await updateDoc(userRef, {
-            role: "admin",
-            active: true,
-            updatedAt: serverTimestamp()
-          })
-        } else {
-          await setDoc(userRef, {
-            id: loggedUser.uid,
-            email: loggedUser.email,
-            name: loggedUser.displayName || "Admin",
-            role: "admin",
-            active: true,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          })
-        }
-      } else {
-        if (userDoc.exists() && userDoc.data().active === false) {
-          await auth.signOut()
-          toast({ 
-            title: "เข้าสู่ระบบไม่สำเร็จ", 
-            description: "บัญชีของคุณยังไม่ได้รับอนุมัติ หรือถูกระงับ กรุณาติดต่อ Admin",
-            variant: "destructive" 
-          })
-          setIsLoading(false)
-          return
-        }
-        
-        if (!userDoc.exists()) {
-          // ไม่มีโปรไฟล์ (เช่น admin ลบออก / สร้างบัญชีนอกหน้าสมัคร) → สร้างเป็นบัญชีรออนุมัติเหมือนตอนสมัคร
-          // (firestore.rules ไม่ให้สร้างโปรไฟล์ตัวเองแบบ active: true แล้ว)
-          await setDoc(userRef, {
-            id: loggedUser.uid,
-            email: loggedUser.email,
-            name: loggedUser.displayName || "User",
-            role: "viewer",
-            active: false,
-            pending: true,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          })
-          await auth.signOut()
-          toast({
-            title: "บัญชีรอการอนุมัติ",
-            description: "กรุณารอ Admin อนุมัติก่อนเข้าใช้งาน"
-          })
-          setIsLoading(false)
-          return
-        }
+      // ไม่มีอีเมลไหนได้สิทธิ์แอดมินอัตโนมัติแล้ว (เดิมฝังอีเมลเจ้าของไว้ ใครเข้าอีเมลนั้นได้ = แอดมิน)
+      // แอดมินเดิมยังเป็นแอดมินตามโปรไฟล์ · กู้สิทธิ์แอดมินทำที่ Firebase Console (users/{uid}) เท่านั้น
+      if (userDoc.exists() && userDoc.data().active === false) {
+        await auth.signOut()
+        toast({
+          title: "เข้าสู่ระบบไม่สำเร็จ",
+          description: "บัญชีของคุณยังไม่ได้รับอนุมัติ หรือถูกระงับ กรุณาติดต่อ Admin",
+          variant: "destructive"
+        })
+        setIsLoading(false)
+        return
+      }
+
+      if (!userDoc.exists()) {
+        // ไม่มีโปรไฟล์ (เช่น admin ลบออก / สร้างบัญชีนอกหน้าสมัคร) → สร้างเป็นบัญชีรออนุมัติเหมือนตอนสมัคร
+        // (firestore.rules ไม่ให้สร้างโปรไฟล์ตัวเองแบบ active: true แล้ว)
+        await setDoc(userRef, {
+          id: loggedUser.uid,
+          email: loggedUser.email,
+          name: loggedUser.displayName || "User",
+          role: "viewer",
+          active: false,
+          pending: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        })
+        await auth.signOut()
+        toast({
+          title: "บัญชีรอการอนุมัติ",
+          description: "กรุณารอ Admin อนุมัติก่อนเข้าใช้งาน"
+        })
+        setIsLoading(false)
+        return
       }
 
       toast({ title: "เข้าสู่ระบบสำเร็จ", description: "กำลังนำคุณไปยังหน้าแดชบอร์ด" })
@@ -126,35 +106,27 @@ export default function LoginPage() {
 
       await updateProfile(newUser, { displayName: name })
 
-      const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase()
-      const role = isAdmin ? "admin" : "viewer"
-
       await setDoc(doc(db, "users", newUser.uid), {
         id: newUser.uid,
         email: newUser.email,
         name: name,
         phone: phone || "",
-        role: role,
-        // ผู้สมัครใหม่ต้องรอ Admin อนุมัติก่อน (admin เปิดสวิตช์ Active ที่หน้าจัดการผู้ใช้)
-        active: isAdmin,
-        // pending = รออนุมัติ (ใช้ขึ้น badge เตือน admin) — admin ไม่ต้องรออนุมัติ
-        pending: !isAdmin,
+        role: "viewer",
+        // ผู้สมัครใหม่ทุกคนต้องรอ Admin อนุมัติก่อน (admin เปิดสวิตช์ Active ที่หน้าจัดการผู้ใช้)
+        active: false,
+        // pending = รออนุมัติ (ใช้ขึ้น badge เตือน admin)
+        pending: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       })
 
-      if (isAdmin) {
-        toast({ title: "ลงทะเบียนสำเร็จ", description: "เข้าสู่ระบบในฐานะ Admin" })
-        router.push("/dashboard")
-      } else {
-        // ออกจากระบบทันที กันไม่ให้เข้าใช้งานก่อนได้รับอนุมัติ (และกัน useEffect เด้งเข้า dashboard)
-        await auth.signOut()
-        toast({
-          title: "สมัครสมาชิกสำเร็จ — รอการอนุมัติ",
-          description: "บัญชีถูกสร้างแล้ว กรุณารอ Admin อนุมัติก่อนเข้าใช้งาน"
-        })
-        setPassword("")
-      }
+      // ออกจากระบบทันที กันไม่ให้เข้าใช้งานก่อนได้รับอนุมัติ (และกัน useEffect เด้งเข้า dashboard)
+      await auth.signOut()
+      toast({
+        title: "สมัครสมาชิกสำเร็จ — รอการอนุมัติ",
+        description: "บัญชีถูกสร้างแล้ว กรุณารอ Admin อนุมัติก่อนเข้าใช้งาน"
+      })
+      setPassword("")
     } catch (error: any) {
       let errorMessage = "เกิดข้อผิดพลาดในการลงทะเบียน"
       if (error.code === 'auth/email-already-in-use') {
