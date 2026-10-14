@@ -31,12 +31,24 @@ export function urgentPrefill(destinations: DraftDestination[], profilePhone: un
   }
 }
 
+/** ค่าจากเอกสาร (ผู้ใช้เขียนเองได้) ที่จะแสดงบนหน้าจอ — รับเฉพาะข้อความ ไม่งั้น React render ไม่ได้ทั้งแท็บ */
+export const displayText = (value: unknown): string => (typeof value === "string" ? value : "")
+
+/** "YYYY-MM-DD" → "DD/MM/YYYY" · รูปแบบผิด/วันที่ไม่มีจริง = คืนข้อความเดิม (ห้าม throw — การ์ดทั้งแท็บจะล้ม) */
+export function formatIsoDateTh(value: unknown): string {
+  const text = displayText(value)
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text)
+  if (!m) return text
+  const d = new Date(`${text}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === text ? `${m[3]}/${m[2]}/${m[1]}` : text
+}
+
 /** ข้อความผิดพลาดของช่องที่ยังไม่ผ่าน (ไม่มี = ส่งได้) */
 export function urgentDetailsError(details: UrgentDetails): string | null {
   if (!details.destination.trim()) return "กรุณาระบุว่าจะไปที่ไหน"
   if (!details.jobSummary.trim()) return "กรุณาระบุงานหรือของที่จะขน"
   if (!details.contactPhone.trim()) return "กรุณาระบุเบอร์ติดต่อ"
-  if (!/^[0-9+\-\s()]+$/.test(details.contactPhone.trim())) return "เบอร์ติดต่อใช้ได้เฉพาะตัวเลข เว้นวรรค + - ( )"
+  if (!/^[0-9+\-\s()]+$/.test(details.contactPhone.trim()) || !/\d/.test(details.contactPhone)) return "เบอร์ติดต่อใช้ได้เฉพาะตัวเลข เว้นวรรค + - ( )"
   for (const key of Object.keys(URGENT_DETAIL_LIMITS) as (keyof UrgentDetails)[]) {
     if (details[key].trim().length > URGENT_DETAIL_LIMITS[key]) return "ข้อความยาวเกินไป กรุณาย่อให้สั้นลง"
   }

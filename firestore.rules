@@ -43,6 +43,22 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
+    function validProfileName(data) {
+      return data.get('name', '') is string && data.get('name', '').size() <= 200;
+    }
+    function validProfilePhone(data) {
+      return data.get('phone', '') is string && data.get('phone', '').size() <= 50;
+    }
+    function validProfileText(data) {
+      return validProfileName(data) && validProfilePhone(data);
+    }
+    // แก้โปรไฟล์ตัวเอง: ตรวจเฉพาะฟิลด์ที่เปลี่ยน — ข้อมูลเก่าที่ไม่ตรงรูปแบบไม่ขวางการแก้ฟิลด์อื่น
+    function validProfileChanges() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return (!changed.hasAny(['name']) || validProfileName(request.resource.data))
+        && (!changed.hasAny(['phone']) || validProfilePhone(request.resource.data));
+    }
+
     match /users/{userId} {
       // ตัวเองอ่านได้เสมอ (หน้า login ต้องอ่านเพื่อเช็ก active) / list ทั้งหมดใช้แค่หน้า admin
       allow read: if isSelf(userId) || isStaff();
@@ -52,10 +68,11 @@ service cloud.firestore {
         isSelf(userId)
         && request.resource.data.role == 'viewer'
         && request.resource.data.active == false
+        && validProfileText(request.resource.data)
       );
-      // แก้ของตัวเองได้แค่ชื่อ/เบอร์ (หน้า profile)
+      // แก้ของตัวเองได้แค่ชื่อ/เบอร์ (หน้า profile) — ต้องเป็นข้อความ (หน้าอื่นนำไปแสดง/โทรออก)
       allow update: if isAdmin() || (
-        isSelf(userId) && changesOnly(['name', 'phone', 'updatedAt'])
+        isSelf(userId) && changesOnly(['name', 'phone', 'updatedAt']) && validProfileChanges()
       );
       allow delete: if isAdmin();
     }
@@ -84,6 +101,12 @@ service cloud.firestore {
     function optionalText(data, key, max) {
       return !data.keys().hasAny([key]) || (data[key] is string && data[key].size() <= max);
     }
+    // ค่าที่การ์ดคนจัดรถแสดง — ผิดชนิด (object ฯลฯ) ทำให้หน้าจัดการคำขอ render ไม่ได้
+    function validUrgentHeader(data) {
+      return data.requestedDate is string && data.requestedDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && optionalText(data, 'requestedBy', 200)
+        && (data.get('requestedByEmail', null) == null || (data.requestedByEmail is string && data.requestedByEmail.size() <= 200));
+    }
 
     match /urgentRequests/{urgentId} {
       allow read: if isStaff() || isActiveOwner(resource.data);
@@ -92,6 +115,7 @@ service cloud.firestore {
         isActiveUser()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == 'pending'
+        && validUrgentHeader(request.resource.data)
         && optionalText(request.resource.data, 'destination', 200)
         && optionalText(request.resource.data, 'jobSummary', 500)
         && optionalText(request.resource.data, 'contactPhone', 30)

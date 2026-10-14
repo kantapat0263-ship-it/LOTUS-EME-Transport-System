@@ -142,10 +142,16 @@ describe('users — ห้ามยกระดับสิทธิ์ตัว
     await assertFails(updateDoc(doc(as('dispatcher'), 'users', 'dispatcher'), { role: 'admin' }))
   })
 
-  it('viewer แก้ชื่อ/เบอร์ตัวเองได้ (หน้า profile)', async () => {
+  it('viewer แก้ชื่อ/เบอร์ตัวเองได้ (หน้า profile) แต่ต้องเป็นข้อความไม่ยาวเกิน', async () => {
     await assertSucceeds(updateDoc(doc(as('viewer'), 'users', 'viewer'), {
       name: 'ชื่อใหม่', phone: '0811111111', updatedAt: serverTimestamp(),
     }))
+    await assertFails(updateDoc(doc(as('viewer'), 'users', 'viewer'), { phone: { evil: true } }))
+    await assertFails(updateDoc(doc(as('viewer'), 'users', 'viewer'), { name: ['x'] }))
+    await assertFails(updateDoc(doc(as('viewer'), 'users', 'viewer'), { phone: '0'.repeat(51) }))
+    // โปรไฟล์เก่าที่เบอร์ผิดชนิด ยังแก้ชื่อได้ (ตรวจเฉพาะฟิลด์ที่เปลี่ยน)
+    await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'users', 'viewer'), { phone: 812345678 }))
+    await assertSucceeds(updateDoc(doc(as('viewer'), 'users', 'viewer'), { name: 'ชื่อใหม่อีกครั้ง', updatedAt: serverTimestamp() }))
   })
 
   it('viewer แก้ users ของคนอื่นไม่ได้ / อ่าน users ทั้งหมดไม่ได้ แต่อ่านของตัวเองได้', async () => {
@@ -301,7 +307,10 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
     const base = { userId: 'viewer', requestedDate: '2026-10-15', status: 'pending', destination: 'ไซต์บางนา', jobSummary: 'ส่งท่อ 10 เส้น', contactPhone: '081-234-5678' }
     await assertSucceeds(setDoc(doc(db, 'urgentRequests', 'U-OK'), base))
     await assertSucceeds(setDoc(doc(db, 'urgentRequests', 'U-OLD'), { userId: 'viewer', requestedDate: '2026-10-15', status: 'pending' }))
-    for (const bad of [{ destination: 'x'.repeat(201) }, { jobSummary: 'x'.repeat(501) }, { contactPhone: '0'.repeat(31) }, { contactPhone: 812345678 }]) {
+    for (const bad of [
+      { destination: 'x'.repeat(201) }, { jobSummary: 'x'.repeat(501) }, { contactPhone: '0'.repeat(31) }, { contactPhone: 812345678 },
+      { requestedDate: 123 }, { requestedDate: '15/10/2026' }, { requestedBy: { name: 'x' } }, { requestedByEmail: ['a'] },
+    ]) {
       await assertFails(setDoc(doc(db, 'urgentRequests', 'U-BAD'), { ...base, ...bad }))
     }
   })

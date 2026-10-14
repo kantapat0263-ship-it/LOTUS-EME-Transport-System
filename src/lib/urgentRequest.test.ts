@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { urgentDetailsError, urgentPrefill } from './urgentRequest'
+import { displayText, formatIsoDateTh, urgentDetailsError, urgentPrefill } from './urgentRequest'
 import { isOutsideRequestHours, settingHour } from './requestWindow'
 
 describe('urgentPrefill — เติมจากฟอร์มที่กรอกไว้', () => {
@@ -24,6 +24,8 @@ describe('urgentDetailsError', () => {
     [{ ...ok, jobSummary: '' }, 'งาน'],
     [{ ...ok, contactPhone: '' }, 'เบอร์'],
     [{ ...ok, contactPhone: '<script>' }, 'ตัวเลข'],
+    [{ ...ok, contactPhone: '---' }, 'ตัวเลข'],
+    [{ ...ok, contactPhone: '( )' }, 'ตัวเลข'],
     [{ ...ok, destination: 'x'.repeat(201) }, 'ยาวเกิน'],
     [{ ...ok, jobSummary: 'x'.repeat(501) }, 'ยาวเกิน'],
   ])('%o → ไม่ผ่าน', (details, message) => {
@@ -49,5 +51,19 @@ describe('เวลาเปิด/ปิดรับคำขอ (ฟอร์�
     expect(isOutsideRequestHours(16, settings)).toBe(true)
     expect(isOutsideRequestHours(1, { requestOpenTime: '00:00', requestCloseTime: '17:00' })).toBe(false)
     expect(isOutsideRequestHours(16, null)).toBe(true)
+  })
+})
+
+describe('ค่าที่ผู้ใช้เขียนเองได้ ต้องแสดงได้โดยไม่ทำให้หน้าล้ม', () => {
+  it('displayText รับเฉพาะข้อความ', () => {
+    expect(displayText('081')).toBe('081')
+    for (const bad of [{ a: 1 }, ['x'], 123, null, undefined, true]) expect(displayText(bad)).toBe('')
+  })
+  it('formatIsoDateTh ไม่ throw กับวันที่เสีย', () => {
+    expect(formatIsoDateTh('2026-10-15')).toBe('15/10/2026')
+    expect(formatIsoDateTh('2026-99-99')).toBe('2026-99-99')
+    expect(formatIsoDateTh('2026-02-30')).toBe('2026-02-30')
+    expect(formatIsoDateTh({ toDate: 1 })).toBe('')
+    expect(formatIsoDateTh(undefined)).toBe('')
   })
 })

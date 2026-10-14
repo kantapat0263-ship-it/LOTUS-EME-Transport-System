@@ -73,6 +73,7 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
+import { displayText, formatIsoDateTh } from "@/lib/urgentRequest"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 
@@ -141,8 +142,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     let cancelled = false
     Promise.all(urgentUserKey.split(",").map(async (uid) => {
       const snap = await getDoc(doc(db, "users", uid)).catch(() => null)
-      const data = snap?.data() as { phone?: string; email?: string } | undefined
-      return [uid, { phone: data?.phone, email: data?.email }] as const
+      const data = snap?.data()
+      return [uid, { phone: displayText(data?.phone), email: displayText(data?.email) }] as const
     })).then((entries) => { if (!cancelled) setUrgentContacts(Object.fromEntries(entries)) })
     return () => { cancelled = true }
   }, [db, urgentUserKey])
@@ -323,7 +324,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       })
       toast({ 
         title: "อนุมัติแล้ว", 
-        description: `${requestedBy} สามารถขอรถวันที่ ${/^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? format(new Date(requestedDate + "T00:00:00"), "dd/MM/yyyy") : requestedDate} ได้แล้ว`
+        description: `${requestedBy} สามารถขอรถวันที่ ${formatIsoDateTh(requestedDate)} ได้แล้ว` 
       })
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
@@ -585,16 +586,21 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
             ยังไม่ใช่ใบขอรถ — อนุมัติแล้วผู้ขอจะกรอกใบขอรถเอง แล้วการ์ด VR จะตามมาให้จัดคิว
           </p>
           {urgentRequests.map((u: any) => {
+            // ทุกค่ามาจากเอกสารที่ผู้ขอเขียนเอง — รับเฉพาะข้อความ ค่าผิดชนิดต้องไม่ทำให้ทั้งแท็บล้ม
             const contact = urgentContacts[u.userId] ?? {}
-            const phone = u.contactPhone || contact.phone
-            const email = u.requestedByEmail || contact.email
-            const requestedAt = u.createdAt?.toDate?.() as Date | undefined
+            const phone = displayText(u.contactPhone) || contact.phone
+            const email = displayText(u.requestedByEmail) || contact.email
+            const requestedBy = displayText(u.requestedBy) || "ไม่ระบุชื่อ"
+            const destination = displayText(u.destination)
+            const jobSummary = displayText(u.jobSummary)
+            const createdAt = typeof u.createdAt?.toDate === "function" ? u.createdAt.toDate() : null
+            const requestedAt = createdAt instanceof Date && !Number.isNaN(createdAt.getTime()) ? createdAt : undefined
             return (
             <div key={u.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-background/50 p-2 rounded-lg">
               <div className="min-w-0 space-y-0.5">
-                <p className="text-xs font-bold text-white">{u.requestedBy}</p>
+                <p className="text-xs font-bold text-white">{requestedBy}</p>
                 <p className="text-[10px] text-muted-foreground">
-                  ขอรถวันที่: {/^\d{4}-\d{2}-\d{2}$/.test(u.requestedDate || "") ? format(new Date(u.requestedDate + "T00:00:00"), "dd/MM/yyyy") : u.requestedDate}
+                  ขอรถวันที่: {formatIsoDateTh(u.requestedDate) || "-"}
                   {requestedAt ? ` · ส่งคำขอ ${format(requestedAt, "HH:mm")} น.` : ""}
                 </p>
                 {(phone || email) && (
@@ -603,9 +609,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     {email && <span className="text-muted-foreground break-all">{email}</span>}
                   </p>
                 )}
-                {u.destination && <p className="text-[11px] text-white break-words">📍 {u.destination}</p>}
-                {u.jobSummary && <p className="text-[11px] text-white whitespace-pre-wrap break-words">📦 {u.jobSummary}</p>}
-                {!u.destination && !u.jobSummary && (
+                {destination && <p className="text-[11px] text-white break-words">📍 {destination}</p>}
+                {jobSummary && <p className="text-[11px] text-white whitespace-pre-wrap break-words">📦 {jobSummary}</p>}
+                {!destination && !jobSummary && (
                   <p className="text-[10px] text-muted-foreground italic">ไม่มีรายละเอียดงาน (ส่งมาก่อนมีช่องให้กรอก) — โทรถามผู้ขอได้</p>
                 )}
               </div>
@@ -613,14 +619,14 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 <Button
                   size="sm"
                   className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
-                  onClick={() => handleApproveUrgent(u.id, u.requestedBy, u.requestedDate)}
+                  onClick={() => handleApproveUrgent(u.id, requestedBy, u.requestedDate)}
                 >
                   ✅ อนุมัติ
                 </Button>
                 <Button
                   size="sm"
                   className="h-7 text-xs bg-red-600 hover:bg-red-700 text-white"
-                  onClick={() => handleRejectUrgent(u.id, u.requestedBy)}
+                  onClick={() => handleRejectUrgent(u.id, requestedBy)}
                 >
                   ❌ ปฏิเสธ
                 </Button>
