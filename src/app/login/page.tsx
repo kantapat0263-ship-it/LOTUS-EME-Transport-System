@@ -17,6 +17,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { Loader2, Truck, ShieldCheck, Eye, EyeOff } from "lucide-react"
 
+/** ตรงกับ validProfileText ใน firestore.rules */
+const PROFILE_NAME_MAX = 200
+const PROFILE_PHONE_MAX = 50
+
 export default function LoginPage() {
   const router = useRouter()
   const auth = useAuth()
@@ -68,7 +72,7 @@ export default function LoginPage() {
         await setDoc(userRef, {
           id: loggedUser.uid,
           email: loggedUser.email,
-          name: loggedUser.displayName || "User",
+          name: (loggedUser.displayName || "User").slice(0, PROFILE_NAME_MAX),
           role: "viewer",
           active: false,
           pending: true,
@@ -99,6 +103,11 @@ export default function LoginPage() {
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
+    // ตรวจก่อนสร้างบัญชี — rules รับชื่อ ≤ 200 / เบอร์ ≤ 50 ตัว ถ้าเกินจะได้บัญชีที่ไม่มีโปรไฟล์
+    if (name.trim().length > PROFILE_NAME_MAX || phone.trim().length > PROFILE_PHONE_MAX) {
+      toast({ title: "ข้อมูลยาวเกินไป", description: `ชื่อไม่เกิน ${PROFILE_NAME_MAX} ตัวอักษร และเบอร์ไม่เกิน ${PROFILE_PHONE_MAX} ตัวอักษร`, variant: "destructive" })
+      return
+    }
     setIsLoading(true)
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
@@ -244,6 +253,7 @@ export default function LoginPage() {
                       placeholder="สมชาย ใจดี"
                       required
                       className="h-11"
+                      maxLength={PROFILE_NAME_MAX}
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                     />
@@ -257,6 +267,7 @@ export default function LoginPage() {
                       placeholder="08X-XXX-XXXX"
                       required
                       className="h-11"
+                      maxLength={PROFILE_PHONE_MAX}
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                     />

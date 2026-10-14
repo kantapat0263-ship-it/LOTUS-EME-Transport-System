@@ -79,6 +79,7 @@ export default function ProfilePage() {
                 <Label htmlFor="name">ชื่อ-นามสกุล</Label>
                 <Input 
                   id="name"
+                  maxLength={200}
                   value={formData.name}
                   onChange={(e) => setFormData({...formData, name: e.target.value})}
                   placeholder="กรอกชื่อและนามสกุลจริง"
@@ -93,6 +94,7 @@ export default function ProfilePage() {
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input 
                     id="phone"
+                    maxLength={50}
                     type="tel"
                     value={formData.phone}
                     onChange={(e) => setFormData({...formData, phone: e.target.value})}
