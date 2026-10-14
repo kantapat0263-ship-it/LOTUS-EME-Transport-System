@@ -273,7 +273,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **public-safe tag:** ในใบงาน/รูปที่ส่งกลุ่ม ถ้ามีคันรับต่อ → โชว์ "🔄 โยกไปทะเบียน X" เสมอ (แม้เป็น `driver-refused`) — **คำว่า "ปฏิเสธ" ห้ามโผล่ในกลุ่ม** เก็บไว้แค่แผง/รายงานแอดมิน
 - **คีย์ Google Maps บน production อยู่ที่ `companySettings/default.googleMapsApiKeyReference` (เมนูตั้งค่าระบบ) — env `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` ไม่ได้ตั้งบน Vercel** → โค้ดฝั่ง client ที่ใช้ Maps/Directions ต้อง fallback ไปคีย์ใน settings เสมอ (ใบสรุปเคยอ่าน env อย่างเดียว → คิด กม. ตอนแทรกงาน/เปลี่ยนรูปแบบเส้นทางไม่เคยทำงานบน production จนแก้ `a16045a`)
 - **Firebase project เดียว** (`studio-2099625459-19c42`, hardcode ใน `src/firebase/config.ts`) → **preview กับ production ใช้ Firestore + กลุ่ม LINE เดียวกัน** ระวังกดส่ง LINE จริงตอนเทส
-- **`trips` อ่านได้แบบ public** (`firestore.rules: allow read: if true`) → หน้าคนขับ (ลิงก์สาธารณะ ไม่ล็อกอิน) ดึงทริปทั้งเดือนมาคำนวณอันดับได้ แต่โชว์แค่ของตัวเอง
+- **ใบงานคนขับ (ลิงก์ LINE ไม่ล็อกอิน) อ่านผ่าน `/api/driver-ticket/{tripId}?t=token` เท่านั้น** (ตั้งแต่ 2026-10-14) — server ตรวจ token แล้วคืนเฉพาะฟิลด์ที่ใบงานแสดง + สถิติรายเดือนคำนวณที่ server · rules ชุดใหม่ปิด `trips`/`drivers` แบบ public (ดู section "ความปลอดภัย 2026-10-14") · เพิ่มฟิลด์ที่ใบงานต้องแสดง = แก้ projection ใน `src/server/driverTicket.ts` ด้วย ไม่งั้นไม่โผล่
 - ใบงานคนขับ **ต้องคงปุ่ม "นำทางด้วย Google Maps" + รายละเอียด (cargoDetails/ผู้ขอ/เบอร์โทร/หมายเหตุ) ไว้ครบ** — คนขับจะได้ไม่ต้องโทรถามคนจัดรถ
 - **พิกัด = snapshot ไม่ realtime:** lat/lng ถูกก๊อป 2 จุด — `sites` → `vehicleRequest.destinations` (ตอน RequestForm) → `trip.stops` (ตอน grouping `trip-grouping/page.tsx:269-270,330-331`) ใบงานคนขับ (`driver/[tripId]:369-371`) ใช้ `stop.lat/lng` จากทริป → **แอดมินแก้พิกัดใน `sites` ทีหลัง = ทริป/ใบงานที่ออกไปแล้วไม่ตาม** (มีผลแค่ใบที่สร้างใหม่). ถ้าจะให้แก้แล้วตาม ต้องทำปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป (ดู TODO)
 
@@ -298,7 +298,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - [ ] (อาจมี) ปุ่ม "ปิดผลทริปนี้" เพื่อรู้ว่า reconcile ครบหรือยัง
 - [ ] **ปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป** — เคสแอดมินแก้หมุด `sites` หลังออกใบ/ส่ง LINE แล้ว งานเดิมไม่ตาม (พิกัดเป็น snapshot ดู gotcha) → ให้กดอัปเดต `stop.lat/lng` จาก `sites` ล่าสุดเฉพาะจุดที่เลือก
 - [ ] **ยืนยัน ENV เฟส 2 บน Vercel สำหรับ cron ราคาดีเซล** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — รายการนี้ไม่ใช่งาน merge ยาม auth LINE อีกแล้ว
-- [ ] **publish Firestore rules ชุด `cc7c069` (อยู่บน main แล้ว)** — ก่อน publish: เช็กใน Console ว่า users ที่เป็น admin/dispatcher เป็นตัวจริงทุกคน + staff ทุกคนมี `active: true` (ดู section "สิทธิ์ Firestore")
+- [ ] **publish Firestore rules ชุดความปลอดภัย 2026-10-14** (ไฟล์ `firestore.rules` บน main) — Claude ทำผ่าน Console หลังผู้ใช้ล็อกอินให้ · ทำหลังลิงก์ใบงานในกลุ่ม LINE มี `?t=` แล้ว · เก็บ rules เดิมใน Console ไว้ย้อนกลับก่อน (ดู section "ความปลอดภัย 2026-10-14")
 - [x] **ยาม auth API ส่ง LINE (2026-10-06):** API ใช้ `verifyStaffToken` ตัวเดียวกับ GPS/ใบลา ตรวจโปรไฟล์ล่าสุดว่าเป็น admin/dispatcher และ `active: true` ก่อนอ่าน body หรือส่ง LINE; ปุ่มส่งแนบ Firebase ID token แล้ว ไม่ต้อง cherry-pick `a5fce13` จาก branch เก่า
 
 ## งานความปลอดภัย/ค่าใช้จ่าย (2026-06-22)
@@ -313,6 +313,19 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - **รายการค้างใน handoff มิถุนายนนี้ปิดแล้วเมื่อ 2026-10-06:** ยาม auth LINE ใช้ verifier ปัจจุบันตามหัวข้อด้านบน และ Firestore rules เผยแพร่พร้อมคิวต่อเนื่องแล้ว
 - ⚠️ **branch เก่าตามหลัง main อยู่เยอะ** อย่า merge ทั้ง branch หรือ cherry-pick `a5fce13`/`4e974ce` ซ้ำ เพราะ main มีงานทดแทนแล้ว
 - (อัปเดต 2026-10-03) ส่วน rules ไม่ต้อง cherry-pick `4e974ce` แล้ว — `cc7c069` บน main รวมไว้แล้ว เหลือแค่ publish
+
+## ความปลอดภัย 2026-10-14 (ตาม SECURITY-AUDIT-2026-10-10 — แทนที่ข้อความเรื่องสิทธิ์อ่านใน section ถัดไป)
+
+- **deploy โค้ดแล้ว 2026-10-14 (`e122a86`) · rules ชุดใหม่ยังไม่ publish** — ลำดับ: โค้ดก่อน → คนจัดรถส่งลิงก์ใหม่ (มี `?t=`) → publish rules · ย้อนกลับ: rules ก่อน แล้วค่อยโค้ด (Vercel rollback ไป `920024c`)
+- **ใบงานคนขับ:** token = HMAC(HKDF จาก private key ใน `FIREBASE_SERVICE_ACCOUNT_BASE64`, tripId + รุ่น + createTime ของเอกสารทริป) · DB เก็บแค่ `driverLinks/{tripId}.version` · ส่งซ้ำได้ลิงก์เดิม · ปุ่ม "สร้างลิงก์ใหม่ (ยกเลิกลิงก์เดิม)" ในประวัติทริป · ใช้ได้ถึงวันทริป+7 · ทริปยกเลิก/ลบ = ใช้ไม่ได้ · ออกลิงก์ได้เฉพาะ staff (`POST /api/driver-links`) · QR สร้างในเครื่อง (`DriverLinkQr`) · **เปลี่ยน service account key = ลิงก์เดิมทั้งหมดใช้ไม่ได้** · ลิงก์เก่าไม่มี token อ่าน Firestore ตรงได้แค่ก่อน publish rules
+- **ใบขอรถส่งผ่าน `POST /api/vehicle-requests`** (ออกเลข VR + สถานที่ใหม่ใน transaction เดียวฝั่ง server · ตรวจเวลาปิดรับ/อนุมัติเร่งด่วนล่าสุดเหมือนฟอร์ม · `operationId` กันใบซ้ำเมื่อคำตอบหาย) — หลัง publish rules ผู้ขอทั่วไปสร้าง `vehicleRequests` ตรงจาก client ไม่ได้ และอ่านได้แค่ใบตัวเอง
+- **rules ชุดใหม่:** อ่านข้อมูลธุรกิจต้อง active · ข้อมูลรถ/พ.ร.บ./ภาษี/ราคาน้ำมัน = staff · ใบขอรถ/ขออนุมัติเร่งด่วน = staff หรือเจ้าของ · `trips/{id}/stops`, `trackingMeta`, `driverLinks`, `vehicleRequestOperations` ปิด · sites เขียนเฉพาะ staff + ตรวจชนิด/ความยาว/พิกัด (แก้ไขตรวจเฉพาะฟิลด์ที่เปลี่ยน) · **ไม่มี bootstrap admin จากอีเมลแล้ว** (กู้สิทธิ์แอดมินที่ Console)
+- **dashboard layout:** ไม่ render หน้าลูก/เมนูจนโปรไฟล์ active และไม่ render หน้าที่ role เข้าไม่ได้ระหว่างรอ redirect (listener ที่ rules ปฏิเสธจะทำ `FirebaseErrorListener` throw) · ไม่มี/รออนุมัติ/ระงับ = ล้างแคช + signOut · `FirebaseErrorListener` ตรวจโปรไฟล์ก่อน throw (ถูกระงับระหว่างใช้ = ออกจากระบบ)
+- **service worker:** `/api/*`, `/driver/`, `manifest.json` = NetworkOnly · ถอดกฎ `cross-origin` ของ next-pwa (เคยเก็บ Firestore/Auth ลงแคช + ทำสตรีม Listen พัง) · activate/logout ล้าง `apis`/`cross-origin` · **ข้อสังเกต: SW บน production ไม่เคยติดตั้งสำเร็จ** (precache `/_next/app-build-manifest.json` ตอบ 404 + register.js อยู่ใน main.js ที่หน้า app router ไม่โหลด) — ยังไม่แก้ (นอกขอบเขต)
+- **ถอด AI (genkit) ทั้งหมด** · XSS หน้าต่างหมุดสถานที่ใช้ `src/lib/sitePopup.ts` (textContent)
+- **คำขอส่งใบหลังเวลาปิดรับ (`urgentRequests`):** ผู้ขอแนบ `destination`/`jobSummary`/`contactPhone` (ผู้ใช้เลือก: ไม่ให้กรอกใบเต็มก่อนอนุมัติ) · การ์ดคนจัดรถแสดงเบอร์/อีเมล (คำขอเก่าดึงจากโปรไฟล์) · เวลาเปิด/ปิดรับใช้ `src/lib/requestWindow.ts` ตัวเดียวทั้งฟอร์มและ server
+- **ข้อจำกัดที่ยอมรับ:** viewer ที่ active ยังอ่าน trips/drivers ทั้งหมด (หน้าประวัติ/แดชบอร์ด/ติดตามใช้) · dependency ที่เหลือ 22 รายการต้องขึ้นรุ่นหลัก (next 16, tailwind 4, next-pwa, firebase client)
+- **ทดสอบในเครื่อง:** root `firebase.json` เปิด UI แล้ว Firestore emulator ล้ม (NoClassDefFoundError) → ใช้ config ที่ปิด UI · dev server ต้องมี cwd = โฟลเดอร์ repo (ไม่งั้น tailwind หา config ไม่เจอ) · เทสต์ API อยู่ใน `npm run test:queue` (vehicle-requests, driver-links)
 
 ## สิทธิ์ Firestore (rules) — รัดแล้วบน main 2026-10-03 (`cc7c069`), **ยังไม่ publish**
 - **ที่มา (Codex audit):** rules ที่ live = ruleset `86aa1529…` publish 2026-05-15 (เก่ากว่า repo — กฎ GPS/พ.ร.บ. + `4e974ce` ไม่เคย publish) → user แก้ `users/{ตัวเอง}.role` เป็น admin ได้ + fallback เปิดอ่าน/เขียนทุก collection + หน้าสมัครเปิดให้ทุกคน = **ใครบนเน็ตก็สมัครแล้วตั้งตัวเองเป็น admin ได้** (server เชื่อ role ผ่าน `verifyStaffToken`)
