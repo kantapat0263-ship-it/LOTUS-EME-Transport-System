@@ -298,7 +298,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - [ ] (อาจมี) ปุ่ม "ปิดผลทริปนี้" เพื่อรู้ว่า reconcile ครบหรือยัง
 - [ ] **ปุ่ม "ซิงก์พิกัดจากสถานที่" ที่ทริป** — เคสแอดมินแก้หมุด `sites` หลังออกใบ/ส่ง LINE แล้ว งานเดิมไม่ตาม (พิกัดเป็น snapshot ดู gotcha) → ให้กดอัปเดต `stop.lat/lng` จาก `sites` ล่าสุดเฉพาะจุดที่เลือก
 - [ ] **ยืนยัน ENV เฟส 2 บน Vercel สำหรับ cron ราคาดีเซล** (`FIREBASE_SERVICE_ACCOUNT_BASE64`, `CRON_SECRET`, optional `DIESEL_PRICE_SOURCE_URL`) — รายการนี้ไม่ใช่งาน merge ยาม auth LINE อีกแล้ว
-- [ ] **publish Firestore rules ชุดความปลอดภัย 2026-10-14** (ไฟล์ `firestore.rules` บน main) — Claude ทำผ่าน Console หลังผู้ใช้ล็อกอินให้ · ทำหลังลิงก์ใบงานในกลุ่ม LINE มี `?t=` แล้ว · เก็บ rules เดิมใน Console ไว้ย้อนกลับก่อน (ดู section "ความปลอดภัย 2026-10-14")
+- [x] ~~publish Firestore rules ชุดความปลอดภัย~~ (เสร็จ 2026-10-15 08:53 — ดู section "ความปลอดภัย 2026-10-14") · แก้ `firestore.rules` ครั้งหน้า = ต้อง publish ใน Console เอง (git push ไม่ publish ให้)
 - [x] **ยาม auth API ส่ง LINE (2026-10-06):** API ใช้ `verifyStaffToken` ตัวเดียวกับ GPS/ใบลา ตรวจโปรไฟล์ล่าสุดว่าเป็น admin/dispatcher และ `active: true` ก่อนอ่าน body หรือส่ง LINE; ปุ่มส่งแนบ Firebase ID token แล้ว ไม่ต้อง cherry-pick `a5fce13` จาก branch เก่า
 
 ## งานความปลอดภัย/ค่าใช้จ่าย (2026-06-22)
@@ -316,7 +316,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 
 ## ความปลอดภัย 2026-10-14 (ตาม SECURITY-AUDIT-2026-10-10 — แทนที่ข้อความเรื่องสิทธิ์อ่านใน section ถัดไป)
 
-- **deploy โค้ดแล้ว 2026-10-14 (`e122a86`) · rules ชุดใหม่ยังไม่ publish** — ลำดับ: โค้ดก่อน → คนจัดรถส่งลิงก์ใหม่ (มี `?t=`) → publish rules · ย้อนกลับ: rules ก่อน แล้วค่อยโค้ด (Vercel rollback ไป `920024c`)
+- **deploy โค้ด 2026-10-14 (`e122a86`) + 2026-10-15 (`e03ce61`) · publish rules แล้ว 2026-10-15 08:53** (ไฟล์ `firestore.rules` ของ `e03ce61` ตรงทุกตัวอักษร) — ทดสอบหลัง publish: คนนอกอ่าน trips/drivers/vehicleRequests ได้ 403 · ลิงก์ใบงานมี token ยังเปิดได้ · แอดมินใช้แดชบอร์ด/ฟลีท/ขอรถ/ติดตามได้ปกติ · **ย้อนกลับ:** Console → Firestore → Rules → ชุด "Oct 6, 2026 11:55 PM" (= `firestore.rules` ของ `920024c`) แล้วค่อยย้อนโค้ด
 - **ใบงานคนขับ:** token = HMAC(HKDF จาก private key ใน `FIREBASE_SERVICE_ACCOUNT_BASE64`, tripId + รุ่น + createTime ของเอกสารทริป) · DB เก็บแค่ `driverLinks/{tripId}.version` · ส่งซ้ำได้ลิงก์เดิม · ปุ่ม "สร้างลิงก์ใหม่ (ยกเลิกลิงก์เดิม)" ในประวัติทริป · ใช้ได้ถึงวันทริป+7 · ทริปยกเลิก/ลบ = ใช้ไม่ได้ · ออกลิงก์ได้เฉพาะ staff (`POST /api/driver-links`) · QR สร้างในเครื่อง (`DriverLinkQr`) · **เปลี่ยน service account key = ลิงก์เดิมทั้งหมดใช้ไม่ได้** · ลิงก์เก่าไม่มี token อ่าน Firestore ตรงได้แค่ก่อน publish rules
 - **ใบขอรถส่งผ่าน `POST /api/vehicle-requests`** (ออกเลข VR + สถานที่ใหม่ใน transaction เดียวฝั่ง server · ตรวจเวลาปิดรับ/อนุมัติเร่งด่วนล่าสุดเหมือนฟอร์ม · `operationId` กันใบซ้ำเมื่อคำตอบหาย) — หลัง publish rules ผู้ขอทั่วไปสร้าง `vehicleRequests` ตรงจาก client ไม่ได้ และอ่านได้แค่ใบตัวเอง
 - **rules ชุดใหม่:** อ่านข้อมูลธุรกิจต้อง active · ข้อมูลรถ/พ.ร.บ./ภาษี/ราคาน้ำมัน = staff · ใบขอรถ/ขออนุมัติเร่งด่วน = staff หรือเจ้าของ · `trips/{id}/stops`, `trackingMeta`, `driverLinks`, `vehicleRequestOperations` ปิด · sites เขียนเฉพาะ staff + ตรวจชนิด/ความยาว/พิกัด (แก้ไขตรวจเฉพาะฟิลด์ที่เปลี่ยน) · **ไม่มี bootstrap admin จากอีเมลแล้ว** (กู้สิทธิ์แอดมินที่ Console)
