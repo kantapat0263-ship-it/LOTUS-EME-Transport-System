@@ -43,6 +43,7 @@ import {
   OFFICE_RADIUS_M,
   LONG_DWELL_MIN,
   cutTrailAt,
+  sortTrailByTime,
   suggestHandoverTime,
   msToThaiClock,
   handoverCutMs,
@@ -287,13 +288,14 @@ export default function TrackingPage() {
     ;(positions ?? []).forEach((p) => {
       deviceToPos[p.deviceId] = p
     })
+    // เรียงตามเวลา GPS — ลำดับที่เก็บไม่ใช่ลำดับเวลา (GPS ส่งจุดย้อนหลังสลับกับจุดสด) วาดตามลำดับที่เก็บ = เส้นพาดย้อนไปมา
     const deviceToTrail: Record<string, DrivingPoint[]> = {}
     ;(trails ?? []).forEach((tr) => {
-      deviceToTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp }))
+      deviceToTrail[tr.deviceId] = sortTrailByTime((tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp })))
     })
     const deviceToPrevTrail: Record<string, DrivingPoint[]> = {}
     ;(prevTrails ?? []).forEach((tr) => {
-      deviceToPrevTrail[tr.deviceId] = (tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp }))
+      deviceToPrevTrail[tr.deviceId] = sortTrailByTime((tr.points ?? []).map((pt) => ({ lat: pt.lat, lng: pt.lng, t: pt.t, sp: pt.sp })))
     })
     const deviceToDaily: Record<string, TrackingDailyDoc> = {}
     ;(daily ?? []).forEach((d) => {

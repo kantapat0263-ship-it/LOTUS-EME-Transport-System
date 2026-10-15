@@ -34,6 +34,9 @@ import {
   RETURN_SITE_AREA_M,
   pickupAreaRadiusM,
   handoverTimeError,
+  sortTrailByTime,
+  insertTrailPoint,
+  type TrailPoint,
 } from './tracking'
 
 describe('tracking: เวลาที่จุดงานนับทุกรอบที่จอดจริง ไม่นับรอบที่ขับผ่าน (Codex รอบ 1 ข้อ 3, 5, 7)', () => {
@@ -932,5 +935,149 @@ describe('tracking: clockWithDay — เวลาคนละวันกับ�
     expect(clockWithDay(th('2026-10-06T19:40:00'), '2026-10-07')).toBe('19:40 (6 ต.ค.)')
     expect(clockWithDay(th('2026-10-08T00:30:00'), '2026-10-07')).toBe('00:30 (8 ต.ค.)')
     expect(clockWithDay(th('2026-12-31T23:05:00'), '2027-01-01')).toBe('23:05 (31 ธ.ค.)')
+  })
+})
+
+describe('tracking: จุด GPS ย้อนเวลา (จุดที่เครื่องเก็บไว้ตอนไม่มีสัญญาณ ส่งมาสลับกับจุดสด) ต้องเรียงตามเวลา', () => {
+  const T0 = Date.parse('2026-10-15T09:00:00+07:00')
+  const min = (m: number) => T0 + m * 60_000
+  // วิ่งลงใต้ทีละ ~1.1 กม. (ทุก 0.01 องศา) — จุดที่ i = นาทีที่ i
+  const road = (i: number) => ({ lat: 14.6 - i * 0.01, lng: 100.45, t: min(i) })
+
+  it('sortTrailByTime: เรียงตามเวลา ไม่แก้ array เดิม · จุดที่เวลาใช้ไม่ได้คงไว้ตำแหน่งเดิม (Codex ข้อ 1)', () => {
+    const noT = { lat: 1, lng: 1 }
+    const nan = { lat: 2, lng: 2, t: NaN }
+    const zero = { lat: 3, lng: 3, t: 0 }
+    const raw: TrailPoint[] = [road(3), noT, road(0), nan, road(2), zero, road(1)]
+    const copy = [...raw]
+    expect(sortTrailByTime(raw)).toEqual([road(0), noT, road(1), nan, road(2), zero, road(3)])
+    expect(raw).toEqual(copy)
+  })
+
+  it('sortTrailByTime: จุดไม่มีเวลายังนับ "ถึงแล้ว" ได้เหมือนเดิม (computeStopStatuses รองรับ trail ไม่มีเวลา)', () => {
+    const stop = { order: 1, lat: 14.5, lng: 100.45 }
+    const trail: TrailPoint[] = [road(0), { lat: 14.5, lng: 100.45 }, road(1)]
+    expect(computeStopStatuses([stop], sortTrailByTime(trail))[0].arrived).toBe(true)
+  })
+
+  it('sortTrailByTime: จุดสดสลับจุดย้อนหลัง → เส้นไม่พาดไปมา (ระยะเท่ากับวิ่งทางเดียว)', () => {
+    // รถอยู่จุด 20 แล้ว GPS ทยอยส่งจุด 1..10 ที่ค้างไว้ สลับกับจุดสด 20..29
+    const stored = [road(0)]
+    for (let k = 0; k < 10; k++) stored.push(road(20 + k), road(1 + k))
+    expect(trailDistanceKm(stored)).toBeGreaterThan(150) // ลำดับที่เก็บ = เส้นพาดไปมาเกือบ 20 เที่ยว
+    expect(trailDistanceKm(sortTrailByTime(stored))).toBeLessThan(35) // ตามเวลา = ทางเดียว ~32 กม.
+  })
+
+  it('insertTrailPoint: จุดใหม่กว่าต่อท้าย · จุดย้อนหลังแทรกตามเวลา ไม่ต่อท้าย', () => {
+    const prev = [road(0), road(1), road(5)]
+    expect(insertTrailPoint(prev, road(6), 100)!.map((p) => p.t)).toEqual([min(0), min(1), min(5), min(6)])
+    expect(insertTrailPoint(prev, road(3), 100)!.map((p) => p.t)).toEqual([min(0), min(1), min(3), min(5)])
+    expect(prev.map((p) => p.t)).toEqual([min(0), min(1), min(5)])
+  })
+
+  it('insertTrailPoint: เวลาซ้ำกับจุดใดก็ได้ในรายการ (ไม่ใช่แค่จุดท้าย) = null ไม่ต้องเขียน', () => {
+    const prev = [road(0), road(1), road(5)]
+    expect(insertTrailPoint(prev, road(5), 100)).toBeNull()
+    expect(insertTrailPoint(prev, road(1), 100)).toBeNull() // เดิมเช็กแค่จุดท้าย → จุดนี้ถูกต่อซ้ำ
+  })
+
+  it('insertTrailPoint: จุดใหม่เวลาใช้ไม่ได้ = กติกาเดิม (ต่อท้าย เว้นแต่เวลาเท่าจุดท้าย) ไม่ทิ้งหลักฐานจุดเสีย (Codex ข้อ 1)', () => {
+    const prev: TrailPoint[] = [road(0)]
+    expect(insertTrailPoint(prev, { lat: 1, lng: 1, t: 0 }, 100)).toEqual([road(0), { lat: 1, lng: 1, t: 0 }])
+    expect(insertTrailPoint(prev, { lat: 1, lng: 1 }, 100)).toEqual([road(0), { lat: 1, lng: 1 }])
+    expect(insertTrailPoint([road(0), { lat: 1, lng: 1, t: 0 }], { lat: 1, lng: 1, t: 0 }, 100)).toBeNull()
+  })
+
+  it('insertTrailPoint: จุดเสียที่เก็บไว้แล้วไม่หายตอนแทรกจุดใหม่ (รายงานรายสัปดาห์ใช้ตัดสินว่าข้อมูลไม่ครบ)', () => {
+    const bad = { lat: 1, lng: 1, t: 0 }
+    expect(insertTrailPoint([road(0), bad, road(5)], road(3), 100)).toEqual([road(0), bad, road(3), road(5)])
+  })
+
+  it('insertTrailPoint: เต็มเพดานแล้วจุดใหม่เก่ากว่าทุกจุด (ถูกตัดทิ้ง ได้ข้อมูลเดิม) = null ไม่เขียนซ้ำ (Codex ข้อ 4)', () => {
+    expect(insertTrailPoint([road(1), road(2), road(3)], road(0), 3)).toBeNull()
+    // แต่ trail เดิมที่สลับลำดับไว้ ยังเขียนเพื่อเรียงใหม่
+    expect(insertTrailPoint([road(2), road(1), road(3)], road(0), 3)!.map((p) => p.t)).toEqual([min(1), min(2), min(3)])
+  })
+
+  it('insertTrailPoint: trail เดิมที่เก็บสลับลำดับไว้แล้ว ถูกเรียงใหม่ตอนเขียนครั้งถัดไป', () => {
+    const stored = [road(0), road(20), road(1), road(21), road(2)]
+    expect(insertTrailPoint(stored, road(22), 100)!.map((p) => p.t)).toEqual([0, 1, 2, 20, 21, 22].map(min))
+  })
+
+  it('insertTrailPoint: เต็มเพดาน = เก็บจุดล่าสุดตามเวลา (ไม่ใช่ตามลำดับที่ส่งมา)', () => {
+    const prev = [road(1), road(2), road(3)]
+    expect(insertTrailPoint(prev, road(4), 3)!.map((p) => p.t)).toEqual([min(2), min(3), min(4)])
+  })
+
+  it('returnTripTrail: จุดย้อนหลังที่ไปอยู่ใน doc วันใหม่ (ส่งมาหลังตัดวัน 04:00) → trail ที่ต่อแล้วเรียงตามเวลา (Codex ข้อ 2)', () => {
+    const th = (iso: string) => Date.parse(`${iso}+07:00`)
+    const site = { lat: 17.4, lng: 102.8 }
+    const home = { lat: 14.0, lng: 100.6 }
+    const at = (p: { lat: number; lng: number }, iso: string, dLat = 0) => ({ lat: p.lat + dLat, lng: p.lng, t: th(iso) })
+    const prev = [at(site, '2026-10-06T04:00:00'), at(site, '2026-10-06T19:39:00'), at(site, '2026-10-06T19:45:00', 0.05), at(home, '2026-10-07T03:59:00', 0.1)]
+    const today = [at(home, '2026-10-07T03:50:00', 0.2), at(home, '2026-10-07T04:10:00')]
+    const r = returnTripTrail(prev, today, site)
+    expect(r.prepended).toBe(true)
+    expect(r.trail.map((p) => p.t)).toEqual(['2026-10-06T19:39:00', '2026-10-06T19:45:00', '2026-10-07T03:50:00', '2026-10-07T03:59:00', '2026-10-07T04:10:00'].map(th))
+    expect(r.siteDepartAt).toBe(th('2026-10-06T19:39:00'))
+
+    // NaN คั่นในวันนี้ (sortTrailByTime คงตำแหน่งไว้) ต้องไม่ทำให้ผลรวมย้อนเวลา (Codex รอบ 2 ข้อ 2)
+    const r2 = returnTripTrail(prev, sortTrailByTime([{ lat: 1, lng: 1, t: NaN }, ...today]), site)
+    expect(r2.trail.map((p) => p.t)).toEqual(r.trail.map((p) => p.t))
+  })
+
+  it('returnTripTrail: จุดย้อนหลังใน doc วันนี้ที่เก่ากว่าตอนอยู่ไซต์ = ก่อนรับรถ ไม่ทำให้ขากลับหาย (Codex รอบ 2 ข้อ 1)', () => {
+    const th = (iso: string) => Date.parse(`${iso}+07:00`)
+    const site = { lat: 17.4, lng: 102.8 }
+    const home = { lat: 14.0, lng: 100.6 }
+    const at = (p: { lat: number; lng: number }, iso: string, dLat = 0) => ({ lat: p.lat + dLat, lng: p.lng, t: th(iso) })
+    const prev = [at(site, '2026-10-07T03:20:00'), at(site, '2026-10-07T03:55:00', 0.05)]
+    const today = [at(home, '2026-10-07T03:10:00', 0.1), at(home, '2026-10-07T04:10:00')]
+    const r = returnTripTrail(prev, today, site)
+    expect(r).toMatchObject({ prepended: true, seenAtSite: true, siteDepartAt: th('2026-10-07T03:55:00') })
+    expect(r.trail.map((p) => p.t)).toEqual(['2026-10-07T03:20:00', '2026-10-07T03:55:00', '2026-10-07T04:10:00'].map(th))
+  })
+
+  describe('returnTripTrail: doc สองวันเวลาทับกัน (ล็อกพฤติกรรมตามข้อเสนอ team-reviewer)', () => {
+    const th = (iso: string) => Date.parse(`${iso}+07:00`)
+    const site = { lat: 17.4, lng: 102.8 }
+    const home = { lat: 14.0, lng: 100.6 } // = ออฟฟิศ
+    const at = (p: { lat: number; lng: number }, iso: string, dLat = 0) => ({ lat: p.lat + dLat, lng: p.lng, t: th(iso) })
+    const prev = [at(site, '2026-10-06T04:00:00'), at(site, '2026-10-06T19:39:00'), at(site, '2026-10-06T19:45:00', 0.05), at(home, '2026-10-07T03:56:00')]
+    const today = [at(home, '2026-10-07T04:01:00'), at(home, '2026-10-07T14:30:00'), at(home, '2026-10-07T14:40:00', -0.05)]
+    const opts = { office: home, tripDayStart: th('2026-10-07T00:00:00') }
+
+    it('จุดย้อนหลังที่ออฟฟิศช่วงก่อนรับรถ (อยู่ใน doc วันนี้) ไม่ถูกนับเป็น "กลับออฟฟิศก่อนวันทริป" → ยังต่อขากลับ', () => {
+      const backlogAtOffice = [at(home, '2026-10-06T08:00:00'), at(home, '2026-10-06T08:10:00')]
+      const base = returnTripTrail(prev, today, site, opts)
+      const r = returnTripTrail(prev, sortTrailByTime([...today, ...backlogAtOffice]), site, opts)
+      expect(base.prepended).toBe(true)
+      expect(r.prepended).toBe(true)
+      expect(r.trail.map((p) => p.t)).toEqual(base.trail.map((p) => p.t))
+      expect(r.siteDepartAt).toBe(base.siteDepartAt)
+    })
+
+    it('วันก่อนจบที่ไซต์ + วันนี้มีทั้งจุดเก่ากว่าและใหม่กว่า → จุดถัดไปของการจอดรอ = จุดที่ใหม่กว่า', () => {
+      const prevEndsAtSite = [at(site, '2026-10-07T03:15:00'), at(site, '2026-10-07T03:20:00')] // อยู่ไซต์แค่ 5 นาที แล้ว GPS เงียบ
+      const tod = [at(home, '2026-10-07T02:50:00', 0.1), at(home, '2026-10-07T04:10:00')]
+      const r = returnTripTrail(prevEndsAtSite, tod, site)
+      expect(r).toMatchObject({ prepended: true, seenAtSite: true, siteDepartAt: th('2026-10-07T04:10:00') })
+      expect(r.trail.map((p) => p.t)).toEqual([th('2026-10-07T03:20:00'), th('2026-10-07T04:10:00')])
+    })
+
+    it('จุดซ้ำข้าม doc: สำเนาจุดนอกไซต์ = ผลเท่าเดิม · สำเนาจุดในไซต์ = ไม่ต่อ (วันนี้มีจุดที่ไซต์)', () => {
+      const base = returnTripTrail(prev, today, site, opts)
+      const dupOut = returnTripTrail(prev, [prev[3], ...today], site, opts)
+      expect(dupOut).toMatchObject({ prepended: true, siteDepartAt: base.siteDepartAt, seenAtSite: true })
+      expect(dupOut.trail.map((p) => p.t)).toEqual([th('2026-10-06T19:39:00'), th('2026-10-06T19:45:00'), th('2026-10-07T03:56:00'), th('2026-10-07T03:56:00'), ...today.map((p) => p.t)])
+      expect(returnTripTrail(prev, [prev[1], ...today], site, opts).prepended).toBe(false)
+    })
+  })
+
+  it('จำลอง sync ทุกนาที: ตำแหน่งล่าสุดสลับระหว่างจุดสดกับจุดค้าง → trail เรียงเวลา ไม่มีจุดซ้ำ', () => {
+    let trail: TrailPoint[] = []
+    const feed = [road(0), road(20), road(1), road(21), road(1), road(2), road(22), road(22), road(3)]
+    for (const p of feed) trail = insertTrailPoint(trail, p, 2880) ?? trail
+    expect(trail.map((p) => p.t)).toEqual([0, 1, 2, 3, 20, 21, 22].map(min))
   })
 })

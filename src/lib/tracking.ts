@@ -118,6 +118,9 @@ export interface StopStatus {
 /** จุดใน trail: พิกัด + เวลา (unix ms) แบบ optional */
 export type TrailPoint = LatLng & { t?: number }
 
+/** เวลาจุด GPS ที่ใช้เรียง/วิเคราะห์ได้ (ไม่มี/NaN/≤0 = ใช้ไม่ได้) */
+const validTrailTime = (t: number | undefined): t is number => Number.isFinite(t) && t! > 0
+
 /**
  * ประเมินสถานะแต่ละจุดงานจากเส้นทางที่วิ่งจริง (trail)
  * - arrived = จุดไกลออฟฟิศ: มีจุดใน trail เข้าใกล้จุดงานภายใน radius
@@ -380,7 +383,7 @@ export function returnTripTrail<T extends TrailPoint>(
   const office = opts.office
   const officeRadiusM = opts.officeRadiusM ?? OFFICE_RADIUS_M
   const inSite = (p: T) => haversineMeters(site, p) <= radiusM
-  const sorted = (pts: T[]) => pts.filter((p) => p.t != null).sort((a, b) => a.t! - b.t!)
+  const sorted = (pts: T[]) => pts.filter((p) => validTrailTime(p.t)).sort((a, b) => a.t! - b.t!)
   const tod = sorted(today)
   let all = tod
   let prepended = false
@@ -396,13 +399,16 @@ export function returnTripTrail<T extends TrailPoint>(
     if (last >= 0) {
       let first = last
       while (first > 0 && inSite(pr[first - 1])) first--
-      const stayed = hasStationaryStay(pr.slice(first, last + 1), pr[last + 1] ?? tod[0], minStayMs, silentGapMs)
+      // หลังออกจากไซต์ (วันก่อน+วันนี้) เรียงเวลาใหม่ — จุดย้อนหลังที่ส่งมาหลังตัดวัน 04:00 ไปอยู่ใน doc วันใหม่ได้
+      // จุดที่เก่ากว่าจุดสุดท้ายในไซต์ = ก่อนรับรถ ไม่ใช่ขากลับ ไม่นับ
+      const after = sorted([...pr.slice(last + 1), ...tod]).filter((p) => p.t! > pr[last].t!)
+      const stayed = hasStationaryStay(pr.slice(first, last + 1), after[0], minStayMs, silentGapMs)
       const officeStay = office
-        ? firstOfficeStayStart([...pr.slice(last + 1), ...tod], office, officeRadiusM, RETURN_DWELL_MIN * 60_000)
+        ? firstOfficeStayStart(after, office, officeRadiusM, RETURN_DWELL_MIN * 60_000)
         : null
       const returnedBeforeTripDay = officeStay != null && officeStay < (opts.tripDayStart ?? Infinity)
       if (stayed && !returnedBeforeTripDay) {
-        all = [...pr.slice(last), ...tod]
+        all = [pr[last], ...after]
         prepended = true
       }
     }
@@ -794,6 +800,35 @@ export function computeDailySummary(
     totalKm: Math.round(trailDistanceKm(pts) * 10) / 10,
     stops: timings,
   }
+}
+
+// ---------------------------------------------------------------------------
+// ลำดับจุดใน trail — GPS ส่งจุดที่เก็บไว้ตอนไม่มีสัญญาณมาทีหลัง สลับกับจุดสด
+// ลำดับที่เก็บจึงไม่ใช่ลำดับเวลา (ลากเส้นตามลำดับที่เก็บ = เส้นตรงพาดย้อนไปมา)
+// ---------------------------------------------------------------------------
+
+/**
+ * trail เรียงตามเวลา GPS (array ใหม่) — จุดที่เวลาใช้ไม่ได้เรียงไม่ได้ คงไว้ตำแหน่งเดิม ไม่ทิ้ง
+ * (computeStopStatuses ใช้พิกัดจุดไม่มีเวลานับ "ถึง" ได้ · รายงานพักรายสัปดาห์ใช้จุดเสียตัดสินว่าข้อมูลไม่ครบ)
+ */
+export function sortTrailByTime<T extends TrailPoint>(trail: T[]): T[] {
+  const timed = trail.filter((p) => validTrailTime(p.t)).sort((a, b) => a.t! - b.t!)
+  let i = 0
+  return trail.map((p) => (validTrailTime(p.t) ? timed[i++] : p))
+}
+
+/**
+ * แทรกจุดใหม่เข้า trail ตามเวลา แล้วเก็บ max จุดล่าสุดตามเวลา (array ใหม่) · null = ไม่ต้องเขียน
+ * — เวลาซ้ำกับจุดใดในรายการ (ไม่ใช่แค่จุดท้าย) = null
+ * — เรียงทั้งรายการทุกครั้ง trail เก่าที่เก็บสลับลำดับไว้จึงถูกเรียงใหม่ตอนเขียนครั้งถัดไป
+ * — จุดใหม่เวลาใช้ไม่ได้ = กติกาเดิม ต่อท้าย เว้นแต่เวลาเท่าจุดท้าย (เก็บหลักฐานจุดเสียไว้เหมือนเดิม)
+ */
+export function insertTrailPoint<T extends TrailPoint>(prev: T[], pt: T, max: number): T[] | null {
+  if (!validTrailTime(pt.t)) return prev.length && prev[prev.length - 1].t === pt.t ? null : [...prev, pt].slice(-max)
+  if (prev.some((p) => p.t === pt.t)) return null
+  const next = sortTrailByTime([...prev, pt]).slice(-max)
+  // เต็มเพดานแล้วจุดใหม่เก่ากว่าทุกจุด = ถูกตัดทิ้ง ได้ข้อมูลเดิมทุกตัว → ไม่ต้องเขียนซ้ำ
+  return next.length === prev.length && next.every((p, i) => p === prev[i]) ? null : next
 }
 
 // ---------------------------------------------------------------------------

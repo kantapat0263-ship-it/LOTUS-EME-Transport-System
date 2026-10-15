@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, SINOTRACK_SERVER, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey, computeDailySummary, cutTrailAt, OFFICE_LOCATION } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary, cutTrailAt, insertTrailPoint, OFFICE_LOCATION } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -191,14 +191,15 @@ export async function GET(req: NextRequest) {
           { merge: true }
         )
 
-      // ต่อ trail รายวัน — ข้ามถ้าจุดเวลาเดิม (GPS ยังไม่รายงานจุดใหม่)
+      // ต่อ trail รายวัน — แทรกตามเวลา GPS (จุดที่เครื่องเก็บไว้ตอนไม่มีสัญญาณส่งมาทีหลัง สลับกับจุดสด)
+      // ข้ามถ้ามีจุดเวลานี้อยู่แล้ว (GPS ยังไม่รายงานจุดใหม่ / จุดย้อนหลังที่เคยเก็บไปแล้ว)
       const trailRef = db.collection('vehiclePositionTrails').doc(`${date}__${p.deviceId}`)
       const trailSnap = await trailRef.get()
       const prev: any[] = trailSnap.exists ? trailSnap.data()?.points ?? [] : []
-      const last = prev[prev.length - 1]
+      const inserted = insertTrailPoint(prev, { lat: p.lat, lng: p.lng, t: p.time, sp: p.speed }, MAX_TRAIL_POINTS)
       let effPoints: any[] = prev
-      if (!last || last.t !== p.time) {
-        effPoints = [...prev, { lat: p.lat, lng: p.lng, t: p.time, sp: p.speed }].slice(-MAX_TRAIL_POINTS)
+      if (inserted) {
+        effPoints = inserted
         await trailRef.set(
           { deviceId: p.deviceId, licensePlate: plate, date, points: effPoints, updatedAt: FieldValue.serverTimestamp() },
           { merge: true }
