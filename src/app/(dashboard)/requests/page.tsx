@@ -76,6 +76,7 @@ import { format } from "date-fns"
 import { displayText, formatIsoDateTh } from "@/lib/urgentRequest"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
+import { isAwaitingPickup, sortForManage, waitingLabel, requestCreatedMs } from "@/lib/requestAttention"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -150,14 +151,16 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   const { data: rawRequests, isLoading } = useCollection<any>(requestsRef)
 
-  const requests = React.useMemo(() => {
-    if (!rawRequests) return [];
-    return [...rawRequests].sort((a, b) => {
-      const dateA = a.createdAt?.toDate() || new Date(0);
-      const dateB = b.createdAt?.toDate() || new Date(0);
-      return dateB.getTime() - dateA.getTime();
-    });
-  }, [rawRequests]);
+  // ใบที่ยังไม่มีใครรับงานขึ้นบนสุด (เลขบนเมนู "ขอรถ" นับใบพวกนี้) ที่เหลือใหม่สุดก่อนเหมือนเดิม
+  const requests = React.useMemo(() => (rawRequests ? sortForManage(rawRequests) : []), [rawRequests]);
+  const awaitingCount = requests.filter(isAwaitingPickup).length
+  const [onlyAwaiting, setOnlyAwaiting] = React.useState(false)
+  // เวลา "ส่งมา X นาทีที่แล้ว" เดินเองทุกนาที
+  const [nowMs, setNowMs] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   const [selectedReqId, setSelectedReqId] = React.useState<string | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
@@ -300,9 +303,10 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     };
   }, [isDetailOpen, selectedReqId, companySettings?.googleMapsApiKeyReference]);
 
-  const filteredRequests = requests?.filter(req => 
+  const filteredRequests = requests?.filter(req =>
+    (!onlyAwaiting || isAwaitingPickup(req)) && (
     req.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    req.requestedBy.toLowerCase().includes(searchTerm.toLowerCase())
+    req.requestedBy.toLowerCase().includes(searchTerm.toLowerCase()))
   ) || []
 
   const toggleDest = (idx: number) => {
@@ -636,11 +640,29 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
           })}
         </div>
       )}
+      {(awaitingCount > 0 || onlyAwaiting) && (
+        <button
+          type="button"
+          onClick={() => setOnlyAwaiting(v => !v)}
+          className={cn(
+            "w-full flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
+            awaitingCount > 0 ? "border-orange-500/60 bg-orange-500/10 hover:bg-orange-500/15" : "border-border/50 bg-secondary/20 hover:bg-secondary/30"
+          )}
+        >
+          <span className="flex items-center gap-2 text-sm font-bold text-orange-400">
+            {awaitingCount > 0 && <span className="h-2 w-2 rounded-full bg-orange-500 animate-pulse" />}
+            {awaitingCount > 0 ? `🆕 มี ${awaitingCount} คำขอใหม่รอรับงาน` : "ไม่มีคำขอใหม่รอรับงานแล้ว"}
+          </span>
+          <span className="text-xs font-bold text-accent shrink-0">
+            {onlyAwaiting ? "แสดงทั้งหมด" : "ดูเฉพาะใบที่รอ"}
+          </span>
+        </button>
+      )}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="ค้นหาด้วยรหัส VR หรือชื่อผู้ขอ..." 
+          <Input
+            placeholder="ค้นหาด้วยรหัส VR หรือชื่อผู้ขอ..."
             className="pl-10 bg-secondary/20 h-11"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -676,6 +698,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
               className={cn(
                 "border-border/50 hover:border-accent/30 transition-all cursor-pointer group relative overflow-hidden",
                 (req.status === "pending" || req.status === "in_progress" || req.status === "partial" || req.status === "rescheduled") && "border-accent/30 bg-accent/5 shadow-lg shadow-accent/5",
+                isAwaitingPickup(req) && "border-2 border-orange-500/80 bg-orange-500/10 shadow-orange-500/10",
                 req.status === "cancelled" && "opacity-50 grayscale-[0.5]"
               )}
               onClick={() => {
@@ -694,10 +717,20 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
               <CardContent className="p-4 space-y-3">
                 <div className="flex justify-between items-start">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-accent">{req.requestId}</span>
-                      {getStatusBadge(req.status)}
+                      {isAwaitingPickup(req) ? (
+                        <Badge className="gap-1.5 bg-orange-500 hover:bg-orange-500 text-white border-none text-xs font-bold">
+                          <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                          🆕 ใหม่ · รอรับงาน
+                        </Badge>
+                      ) : getStatusBadge(req.status)}
                     </div>
+                    {isAwaitingPickup(req) && waitingLabel(requestCreatedMs(req), nowMs) && (
+                      <div className="text-[11px] font-bold text-orange-400">
+                        ⏱ {waitingLabel(requestCreatedMs(req), nowMs)}
+                      </div>
+                    )}
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <UserIcon className="h-3 w-3" /> {req.requestedBy}
@@ -734,7 +767,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         </div>
       ) : (
         <div className="text-center py-12 text-muted-foreground bg-secondary/10 rounded-xl border border-dashed">
-          ไม่พบรายการคำขอใช้รถ
+          {onlyAwaiting ? "ไม่มีคำขอที่รอรับงาน" : "ไม่พบรายการคำขอใช้รถ"}
         </div>
       )}
 
@@ -1197,6 +1230,28 @@ export default function RequestsPage() {
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'dispatcher'
 
+  // งานรอคนจัดรถ = เลขเดียวกับเมนู "ขอรถ" (ใบยังไม่มีใครรับงาน + คำขอส่งใบหลังเวลาปิดรับ)
+  // query เฉพาะ staff — rules ไม่ให้คนอื่นอ่านใบของคนอื่น โดนปฏิเสธแล้ว FirebaseErrorListener ล้มทั้งแอป
+  const awaitingRef = useMemoFirebase(() => (db && isStaff) ? query(
+    collection(db, "vehicleRequests"),
+    where("status", "==", "pending")
+  ) : null, [db, isStaff])
+  const { data: awaitingReqs } = useCollection<any>(awaitingRef)
+  const urgentPendingRef = useMemoFirebase(() => (db && isStaff) ? query(
+    collection(db, "urgentRequests"),
+    where("status", "==", "pending")
+  ) : null, [db, isStaff])
+  const { data: urgentPending } = useCollection<any>(urgentPendingRef)
+  const manageAttention = (awaitingReqs?.length ?? 0) + (urgentPending?.length ?? 0)
+
+  // เข้าหน้านี้ตอนมีงานรอ → เปิดแท็บ "จัดการคำขอ" ให้ (ครั้งเดียวตอนโหลด ผู้ใช้เลือกแท็บเองแล้วไม่ยุ่ง)
+  const autoTabDoneRef = React.useRef(false)
+  React.useEffect(() => {
+    if (autoTabDoneRef.current || !isStaff || !awaitingReqs || !urgentPending) return
+    autoTabDoneRef.current = true
+    if (manageAttention > 0) setActiveTab(t => (t === "form" ? "manage" : t))
+  }, [isStaff, awaitingReqs, urgentPending, manageAttention])
+
   const handleCancelRequest = async () => {
     if (!reqToCancel) return
     try {
@@ -1224,7 +1279,7 @@ export default function RequestsPage() {
         <p className="text-sm md:text-base text-muted-foreground">ระบบส่งคำขอใช้รถวัสดุและติดตามสถานะคิวงาน</p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={(t) => { autoTabDoneRef.current = true; setActiveTab(t) }} className="space-y-6">
         <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto overflow-x-auto justify-start">
           <TabsTrigger value="form" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">
             <ClipboardList className="mr-2 h-4 w-4" /> ใบขอใช้รถ
@@ -1235,6 +1290,11 @@ export default function RequestsPage() {
           {isStaff && (
             <TabsTrigger value="manage" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">
               <Settings2 className="mr-2 h-4 w-4" /> จัดการคำขอ
+              {manageAttention > 0 && (
+                <span className="ml-2 h-5 min-w-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {manageAttention}
+                </span>
+              )}
             </TabsTrigger>
           )}
           {isStaff && (
