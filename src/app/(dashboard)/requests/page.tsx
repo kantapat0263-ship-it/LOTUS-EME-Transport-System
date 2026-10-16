@@ -767,7 +767,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         </div>
       ) : (
         <div className="text-center py-12 text-muted-foreground bg-secondary/10 rounded-xl border border-dashed">
-          {onlyAwaiting ? "ไม่มีคำขอที่รอรับงาน" : "ไม่พบรายการคำขอใช้รถ"}
+          {onlyAwaiting
+            ? (searchTerm && awaitingCount > 0 ? "ไม่พบคำขอที่รอรับงานตรงกับคำค้นหา" : "ไม่มีคำขอที่รอรับงาน")
+            : "ไม่พบรายการคำขอใช้รถ"}
         </div>
       )}
 
@@ -1272,8 +1274,11 @@ export default function RequestsPage() {
     return <div className="flex h-[80vh] items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-accent" /></div>
   }
 
+  // ผู้ใช้เริ่มคลิก/พิมพ์ในหน้าแล้ว (เช่นกรอกฟอร์มก่อนตัวนับโหลดเสร็จ) = ไม่สลับแท็บให้ ฟอร์มที่กรอกค้างจะได้ไม่หาย
+  const stopAutoTab = () => { autoTabDoneRef.current = true }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" onPointerDownCapture={stopAutoTab} onKeyDownCapture={stopAutoTab}>
       <div className="flex flex-col gap-2">
         <h2 className="text-2xl md:text-3xl font-bold tracking-tight">ขอใช้รถและจัดการคำขอ</h2>
         <p className="text-sm md:text-base text-muted-foreground">ระบบส่งคำขอใช้รถวัสดุและติดตามสถานะคิวงาน</p>
