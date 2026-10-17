@@ -43,6 +43,7 @@ import { useContinuousQueues } from "@/hooks/use-continuous-queues"
 import { QueueNoticeCard } from "@/components/continuous-queue/QueueNoticeCard"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
+import { normalizeRequestTime } from "@/lib/requestTime"
 import { URGENT_DETAIL_LIMITS, urgentDetailsError, urgentPrefill, type UrgentDetails } from "@/lib/urgentRequest"
 
 interface DestinationRequest {
@@ -342,16 +343,31 @@ const handleSubmit = async (e: React.FormEvent) => {
       return
     }
 
+    // เวลาแต่ละจุด → "HH:MM" (พิมพ์ "06.30" ได้) · ผิดรูปแบบ = บอกจุดที่ + ค่าที่กรอก ไม่ส่ง
+    const badTime = validDestinations.find(d => normalizeRequestTime(d.requestTime) === null)
+    if (badTime) {
+      // ตัดชื่อ/ค่าที่ยาวมาก ให้ข้อความเตือนไม่ล้นจอ (เกณฑ์เดียวกับ server)
+      const name = (badTime.category === "custom" ? badTime.customName : badTime.siteName).trim()
+      const shown = badTime.requestTime.length > 20 ? `${badTime.requestTime.slice(0, 20)}…` : badTime.requestTime
+      toast({
+        title: "เวลาไม่ถูกต้อง",
+        description: `จุดที่ ${destinations.indexOf(badTime) + 1}${name && name.length <= 80 ? ` (${name})` : ""}: เวลา "${shown}" ไม่ถูกต้อง — ใช้รูปแบบ 08:30`,
+        variant: "destructive",
+      })
+      return
+    }
+    const timeOf = (d: DestinationRequest) => normalizeRequestTime(d.requestTime) ?? ""
+
     const payload = {
       requestDate: selectedDate,
-      requestTime: destinations[0]?.requestTime || "08:30",
+      requestTime: (destinations[0] ? normalizeRequestTime(destinations[0].requestTime) : null) || "08:30",
       requestedBy,
       note,
       destinations: validDestinations.map(d => ({
         category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
         coordinates: d.coordinates, jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
         ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
-        locationType: d.locationType, requestTime: d.requestTime,
+        locationType: d.locationType, requestTime: timeOf(d),
       })),
     }
     const payloadKey = JSON.stringify(payload)
@@ -891,6 +907,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                               className="h-11 pr-8"
                               value={dest.requestTime}
                               onChange={(e) => updateDest(dest.id, { requestTime: e.target.value })}
+                              onBlur={() => {
+                                // กรอกเสร็จ → จัดรูปแบบให้เห็นเลย ("6.30" → "06:30") · ผิดรูปแบบปล่อยไว้ให้ตอนส่งบอก
+                                const t = normalizeRequestTime(dest.requestTime)
+                                if (t && t !== dest.requestTime) updateDest(dest.id, { requestTime: t })
+                              }}
                             />
                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none font-bold">
                               น.

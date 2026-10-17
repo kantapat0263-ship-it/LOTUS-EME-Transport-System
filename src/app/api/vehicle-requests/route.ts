@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminDb, verifyActiveUserToken } from '@/firebase/admin'
 import { CustomSiteError } from '@/lib/customSite'
 import { RequestIdExhaustedError } from '@/lib/requestId'
-import { parseVehicleRequestCommand } from '@/server/vehicleRequestValidation'
+import { parseVehicleRequestCommand, VehicleRequestInputError } from '@/server/vehicleRequestValidation'
 import { createVehicleRequest, VehicleRequestError } from '@/server/vehicleRequestService'
 
 export const dynamic = 'force-dynamic'
@@ -18,7 +18,11 @@ export async function POST(request: NextRequest) {
     const raw = await request.text()
     if (Buffer.byteLength(raw, 'utf8') > 200_000) return json({ error: 'ข้อมูลใบขอรถใหญ่เกินไป' }, 400)
     command = parseVehicleRequestCommand(JSON.parse(raw))
-  } catch { return json({ error: 'ข้อมูลใบขอรถไม่ถูกต้อง กรุณาตรวจสอบแล้วส่งอีกครั้ง' }, 400) }
+  } catch (error) {
+    // ผิดช่องไหน บอกช่องนั้น (ผู้ขอแก้ได้เอง) — JSON เสีย = ข้อความโหลดหน้าใหม่ของตัวตรวจ
+    if (error instanceof VehicleRequestInputError) return json({ error: error.message }, 400)
+    return json({ error: 'ข้อมูลใบขอรถไม่ถูกต้อง — กรุณาโหลดหน้าใหม่ (F5) แล้วส่งอีกครั้ง' }, 400)
+  }
   try { return json(await createVehicleRequest(getAdminDb(), user, command)) }
   catch (error) {
     if (error instanceof VehicleRequestError) return json({ error: error.message }, error.status)
