@@ -77,7 +77,7 @@ function cleanText(v: unknown): string | null {
   return t ? t.slice(0, TEXT_MAX) : null
 }
 
-function inThailand(lat: unknown, lng: unknown): boolean {
+export function inThailand(lat: unknown, lng: unknown): boolean {
   return (
     typeof lat === 'number' && typeof lng === 'number' &&
     Number.isFinite(lat) && Number.isFinite(lng) &&

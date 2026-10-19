@@ -109,7 +109,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 **Insight สำคัญ:** "ปฏิเสธ" มักตามด้วย "ต้องมีคนรับต่อ" → ปุ่ม `driver-refused` เลยมี dropdown เลือกคันปลายทางได้
 → เก็บครบ: รู้ว่าใครปฏิเสธ (จับ pattern) + งานไปเสร็จที่ไหน + กม.ลงคันที่ทำจริง
 
-**กม. = per-stop share** (`totalDistanceKm ÷ จำนวนจุด`) ย้ายตามงาน — **ไม่ยิง Google Maps ใหม่** (คนใช้ยอมรับความละเอียด "คร่าว ๆ")
+**กม. = per-stop share** ย้ายตามงาน — **ไม่ยิง Google Maps ใหม่** (คนใช้ยอมรับความละเอียด "คร่าว ๆ") · ตั้งแต่ 2026-10-19 แบ่ง `totalDistanceKm` (และค่าน้ำมัน) ให้แต่ละจุด **ถ่วงตามระยะเส้นตรงจากออฟฟิศ** (`stopSharesKm`, ขั้นต่ำ 1 กม.) เดิมหารเท่าตามจำนวนจุด — เคส T-1710-0012 ระยอง+จุดใกล้ หารเท่าได้คนละ 207.6 ทั้งที่ GPS วิ่งจริง ~395 · ทริปมีจุดไม่มีพิกัด/นอกประเทศไทย (รวม (0,0) ที่ใช้แทนไม่มีพิกัด) = หารเท่าเหมือนเดิม · ทริปที่วิ่งครบเองได้เต็มแผนเหมือนเดิม · ตัวเลขย้อนหลังของเดือนที่มีงานโยก/เลื่อนคิดใหม่ตามวิธีนี้ (รูป LINE ที่ส่งไปแล้วไม่ตรง) · ข้อจำกัด: ตาราง "ต้นทุนต่อสถานที่" หน้า report (`siteCostStats`) ยังหารเท่าเอง
 
 ### การแสดงผล 3 ชั้น (motivation)
 1. ✅ **(ทำแล้ว) ส่วนตัว** — แถบสถิติส้ม (Variant A) ในใบงานคนขับ `/driver/[tripId]`: กม.จริง/จุดสำเร็จ/วันออกงาน + อันดับตัวเอง + ตัวกระตุ้น "อีก X กม. แซงอันดับ 1" — **บวกล้วน ไม่มีคำว่าปฏิเสธ**
@@ -259,7 +259,7 @@ REPORT ถูก export เป็น JPEG ส่งเข้ากลุ่ม L
 - `src/app/api/cron/update-diesel-price/route.ts` — cron อัปเดตราคา · `vercel.json` — schedule
 - `src/types/models.ts` — `TripStop` (มี outcome fields), `StopOutcome`, `Trip` (มี `dieselPriceUsed`/`fuelRateUsed`)
 - `src/lib/calculations.ts` — pure helpers (มี unit test ใน `calculations.test.ts`):
-  - `computeOutcomeStats` (นับผล + กม.จริงต่อทริป), `stopShareKm`
+  - `computeOutcomeStats` (นับผล + กม.จริงต่อทริป), `stopSharesKm`/`stopSharesCost` (ส่วนแบ่งต่อจุด ถ่วงตามระยะห่างจากออฟฟิศ)
   - `computeDriverLeaderboard` + `monthRange` (อันดับรายเดือนนับ กม.จริง)
 - `src/app/(dashboard)/daily-summary/page.tsx` — A4 + แผง "ปิดผลงานจริง" + Top 3
 - `src/app/driver/[tripId]/page.tsx` — ใบงานคนขับ + แถบสถิติส้ม

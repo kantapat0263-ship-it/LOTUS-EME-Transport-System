@@ -6,6 +6,9 @@
  * They are intentionally free of React/Firebase dependencies.
  */
 
+import { haversineMeters, OFFICE_LOCATION } from './tracking'
+import { inThailand } from './roadFlood'
+
 /** Default kilometres travelled per litre of diesel. */
 export const DEFAULT_FUEL_RATE = 10
 /** Default diesel price (THB per litre). */
@@ -93,6 +96,9 @@ export function nextStopOrder(stops: { order?: number }[] | null | undefined): n
 export interface OutcomeStopLike {
   outcome?: string | null
   reassignedToTripId?: string | null
+  /** พิกัดของจุด (snapshot ตอนจัดกลุ่ม/แทรกงาน) — ใช้ถ่วงส่วนแบ่ง กม. */
+  lat?: number | null
+  lng?: number | null
 }
 
 /** Minimal trip shape needed for outcome aggregation. */
@@ -105,22 +111,34 @@ export interface OutcomeTripLike {
   stops?: OutcomeStopLike[] | null
 }
 
+/** ระยะห่างขั้นต่ำ (กม.) ของจุดตอนถ่วงส่วนแบ่ง — จุดที่ออฟฟิศยังได้ส่วนแบ่งบ้าง ไม่เป็น 0 */
+const MIN_STOP_WEIGHT_KM = 1
+
 /**
- * Crude per-stop distance share for a trip: `totalDistanceKm / stopCount`.
- * Mirrors the allocation already used by the report page (report/page.tsx),
- * so we stay consistent without re-querying Google Maps when jobs move.
+ * แบ่ง `total` (ระยะหรือค่าน้ำมันของทริปตามแผน) ให้แต่ละจุดตามลำดับ stops — รวมกันเท่า total เสมอ
+ * ถ่วงด้วยระยะเส้นตรงจากออฟฟิศไปจุดนั้น: จุดไกลได้มากกว่าจุดใกล้ (ไม่ยิง Google Maps ใหม่ตอนโยกงาน)
+ * — เคส T-1710-0012 (2026-10-17): ระยอง ~165 กม. + จุดใกล้ ~15 กม. เดิมหารเท่าได้คนละครึ่ง
+ *   ทั้งที่ GPS วิ่งจริงเกือบเต็มเส้น · คันที่รับจุดใกล้ไปได้เครดิตครึ่งเส้นไประยอง
+ * มีจุดไม่มีพิกัด/พิกัดเสีย/นอกประเทศไทยแม้จุดเดียว = หารเท่า (ระยะของทริปคิดจากจุดที่มีพิกัดเท่านั้น ถ่วงไม่ได้)
+ *   — รวม (0,0) ที่ระบบใช้แทน "ไม่มีพิกัด" (vehicleRequestService / เลื่อนงาน) ไม่งั้นจุดนั้นกินส่วนแบ่งเกือบทั้งทริป
  */
-export function stopShareKm(trip: OutcomeTripLike): number {
-  const stopCount = trip.stops?.length || 0
-  if (stopCount === 0) return 0
-  return (trip.totalDistanceKm || 0) / stopCount
+function splitByStopDistance(total: number, stops: OutcomeStopLike[]): number[] {
+  if (stops.length === 0) return []
+  const weights = stops.every(s => inThailand(s.lat, s.lng))
+    ? stops.map(s => Math.max(haversineMeters(OFFICE_LOCATION, { lat: s.lat as number, lng: s.lng as number }) / 1000, MIN_STOP_WEIGHT_KM))
+    : stops.map(() => 1)
+  const weightSum = weights.reduce((a, b) => a + b, 0)
+  return weights.map(w => (total * w) / weightSum)
 }
 
-/** Per-stop fuel-cost share, allocated the same crude way as distance. */
-export function stopShareCost(trip: OutcomeTripLike): number {
-  const stopCount = trip.stops?.length || 0
-  if (stopCount === 0) return 0
-  return (trip.fuelCost || 0) / stopCount
+/** ส่วนแบ่ง กม. ของแต่ละจุด (ตามลำดับ trip.stops) — ดู splitByStopDistance */
+export function stopSharesKm(trip: OutcomeTripLike): number[] {
+  return splitByStopDistance(trip.totalDistanceKm || 0, trip.stops || [])
+}
+
+/** ส่วนแบ่งค่าน้ำมันของแต่ละจุด — สัดส่วนเดียวกับ กม. */
+export function stopSharesCost(trip: OutcomeTripLike): number[] {
+  return splitByStopDistance(trip.fuelCost || 0, trip.stops || [])
 }
 
 /** A stop with no recorded outcome (or 'delivered') counts as run-as-planned. */
@@ -181,10 +199,12 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
 
   for (const trip of trips) {
     const id = trip.id || ''
-    const share = stopShareKm(trip)
-    const costShare = stopShareCost(trip)
+    const shares = stopSharesKm(trip)
+    const costShares = stopSharesCost(trip)
 
-    for (const stop of trip.stops || []) {
+    for (const [i, stop] of (trip.stops || []).entries()) {
+      const share = shares[i]
+      const costShare = costShares[i]
       counts.total += 1
       const outcome = stop.outcome
 
@@ -309,8 +329,9 @@ export function computeDriverLeaderboard(trips: LeaderboardTripLike[]): DriverSt
       const cd0 = creditDriverOf(t)
       const hasWork = (t.stops || []).length > 0 || receivesWork(t.id)
       if (cd0.driverId && hasWork) ensure(cd0.driverId, cd0.driverName).days.add(date)
-      const share = stopShareKm(t)
-      for (const stop of t.stops || []) {
+      const shares = stopSharesKm(t)
+      for (const [i, stop] of (t.stops || []).entries()) {
+        const share = shares[i]
         // Which truck actually performed this stop?
         let creditTripId: string | null = null
         if (isDeliveredOutcome(stop.outcome)) {

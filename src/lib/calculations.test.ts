@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { haversineMeters, OFFICE_LOCATION } from './tracking'
 import {
   DEFAULT_FUEL_RATE,
   DEFAULT_DIESEL_PRICE,
@@ -10,7 +11,8 @@ import {
   isDateInRange,
   formatTripSequence,
   nextStopOrder,
-  stopShareKm,
+  stopSharesKm,
+  stopSharesCost,
   computeOutcomeStats,
   monthRange,
   computeDriverLeaderboard,
@@ -128,14 +130,90 @@ describe('nextStopOrder', () => {
   })
 })
 
-describe('stopShareKm', () => {
-  it('divides total distance by the number of stops', () => {
-    expect(stopShareKm({ totalDistanceKm: 80, stops: [{}, {}, {}, {}] })).toBe(20)
+// ระยะเส้นตรงจากออฟฟิศ (กม.) — ใช้ตรวจว่าส่วนแบ่ง "เป็นสัดส่วนกับระยะห่าง" ไม่ได้เลียนสูตรภายใน
+const kmFromOffice = (p: { lat: number; lng: number }) => haversineMeters(OFFICE_LOCATION, p) / 1000
+// เคสจริง T-1710-0012 (2026-10-17): ระยอง ~165 กม. + โชคชัย ซัพพลาย ~15 กม. · แผนรวม 415.15 กม.
+const RAYONG = { lat: 12.6991217, lng: 101.2038433 }
+const NEAR = { lat: 14.2, lng: 100.62 }
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
+
+describe('stopSharesKm — แบ่งระยะของทริปให้แต่ละจุดตามระยะห่างจากออฟฟิศ', () => {
+  it('จุดไกลได้ส่วนแบ่งมากกว่าตามสัดส่วนระยะห่าง และรวมกันเท่าระยะทั้งทริป', () => {
+    const shares = stopSharesKm({ totalDistanceKm: 415.15, stops: [RAYONG, NEAR] })
+    expect(sum(shares)).toBeCloseTo(415.15, 9)
+    expect(shares[0] / shares[1]).toBeCloseTo(kmFromOffice(RAYONG) / kmFromOffice(NEAR), 9)
+    expect(shares[0]).toBeGreaterThan(370) // เดิมหารเท่า = 207.6
   })
-  it('returns 0 when there are no stops or no distance', () => {
-    expect(stopShareKm({ totalDistanceKm: 80, stops: [] })).toBe(0)
-    expect(stopShareKm({ totalDistanceKm: 80, stops: null })).toBe(0)
-    expect(stopShareKm({ stops: [{}, {}] })).toBe(0)
+  it('จุดที่ออฟฟิศ (ห่าง ~0) ยังได้ส่วนแบ่งขั้นต่ำ ไม่เป็น 0', () => {
+    const shares = stopSharesKm({ totalDistanceKm: 100, stops: [OFFICE_LOCATION, RAYONG] })
+    expect(shares[0]).toBeGreaterThan(0)
+    expect(sum(shares)).toBeCloseTo(100, 9)
+  })
+  it('ลำดับส่วนแบ่งตรงกับลำดับจุด (ไม่เรียงตามน้ำหนัก)', () => {
+    const [near, far] = stopSharesKm({ totalDistanceKm: 415.15, stops: [NEAR, RAYONG] })
+    expect(far).toBeGreaterThan(near)
+    const three = stopSharesKm({ totalDistanceKm: 300, stops: [NEAR, RAYONG, NEAR] })
+    expect(three[0]).toBeCloseTo(three[2], 9)
+    expect(three[1]).toBeGreaterThan(three[0])
+  })
+  it('จุดเดียวได้ระยะทั้งทริป · จุดตำแหน่งซ้ำกันแบ่งเท่ากัน', () => {
+    expect(stopSharesKm({ totalDistanceKm: 120, stops: [RAYONG] })).toEqual([120])
+    expect(stopSharesKm({ totalDistanceKm: 120, stops: [NEAR, NEAR] })).toEqual([60, 60])
+  })
+  it('มีจุดไม่มีพิกัด/พิกัดเสีย/นอกประเทศไทยแม้จุดเดียว = หารเท่าแบบเดิม', () => {
+    // (0,0) = ค่าที่ระบบใช้แทน "ไม่มีพิกัด" (ส่งใบขอผ่าน server / เลื่อนงาน) — ห้ามนับเป็นจุดที่ห่างออฟฟิศหลายพัน กม.
+    for (const bad of [{}, { lat: 14.2 }, { lat: null, lng: null }, { lat: 0, lng: 0 }, { lat: NaN, lng: 100.6 }, { lat: '14.2', lng: '100.6' }, { lat: 35.68, lng: 139.69 }] as any[]) {
+      expect(stopSharesKm({ totalDistanceKm: 80, stops: [RAYONG, bad, NEAR, NEAR] })).toEqual([20, 20, 20, 20])
+    }
+  })
+  it('ไม่มีจุด / ไม่มีระยะ = ไม่มีส่วนแบ่ง', () => {
+    expect(stopSharesKm({ totalDistanceKm: 80, stops: [] })).toEqual([])
+    expect(stopSharesKm({ totalDistanceKm: 80, stops: null })).toEqual([])
+    expect(stopSharesKm({ stops: [RAYONG, NEAR] })).toEqual([0, 0])
+  })
+  it('ค่าน้ำมันแบ่งด้วยสัดส่วนเดียวกับระยะ', () => {
+    const km = stopSharesKm({ totalDistanceKm: 415.15, stops: [RAYONG, NEAR] })
+    const cost = stopSharesCost({ totalDistanceKm: 415.15, fuelCost: 1000, stops: [RAYONG, NEAR] })
+    expect(cost[0] / 1000).toBeCloseTo(km[0] / 415.15, 9)
+    expect(sum(cost)).toBeCloseTo(1000, 9)
+  })
+})
+
+describe('กม. ตามงานจริงหลังโยกงาน — แบ่งตามระยะห่าง (เคส T-1710-0012)', () => {
+  const trips = () => [
+    { id: 'A', tripDate: '2026-10-17', driverId: 'jatu', driverName: 'จตุพล', totalDistanceKm: 415.15, fuelCost: 1000,
+      stops: [{ ...RAYONG }, { ...NEAR, outcome: 'reassigned', reassignedToTripId: 'B' }] },
+    { id: 'B', tripDate: '2026-10-17', driverId: 'chai', driverName: 'ชัยชาญ', totalDistanceKm: 30, fuelCost: 100, stops: [{ ...NEAR }] },
+  ]
+  const nearShare = 415.15 * kmFromOffice(NEAR) / (kmFromOffice(RAYONG) + kmFromOffice(NEAR))
+  it('computeOutcomeStats: คันที่ไประยองได้ กม. เกือบเต็มเส้น คันที่รับจุดใกล้ได้แค่ส่วนของจุดใกล้ · ยอดรวมไม่เปลี่ยน', () => {
+    const r = computeOutcomeStats(trips())
+    expect(r.actualKmByTrip.A).toBeCloseTo(415.15 - nearShare, 9)
+    expect(r.actualKmByTrip.B).toBeCloseTo(30 + nearShare, 9)
+    expect(r.totalActualKm).toBeCloseTo(445.15, 9)
+  })
+  it('ทริปที่วิ่งครบเองทุกจุด (มีพิกัด) ได้ กม./ค่าน้ำมันเต็มแผนเหมือนเดิม', () => {
+    const own = [{ id: 'S', tripDate: '2026-10-17', driverId: 'solo', driverName: 'วิ่งเอง', totalDistanceKm: 415.15, fuelCost: 1000, stops: [{ ...RAYONG }, { ...NEAR }] }]
+    const r = computeOutcomeStats(own)
+    expect(r.actualKmByTrip.S).toBeCloseTo(415.15, 9)
+    expect(r.actualCostByTrip.S).toBeCloseTo(1000, 9)
+    expect(computeDriverLeaderboard(own)[0].actualKm).toBeCloseTo(415.15, 9)
+  })
+  it('ค่าน้ำมันย้ายตามสัดส่วนเดียวกับ กม.', () => {
+    const r = computeOutcomeStats(trips())
+    expect(r.actualCostByTrip.A).toBeCloseTo(1000 * (415.15 - nearShare) / 415.15, 9)
+    expect(r.actualCostByTrip.B).toBeCloseTo(100 + 1000 * nearShare / 415.15, 9)
+  })
+  it('เลื่อนจุดไกล = ส่วนแบ่งที่หายเป็นของจุดไกล (ไม่ใช่ครึ่งทริป)', () => {
+    const t = trips()
+    t[0].stops[0] = { ...RAYONG, outcome: 'postponed' } as any
+    t[0].stops[1] = { ...NEAR } as any
+    expect(computeOutcomeStats(t).actualKmByTrip.A).toBeCloseTo(nearShare, 9)
+  })
+  it('computeDriverLeaderboard: เครดิตคนขับตามส่วนแบ่งเดียวกัน', () => {
+    const board = computeDriverLeaderboard(trips())
+    expect(board.find(b => b.driverId === 'jatu')!.actualKm).toBeCloseTo(415.15 - nearShare, 9)
+    expect(board.find(b => b.driverId === 'chai')!.actualKm).toBeCloseTo(30 + nearShare, 9)
   })
 })
 
