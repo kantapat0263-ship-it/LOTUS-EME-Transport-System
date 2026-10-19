@@ -824,7 +824,7 @@ export default function TripGroupingPage() {
 
       // คิด กม./เวลา/ค่าน้ำมันใหม่ก่อนรวม แล้วเขียนพร้อมจุดในครั้งเดียว — ตัวคิดกลางเดียวกับหน้าประวัติ/ใบสรุป (planDistance)
       // คิดไม่ได้ = ยังไม่รวม ให้กดใหม่ (เดิมรวมสำเร็จแล้วคิดตามหลัง ล้มแบบเงียบ เลข กม. ค้างค่าก่อนรวม)
-      // ไม่มีจุดที่มีพิกัดเลย = คงเลขเดิม (กติกาเดียวกับหน้าประวัติ) · มีคนแก้จุดของทริประหว่างรอ = ด่าน expected.stops ไม่ให้เขียน
+      // ไม่มีจุดที่มีพิกัดเลย = 0 (กติกาเดียวกับหน้าประวัติ/ใบสรุป) · มีคนแก้จุดของทริประหว่างรอ = ด่าน expected.stops ไม่ให้เขียน
       const plan = await computeTripPlanDistance(
         process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference || "",
         latestTrip,
@@ -835,7 +835,9 @@ export default function TripGroupingPage() {
         toast({ title: "ยังไม่ได้รวม Trip", description: "คิดระยะทางไม่ได้ (เชื่อม Google Maps ไม่สำเร็จ) — กดรวมอีกครั้ง", variant: "destructive" })
         return
       }
-      const distancePatch = plan === 'no-coords' ? {} : { totalDistanceKm: plan.km, totalEstimatedTimeMinutes: plan.minutes, fuelCost: plan.fuelCost }
+      const distancePatch = plan === 'no-coords'
+        ? { totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 }
+        : { totalDistanceKm: plan.km, totalEstimatedTimeMinutes: plan.minutes, fuelCost: plan.fuelCost }
 
       await updateTripWithQueueGuard(db, existingTrip.id, {
         stops: mergedStops,

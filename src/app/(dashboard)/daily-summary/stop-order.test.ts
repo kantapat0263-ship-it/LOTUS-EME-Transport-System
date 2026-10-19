@@ -13,7 +13,8 @@ function body(name: string) {
   if (!value) throw new Error(`Actual handler ${name} missing`)
   return ts.transpileModule(`const ${name} = ${value.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
 }
-function arrange(reject = false, opts: { stops?: any[]; incoming?: number } = {}) {
+type Plan = { km: number; minutes: number; fuelCost: number } | 'no-coords' | 'failed'
+function arrange(reject = false, opts: { stops?: any[]; incoming?: number; plan?: Plan } = {}) {
   const trip = { id: 'T1', driverName: 'ทดสอบ', vehiclePlate: 'ทดสอบ', stops: opts.stops ?? [
     { order: 1, siteName: 'A' }, { order: 2, siteName: 'B' }, { order: 3, siteName: 'C' },
   ], stopNotes: { stop_0: 'A', stop_1: 'B', stop_2: 'C' }, stopNoteAuthors: { stop_1: 'ข' } }
@@ -21,13 +22,19 @@ function arrange(reject = false, opts: { stops?: any[]; incoming?: number } = {}
   const saved = { stops: [{ ...trip.stops[1], dispatcherNote: 'B', dispatcherName: 'ข' }, { ...trip.stops[2], dispatcherNote: 'C' }], stopNotes: {}, stopNoteAuthors: {} }
   const update = reject ? vi.fn().mockRejectedValue(new Error('เปลี่ยนแล้ว')) : vi.fn().mockResolvedValue(saved)
   const toast = vi.fn()
-  const recalc = vi.fn()
+  // ตัวคิดระยะตัวจริงของหน้า (planDistanceFields/applyStopsWithDistance) — mock แค่ Google
+  const compute = vi.fn(async (..._args: unknown[]) => opts.plan ?? { km: 90, minutes: 70, fuelCost: 290 })
+  const gens: Record<string, number> = {}
+  const statsRefresh = vi.fn()
   const remove = vi.fn().mockResolvedValue(undefined)
   const incoming = vi.fn(() => Array.from({ length: opts.incoming ?? 0 }, () => ({ fromTripId: 'SRC' })))
-  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'recalcTripDistance', 'setRefusalDrafts', 'incomingStopsForTrip', 'recordedBy', 'user', `${body('persistTripPatch')}${body('applyStops')}${body('cancelStop')}return cancelStop`)(
-    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, remove, recalc, vi.fn(), incoming, 'คนจัดรถ', null,
+  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'setRefusalDrafts', 'incomingStopsForTrip', 'recordedBy', 'user',
+    'computePlanDistance', 'nextDistGen', 'isLatestDistGen', 'setStatsRefreshKey',
+    `${body('persistTripPatch')}${body('applyStops')}${body('planDistanceFields')}${body('applyStopsWithDistance')}${body('cancelStop')}return cancelStop`)(
+    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, remove, vi.fn(), incoming, 'คนจัดรถ', null,
+    compute, (id: string) => (gens[id] = (gens[id] ?? 0) + 1), (id: string, gen: number) => gens[id] === gen, statsRefresh,
   ) as (trip: unknown, index: number) => Promise<void>
-  return { trip, handler, update, toast, recalc, saved, remove, state: () => state }
+  return { trip, handler, update, toast, compute, statsRefresh, saved, remove, state: () => state }
 }
 
 it('ปุ่มยกเลิกงานส่ง binding ต้นฉบับ [1,2] พร้อม expected stops', async () => {
@@ -39,13 +46,13 @@ it('UI หลังลบใช้ patch ที่บันทึกจริง
   const test = arrange()
   await test.handler(test.trip, 0)
   expect(test.state()[0]).toMatchObject(test.saved)
-  expect(test.recalc).toHaveBeenCalledOnce()
+  expect(test.compute).toHaveBeenCalledOnce()
 })
-it('บันทึกล้มเหลวไม่เปลี่ยน local stops ไม่คิดระยะหรือแจ้งลบสำเร็จ', async () => {
+it('บันทึกล้มเหลวไม่เปลี่ยน local stops ไม่ขยับบอร์ดหรือแจ้งลบสำเร็จ', async () => {
   const test = arrange(true)
   await test.handler(test.trip, 0)
   expect(test.state()[0]).toEqual(test.trip)
-  expect(test.recalc).not.toHaveBeenCalled()
+  expect(test.statsRefresh).not.toHaveBeenCalled()
   expect(test.toast).toHaveBeenCalledOnce()
   expect(test.toast.mock.calls[0][0].variant).toBe('destructive')
 })
@@ -62,6 +69,7 @@ it('ยกเลิกงานสุดท้ายที่ไม่มีง�
   await test.handler(test.trip, 0)
   expect(test.remove).toHaveBeenCalledOnce()
   expect(test.update).not.toHaveBeenCalled()
+  expect(test.statsRefresh).toHaveBeenCalledOnce() // บอร์ดนักขับไม่นับทริปที่ลบแล้ว
 })
 it('ยกเลิกงานที่เคยเลื่อนไปวันอื่น = ปลดใบวันใหม่ในคำสั่งเดียวกัน (ทั้งลบจุดและลบทั้งทริป)', async () => {
   const postponed = { order: 2, siteName: 'B', outcome: 'postponed', postponedRequestId: 'VR-NEW', postponedToDate: '2026-10-09' }
@@ -72,4 +80,35 @@ it('ยกเลิกงานที่เคยเลื่อนไปวั�
   await lastStop.handler(lastStop.trip, 0)
   expect(lastStop.remove.mock.calls[0][3]).toEqual({ id: 'VR-NEW', by: 'คนจัดรถ' })
   expect(lastStop.remove.mock.calls[0][4]).toEqual({ cancelJob: true })
+})
+
+it('ลบงาน: คิด กม.ของจุดที่เหลือก่อน แล้วเขียนจุด + กม./เวลา/ค่าน้ำมัน ในการเขียนเดียวกัน', async () => {
+  const test = arrange()
+  await test.handler(test.trip, 0)
+  const [planTrip, planStops] = test.compute.mock.calls[0]
+  expect(planTrip).toBe(test.trip)
+  expect((planStops as any[]).map(s => s.siteName)).toEqual(['B', 'C'])
+  expect(test.update).toHaveBeenCalledOnce()
+  expect(test.update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 90, totalEstimatedTimeMinutes: 70, fuelCost: 290 })
+  expect(test.update.mock.calls[0][2].stops.map((s: any) => s.siteName)).toEqual(['B', 'C'])
+  expect(test.statsRefresh).toHaveBeenCalledOnce()
+})
+it('ลบงาน: คิดระยะไม่ได้ = ยังไม่ลบ ไม่เขียน บอกให้กดใหม่', async () => {
+  const test = arrange(false, { plan: 'failed' })
+  await test.handler(test.trip, 0)
+  expect(test.update).not.toHaveBeenCalled()
+  expect(test.state()[0]).toEqual(test.trip)
+  expect(test.toast.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'ยังไม่ได้ยกเลิกงาน', variant: 'destructive' })
+})
+it('ลบงาน: จุดที่เหลือไม่มีพิกัดเลย = ลบได้ กม./เวลา/ค่าน้ำมัน 0 (ไม่ค้าง กม.ของงานที่ลบ)', async () => {
+  const test = arrange(false, { plan: 'no-coords' })
+  await test.handler(test.trip, 0)
+  expect(test.update).toHaveBeenCalledOnce()
+  expect(test.update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 })
+})
+it('ลบงานสุดท้ายของคันที่ถืองานโยกเข้า = กม./ค่าน้ำมัน/เวลาของตัวเองเป็น 0 โดยไม่เรียก Google', async () => {
+  const test = arrange(false, { stops: [{ order: 1, siteName: 'A' }], incoming: 1 })
+  await test.handler(test.trip, 0)
+  expect(test.compute).not.toHaveBeenCalled()
+  expect(test.update.mock.calls[0][2]).toMatchObject({ stops: [], totalDistanceKm: 0, fuelCost: 0, totalEstimatedTimeMinutes: 0 })
 })

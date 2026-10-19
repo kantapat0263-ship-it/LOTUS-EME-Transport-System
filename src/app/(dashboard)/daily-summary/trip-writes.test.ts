@@ -140,11 +140,3 @@ it('"ตามแผน" ล้าง pointer โยกที่ค้างจ�
   await clean.handler(clean.t, 0, 'delivered')
   expect(clean.apply).not.toHaveBeenCalled()
 })
-it('ไม่เหลืองานตัวเอง (เก็บทริปไว้ถืองานโยกเข้า) = ระยะ/ค่าน้ำมัน/เวลาตามแผนเป็น 0 โดยไม่เรียกคิดเส้นทาง', async () => {
-  const update = vi.fn().mockResolvedValue({}), compute = vi.fn()
-  const deps = { db: {}, nextDistGen: () => 1, isLatestDistGen: () => true, computePlanDistance: compute, setTrips: vi.fn(), updateTripWithQueueGuard: update, serverTimestamp: () => 'ts', setStatsRefreshKey: vi.fn() }
-  const handler = new Function(...Object.keys(deps), `${body('recalcTripDistance')}return work`)(...Object.values(deps))
-  await handler({ id: 'T1', totalDistanceKm: 80, fuelCost: 300 }, [])
-  expect(compute).not.toHaveBeenCalled()
-  expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, fuelCost: 0, totalEstimatedTimeMinutes: 0 })
-})

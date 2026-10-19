@@ -130,6 +130,10 @@ it('สถานที่ใหม่ (markup ในชื่อ) ถูกบ�
   expect((await conflict.json()).error).toContain('ตรงกับ')
   const bad = await post(body(workday(3), [{ ...custom, customName: 'พิกัดผิด', coordinates: '13.8' }]))
   expect(bad.status).toBe(400)
+  // ผู้ใช้กำหนด 2026-10-19: ทุกจุดต้องมีพิกัด — หน้าฟอร์มรุ่นเก่าที่เปิดค้างส่งจุดไม่มีพิกัดมาก็ไม่ผ่าน
+  const noPin = await post(body(workday(3), [{ ...custom, customName: 'ไม่ใส่พิกัด', coordinates: '', saveAsSite: false }]))
+  expect(noPin.status).toBe(400)
+  expect((await noPin.json()).error).toContain('ยังไม่มีพิกัด')
 })
 
 it('กดส่งซ้ำด้วยรหัสการส่งเดิม (คำตอบครั้งแรกหาย) → ได้ใบเดิม ไม่สร้างใบซ้ำ · รหัสของคนอื่นใช้ไม่ได้', async () => {

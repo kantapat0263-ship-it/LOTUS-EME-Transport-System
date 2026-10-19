@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { normalizeRequestTime } from '@/lib/requestTime'
+import { destinationCoordinateProblem, parseThaiCoordinates } from '@/lib/requestCoordinates'
 
 /** ตรวจข้อมูลใบขอรถที่ส่งมาจากฟอร์ม — ฝั่ง server ไม่เชื่อ client (ความยาว/รูปแบบ/ประเภท) */
 const text = (max: number) => z.string().max(max)
@@ -22,6 +23,8 @@ const destination = z.object({
   locationType: text(60),
   requestTime: time,
 }).strict().refine(d => d.category === 'custom' ? d.customName.trim() !== '' : d.siteId !== '')
+  // ทุกจุดต้องมีพิกัดในไทย (ผู้ใช้กำหนด 2026-10-19) — กันหน้าฟอร์มรุ่นเก่าที่เปิดค้างส่งจุดไม่มีพิกัดมา
+  .refine(d => parseThaiCoordinates(d.coordinates) !== null, { path: ['coordinates'] })
 
 const command = z.object({
   /** รหัสการกดส่งครั้งนี้ (ฟอร์มใช้รหัสเดิมตอนกดซ้ำ) — กันใบซ้ำเมื่อบันทึกสำเร็จแต่คำตอบหาย */
@@ -66,6 +69,9 @@ function issueMessage(issue: z.ZodIssue, input: any): string {
       return raw?.category === 'custom' ? `${where}: ยังไม่ได้ใส่ชื่อสถานที่` : `${where}: ยังไม่ได้เลือกสถานที่`
     }
     if (field === 'siteId' && issue.code === 'custom') return `${where}${name}: สถานที่ไม่ถูกต้อง — เลือกสถานที่ใหม่`
+    if (field === 'coordinates' && issue.code === 'custom') {
+      return destinationCoordinateProblem({ category: String(raw?.category ?? ''), coordinates: String(raw?.coordinates ?? '') }, `${where}${name}`) ?? RELOAD
+    }
     if (field === 'requestTime') return `${where}${name}: เวลา "${shownTime(raw?.requestTime)}" ไม่ถูกต้อง — ใช้รูปแบบ 08:30`
     if (issue.code === 'too_big' && typeof field === 'string' && LABELS[field]) {
       return `${where}${name}: ${LABELS[field]}ยาวเกิน ${Number(issue.maximum).toLocaleString('en-US')} ตัวอักษร`

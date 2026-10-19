@@ -77,6 +77,7 @@ import { displayText, formatIsoDateTh } from "@/lib/urgentRequest"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { isAwaitingPickup, sortForManage, waitingLabel, requestCreatedMs } from "@/lib/requestAttention"
+import { COORDINATE_EXAMPLE, parseThaiCoordinates } from "@/lib/requestCoordinates"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -408,11 +409,13 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       return
     }
     
-    const [lat, lng] = coordStr.split(',').map(s => parseFloat(s.trim()))
-    if (isNaN(lat) || isNaN(lng)) {
-      toast({ title: "พิกัดไม่ถูกต้อง", description: "รูปแบบ: 14.0815, 100.7129", variant: "destructive" })
+    // พิกัดต้องอยู่ในไทย (กติกาเดียวกับฟอร์มขอรถ/ตัวคิด กม.) — เดิมรับทุกตัวเลข รวม (0,0) และนอกไทย
+    const parsed = parseThaiCoordinates(coordStr)
+    if (!parsed) {
+      toast({ title: "พิกัดไม่ถูกต้อง", description: `ต้องเป็นพิกัดในประเทศไทย รูปแบบ: ${COORDINATE_EXAMPLE}`, variant: "destructive" })
       return
     }
+    const { lat, lng } = parsed
 
     try {
       const newDestinations = [...selectedReq.destinations]

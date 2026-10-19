@@ -104,11 +104,10 @@ describe('รวมจุดเข้าทริปเดิม: คิด ก�
     expect(toast).not.toHaveBeenCalled()
   })
 
-  it('ไม่มีจุดที่มีพิกัดเลย = รวมได้ คงเลข กม. เดิม (ไม่ส่งช่อง กม. ไปเขียนทับ)', async () => {
+  it('ไม่มีจุดที่มีพิกัดเลย = รวมได้ กม./ค่าน้ำมัน 0 (กติกาเดียวกับหน้าประวัติ/ใบสรุป)', async () => {
     const { handler, update } = arrange({}, 'no-coords')
     await handler()
     expect(update).toHaveBeenCalledTimes(1)
-    expect(update.mock.calls[0][2]).not.toHaveProperty('totalDistanceKm')
-    expect(update.mock.calls[0][2]).not.toHaveProperty('fuelCost')
+    expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 })
   })
 })

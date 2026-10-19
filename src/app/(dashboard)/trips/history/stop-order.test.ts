@@ -123,13 +123,13 @@ it('จุดไม่เปลี่ยน (แก้รายละเอี�
   expect(update.mock.calls[0][2]).toMatchObject({ fuelRateUsed: 5, fuelCost: 600 })
   expect(update.mock.calls[0][2].totalDistanceKm).toBeUndefined()
 })
-it('คิดระยะได้ผล "ไม่มีพิกัด" = บันทึกจุดได้ กม. คงเดิม ไม่ลงประวัติระยะ', async () => {
+it('ลบงานจนไม่เหลืองานที่มีพิกัด = กม./เวลา/ค่าน้ำมัน 0 (ไม่ค้าง กม.ของงานที่ลบ) และลงประวัติระยะ', async () => {
   const original = { ...trip(), totalDistanceKm: 50 }
   const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1]], originalStopIndexes: [1], note: 'ลบ A' }
   const { work, update, log } = saveEdit(original, form, { plan: 'no-coords' })
   await work()
-  expect(update.mock.calls[0][2].totalDistanceKm).toBeUndefined()
-  expect(log.mock.calls[0][1].changes.distance).toBeUndefined()
+  expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 })
+  expect(log.mock.calls[0][1].changes.distance).toEqual({ from: 50, to: 0 })
 })
 it('ลบจุดจนไม่เหลือ = ระยะ/เวลา/ค่าน้ำมัน 0 โดยไม่ต้องเรียกแผนที่', async () => {
   const original = { ...trip(), totalDistanceKm: 50 }

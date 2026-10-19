@@ -327,13 +327,11 @@ export default function TripHistoryPage() {
           toast({ title: "ยังไม่ได้บันทึก", description: "คิดระยะทางใหม่ไม่ได้ (แผนที่/อินเทอร์เน็ต) — ลองกดบันทึกอีกครั้ง", variant: "destructive" })
           return
         }
-        if (plan === "no-coords") {
-          distanceNote = " · งานไม่มีพิกัด กม. คงเดิม"
-        } else {
-          Object.assign(distancePatch, { totalDistanceKm: plan.km, totalEstimatedTimeMinutes: plan.minutes, fuelCost: plan.fuelCost })
-          changes.distance = { from: liveTrip.totalDistanceKm ?? null, to: plan.km }
-          distanceNote = ` · ระยะทาง ${plan.km.toFixed(1)} กม.`
-        }
+        // ไม่เหลืองานที่มีพิกัดเลย = 0 (ผู้ใช้กำหนด 2026-10-19: ลบงานแล้ว กม.ต้องหาย — เดิมคงเลขเดิมซึ่งยังรวม กม.ของงานที่ลบ)
+        const r = plan === "no-coords" ? { km: 0, minutes: 0, fuelCost: 0 } : plan
+        Object.assign(distancePatch, { totalDistanceKm: r.km, totalEstimatedTimeMinutes: r.minutes, fuelCost: r.fuelCost })
+        changes.distance = { from: liveTrip.totalDistanceKm ?? null, to: r.km }
+        distanceNote = plan === "no-coords" ? " · งานไม่มีพิกัด กม. = 0" : ` · ระยะทาง ${r.km.toFixed(1)} กม.`
       }
       if (vehicleChanged && fuelRate) {
         distancePatch.fuelRateUsed = fuelRate

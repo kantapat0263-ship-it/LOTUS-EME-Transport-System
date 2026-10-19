@@ -33,6 +33,8 @@ Save
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { editCustomDestination, matchCustomSite } from "@/lib/customSite"
+import { COORDINATE_EXAMPLE, destinationCoordinateProblem, parseThaiCoordinates } from "@/lib/requestCoordinates"
+import { inThailand } from "@/lib/roadFlood"
 import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -262,6 +264,15 @@ export function RequestForm() {
     }))
   }
 
+  // จุดที่เลือกจากรายการสถานที่: ใช้พิกัด "สด" ของสถานที่ ไม่ใช่ค่าที่จำไว้ตอนเลือก
+  // (ทีมจัดรถเพิ่งเติมพิกัดให้ = ส่งได้ทันที ไม่ต้องเลือกสถานที่ใหม่หรือโหลดหน้าใหม่จนข้อมูลที่กรอกหาย)
+  const liveCoordinates = (d: DestinationRequest) => {
+    if (d.category === "custom" || !d.siteId) return d.coordinates
+    const site = sites?.find(s => s.id === d.siteId)
+    if (!site) return d.coordinates
+    return site.latitude != null && site.longitude != null ? `${site.latitude}, ${site.longitude}` : ""
+  }
+
 const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedDate || !user) {
@@ -343,6 +354,15 @@ const handleSubmit = async (e: React.FormEvent) => {
       return
     }
 
+    // ทุกจุดต้องมีพิกัดในไทย (ผู้ใช้กำหนด 2026-10-19 — งานไม่มีพิกัดคิด กม.ไม่ได้) · ชี้จุดที่ผิด ข้อความเดียวกับ server
+    const noCoords = validDestinations.find(d => !parseThaiCoordinates(liveCoordinates(d)))
+    if (noCoords) {
+      const name = (noCoords.category === "custom" ? noCoords.customName : noCoords.siteName).trim()
+      const where = `จุดที่ ${destinations.indexOf(noCoords) + 1}${name && name.length <= 80 ? ` (${name})` : ""}`
+      toast({ title: "ยังไม่มีพิกัด", description: destinationCoordinateProblem({ category: noCoords.category, coordinates: liveCoordinates(noCoords) }, where) ?? "", variant: "destructive" })
+      return
+    }
+
     // เวลาแต่ละจุด → "HH:MM" (พิมพ์ "06.30" ได้) · ผิดรูปแบบ = บอกจุดที่ + ค่าที่กรอก ไม่ส่ง
     const badTime = validDestinations.find(d => normalizeRequestTime(d.requestTime) === null)
     if (badTime) {
@@ -365,7 +385,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       note,
       destinations: validDestinations.map(d => ({
         category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
-        coordinates: d.coordinates, jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
+        coordinates: liveCoordinates(d), jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
         ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
         locationType: d.locationType, requestTime: timeOf(d),
       })),
@@ -664,7 +684,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                                   </SelectTrigger>
                                   <SelectContent className="max-h-64">
                                     {filteredSites.length > 0 ? filteredSites.map(s => (
-                                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                      <SelectItem key={s.id} value={s.id}>{s.name}{inThailand(s.latitude, s.longitude) ? "" : " · ไม่มีพิกัด"}</SelectItem>
                                     )) : (
                                       <div className="p-4 text-center text-xs text-muted-foreground">ไม่พบสถานที่ในหมวดหมู่นี้</div>
                                     )}
@@ -674,13 +694,13 @@ const handleSubmit = async (e: React.FormEvent) => {
                               <div className="space-y-2">
                                 <div className="flex items-center justify-between min-h-[24px]">
                                   <Label>พิกัด (ดึงข้อมูลอัตโนมัติ)</Label>
-                                  {dest.coordinates && (
+                                  {liveCoordinates(dest) && (
                                     <Button
                                       type="button"
                                       variant="link"
                                       className="h-auto p-0 text-[10px] text-accent"
                                       onClick={() => {
-                                        const [lat, lng] = dest.coordinates.split(',').map(s => s.trim());
+                                        const [lat, lng] = liveCoordinates(dest).split(',').map(s => s.trim());
                                         if (lat && lng) {
                                           window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
                                         }
@@ -690,7 +710,13 @@ const handleSubmit = async (e: React.FormEvent) => {
                                     </Button>
                                   )}
                                 </div>
-                                <Input className="h-11 bg-muted/30" value={dest.coordinates} readOnly />
+                                <Input className="h-11 bg-muted/30" value={liveCoordinates(dest)} readOnly />
+                                {dest.siteId && !parseThaiCoordinates(liveCoordinates(dest)) && (
+                                  <p className="text-[10px] text-red-400 flex items-center gap-1 mt-1" role="alert">
+                                    <Info className="h-3 w-3 shrink-0" />
+                                    สถานที่นี้ยังไม่มีพิกัดในระบบ — ส่งไม่ได้ เลือก &quot;กำหนดเอง&quot; แล้วใส่พิกัด หรือแจ้งทีมจัดรถให้เติมพิกัด
+                                  </p>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -801,10 +827,12 @@ const handleSubmit = async (e: React.FormEvent) => {
                                   🎬 ดูวิธีทำ
                                 </a>
                               </p>
-                              {!dest.coordinates && (
-                                <p className="text-[10px] text-amber-400 flex items-center gap-1 mt-1">
+                              {dest.customName.trim() && !parseThaiCoordinates(dest.coordinates) && (
+                                <p className="text-[10px] text-red-400 flex items-center gap-1 mt-1" role="alert">
                                   <Info className="h-3 w-3 shrink-0" />
-                                  ถ้าไม่รู้พิกัด ทีมจัดรถจะช่วยเพิ่มให้
+                                  {dest.coordinates.trim()
+                                    ? `พิกัดไม่ถูกต้องหรืออยู่นอกประเทศไทย — ใช้รูปแบบ ${COORDINATE_EXAMPLE}`
+                                    : "ต้องใส่พิกัดก่อนส่งใบขอรถ — ไม่รู้พิกัดให้ถามทีมจัดรถ"}
                                 </p>
                               )}
                             </div>
@@ -858,12 +886,6 @@ const handleSubmit = async (e: React.FormEvent) => {
                           </div>
                         )}
 
-                        {dest.category === 'custom' && dest.customName.trim() && !dest.coordinates.trim() && !dest.siteId && (
-                          <p className="text-xs text-amber-400" role="status">ยังไม่มีพิกัด — ส่งใบขอรถได้ แต่ยังไม่เพิ่มในรายการสถานที่ไว้ใช้ครั้งต่อไป</p>
-                        )}
-                        {dest.saveAsSite && siteMatch?.kind === 'invalid' && (
-                          <p className="text-xs text-red-400" role="alert">พิกัดไม่ถูกต้อง กรุณาระบุ lat, lng เป็นตัวเลขให้ครบ เช่น 13.709811, 100.523629</p>
-                        )}
                         {dest.saveAsSite && siteMatch?.kind === 'existing' && (
                           <p className="text-xs text-emerald-400" role="status">ชื่อและพิกัดตรงกับ “{siteMatch.matches[0].name}” — จะใช้สถานที่เดิม ไม่เพิ่มซ้ำ</p>
                         )}
@@ -875,7 +897,8 @@ const handleSubmit = async (e: React.FormEvent) => {
                                 <span className="text-xs">{site.name} · {site.latitude ?? 'ไม่มีพิกัด'}, {site.longitude ?? 'ไม่มีพิกัด'}</span>
                                 <Button type="button" variant="outline" size="sm" onClick={() => updateDest(dest.id, {
                                   siteId: site.id, siteName: site.name, customName: site.name,
-                                  coordinates: site.latitude != null && site.longitude != null ? `${site.latitude}, ${site.longitude}` : '',
+                                  // สถานที่เดิมยังไม่มีพิกัด = ใช้พิกัดที่ผู้ขอพิมพ์ไว้ (เดิมล้างเป็นว่าง → ส่งไม่ได้ ทางตัน)
+                                  coordinates: site.latitude != null && site.longitude != null ? `${site.latitude}, ${site.longitude}` : dest.coordinates,
                                   saveAsSite: false, allowSeparateSite: false,
                                 })}>ใช้สถานที่นี้</Button>
                               </div>

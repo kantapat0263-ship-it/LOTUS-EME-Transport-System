@@ -1,4 +1,5 @@
 import { FieldValue, type DocumentData, type Firestore } from 'firebase-admin/firestore'
+import { parseThaiCoordinates } from '@/lib/requestCoordinates'
 import type { ActiveTokenUser } from '@/firebase/admin'
 import { findFreeRequestId, requestIdPrefix } from '@/lib/requestId'
 import { planCustomSites, type SavedPlace } from '@/lib/customSite'
@@ -94,7 +95,8 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
   }
 
   const destinations = sitePlan.destinations.map(d => {
-    const [lat, lng] = d.coordinates.split(',').map(s => parseFloat(s.trim()))
+    // ตัวแปลงเดียวกับตัวตรวจ (ผ่านตัวตรวจแล้วทุกจุด) — ไม่แปลงซ้ำด้วยวิธีอื่นจนได้ค่าคนละตัว
+    const { lat, lng } = parseThaiCoordinates(d.coordinates) ?? { lat: NaN, lng: NaN }
     return {
       type: d.category === 'custom' ? 'other' : 'site',
       siteId: d.siteId || null,
