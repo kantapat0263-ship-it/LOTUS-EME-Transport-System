@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
+import { validCoordinates } from '@/lib/tripCoordinateSync'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function handler(name: string) {
@@ -16,7 +17,7 @@ function handler(name: string) {
 const trip = () => ({ id: 'T1', tripId: 'T1', tripDate: '2026-10-07', status: 'Planned', vehicleId: 'V1', driverId: 'D1', stops: [
   { siteId: 'A', siteName: 'A', order: 1, cargoDetails: 'A' }, { siteId: 'B', siteName: 'B', order: 2, cargoDetails: 'B' },
 ] })
-function formEvent(fragment: string, form: any, index = 0) {
+function formEvent(fragment: string, form: any, index = 0, site: any = { id: 'NEW', name: 'ใหม่' }) {
   let event: ts.ArrowFunction | undefined
   function find(node: ts.Node) {
     if (ts.isArrowFunction(node) && ts.isJsxExpression(node.parent) && ts.isJsxAttribute(node.parent.parent) && node.getText(source).includes(fragment)) event = node
@@ -26,7 +27,7 @@ function formEvent(fragment: string, form: any, index = 0) {
   if (!event) throw new Error(`Actual form event missing: ${fragment}`)
   let saved = form
   const code = ts.transpileModule(`const work = ${event.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  const work = new Function('editFormData', 'setEditFormData', 'idx', 'site', `${code}return work`)(form, (value: any) => { saved = value }, index, { id: 'NEW', name: 'ใหม่' })
+  const work = new Function('editFormData', 'setEditFormData', 'idx', 'site', 'validCoordinates', `${code}return work`)(form, (value: any) => { saved = value }, index, site, validCoordinates)
   work({ target: { value: 'รายละเอียดใหม่' } })
   return saved
 }
@@ -38,6 +39,15 @@ it('ปุ่มเพิ่มแล้วลบแถวแรกเก็บ 
   const removed = formEvent('editFormData.stops.filter', added)
   expect(removed.originalStopIndexes).toEqual([1, null])
   expect(removed.stops.map((s: any) => s.siteId)).toEqual(['B', 'NEW'])
+})
+it('เพิ่มจุดแวะคัดลอกพิกัดของสถานที่ที่เลือก · สถานที่ไม่มีพิกัด/พิกัดเสีย = ไม่ใส่ lat/lng (ไม่มี undefined เข้า Firestore)', () => {
+  const form = { stops: trip().stops, originalStopIndexes: [0, 1] }
+  const withCoords = formEvent('siteId: site.id', form, 0, { id: 'NEW', name: 'ใหม่', latitude: 14.2, longitude: 100.7 })
+  expect(withCoords.stops[2]).toMatchObject({ siteId: 'NEW', lat: 14.2, lng: 100.7 })
+  for (const bad of [{}, { latitude: 14.2 }, { latitude: '14.2', longitude: '100.7' }, { latitude: NaN, longitude: 100.7 }]) {
+    const stop = formEvent('siteId: site.id', form, 0, { id: 'NEW', name: 'ใหม่', ...bad }).stops[2]
+    expect('lat' in stop || 'lng' in stop).toBe(false)
+  }
 })
 it('แก้ cargo ไม่เปลี่ยน binding และไม่ mutate stops ของ render ก่อนหน้า', () => {
   const form = { stops: trip().stops, originalStopIndexes: [0, 1] }

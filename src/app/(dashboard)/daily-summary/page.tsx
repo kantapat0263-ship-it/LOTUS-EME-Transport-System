@@ -56,6 +56,7 @@ import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
 import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
 import { ROUTE_MODES, routePlan, sumRouteLegs, tripRouteMode, type RouteMode } from "@/lib/routeMode"
+import { validCoordinates } from "@/lib/tripCoordinateSync"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { Loader } from "@googlemaps/js-api-loader"
@@ -65,6 +66,9 @@ import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueue
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { requestDriverLinks, useDriverLinks } from "@/lib/driverLinks"
 import { DriverLinkQr } from "@/components/DriverLinkQr"
+
+/** ไซต์ที่เลือกเป็นจุดแทรกงานได้ = เปิดใช้งาน + พิกัดถูกต้อง (งานที่แทรกต้องขึ้นแผนที่และนับระยะได้) */
+const isPickableSite = (s: Site) => s.status === "Active" && validCoordinates(s.latitude, s.longitude)
 
 export default function DailySummaryPage() {
   const { toast } = useToast()
@@ -893,10 +897,14 @@ export default function DailySummaryPage() {
       toast({ title: "แทรกได้เฉพาะงานวันนี้", description: "งานย้อนหลังข้ามวันแทรกไม่ได้", variant: "destructive" })
       return
     }
-    // ถ้าเลือกไซต์ที่บันทึกไว้ → ได้พิกัด (ขึ้นแผนที่+คิดระยะทาง) ; ไม่เลือก → พิมพ์เอง ไม่มีพิกัด
+    // ต้องเลือกไซต์ที่บันทึกไว้ (มีพิกัด) เท่านั้น — สถานที่ใหม่ให้เพิ่มที่เมนูจัดการไซต์งานก่อน
+    // (ผู้ใช้กำหนด 2026-10-19: งานพิมพ์ชื่อเองไม่มีพิกัด → ไม่ขึ้นแผนที่ กม. ของทริปไม่นับจุดนี้)
     const site = insertForm.siteId ? (sitesData || []).find(s => s.id === insertForm.siteId) : null
-    const place = insertForm.place.trim() || site?.name || ""
-    if (!place) { toast({ title: "ใส่ชื่อจุด/สถานที่ก่อน", variant: "destructive" }); return }
+    if (!site || !isPickableSite(site)) {
+      toast({ title: "เลือกสถานที่จากรายการก่อน", description: "สถานที่ใหม่ให้เพิ่มที่เมนูจัดการไซต์งานก่อน แล้วกลับมาเลือก", variant: "destructive" })
+      return
+    }
+    const place = site.name
 
     const chosenVehId = insertForm.vehicleId || trip.vehicleId
     // ห้ามมี field = undefined เด็ดขาด — Firestore ปฏิเสธทั้งก้อนแบบ throw ทันที
@@ -983,13 +991,15 @@ export default function DailySummaryPage() {
 
   // ไซต์ที่ตรงกับที่พิมพ์ (เฉพาะ Active + มีพิกัด) — โชว์เป็น dropdown ใต้ช่องค้นหา
   const siteMatches = React.useMemo(() => {
-    const pool = (sitesData || []).filter(s => s.status === "Active" && s.latitude != null && s.longitude != null)
+    const pool = (sitesData || []).filter(isPickableSite)
     const q = insertForm.place.trim().toLowerCase()
     const hit = q
       ? pool.filter(s => s.name.toLowerCase().includes(q) || (s.address || "").toLowerCase().includes(q))
       : pool
     return hit.slice(0, 30)
   }, [sitesData, insertForm.place])
+  // ไซต์ที่เลือกไว้ ณ ตอนนี้ (ข้อมูลสด) — ถูกลบ/เอาพิกัดออกระหว่างเปิดหน้าต่าง = กลับเป็นยังไม่ได้เลือก ปุ่มกับข้อความตรงกับตัวกันใน handleInsertJob
+  const insertSite = insertForm.siteId ? (sitesData || []).find(s => s.id === insertForm.siteId && isPickableSite(s)) ?? null : null
 
   // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
   // ยกเลิก/ลบงานออกจากทริป (ลูกค้าแจ้งยกเลิกหลังออกคิว) — งานหายจากใบสรุป
@@ -2397,8 +2407,8 @@ export default function DailySummaryPage() {
               </select>
               <p className="text-[11px] text-muted-foreground">คนขับคนเดิม — เลือกคันอื่นถ้ารถเปลี่ยน (งานจะไปอยู่ทริป/GPS ของคันที่เลือก)</p>
             </div>
-            {/* จุด/สถานที่ — พิมพ์ค้นหาแล้วมีรายการไซต์เลื่อนลงมาให้เลือก (เลือก=ได้พิกัด)
-                ถ้าไม่มีในลิสต์ พิมพ์เองได้เลย (ไม่มีพิกัด ไม่ขึ้นแผนที่) */}
+            {/* จุด/สถานที่ — พิมพ์ค้นหาแล้วต้องเลือกจากรายการไซต์ (มีพิกัด) เท่านั้น
+                ไม่มีในลิสต์ = ไปเพิ่มที่เมนูจัดการไซต์งาน (แท็บใหม่) รายการนี้ดึงสด กลับมาเลือกได้เลย */}
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">จุด/สถานที่ <span className="text-red-400">*</span></label>
               <div className="relative">
@@ -2433,13 +2443,19 @@ export default function DailySummaryPage() {
                   </ul>
                 )}
               </div>
-              {insertForm.siteId ? (
+              {insertSite ? (
                 <p className="text-[11px] text-emerald-400">✅ ใช้พิกัดจากไซต์ที่บันทึกไว้ — งานจะขึ้นแผนที่ + คิดระยะทางได้</p>
               ) : (
                 <p className="text-[11px] text-muted-foreground">
-                  {insertForm.place.trim()
-                    ? "⚠ พิมพ์เอง (ไม่มีพิกัด ไม่ขึ้นแผนที่) — เลือกจากรายการถ้าต้องการพิกัด"
-                    : "พิมพ์เพื่อค้นหาไซต์ที่บันทึกไว้ หรือพิมพ์ชื่อจุดเองก็ได้"}
+                  {!insertForm.place.trim()
+                    ? "พิมพ์เพื่อค้นหาไซต์ที่บันทึกไว้ แล้วเลือกจากรายการ"
+                    : siteMatches.length > 0
+                      ? "เลือกสถานที่จากรายการก่อน ถึงจะแทรกงานได้"
+                      : "⚠ ไม่พบสถานที่นี้ในระบบ (หรือยังไม่มีพิกัด) — เพิ่มสถานที่ หรือแก้พิกัดของสถานที่เดิม ที่เมนูจัดการไซต์งาน แล้วกลับมาเลือก"}
+                  {" "}
+                  <a href="/sites" target="_blank" rel="noopener noreferrer" className="text-accent underline font-medium">
+                    เปิดเมนูจัดการไซต์งาน (แท็บใหม่)
+                  </a>
                 </p>
               )}
             </div>
@@ -2470,7 +2486,7 @@ export default function DailySummaryPage() {
             <Button
               className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
               onClick={() => void runOrdinaryAction(handleInsertJob)}
-              disabled={ordinaryBusy || (!insertForm.siteId && !insertForm.place.trim())}
+              disabled={ordinaryBusy || !insertSite}
             >
               ➕ แทรกงาน
             </Button>
