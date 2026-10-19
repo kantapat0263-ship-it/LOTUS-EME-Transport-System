@@ -14,7 +14,7 @@ function body(name: string) {
   return ts.transpileModule(`const work = ${value.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
 }
 type Plan = { km: number; minutes: number; fuelCost: number } | 'no-coords' | 'failed'
-function modeUi(opts: { plan?: Plan; saved?: boolean; editedDuringPlan?: boolean } = {}) {
+function modeUi(opts: { plan?: Plan; saved?: boolean; editedDuringPlan?: boolean; live?: (t: any) => any } = {}) {
   const trip = { id: 'T1', routeMode: 'round', totalDistanceKm: 60, stops: [{ siteName: 'A', order: 1, lat: 14.2, lng: 100.62 }] }
   const applyStops = vi.fn(async (..._args: unknown[]) => opts.saved ?? true)
   const distGenRef: { current: Record<string, number> } = { current: {} }
@@ -26,6 +26,7 @@ function modeUi(opts: { plan?: Plan; saved?: boolean; editedDuringPlan?: boolean
   const deps = {
     db: {}, routeModeBusy: false, setRouteModeBusy: vi.fn(), isManagedTrip: () => false, tripRouteMode, ROUTE_MODES,
     distGenRef, nextDistGen: vi.fn(), computePlanDistance: compute, applyStops, setStatsRefreshKey: statsRefresh, toast, console: { error: vi.fn() },
+    readLiveTrip: vi.fn(async (t: any) => (opts.live ? opts.live(t) : t)), // ทริปล่าสุดบนฐาน
   }
   const handler = new Function(...Object.keys(deps), `${body('changeRouteMode')}return work`)(...Object.values(deps)) as (t: unknown, m: string) => Promise<void>
   return { trip, handler, applyStops, compute, toast, statsRefresh }
@@ -65,4 +66,21 @@ it('งานในทริปเปลี่ยน (แทรก/ลบ) ร�
   await ui.handler(ui.trip, 'outbound')
   expect(ui.applyStops).not.toHaveBeenCalled()
   expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'ยังไม่เปลี่ยนรูปแบบเส้นทาง', variant: 'destructive' })
+})
+
+it('คิดและบันทึกจากทริปล่าสุดบนฐาน — งานที่เพิ่งรวมจากหน้าอื่นถูกนับด้วย (ไม่ใช้งานชุดเก่าบนจอ)', async () => {
+  const merged = { siteName: 'B รวมจากหน้าจัดกลุ่ม', order: 2, lat: 13.9, lng: 100.6 }
+  const ui = modeUi({ live: (t: any) => ({ ...t, stops: [...t.stops, merged] }) })
+  await ui.handler(ui.trip, 'outbound')
+  expect((ui.compute.mock.calls[0][1] as any[]).map(s => s.siteName)).toEqual(['A', 'B รวมจากหน้าจัดกลุ่ม'])
+  const [liveTrip, stops] = ui.applyStops.mock.calls[0] as [any, any[]]
+  expect(liveTrip.stops).toHaveLength(2)
+  expect(stops).toHaveLength(2) // ด่านตรวจกับงานชุดล่าสุด
+})
+it('ทริปถูกเปลี่ยนเป็นโหมดนี้จากหน้าอื่นแล้ว = ไม่ทำซ้ำ และบอกผู้ใช้ (ไม่จบเงียบ)', async () => {
+  const ui = modeUi({ live: (t: any) => ({ ...t, routeMode: 'outbound' }) })
+  await ui.handler(ui.trip, 'outbound')
+  expect(ui.compute).not.toHaveBeenCalled()
+  expect(ui.applyStops).not.toHaveBeenCalled()
+  expect(ui.toast.mock.calls.at(-1)?.[0].description).toContain('อยู่แล้ว')
 })

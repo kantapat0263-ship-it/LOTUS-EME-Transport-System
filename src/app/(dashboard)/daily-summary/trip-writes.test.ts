@@ -54,13 +54,13 @@ it('ข้อความที่พิมพ์เพิ่มระหว่�
   expect(ui.drafts()['T1:0'].text).toBe('พิมพ์เพิ่ม')
   expect(ui.drafts()['T1:0'].trip.stops[0].outcomeReason).toBe('รอบแรก')
 })
-function secondaryUI(name: string, reverting = false) {
+function secondaryUI(name: string, reverting = false, live?: (t: any) => any) {
   const target = { ...trip(), driverId: 'D1', vehiclePlate: 'รถหนึ่ง', tripDate: '2026-10-07', ...(reverting ? { actualDriverId: 'D2' } : {}) }
   const other = { ...trip(), id: 'T2', driverId: 'D2', driverName: 'คนสอง', vehiclePlate: 'รถสอง', stops: [{ ...trip().stops[0], outcome: reverting ? 'reassigned' : 'delivered', reassignedToTripId: 'T1' }] }
   const toast = vi.fn(), persist = vi.fn().mockResolvedValue(true), apply = vi.fn().mockResolvedValue(false)
-  const deps = { trips: [target, other], driversData: [{ id: 'D2', name: 'คนสอง' }], vehiclesData: [{ id: 'V3', licensePlate: 'รถสาม', type: 'truck' }], allowOrdinaryEdit: () => true, passLeaveGate: async () => true, persistTripPatch: persist, isManagedTrip: () => false, window: { confirm: () => true }, applyStops: apply, stripOutcome: (s: any) => s, recordedBy: 'ผู้จัด', toast, calculateFuelCost: () => 0, renameMoveTarget }
+  const deps = { trips: [target, other], driversData: [{ id: 'D2', name: 'คนสอง' }], vehiclesData: [{ id: 'V3', licensePlate: 'รถสาม', type: 'truck' }], allowOrdinaryEdit: () => true, passLeaveGate: async () => true, persistTripPatch: persist, isManagedTrip: () => false, window: { confirm: () => true }, applyStops: apply, stripOutcome: (s: any) => s, recordedBy: 'ผู้จัด', toast, calculateFuelCost: vi.fn((..._args: unknown[]) => 0), renameMoveTarget, readLiveTrip: vi.fn(async (t: any) => (live ? live(t) : t)) }
   const handler = new Function(...Object.keys(deps), `${body(name)}return work`)(...Object.values(deps))
-  return { handler, toast, persist, apply }
+  return { handler, toast, persist, apply, deps }
 }
 it.each([false, true])('ขับแทนบันทึกแล้ว แต่โยก/คืนงานล้มเหลว ต้องแจ้งว่าบันทึกเพียงบางส่วน revert=$0', async reverting => {
   const ui = secondaryUI('setActualDriver', reverting)
@@ -79,7 +79,7 @@ it('เปลี่ยนรถบันทึกแล้ว แต่ทะเ
 it('fetch จริงล้าง draft หลังข้อมูลล่าสุดโหลดสำเร็จ แต่ไม่ล้างจาก query ที่หมดอายุ', async () => {
   for (const latest of [true, false]) {
     const setDrafts = vi.fn(), setTrips = vi.fn()
-    const deps = { selectedDate: '2026-10-07', beginFetchTripsRef: { current: () => () => latest }, setIsLoading: vi.fn(), db: {}, query: (...args: any[]) => args, collection: () => ({}), where: () => ({}), getDocs: async () => ({ docs: [{ id: 'T1', data: () => ({ tripDate: '2026-10-07', stops: [] }) }] }), setTrips, setRefusalDrafts: setDrafts, errorEmitter: { emit: vi.fn() }, FirestorePermissionError: Error, toast: vi.fn() }
+    const deps = { selectedDate: '2026-10-07', beginFetchTripsRef: { current: () => () => latest }, normalLoadsRef: { current: 0 }, silentRefreshAllowedRef: { current: () => true }, setIsLoading: vi.fn(), db: {}, query: (...args: any[]) => args, collection: () => ({}), where: () => ({}), getDocs: async () => ({ docs: [{ id: 'T1', data: () => ({ tripDate: '2026-10-07', stops: [] }) }] }), setTrips, setRefusalDrafts: setDrafts, errorEmitter: { emit: vi.fn() }, FirestorePermissionError: Error, toast: vi.fn() }
     const handler = new Function(...Object.keys(deps), `${body('fetchTrips')}return work`)(...Object.values(deps))
     await handler()
     expect(setDrafts.mock.calls).toEqual(latest ? [[{}]] : [])
@@ -139,4 +139,69 @@ it('"ตามแผน" ล้าง pointer โยกที่ค้างจ�
   const clean = outcomeUI({ siteName: 'A', order: 1 })
   await clean.handler(clean.t, 0, 'delivered')
   expect(clean.apply).not.toHaveBeenCalled()
+})
+
+it('เปลี่ยนรถ: ค่าน้ำมันคิดจาก กม./ราคาดีเซลล่าสุดบนฐาน (จออาจเก่า) และเก็บทะเบียนเดิมจากฐาน', async () => {
+  const ui = secondaryUI('changeVehicle', false, (t: any) => ({ ...t, totalDistanceKm: 210, dieselPriceUsed: 30, vehiclePlate: 'รถบนฐาน' }))
+  await ui.handler('T1', 'V3')
+  expect(ui.deps.calculateFuelCost).toHaveBeenCalledWith(210, undefined, 30)
+  expect(ui.persist.mock.calls[0][1]).toMatchObject({ vehicleId: 'V3', vehicleChangedFromPlate: 'รถบนฐาน' }) // จอเป็น 'รถหนึ่ง'
+})
+it('เปลี่ยนรถ: อ่านทริปล่าสุดไม่ได้ (ถูกลบจากหน้าอื่น) = ไม่บันทึก', async () => {
+  const ui = secondaryUI('changeVehicle', false, () => null)
+  await ui.handler('T1', 'V3')
+  expect(ui.persist).not.toHaveBeenCalled()
+})
+it('โหลดทริปแบบเงียบ (กลับมาที่แท็บ): ไม่ขึ้นสถานะโหลด · ล้มเหลว = คงข้อมูลบนจอ ไม่ล้าง ไม่เด้งข้อความ', async () => {
+  const setIsLoading = vi.fn(), setTrips = vi.fn(), toast = vi.fn()
+  const deps = { selectedDate: '2026-10-07', beginFetchTripsRef: { current: () => () => true }, normalLoadsRef: { current: 0 }, silentRefreshAllowedRef: { current: () => true }, setIsLoading, db: {}, query: (...args: any[]) => args, collection: () => ({}), where: () => ({}), getDocs: async () => { throw new Error('offline') }, setTrips, setRefusalDrafts: vi.fn(), errorEmitter: { emit: vi.fn() }, FirestorePermissionError: Error, toast }
+  const handler = new Function(...Object.keys(deps), `${body('fetchTrips')}return work`)(...Object.values(deps))
+  await handler('2026-10-07', true)
+  expect(setIsLoading).not.toHaveBeenCalled()
+  expect(setTrips).not.toHaveBeenCalled()
+  expect(toast).not.toHaveBeenCalled()
+})
+
+it('เปลี่ยนรถ: ทริปบนฐานใช้รถคันนี้อยู่แล้ว (เปลี่ยนจากหน้าอื่น) = ไม่ทำซ้ำ บอกผู้ใช้', async () => {
+  const ui = secondaryUI('changeVehicle', false, (t: any) => ({ ...t, vehiclePlate: 'รถสาม' }))
+  await ui.handler('T1', 'V3')
+  expect(ui.persist).not.toHaveBeenCalled()
+  expect(ui.toast.mock.calls.at(-1)?.[0].title).toBe('ทริปนี้ใช้รถคันนี้อยู่แล้ว')
+})
+function silentUi(opts: { fromCache?: boolean; allowedAtResult?: boolean; normalLoads?: number } = {}) {
+  const setIsLoading = vi.fn(), setTrips = vi.fn(), setDrafts = vi.fn(), getDocs = vi.fn()
+  let calls = 0
+  const allowed = { current: () => (calls++ === 0 ? true : opts.allowedAtResult ?? true) } // ครั้งแรก = ตอนเริ่ม ครั้งถัดไป = ตอนได้ผล
+  getDocs.mockResolvedValue({ docs: [{ id: 'T1', data: () => ({ tripDate: '2026-10-07', stops: [] }) }], metadata: { fromCache: !!opts.fromCache } })
+  const normalLoadsRef = { current: opts.normalLoads ?? 0 }
+  const deps = { selectedDate: '2026-10-07', beginFetchTripsRef: { current: () => () => true }, normalLoadsRef, silentRefreshAllowedRef: allowed, setIsLoading, db: {}, query: (...args: any[]) => args, collection: () => ({}), where: () => ({}), getDocs, setTrips, setRefusalDrafts: setDrafts, errorEmitter: { emit: vi.fn() }, FirestorePermissionError: Error, toast: vi.fn() }
+  const handler = new Function(...Object.keys(deps), `${body('fetchTrips')}return work`)(...Object.values(deps))
+  return { handler, setIsLoading, setTrips, setDrafts, getDocs, normalLoadsRef }
+}
+it('โหลดเงียบสำเร็จ = แทนทริปบนจอโดยไม่ขึ้นสถานะโหลด', async () => {
+  const ui = silentUi()
+  await ui.handler('2026-10-07', true)
+  expect(ui.setTrips).toHaveBeenCalledOnce()
+  expect(ui.setIsLoading).not.toHaveBeenCalled()
+})
+it('โหลดเงียบ: ผลจาก cache (เน็ตหลุด) = ทิ้ง ไม่ล้างจอ', async () => {
+  const ui = silentUi({ fromCache: true })
+  await ui.handler('2026-10-07', true)
+  expect(ui.setTrips).not.toHaveBeenCalled()
+  expect(ui.setDrafts).not.toHaveBeenCalled()
+})
+it('โหลดเงียบ: ระหว่างรอผลผู้ใช้เริ่มทำอะไรค้าง (เปิดหน้าต่าง/พิมพ์เหตุผล) = ทิ้งผล ไม่ล้างข้อความร่าง', async () => {
+  const ui = silentUi({ allowedAtResult: false })
+  await ui.handler('2026-10-07', true)
+  expect(ui.setTrips).not.toHaveBeenCalled()
+  expect(ui.setDrafts).not.toHaveBeenCalled()
+})
+it('โหลดเงียบไม่แซงการโหลดปกติที่กำลังทำ (กัน isLoading ค้าง) · โหลดปกตินับเข้า-ออกครบ', async () => {
+  const busy = silentUi({ normalLoads: 1 })
+  await busy.handler('2026-10-07', true)
+  expect(busy.getDocs).not.toHaveBeenCalled()
+  const normal = silentUi()
+  await normal.handler('2026-10-07')
+  expect(normal.normalLoadsRef.current).toBe(0)
+  expect(normal.setIsLoading.mock.calls).toEqual([[true], [false]])
 })

@@ -301,19 +301,29 @@ export default function DailySummaryPage() {
   // เปลี่ยนวันเร็ว ๆ แล้ว query วันเก่าตอบกลับทีหลัง → ห้ามเขียนทับทริปของวันที่เลือกล่าสุด
   // (ไม่งั้นปุ่มส่ง LINE/คัดลอก/บันทึกรูปทำงานกับทริปผิดวัน)
   const beginFetchTripsRef = React.useRef(createLatestRequestGuard())
+  // จำนวนการโหลดปกติที่กำลังทำ — โหลดเงียบห้ามเริ่มแซง (ไม่งั้นการโหลดปกติกลายเป็นคำขอเก่า ไม่ปลด isLoading = ค้าง)
+  const normalLoadsRef = React.useRef(0)
+  // ตอนนี้โหลดเงียบได้ไหม (ค่าของ render ล่าสุด) — ตรวจทั้งตอนเริ่มและตอนได้ผล (ระหว่างรอผู้ใช้อาจเริ่มทำอะไรค้าง)
+  const silentRefreshAllowedRef = React.useRef<() => boolean>(() => false)
 
-  const fetchTrips = async (dateStr?: string) => {
+  const fetchTrips = async (dateStr?: string, silent = false) => {
     const targetDate = dateStr || selectedDate
     if (!targetDate) return
+    if (silent && (normalLoadsRef.current > 0 || !silentRefreshAllowedRef.current())) return
 
     const isLatest = beginFetchTripsRef.current()
-    setIsLoading(true)
+    if (!silent) {
+      normalLoadsRef.current++
+      setIsLoading(true)
+    }
     try {
       const q1 = query(collection(db, "trips"), where("tripDate", "==", targetDate))
       const q2 = query(collection(db, "trips"), where("date", "==", targetDate))
 
       const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)])
       if (!isLatest()) return
+      // โหลดเงียบ: ผลจาก cache (เน็ตหลุด) อาจไม่ครบ = ทิ้ง · ระหว่างรอผู้ใช้เริ่มพิมพ์/เปิดหน้าต่าง/บันทึก = ทิ้ง (ไม่ล้างงานที่ทำค้าง)
+      if (silent && (snap1.metadata?.fromCache || snap2.metadata?.fromCache || !silentRefreshAllowedRef.current())) return
 
       const seen = new Set<string>()
       const results = [...snap1.docs, ...snap2.docs]
@@ -332,7 +342,7 @@ export default function DailySummaryPage() {
       setTrips(results)
       setRefusalDrafts({}) // โหลดใหม่ = เริ่มจากข้อมูลล่าสุด ไม่ใช้ baseline/เลขแถวของข้อความร่างเก่า
     } catch (error) {
-      if (!isLatest()) return
+      if (!isLatest() || silent) return // โหลดเงียบล้ม = คงข้อมูลบนจอไว้ (วันเดียวกัน) ไม่เด้งข้อความ
       // โหลดไม่สำเร็จ = ไม่รู้ว่าวันนี้มีทริปอะไร → ล้างทริปที่ค้างจากรอบก่อน (อาจเป็นอีกวัน)
       // ไม่งั้นทริปวันเก่าโผล่ใต้วันที่ใหม่ และปุ่มส่งออก/แผงแอดมิน (ต้องการ trips.length > 0) กลับมาใช้ได้หลัง loading=false
       setTrips([])
@@ -342,7 +352,8 @@ export default function DailySummaryPage() {
       }))
       toast({ title: "เกิดข้อผิดพลาด", description: "ไม่สามารถโหลดข้อมูลได้", variant: "destructive" })
     } finally {
-      if (isLatest()) setIsLoading(false)
+      if (!silent) normalLoadsRef.current--
+      if (isLatest() && !silent) setIsLoading(false)
     }
   }
 
@@ -352,6 +363,31 @@ export default function DailySummaryPage() {
       fetchTrips(selectedDate)
     }
   }, [selectedDate])
+
+  // กลับมาที่แท็บนี้ = โหลดทริปของวันที่เลือกใหม่แบบเงียบ (ผู้ใช้อนุมัติ 2026-10-19) — ใบสรุปไม่ฟังฐานสด
+  // ไปแก้ทริปจากหน้าอื่น/แท็บอื่นมาแล้วจอจะค้างของเก่า · ข้ามถ้ากำลังโหลด/บันทึก/เปิดหน้าต่างอยู่
+  // หรือมีเหตุผลที่พิมพ์ค้างยังไม่บันทึก (โหลดใหม่ล้างข้อความร่าง) · focus + visibilitychange ยิงคู่กัน = เว้น 2 วิ
+  const returnRefreshRef = React.useRef<() => void>(() => {})
+  const lastReturnRefreshRef = React.useRef(0)
+  silentRefreshAllowedRef.current = () =>
+    !!selectedDate && !isLoading && !ordinaryBusy && !isSavingImage && !isSendingLine &&
+    !(selectedTripForShare || noteDialog || postponeDialog || insertDialog || reassignNewDialog || assistDialog) &&
+    Object.keys(refusalDrafts).length === 0
+  returnRefreshRef.current = () => {
+    if (document.hidden || !silentRefreshAllowedRef.current()) return
+    if (Date.now() - lastReturnRefreshRef.current < 2000) return
+    lastReturnRefreshRef.current = Date.now()
+    void fetchTrips(selectedDate, true)
+  }
+  React.useEffect(() => {
+    const onReturn = () => returnRefreshRef.current()
+    window.addEventListener("focus", onReturn)
+    document.addEventListener("visibilitychange", onReturn)
+    return () => {
+      window.removeEventListener("focus", onReturn)
+      document.removeEventListener("visibilitychange", onReturn)
+    }
+  }, [])
 
   // Top 3 drivers of the selected month (by actual km driven) for the A4 footer
   React.useEffect(() => {
@@ -760,8 +796,37 @@ export default function DailySummaryPage() {
       ? { totalDistanceKm: 0, fuelCost: 0, totalEstimatedTimeMinutes: 0 }
       : { totalDistanceKm: r.km, fuelCost: r.fuelCost, totalEstimatedTimeMinutes: r.minutes }
   }
+  // อ่านทริปล่าสุดจากฐานก่อนคิด กม. (ผู้ใช้อนุมัติ 2026-10-19) — ใบสรุปโหลดทริปครั้งเดียวตอนเลือกวัน
+  // รูปแบบเส้นทาง/ต้นทาง/อัตราน้ำมัน/ราคาดีเซล/กม.บนจออาจเก่า (แก้จากหน้าอื่น) → คิดด้วยค่าล่าสุดเสมอ แล้วอัปเดตจอ
+  // sameStops: คำสั่งที่อ้างงานบนจอ (แทรก/ลบ/คันช่วย) — งานบนฐานไม่ตรงกับจอ = หยุด ให้รีเฟรช (ไม่ต้องรอ Google ก่อนโดนด่านปฏิเสธ)
+  const readLiveTrip = async (trip: Trip, action: string, sameStops = true): Promise<Trip | null> => {
+    const snap = await getDoc(doc(db, "trips", trip.id))
+    const data = snap.exists() ? (snap.data() as any) : null
+    if (!data || data.status === "Cancelled") {
+      toast({ title: `ยังไม่ได้${action}`, description: "ไม่พบทริปนี้แล้ว (ถูกลบ/ยกเลิกจากหน้าอื่น) — กดรีเฟรช 🔄", variant: "destructive" })
+      return null
+    }
+    const live = { ...data, id: trip.id, tripDate: data.tripDate || data.date } as Trip
+    const fail = (description: string) => {
+      toast({ title: `ยังไม่ได้${action}`, description, variant: "destructive" })
+      return null
+    }
+    // ถูกย้ายไปวันอื่นจากหน้าอื่น = ไม่ใช่ทริปของวันที่เปิดอยู่แล้ว
+    if (live.tripDate !== trip.tripDate) return fail("ทริปนี้ถูกย้ายวันจากหน้าอื่นแล้ว — กดรีเฟรช 🔄")
+    // ข้อมูลล่าสุดขึ้นจอเสมอ — กดซ้ำได้เลย ไม่ต้องปิดหน้าต่าง/รีเฟรชจนข้อมูลที่กรอกหาย
+    setTrips(prev => prev.map(t => (t.id === live.id ? live : t)))
+    if (isManagedTrip(live)) return fail("ทริปนี้เป็นคิวต่อเนื่องแล้ว — ปรับที่แผงคิวต่อเนื่อง")
+    if (sameStops) {
+      try { assertTripStopsUnchanged(live.stops, trip.stops) } catch {
+        return fail("งานในทริปนี้ถูกแก้จากหน้าอื่น — อัปเดตข้อมูลบนจอให้แล้ว ตรวจแล้วกดอีกครั้ง")
+      }
+    }
+    return live
+  }
   const applyStopsWithDistance = async (trip: Trip, newStops: TripStop[], action: string, stopEdit?: TripStopEdit) => {
-    const dist = await planDistanceFields(trip, newStops, action)
+    const live = await readLiveTrip(trip, action)
+    if (!live) return false
+    const dist = await planDistanceFields(live, newStops, action)
     if (!dist) return false
     if (!await applyStops(trip, newStops, true, stopEdit, false, dist)) return false
     setStatsRefreshKey(k => k + 1) // บอร์ดนักขับต้องขยับตามด้วย ไม่ต้องให้ผู้ใช้กดวันที่ใหม่
@@ -777,9 +842,16 @@ export default function DailySummaryPage() {
     setRouteModeBusy(true)
     const label = ROUTE_MODES.find((m) => m.value === mode)?.label ?? mode
     try {
+      // คิดจากทริปล่าสุดบนฐาน (งาน/ต้นทาง/อัตราบนจออาจเก่า) — เปลี่ยนโหมดไม่อ้างงานบนจอ จึงใช้งานชุดล่าสุดได้เลย
+      const live = await readLiveTrip(trip, "เปลี่ยนรูปแบบเส้นทาง", false)
+      if (!live) return
+      if (tripRouteMode(live) === mode) {
+        toast({ title: `รูปแบบเส้นทาง: ${label}`, description: "ทริปนี้เป็นรูปแบบนี้อยู่แล้ว (เปลี่ยนจากหน้าอื่น) — อัปเดตจอให้แล้ว" })
+        return
+      }
       // จำรุ่นตอนเริ่ม "โดยยังไม่เพิ่ม" — เปลี่ยนโหมดล้มเหลว การคิดระยะที่ค้างอยู่ (เช่น ของงานที่เพิ่งแทรก) ยังได้เขียน
       const startGen = distGenRef.current[trip.id] ?? 0
-      const r = await computePlanDistance({ ...trip, routeMode: mode } as Trip, trip.stops || [])
+      const r = await computePlanDistance({ ...live, routeMode: mode } as Trip, live.stops || [])
       if ((distGenRef.current[trip.id] ?? 0) !== startGen) {
         // ทริปถูกแก้ (แทรก/ลบงาน) ระหว่างคิด — ผลนี้ใช้จุดชุดเก่า ไม่บันทึก
         toast({
@@ -801,10 +873,9 @@ export default function DailySummaryPage() {
       const dist =
         r === "no-coords" ? {} : { totalDistanceKm: r.km, fuelCost: r.fuelCost, totalEstimatedTimeMinutes: r.minutes }
       nextDistGen(trip.id) // ผลนี้ชนะ — การคิดระยะที่เริ่มก่อนหน้าและยังค้างอยู่ถูกทิ้ง
-      // บันทึกผ่านด่านรายการงาน (งานเดิม ลำดับเดิม) — ใบสรุปไม่ดึงทริปใหม่เองหลังเลือกวัน ถ้างานในทริปถูกแก้จากหน้าอื่น
-      // (เช่น รวมงานจากหน้าจัดกลุ่ม) ระหว่างเปิดหน้านี้ค้างไว้ = ไม่บันทึก กม.ที่คิดจากงานชุดเก่าทับ (แจ้งให้โหลดใหม่)
+      // บันทึกผ่านด่านรายการงาน (งานชุดล่าสุดที่เพิ่งอ่าน) — งานถูกแก้จากที่อื่นระหว่างรอ Google = ไม่บันทึก กม.ที่คิดจากงานชุดเก่าทับ
       // เดิมเขียน updateDoc ตรง ๆ ไม่ตรวจ (ผู้ใช้อนุมัติแก้ 2026-10-19)
-      if (!await applyStops(trip, trip.stops || [], true, undefined, true, { routeMode: mode, ...dist })) return
+      if (!await applyStops(live, live.stops || [], true, undefined, true, { routeMode: mode, ...dist })) return
       if (r !== "no-coords") setStatsRefreshKey((k) => k + 1)
       toast({
         title: `รูปแบบเส้นทาง: ${label}`,
@@ -1081,16 +1152,23 @@ export default function DailySummaryPage() {
     )
     if (!ok) return
     // ค่าน้ำมันคิดใหม่ตามอัตราสิ้นเปลืองของรถคันใหม่ (ราคาดีเซลใช้ค่าที่ freeze ไว้กับทริปเดิม)
-    const newRate = v.fuelRate && v.fuelRate > 0 ? v.fuelRate : trip.fuelRateUsed
+    // ใช้ กม./ราคา/อัตราล่าสุดบนฐาน — บนจออาจเก่า (เช่น แทรกงานจากแท็บอื่นแล้ว กม.เปลี่ยน)
+    const live = await readLiveTrip(trip, "เปลี่ยนรถ", false)
+    if (!live) return
+    if (live.vehiclePlate === v.licensePlate) {
+      toast({ title: "ทริปนี้ใช้รถคันนี้อยู่แล้ว", description: "มีการเปลี่ยนรถจากหน้าอื่น — อัปเดตจอให้แล้ว" })
+      return
+    }
+    const newRate = v.fuelRate && v.fuelRate > 0 ? v.fuelRate : live.fuelRateUsed
     const patch: any = {
       vehicleId: v.id,
       vehiclePlate: v.licensePlate,
       vehicleType: v.type,
     }
     if (newRate) patch.fuelRateUsed = newRate
-    if (trip.totalDistanceKm) patch.fuelCost = calculateFuelCost(trip.totalDistanceKm, newRate, trip.dieselPriceUsed)
+    if (live.totalDistanceKm) patch.fuelCost = calculateFuelCost(live.totalDistanceKm, newRate, live.dieselPriceUsed)
     // เก็บทะเบียนเดิมไว้ดูย้อนหลัง (ครั้งแรกครั้งเดียว — เปลี่ยนซ้ำก็ยังรู้ว่าตอนจัดใช้คันไหน)
-    if (!(trip as any).vehicleChangedFromPlate) patch.vehicleChangedFromPlate = trip.vehiclePlate
+    if (!(live as any).vehicleChangedFromPlate) patch.vehicleChangedFromPlate = live.vehiclePlate
     if (!await persistTripPatch(tripId, patch)) return
     // งานของคันอื่นที่ "โยกเข้ามา" ที่ทริปนี้ เก็บทะเบียนเป็น snapshot → อัปเดตให้ตรงคันใหม่
     for (const other of trips.filter(t => t.id !== tripId && !isManagedTrip(t))) {
@@ -1102,7 +1180,7 @@ export default function DailySummaryPage() {
         return
       }
     }
-    toast({ title: "🚚 เปลี่ยนรถแล้ว", description: `${trip.driverName}: ${trip.vehiclePlate} → ${v.licensePlate}` })
+    toast({ title: "🚚 เปลี่ยนรถแล้ว", description: `${live.driverName}: ${live.vehiclePlate} → ${v.licensePlate}` })
   }
 
   // Replace a single stop within a trip, returning the new stops array.

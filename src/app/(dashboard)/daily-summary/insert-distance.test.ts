@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { inThailand } from '@/lib/roadFlood'
+import { assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
+import { isManagedTrip } from '@/lib/continuousQueue'
 
 // แทรกงานด่วนตัวจริงของใบสรุป (handleInsertJob + ตัวเขียนจุด + ตัวคิดระยะ) — mock แค่ Google/Firestore
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -40,8 +42,11 @@ function insertUi(opts: { plan?: Plan; vehicleId?: string; modeChangeDuringPlan?
     setTrips: (fn: (prev: any[]) => any[]) => { state = fn(state) }, setRefusalDrafts: vi.fn(), setStatsRefreshKey: statsRefresh,
     computePlanDistance: compute, nextDistGen: (id: string) => (gens[id] = (gens[id] ?? 0) + 1), isLatestDistGen: (id: string, gen: number) => gens[id] === gen,
     console: { error: vi.fn() },
+    // ทริปบนฐาน = ตรงกับบนจอ
+    doc: (_db: unknown, _col: string, id: string) => id, assertTripStopsUnchanged, isManagedTrip,
+    getDoc: async (id: string) => { const t = trips.find(x => x.id === id); return { exists: () => !!t, data: () => structuredClone(t) } },
   }
-  const code = ['isPickableSite', 'persistTripPatch', 'applyStops', 'planDistanceFields', 'applyStopsWithDistance', 'handleInsertJob'].map(body).join('')
+  const code = ['isPickableSite', 'persistTripPatch', 'applyStops', 'readLiveTrip', 'planDistanceFields', 'applyStopsWithDistance', 'handleInsertJob'].map(body).join('')
   const handler = new Function(...Object.keys(deps), `${code}return handleInsertJob`)(...Object.values(deps)) as () => Promise<void>
   return { trip, other, handler, compute, update, create, toast, setInsertDialog, statsRefresh, state: () => state }
 }
@@ -50,7 +55,7 @@ it('แทรกเข้าทริปเดิม: คิด กม.ของ
   const ui = insertUi()
   await ui.handler()
   const [planTrip, planStops] = ui.compute.mock.calls[0] as [any, any[]]
-  expect(planTrip).toBe(ui.trip) // routeMode/ต้นทาง/อัตราของทริปนั้น
+  expect(planTrip).toEqual(ui.trip) // routeMode/ต้นทาง/อัตราของทริปนั้น (อ่านล่าสุดจากฐาน)
   expect(planStops.map(s => s.siteName)).toEqual(['งานเดิม', 'ไซต์แทรก (ทดสอบ)'])
   expect(planStops[1]).toMatchObject({ lat: 13.5, lng: 100.8, adhoc: true })
   expect(ui.update).toHaveBeenCalledTimes(1)
@@ -103,7 +108,7 @@ it('เปลี่ยนเป็นรถที่มีทริปวัน�
   const ui = insertUi({ vehicleId: 'V2', otherTrip: true })
   await ui.handler()
   const [planTrip, planStops] = ui.compute.mock.calls[0] as [any, any[]]
-  expect(planTrip).toBe(ui.other) // อัตรา/รูปแบบเส้นทางของทริปปลายทาง ไม่ใช่ทริปต้นทาง
+  expect(planTrip).toEqual(ui.other) // อัตรา/รูปแบบเส้นทางของทริปปลายทาง ไม่ใช่ทริปต้นทาง
   expect(planStops.map(s => s.siteName)).toEqual(['งานของรถหกล้อ', 'ไซต์แทรก (ทดสอบ)'])
   expect(ui.create).not.toHaveBeenCalled()
   expect(ui.update).toHaveBeenCalledTimes(1)

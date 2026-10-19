@@ -1123,9 +1123,10 @@ export default function TripGroupingPage() {
             </div>
             <div className="space-y-2 pt-2 border-t border-gray-700">
               <p className="text-xs font-bold text-orange-400 uppercase tracking-wider">จุดใหม่ที่จะเพิ่ม (+{mergeDialog.newStops?.length}):</p>
-              {mergeDialog.existingTrip?.newStops?.map((stop: any, i: number) => (
+              {/* งานที่จะรวมเข้าอยู่ที่ mergeDialog.newStops (เดิมอ่านจาก existingTrip ซึ่งไม่มีช่องนี้ = รายชื่อไม่เคยขึ้น) */}
+              {mergeDialog.newStops?.map((stop: any, i: number) => (
                 <div key={i} className="text-xs text-orange-300 flex gap-2">
-                  <span className="shrink-0">+</span> <span className="truncate">{stop.siteName}</span>
+                  <span className="shrink-0">+</span> <span className="truncate">{stop.siteName || stop.customName}</span>
                 </div>
               ))}
             </div>

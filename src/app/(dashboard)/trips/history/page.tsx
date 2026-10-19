@@ -47,7 +47,7 @@ import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQueueGuard"
-import { validCoordinates } from "@/lib/tripCoordinateSync"
+import { inThailand } from "@/lib/roadFlood"
 import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
 import { calculateFuelCost } from "@/lib/calculations"
 
@@ -824,21 +824,27 @@ export default function TripHistoryPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="max-h-60 overflow-y-auto">
-                    {sites?.map(site => (
-                      <DropdownMenuItem key={site.id} onClick={() => {
-                        setEditFormData({
-                          ...editFormData,
-                          stops: [...editFormData.stops, {
-                            siteId: site.id, siteName: site.name, order: editFormData.stops.length, cargoDetails: "",
-                            // พิกัดติดไปกับงานแบบเดียวกับตอนจัดกลุ่ม — ไม่งั้นจุดนี้ไม่ขึ้นแผนที่/ปุ่มนำทาง/หน้าติดตาม
-                            ...(validCoordinates(site.latitude, site.longitude) ? { lat: site.latitude, lng: site.longitude } : {}),
-                          }],
-                          originalStopIndexes: [...editFormData.originalStopIndexes, null],
-                        })
-                      }}>
-                        {site.name}
-                      </DropdownMenuItem>
-                    ))}
+                    {sites?.map(site => {
+                      // เลือกได้เฉพาะสถานที่ที่มีพิกัดในไทย (ผู้ใช้กำหนด 2026-10-19 — กติกาเดียวกับแทรกงานในใบสรุป)
+                      // ไม่มีพิกัด = เพิ่มแล้วคิด กม.ไม่ได้ → ต้องเติมพิกัดที่เมนูจัดการไซต์งานก่อน
+                      const pinned = inThailand(site.latitude, site.longitude)
+                      return (
+                        <DropdownMenuItem key={site.id} disabled={!pinned} onClick={() => {
+                          if (!pinned) return
+                          setEditFormData({
+                            ...editFormData,
+                            stops: [...editFormData.stops, {
+                              siteId: site.id, siteName: site.name, order: editFormData.stops.length, cargoDetails: "",
+                              // พิกัดติดไปกับงานแบบเดียวกับตอนจัดกลุ่ม — ไม่งั้นจุดนี้ไม่ขึ้นแผนที่/ปุ่มนำทาง/หน้าติดตาม
+                              lat: site.latitude as number, lng: site.longitude as number,
+                            }],
+                            originalStopIndexes: [...editFormData.originalStopIndexes, null],
+                          })
+                        }}>
+                          {site.name}{pinned ? "" : " · ไม่มีพิกัด — เติมพิกัดที่เมนูจัดการไซต์งานก่อน"}
+                        </DropdownMenuItem>
+                      )
+                    })}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

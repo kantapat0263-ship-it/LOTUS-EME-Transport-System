@@ -111,3 +111,9 @@ describe('รวมจุดเข้าทริปเดิม: คิด ก�
     expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 })
   })
 })
+
+it('หน้าต่างรวม Trip เดิมแสดงรายชื่องานใหม่จาก mergeDialog.newStops (เดิมอ่าน existingTrip.newStops ที่ไม่มีอยู่จริง)', () => {
+  const text = readFileSync(new URL('./page.tsx', import.meta.url), 'utf8')
+  expect(text).toContain('mergeDialog.newStops?.map(')
+  expect(text).not.toContain('existingTrip?.newStops')
+})
