@@ -7,9 +7,10 @@ import { doc } from "firebase/firestore"
 import { CompanySetting } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Loader2, Route, Zap, RefreshCcw, Fuel, MousePointer2, Wand2 } from "lucide-react"
+import { Loader2, Route, Zap, RefreshCcw, Fuel, MousePointer2, Wand2, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
+import { inThailand } from "@/lib/roadFlood"
 
 interface GroupingMapProps {
   destinations: any[];
@@ -49,6 +50,8 @@ export function GroupingMap({
   // Identifies the inputs of the last successfully rendered route so we can
   // skip redundant Google Directions API calls when nothing relevant changed.
   const lastRouteKeyRef = React.useRef<string | null>(null)
+  // รุ่นของการคิดเส้นทางล่าสุด — ผลจาก Google ที่ตอบช้ากว่าการเลือกครั้งใหม่ ไม่ให้มาทับแผนที่/ตัวเลข/ลำดับ
+  const routeSeqRef = React.useRef(0)
 
   const [routeStats, setRouteStats] = React.useState<{ 
     distance: string, 
@@ -59,6 +62,8 @@ export function GroupingMap({
   } | null>(null)
   
   const [isCalculating, setIsCalculating] = React.useState(false)
+  // งานที่เลือกแต่ไม่มีพิกัด (ใบขอพิมพ์ชื่อสถานที่เอง / (0,0)) — ไม่ส่งให้ Google และไม่นับในระยะทาง
+  const [missingCoordCount, setMissingCoordCount] = React.useState(0)
   const [optimizeMode, setOptimizeMode] = React.useState(true) // Default true for Auto mode
 
   const settingRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
@@ -66,10 +71,13 @@ export function GroupingMap({
 
   const calculateRoute = React.useCallback(async (optimize: boolean = true, force: boolean = false) => {
     if (!directionsServiceRef.current || !directionsRendererRef.current) return;
+    const seq = ++routeSeqRef.current
+    setIsCalculating(false) // คำขอเก่าที่ค้างอยู่ถูกทิ้ง — เปิดใหม่ด้านล่างถ้ารอบนี้ต้องถาม Google
 
     const count = mode === 'manual' ? manualOrder.length : selectedIds.size
     if (count === 0) {
       setRouteStats(null)
+      setMissingCoordCount(0)
       directionsRendererRef.current?.setDirections({ routes: [] } as any)
       lastRouteKeyRef.current = null
       return
@@ -83,6 +91,22 @@ export function GroupingMap({
       : destinations.filter(d => selectedIds.has(d.id))
 
     if (selectedDests.length === 0) {
+      // งานที่เลือกอยู่นอกตัวกรองวันทั้งหมด — ไม่ค้างตัวเลขของชุดก่อน
+      setRouteStats(null)
+      setMissingCoordCount(0)
+      directionsRendererRef.current?.setDirections({ routes: [] } as any)
+      lastRouteKeyRef.current = null
+      return
+    }
+
+    // ส่งให้ Google เฉพาะงานที่มีพิกัดในไทย — กติกาเดียวกับตอนบันทึกจุดลงทริป (stopCoords) และตัวคิด กม. กลาง
+    // (เดิมส่ง (0,0) ไปด้วย → Google หาเส้นทางไม่ได้ทั้งชุด) · งานไม่มีพิกัดยังอยู่ในทริป (โหมดอัตโนมัติต่อท้ายลำดับ) แค่ไม่นับระยะ
+    const routedDests = selectedDests.filter((d: any) => inThailand(d.lat, d.lng))
+    setMissingCoordCount(selectedDests.length - routedDests.length)
+    if (routedDests.length === 0) {
+      setRouteStats(null)
+      directionsRendererRef.current?.setDirections({ routes: [] } as any)
+      lastRouteKeyRef.current = null
       return
     }
 
@@ -97,7 +121,7 @@ export function GroupingMap({
       mode,
       optimize: mode === 'auto' ? optimize : false,
       origin: [warehousePos.lat, warehousePos.lng],
-      stops: selectedDests.map(d => `${d.id}@${d.lat},${d.lng}`)
+      stops: routedDests.map(d => `${d.id}@${d.lat},${d.lng}`)
     })
     if (!force && routeKey === lastRouteKeyRef.current) {
       return
@@ -108,7 +132,7 @@ export function GroupingMap({
 
     // For TRUE road optimization, we must use origin=warehouse and destination=warehouse
     // so Google knows it's a round trip and finds the best loop.
-    const waypoints = selectedDests.map(d => ({
+    const waypoints = routedDests.map(d => ({
       location: new google.maps.LatLng(d.lat, d.lng),
       stopover: true
     }))
@@ -121,6 +145,7 @@ export function GroupingMap({
       travelMode: google.maps.TravelMode.DRIVING,
       region: 'TH'
     }, (result, status) => {
+      if (seq !== routeSeqRef.current) return
       setIsCalculating(false)
       if (status === 'OK' && result) {
         lastRouteKeyRef.current = routeKey
@@ -131,7 +156,7 @@ export function GroupingMap({
         // Handle Optimized Order callback
         if (mode === 'auto' && optimize && onOptimizedOrderChange) {
           const optimizedIndices = route.waypoint_order; // [2, 0, 1] means go to waypoints[2] first
-          const optimizedIds = optimizedIndices.map(idx => selectedDests[idx].id);
+          const optimizedIds = optimizedIndices.map(idx => routedDests[idx].id);
           onOptimizedOrderChange(optimizedIds);
         }
 
@@ -160,19 +185,11 @@ export function GroupingMap({
           totalDistance: totalDistKm.toFixed(1) + " กม.",
           fuelCost: fuelCost.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " บาท"
         })
-
-        if (typeof window !== 'undefined') {
-          (window as any).__lastTripStats = {
-            distance: totalDistKm,
-            duration: Math.round(totalTime / 60),
-            fuelCost: fuelCost,
-            dieselPrice: dieselPrice,
-            fuelRate: fuelRate
-          }
-        }
+        // ตัวเลขนี้แสดงบนแผนที่อย่างเดียว — ตอนกดสร้างทริป หน้าจัดกลุ่มคิด กม. ใหม่จากงานชุดที่บันทึกจริง (ตัวคิดกลาง planDistance)
       } else {
         // Allow the same inputs to be retried after a failure.
         lastRouteKeyRef.current = null
+        setRouteStats(null) // ไม่ค้างตัวเลขของการเลือกชุดก่อน
         toast({
           title: "การคำนวณล้มเหลว",
           description: "ไม่สามารถคำนวณเส้นทางถนนจริงได้ กรุณาลองใหม่",
@@ -419,7 +436,13 @@ export function GroupingMap({
                 <span className="text-muted-foreground">จุดหมายที่เลือก:</span>
                 <span className="font-bold text-white">{(mode === 'manual' ? manualOrder.length : selectedIds.size)} จุด</span>
               </div>
-              
+              {missingCoordCount > 0 && (
+                <div className="flex items-start gap-1.5 text-[10px] text-amber-400 mb-2">
+                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>{missingCoordCount} จุดไม่มีพิกัด — ไม่นับในระยะทาง/ค่าน้ำมัน</span>
+                </div>
+              )}
+
               <div className="space-y-1">
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-muted-foreground">ระยะทางไป:</span>

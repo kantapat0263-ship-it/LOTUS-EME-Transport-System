@@ -48,6 +48,8 @@ import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQueueGuard"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
+import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
+import { calculateFuelCost } from "@/lib/calculations"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -67,6 +69,9 @@ export default function TripHistoryPage() {
   
   const userProfileRef = useMemoFirebase(() => user ? doc(db, "users", user.uid) : null, [db, user])
   const { data: profile } = useDoc<UserProfile>(userProfileRef)
+  // คีย์ Google Maps อยู่ในตั้งค่าระบบ (ไม่ได้ตั้ง env บน Vercel) — ใช้คิด กม. ใหม่ตอนแก้จุดส่งของ
+  const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
+  const { data: companySettings } = useDoc<{ googleMapsApiKeyReference?: string }>(settingsRef)
   
   const isViewer = profile?.role === 'viewer'
   const isAdmin = profile?.role === 'admin'
@@ -298,6 +303,45 @@ export default function TripHistoryPage() {
       const cargoChanged = JSON.stringify(editingTrip.stops.map(s => s.cargoDetails)) !== JSON.stringify(editFormData.stops.map(s => s.cargoDetails))
       if (cargoChanged) changes.cargoChanged = true
 
+      // กม./เวลา/ค่าน้ำมันตามแผนต้องตามจุดส่งของที่แก้ (ผู้ใช้กำหนด 2026-10-19 — ตรงกับหน้าสรุปคิว)
+      // จุดเปลี่ยน (เพิ่ม/ลบ/สลับ/พิกัด) = คิดเส้นทางใหม่ก่อนบันทึก · คิดไม่ได้ = ไม่บันทึก ให้ลองใหม่ (ผู้ใช้เลือก)
+      // เปลี่ยนรถ = ค่าน้ำมันตามอัตราของรถคันใหม่ (ราคาดีเซลใช้ค่าที่ freeze ไว้) เหมือนเปลี่ยนรถในใบสรุป
+      // รูปแบบเส้นทาง/ต้นทาง/อัตราน้ำมันใช้ทริปล่าสุด (แท็บอื่นอาจเปลี่ยนโหมดระหว่างเปิดหน้าต่าง — guard เช็กแค่ stops)
+      const liveTrip = trips?.find(t => t.id === editingTrip.id) ?? editingTrip
+      const vehicleChanged = editingTrip.vehicleId !== editFormData.vehicleId
+      const fuelRate = vehicleChanged && selectedVehicle?.fuelRate && selectedVehicle.fuelRate > 0 ? selectedVehicle.fuelRate : liveTrip.fuelRateUsed
+      const distancePatch: { totalDistanceKm?: number; totalEstimatedTimeMinutes?: number; fuelCost?: number; fuelRateUsed?: number } = {}
+      let distanceNote = ""
+      if (routeStopsKey(editingTrip.stops) !== routeStopsKey(editFormData.stops)) {
+        const version = editVersionRef.current
+        const plan = editFormData.stops.length === 0
+          ? { km: 0, minutes: 0, fuelCost: 0 }
+          : await computeTripPlanDistance(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference || "", liveTrip, editFormData.stops, fuelRate)
+        if (editVersionRef.current !== version) {
+          if (editOpenRef.current) {
+            toast({ title: "ยังไม่ได้บันทึก", description: "ข้อมูลในหน้าต่างแก้ไขเปลี่ยนระหว่างคิดระยะทาง — ตรวจแล้วกดบันทึกอีกครั้ง", variant: "destructive" })
+          }
+          return
+        }
+        if (plan === "failed") {
+          toast({ title: "ยังไม่ได้บันทึก", description: "คิดระยะทางใหม่ไม่ได้ (แผนที่/อินเทอร์เน็ต) — ลองกดบันทึกอีกครั้ง", variant: "destructive" })
+          return
+        }
+        if (plan === "no-coords") {
+          distanceNote = " · งานไม่มีพิกัด กม. คงเดิม"
+        } else {
+          Object.assign(distancePatch, { totalDistanceKm: plan.km, totalEstimatedTimeMinutes: plan.minutes, fuelCost: plan.fuelCost })
+          changes.distance = { from: liveTrip.totalDistanceKm ?? null, to: plan.km }
+          distanceNote = ` · ระยะทาง ${plan.km.toFixed(1)} กม.`
+        }
+      }
+      if (vehicleChanged && fuelRate) {
+        distancePatch.fuelRateUsed = fuelRate
+        if (distancePatch.fuelCost === undefined && liveTrip.totalDistanceKm) {
+          distancePatch.fuelCost = calculateFuelCost(liveTrip.totalDistanceKm, fuelRate, liveTrip.dieselPriceUsed)
+        }
+      }
+
       // Update Trip
       await updateTripWithQueueGuard(db, editingTrip.id, {
         vehicleId: editFormData.vehicleId,
@@ -305,6 +349,7 @@ export default function TripHistoryPage() {
         driverId: editFormData.driverId,
         driverName: selectedDriver?.name || "",
         stops: editFormData.stops.map((s, idx) => ({ ...s, order: idx })),
+        ...distancePatch,
         updatedAt: serverTimestamp()
       }, undefined, { expectedStops: editingTrip.stops, sourceIndexes: editFormData.originalStopIndexes })
 
@@ -317,7 +362,7 @@ export default function TripHistoryPage() {
         changes
       })
 
-      toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลเที่ยววิ่ง ${editingTrip.tripId} เรียบร้อยแล้ว` })
+      toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลเที่ยววิ่ง ${editingTrip.tripId} เรียบร้อยแล้ว${distanceNote}` })
       setIsEditOpen(false)
     } catch (e: any) {
       toast({ title: "เกิดข้อผิดพลาด", description: e?.message || "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })

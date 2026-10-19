@@ -431,7 +431,7 @@ export default function TripDetailPage() {
               <CardHeader className="p-4 md:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <CardTitle className="flex items-center gap-2 text-lg"><MapPin className="h-5 w-5 text-accent" /> ลำดับจุดส่งของ</CardTitle>
-                  {isStaff && profile?.active === true && user && <TripCoordinateSyncDialog key={trip.id} trip={trip} sites={allSites || []} user={user} />}
+                  {isStaff && profile?.active === true && user && <TripCoordinateSyncDialog key={trip.id} trip={trip} sites={allSites || []} user={user} mapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference || ""} />}
                 </div>
               </CardHeader>
               <CardContent className="p-4 md:p-6 space-y-4 pt-0">

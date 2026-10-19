@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { assertRequestDestinationsUnchanged, requestDestinationFingerprint } from '@/lib/requestDestination'
+import { inThailand } from '@/lib/roadFlood'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function actual(name: string, deps: Record<string, unknown>) {
@@ -19,23 +20,77 @@ function actual(name: string, deps: Record<string, unknown>) {
 const original = { requestId: 'VR-0710-001', requestDate: '2026-10-07', requestedBy: 'ผู้ขอ', status: 'in_progress', destinations: [{ siteName: 'งานเดิม', jobDescription: 'ส่งเครื่องมือ', lat: 13, lng: 100 }] }
 const selected = { ...original.destinations[0], id: 'R1-0', vrDocId: 'R1', vrId: original.requestId, destIndex: 0, requestDate: original.requestDate, sourceFingerprint: requestDestinationFingerprint(original, 0) }
 
-function createUi(options: { continuous?: boolean; borrow?: boolean; changed?: boolean } = {}) {
+type Plan = { km: number; minutes: number; fuelCost: number } | 'no-coords' | 'failed'
+function createUi(options: { continuous?: boolean; borrow?: boolean; changed?: boolean; plan?: Plan; fuelRate?: number; changeDuringPlan?: boolean } = {}) {
   const fresh = options.changed ? { ...original, destinations: [{ ...original.destinations[0], siteName: 'อีกงานที่สลับมา' }] } : original
   const create = vi.fn().mockResolvedValue(undefined), command = vi.fn().mockResolvedValue({ tripIds: ['T1'] }), toast = vi.fn()
   const flight = { isCurrent: () => true, operationId: () => 'OP1', finish: vi.fn() }
+  const selectionSigRef = { current: 'unchanged' }
+  const computePlan = vi.fn(async (..._args: unknown[]) => {
+    if (options.changeDuringPlan) selectionSigRef.current = 'changed' // ผู้ใช้เปลี่ยนการเลือกระหว่างรอ Google
+    return options.plan ?? { km: 120, minutes: 150, fuelCost: 390 }
+  })
+  const getDocs = vi.fn().mockResolvedValue({ size: 0 })
   const deps = {
-    user: { uid: 'U1' }, selectionSig: 'unchanged', selectionSigRef: { current: 'unchanged' }, pageVersionRef: { current: 0 },
+    stopCoords: actual('stopCoords', { inThailand }),
+    user: { uid: 'U1' }, selectionSig: 'unchanged', selectionSigRef, pageVersionRef: { current: 0 },
     commandFlightRef: { current: { begin: () => flight } }, borrowOpenRef: { current: true }, confirmOpenRef: { current: true },
     setIsProcessing: vi.fn(), selectedDestinations: [selected], driverId: 'D1', vehicleId: 'V1',
     continuousEndDate: options.continuous ? '2026-10-09' : '', expandQueueDates: () => ['2026-10-07', '2026-10-08', '2026-10-09'],
     window: { confirm: () => true }, toast, confirmLeaveBeforeAssign: vi.fn().mockResolvedValue(true), checkLeave: vi.fn(), drivers: [{ id: 'D1', name: 'คนขับ' }],
     borrowOpen: true, getDoc: vi.fn().mockResolvedValue({ exists: () => true, data: () => fresh }), doc: (_db: unknown, collection: string, id: string) => `${collection}/${id}`, db: {},
-    selectedVehicle: { licensePlate: 'รถทดสอบ', type: 'truck' }, settings: {}, runContinuousQueueCommand: command, continuousQueues: { refresh: vi.fn() }, queueDateLabel: (date: string) => date,
-    resetAll: vi.fn(), getDocs: vi.fn().mockResolvedValue({ size: 0 }), query: vi.fn(), collection: vi.fn(), where: vi.fn(), createTripWithQueueGuard: create, serverTimestamp: () => 'time',
+    selectedVehicle: { licensePlate: 'รถทดสอบ', type: 'truck', fuelRate: options.fuelRate }, settings: { dieselPrice: 30, googleMapsApiKeyReference: 'maps-key' }, computeTripPlanDistance: computePlan, runContinuousQueueCommand: command, continuousQueues: { refresh: vi.fn() }, queueDateLabel: (date: string) => date,
+    resetAll: vi.fn(), getDocs, query: vi.fn(), collection: vi.fn(), where: vi.fn(), createTripWithQueueGuard: create, serverTimestamp: () => 'time',
     assertRequestDestinationsUnchanged, requestDestinationFingerprint, console: { error: vi.fn() },
   }
-  return { handler: actual('confirmCreateTrip', deps), create, command, toast, borrowChoice: options.borrow ? { bookingId: 'B1', reason: 'งานจำเป็น' } : undefined }
+  return { handler: actual('confirmCreateTrip', deps), create, command, toast, computePlan, getDocs, borrowChoice: options.borrow ? { bookingId: 'B1', reason: 'งานจำเป็น' } : undefined }
 }
+
+describe('สร้างทริป: คิด กม. จากงานชุดที่บันทึกจริง (ไม่ใช้เลขค้างบนแผนที่)', () => {
+  const written = (ui: ReturnType<typeof createUi>, viaQueue: boolean) => viaQueue ? ui.command.mock.calls[0][1].trip : ui.create.mock.calls[0][2]
+
+  it.each([{ continuous: false }, { continuous: true }, { borrow: true }])('ใส่ กม./เวลา/ค่าน้ำมันจากตัวคิดกลาง + freeze อัตรา/ราคา %j', async options => {
+    const ui = createUi({ ...options, fuelRate: 8 })
+    await ui.handler(ui.borrowChoice)
+    expect(ui.computePlan).toHaveBeenCalledTimes(1)
+    const [key, planTrip, planStops] = ui.computePlan.mock.calls[0]
+    expect(key).toBe(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || 'maps-key')
+    expect(planTrip).toEqual({ originLat: 14.0815, originLng: 100.7129, fuelRateUsed: 8, dieselPriceUsed: 30 })
+    expect(planStops).toEqual([expect.objectContaining({ lat: 13, lng: 100, siteName: 'งานเดิม' })])
+    const trip = written(ui, !!(options.continuous || options.borrow))
+    expect(trip).toMatchObject({ totalDistanceKm: 120, totalEstimatedTimeMinutes: 150, fuelCost: 390, fuelRateUsed: 8, dieselPriceUsed: 30 })
+    expect(trip.stops).toBe(planStops) // ชุดเดียวกับที่คิด
+  })
+
+  it.each([{ continuous: false }, { continuous: true }, { borrow: true }])('คิดไม่ได้ = ยังไม่สร้าง บอกให้กดใหม่ %j', async options => {
+    const ui = createUi({ ...options, plan: 'failed' })
+    await ui.handler(ui.borrowChoice)
+    expect(ui.create).not.toHaveBeenCalled()
+    expect(ui.command).not.toHaveBeenCalled()
+    expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'ยังไม่ได้สร้างเที่ยววิ่ง', variant: 'destructive' })
+  })
+
+  it.each([{ continuous: false }, { continuous: true }, { borrow: true }])('เปลี่ยนการเลือกระหว่างรอคิดระยะ = ไม่เขียนชุดเก่า %j', async options => {
+    const ui = createUi({ ...options, changeDuringPlan: true })
+    await ui.handler(ui.borrowChoice)
+    expect(ui.create).not.toHaveBeenCalled()
+    expect(ui.command).not.toHaveBeenCalled()
+    expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'ยังไม่ได้สร้างเที่ยววิ่ง', variant: 'destructive' })
+  })
+
+  it('ทริปปกติคิดระยะก่อนนับเลขทริปของวัน (ช่วงรอ Google ไม่คั่นระหว่างนับเลขกับบันทึก)', async () => {
+    const ui = createUi()
+    await ui.handler()
+    expect(ui.computePlan.mock.invocationCallOrder[0]).toBeLessThan(ui.getDocs.mock.invocationCallOrder[0])
+    expect(ui.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('ทุกงานไม่มีพิกัด = สร้างได้ กม. 0 · ไม่มีอัตรารถ = ใช้ค่าเริ่มต้น 10', async () => {
+    const ui = createUi({ plan: 'no-coords' })
+    await ui.handler()
+    expect(ui.create.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0, fuelRateUsed: 10 })
+  })
+})
 
 describe('actual request selection and create handlers', () => {
   it('เลือกจุดแล้วเก็บ fingerprint ของแถวที่คลิกไว้', () => {

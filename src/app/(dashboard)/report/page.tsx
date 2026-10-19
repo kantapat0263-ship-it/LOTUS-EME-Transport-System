@@ -35,7 +35,7 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Trip, CompanySetting, UserProfile } from "@/types/models"
-import { computeOutcomeStats, computeDriverReliability } from "@/lib/calculations"
+import { computeOutcomeStats, computeDriverReliability, stopSharesKm, stopSharesCost } from "@/lib/calculations"
 import { detectStops, cutTrailAt, computeRecurringStops, haversineMeters, OFFICE_LOCATION, OFFICE_RADIUS_M, ARRIVAL_RADIUS_M, type RecurringSpot, type StopEvent } from "@/lib/tracking"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
@@ -287,10 +287,10 @@ export default function ReportPage() {
     const tripIds = new Set(trips.map((t: any) => t.id).filter(Boolean))
 
     trips.forEach(t => {
-      const stopCount = t.stops?.length || 1
-      const distPerStop = (t.totalDistanceKm || 0) / stopCount
-      const costPerStop = tripFuelCost(t) / stopCount
-      t.stops?.forEach((s: any) => {
+      // ส่วนแบ่งต่อจุดแบบเดียวกับตารางรายคัน/รายคนขับ (ถ่วงตามระยะห่างจากออฟฟิศ) — ตัวเลขทั้งหน้าตรงกัน
+      const distShares = stopSharesKm(t)
+      const costShares = stopSharesCost({ ...t, fuelCost: tripFuelCost(t) })
+      t.stops?.forEach((s: any, i: number) => {
         // นับเฉพาะจุดที่ "มีคนวิ่งจริง": ตามแผน หรือถูกรับต่อ — เลื่อน/ปฏิเสธไม่มีคนรับ = ไม่นับ
         const delivered = !s.outcome || s.outcome === 'delivered'
         const pickedUp = s.reassignedToTripId && tripIds.has(s.reassignedToTripId)
@@ -298,8 +298,8 @@ export default function ReportPage() {
         const name = s.siteName || "ไม่ระบุ"
         if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0 }
         data[name].count += 1
-        data[name].distance += distPerStop
-        data[name].cost += costPerStop
+        data[name].distance += distShares[i]
+        data[name].cost += costShares[i]
       })
     })
 

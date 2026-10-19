@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase"
 import { collection, query, where, orderBy, doc, serverTimestamp, runTransaction, getDocs, getDoc } from "firebase/firestore"
-import { Vehicle, Driver, Site, CompanySetting, Trip } from "@/types/models"
+import { Vehicle, Driver, Site, CompanySetting, Trip, TripStop } from "@/types/models"
 import { GroupingMap } from "@/components/trip-grouping/GroupingMap"
 import { DestinationCard } from "@/components/trip-grouping/DestinationCard"
 import { TripControlPanel } from "@/components/trip-grouping/TripControlPanel"
@@ -22,7 +22,6 @@ import {
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
-import { Loader } from "@googlemaps/js-api-loader"
 import { useDriverLeaves } from "@/hooks/use-driver-leaves"
 import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
@@ -34,10 +33,16 @@ import { BorrowQueueDialog, type BorrowChoice } from "@/components/continuous-qu
 import { queueDateLabel } from "@/components/continuous-queue/QueueNoticeCard"
 import type { QueueTripInput } from "@/types/continuous-queue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
-import { routePlan, sumRouteLegs, tripRouteMode } from "@/lib/routeMode"
+import { computeTripPlanDistance } from "@/lib/planDistance"
 import { assertRequestDestinationsUnchanged, requestDestinationFingerprint } from "@/lib/requestDestination"
+import { inThailand } from "@/lib/roadFlood"
 
 type GroupingMode = 'auto' | 'manual';
+
+/** พิกัดที่คัดลอกจากใบขอลงงานในทริป — เฉพาะที่อยู่ในไทย · (0,0) = "ไม่มีพิกัด" ของใบขอ (ส่งใบไม่ใส่พิกัด/เลื่อนงาน)
+ *  คัดลอกไปตรง ๆ แล้วปุ่มนำทางใบงานคนขับ/หมุดหน้าติดตามชี้กลางทะเล */
+const stopCoords = (d: { lat?: number | null; lng?: number | null }) =>
+  inThailand(d.lat, d.lng) ? { lat: d.lat as number, lng: d.lng as number } : {}
 
 export default function TripGroupingPage() {
   const { user } = useUser()
@@ -517,19 +522,17 @@ export default function TripGroupingPage() {
     try {
       // ด่านวันลา: ทำก่อนด่าน 2 (อ่านสถานะใบ) เสมอ — ตรงนี้ผู้ใช้อาจรอดึงข้อมูล ≤8 วิ + กล่อง confirm ได้นาน
       // ถ้าคั่นอยู่ระหว่างด่าน 2 กับการเขียน จะเปิดช่อง race ที่ด่าน 2 ปิดไว้ (ใบที่เพิ่งถูกยกเลิกถูกฟื้นกลับ)
-      // เก็บลายเซ็นการเลือก + สถิติเส้นทางไว้ก่อน await (GroupingMap เขียน __lastTripStats ใหม่ได้ทุกครั้งที่เปลี่ยนการเลือก)
-      // ยกเลิก = return (finally ปลด isProcessing) · วันของจุดเป็นวันเดียวกันหมดอยู่แล้ว (handleCreateTrip บังคับ)
+      // เก็บลายเซ็นการเลือกไว้ก่อน await · ยกเลิก = return (finally ปลด isProcessing) · วันของจุดเป็นวันเดียวกันหมดอยู่แล้ว (handleCreateTrip บังคับ)
       const gateDriverId = driverId
       const gateDate = selectedDestinations[0]?.requestDate
       const gateSig = selectionSig // ลายเซ็นของ render เดียวกับ selectedDestinations/driverId/vehicleId ที่จะเขียน
       const gateVersion = pageVersionRef.current
       const queueDates = borrowChoice || !continuousEndDate ? [gateDate] : expandQueueDates(gateDate, continuousEndDate)
-      const lastStats = (window as any).__lastTripStats || { distance: 0, duration: 0, fuelCost: 0 }
       // เช็กหลังทุก await ก่อนทำอะไรต่อ: true = หยุด ไม่เขียน — ออกจากหน้าแล้ว (เงียบ) / การเลือกเปลี่ยนระหว่างรอ (บอกผู้ใช้)
       const cancelled = () => {
         if (pageVersionRef.current !== gateVersion) return true
         if (selectionSigRef.current === gateSig) return false
-        toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "เลือกงาน/คนขับ/รถเปลี่ยนระหว่างตรวจวันลา — เลือกใหม่แล้วกดสร้างอีกครั้ง", variant: "destructive" })
+        toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "งานที่เลือก/ลำดับ/คนขับ/รถเปลี่ยนระหว่างบันทึก (ตรวจวันลา/คิดระยะทาง) — ตรวจแล้วกดสร้างอีกครั้ง", variant: "destructive" })
         return true
       }
       // drivers ส่งตรง ๆ: ยังไม่โหลด (null) = ด่านถามแบบตรวจไม่ได้ — `?? []` จะทำให้ผ่านเงียบ
@@ -570,31 +573,51 @@ export default function TripGroupingPage() {
       const selectedDriver = drivers?.find(d => d.id === driverId)
       const now = new Date();
       const tripDateStr = dests[0]?.requestDate || now.toISOString().split('T')[0];
+      // กม./เวลา/ค่าน้ำมัน คิดจากงานชุดที่จะบันทึกจริง ตามลำดับจริง — ตัวคิดกลางเดียวกับหน้าประวัติ/ใบสรุป (planDistance)
+      // ไม่ใช้ตัวเลขบนแผนที่ (อาจเป็นของการเลือกชุดก่อน / ยังคิดไม่เสร็จ / คิดไม่สำเร็จ)
+      // คิดไม่ได้ = null → ไม่สร้าง ให้กดใหม่ (ผู้ใช้เลือก 2026-10-19: ไม่บันทึกเลขผิดแบบเงียบ ๆ) · ไม่มีจุดที่มีพิกัดเลย = 0
+      // freeze ราคาน้ำมัน + อัตราสิ้นเปลืองที่ใช้ตอนสร้างทริป เพื่อให้ต้นทุนย้อนหลังไม่เปลี่ยนเวลาแก้ราคาใน settings
+      const fuelRateUsed = selectedVehicle?.fuelRate || settings?.defaultFuelRate || 10
+      const dieselPriceUsed = settings?.dieselPrice || 32.5
+      const planFields = async (origin: { lat: number; lng: number }, stops: Pick<TripStop, 'lat' | 'lng'>[]) => {
+        const plan = await computeTripPlanDistance(
+          process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference || "",
+          { originLat: origin.lat, originLng: origin.lng, fuelRateUsed, dieselPriceUsed },
+          stops,
+        )
+        if (plan === 'failed') return null
+        if (plan === 'no-coords') return { totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 }
+        return { totalDistanceKm: plan.km, totalEstimatedTimeMinutes: plan.minutes, fuelCost: plan.fuelCost }
+      }
+      const distanceFailed = () => toast({ title: "ยังไม่ได้สร้างเที่ยววิ่ง", description: "คิดระยะทางไม่ได้ (เชื่อม Google Maps ไม่สำเร็จ) — กดสร้างอีกครั้ง", variant: "destructive" })
       if (borrowChoice || (continuousEndDate && continuousEndDate > tripDateStr)) {
         if (dests.length !== selectedDestinations.length) throw new Error('บางใบเปลี่ยนสถานะแล้ว กรุณาเลือกงานใหม่ก่อนจัดคิวต่อเนื่อง')
         const warehousePos = { lat: settings?.warehouseLatitude || 14.0815, lng: settings?.warehouseLongitude || 100.7129 }
+        const stops = dests.map((d, index) => {
+          const req = freshRequests[d.vrDocId]
+          const fresh = req.destinations[d.destIndex]
+          return {
+            order: index + 1, siteId: fresh.siteId || '', siteName: fresh.siteName || fresh.customName || '',
+            ...stopCoords(fresh),
+            cargoDetails: fresh.jobDescription || '', requestedBy: req.requestedBy || '',
+            requestedByPhone: req.requestedByPhone || '', requestedByUserId: req.userId || '',
+            ...(req.createdAt?.toMillis?.() != null ? { requestedAt: req.createdAt.toMillis() } : {}),
+            requestTime: fresh.requestTime || req.requestTime || '08:30', address: fresh.address || '',
+            note: req.note || req.notes || '', dispatcherNote: req.stopNotes?.[`stop_${d.destIndex}`] || '',
+            dispatcherName: req.stopNoteAuthors?.[`stop_${d.destIndex}`] || req.stopNotesUpdatedBy || '',
+          }
+        })
+        // คิวต่อเนื่องหลายวันใช้งานชุดเดียวกันทุกวัน — คิดครั้งเดียว
+        const distance = await planFields(warehousePos, stops)
+        if (cancelled()) return
+        if (!distance) { distanceFailed(); return }
         const trip: QueueTripInput = {
           tripDate: tripDateStr, vehicleId, vehiclePlate: selectedVehicle?.licensePlate || '',
           vehicleType: selectedVehicle?.type, driverId, driverName: selectedDriver?.name || '',
           sourceVRIds: Array.from(new Set(dests.map(d => d.vrId))),
-          totalDistanceKm: lastStats.distance || 0, totalEstimatedTimeMinutes: lastStats.duration || 0,
-          fuelCost: lastStats.fuelCost || 0, dieselPriceUsed: lastStats.dieselPrice || settings?.dieselPrice || 32.5,
-          fuelRateUsed: lastStats.fuelRate || settings?.defaultFuelRate || 10,
+          ...distance, dieselPriceUsed, fuelRateUsed,
           departurePoint: settings?.warehouseName || 'คลังสินค้า LOTUS EME', originLat: warehousePos.lat, originLng: warehousePos.lng,
-          stops: dests.map((d, index) => {
-            const req = freshRequests[d.vrDocId]
-            const fresh = req.destinations[d.destIndex]
-            return {
-              order: index + 1, siteId: fresh.siteId || '', siteName: fresh.siteName || fresh.customName || '',
-              ...(fresh.lat != null ? { lat: fresh.lat } : {}), ...(fresh.lng != null ? { lng: fresh.lng } : {}),
-              cargoDetails: fresh.jobDescription || '', requestedBy: req.requestedBy || '',
-              requestedByPhone: req.requestedByPhone || '', requestedByUserId: req.userId || '',
-              ...(req.createdAt?.toMillis?.() != null ? { requestedAt: req.createdAt.toMillis() } : {}),
-              requestTime: fresh.requestTime || req.requestTime || '08:30', address: fresh.address || '',
-              note: req.note || req.notes || '', dispatcherNote: req.stopNotes?.[`stop_${d.destIndex}`] || '',
-              dispatcherName: req.stopNoteAuthors?.[`stop_${d.destIndex}`] || req.stopNotesUpdatedBy || '',
-            }
-          }),
+          stops,
         }
         const grouped: Record<string, { destinationIndexes: number[]; expectedDestinationFingerprints: string[] }> = {}
         dests.forEach(d => {
@@ -616,6 +639,30 @@ export default function TripGroupingPage() {
         resetAll()
         return
       }
+      const warehousePos = { 
+        lat: settings?.warehouseLatitude || 14.0815, 
+        lng: settings?.warehouseLongitude || 100.7129 
+      }
+      const stops = dests.map((d, index) => ({
+        order: index + 1,
+        siteId: d.siteId || null,
+        siteName: d.siteName || d.customName,
+        ...stopCoords(d),
+        cargoDetails: d.jobDescription || '',
+        requestedBy: d.requestedBy || '',
+        requestedByPhone: d.requestedByPhone || '',
+        requestedByUserId: d.requestedByUserId || '',
+        ...(d.requestedAt != null ? { requestedAt: d.requestedAt } : {}), // ห้ามใส่ undefined ลง Firestore
+        requestTime: d.requestTime || '',
+        address: d.address || '',
+        note: d.note || "",
+        dispatcherNote: d.dispatcherNote || "",
+        dispatcherName: d.dispatcherName || ""
+      }))
+      // คิดก่อนนับเลขทริปของวัน — ไม่ให้ช่วงรอ Google ไปถ่างช่องระหว่างนับเลขกับบันทึก
+      const distance = await planFields(warehousePos, stops)
+      if (cancelled()) return
+      if (!distance) { distanceFailed(); return }
       const tripDateObj = new Date(tripDateStr + 'T00:00:00');
       const d = String(tripDateObj.getDate()).padStart(2, '0');
       const m = String(tripDateObj.getMonth() + 1).padStart(2, '0');
@@ -627,11 +674,6 @@ export default function TripGroupingPage() {
       const sequence = String(snapTrips.size + 1).padStart(3, '0');
       const safety = Math.floor(Math.random() * 10);
       const tripId = `${datePrefix}-${sequence}${safety}`;
-      
-      const warehousePos = { 
-        lat: settings?.warehouseLatitude || 14.0815, 
-        lng: settings?.warehouseLongitude || 100.7129 
-      }
 
       const vrGroups: Record<string, { destinationIndexes: number[]; expectedDestinationFingerprints: string[] }> = {}
       dests.forEach(d => {
@@ -651,33 +693,14 @@ export default function TripGroupingPage() {
         driverName: selectedDriver?.name || "",
         status: "Planned",
         sourceVRIds: Array.from(new Set(dests.map(d => d.vrId))),
-        totalDistanceKm: lastStats.distance || 0,
-        totalEstimatedTimeMinutes: lastStats.duration || 0,
-        fuelCost: lastStats.fuelCost || 0,
-        // freeze ราคาน้ำมัน + อัตราสิ้นเปลืองที่ใช้ตอนสร้างทริป เพื่อให้ต้นทุนย้อนหลังไม่เปลี่ยนเวลาแก้ราคาใน settings
-        dieselPriceUsed: lastStats.dieselPrice || settings?.dieselPrice || 32.5,
-        fuelRateUsed: lastStats.fuelRate || settings?.defaultFuelRate || 10,
+        ...distance,
+        dieselPriceUsed,
+        fuelRateUsed,
         createdAt: serverTimestamp(),
         departurePoint: settings?.warehouseName || "คลังสินค้า LOTUS EME",
         originLat: warehousePos.lat,
         originLng: warehousePos.lng,
-        stops: dests.map((d, index) => ({
-          order: index + 1,
-          siteId: d.siteId || null,
-          siteName: d.siteName || d.customName,
-          lat: d.lat,
-          lng: d.lng,
-          cargoDetails: d.jobDescription || '',
-          requestedBy: d.requestedBy || '',
-          requestedByPhone: d.requestedByPhone || '',
-          requestedByUserId: d.requestedByUserId || '',
-          ...(d.requestedAt != null ? { requestedAt: d.requestedAt } : {}), // ห้ามใส่ undefined ลง Firestore
-          requestTime: d.requestTime || '',
-          address: d.address || '',
-          note: d.note || "",
-          dispatcherNote: d.dispatcherNote || "",
-          dispatcherName: d.dispatcherName || ""
-        }))
+        stops
       }, {
         assignments: Object.entries(vrGroups).map(([requestId, indexes]) => ({ requestId, ...indexes }))
       })
@@ -691,68 +714,6 @@ export default function TripGroupingPage() {
     } finally {
       flight.finish(succeeded)
       setIsProcessing(false)
-    }
-  }
-
-  // คิดระยะทางทั้งทริปใหม่หลังรวมจุดเข้าทริปเดิม (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
-  // กติกาเดียวกับแทรกงานด่วนใน daily-summary — คิดไม่ได้ = ปล่อยตัวเลขเดิม ไม่ทำให้การรวมล้มเหลว
-  const recalcMergedTripDistance = async (trip: any, stops: any[]) => {
-    try {
-      const coordStops = (stops || []).filter(
-        (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
-      )
-      if (coordStops.length === 0) return
-
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference || ""
-      if (!apiKey) return
-      const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
-      await loader.load()
-      const g = (window as any).google
-      const svc = new g.maps.DirectionsService()
-
-      const office = {
-        lat: trip.originLat ?? settings?.warehouseLatitude ?? 14.0815,
-        lng: trip.originLng ?? settings?.warehouseLongitude ?? 100.7129,
-      }
-      // ทริปที่ตั้ง "ไปอย่างเดียว/กลับอย่างเดียว" ไว้ในใบสรุป ต้องไม่เด้งกลับเป็นไป-กลับตอนรวมจุดเข้า
-      const plan = routePlan(
-        tripRouteMode(trip),
-        office,
-        coordStops.map((s: any) => ({ lat: s.lat as number, lng: s.lng as number }))
-      )
-      if (!plan) return
-      const waypoints = plan.waypoints.map((p) => ({
-        location: new g.maps.LatLng(p.lat, p.lng),
-        stopover: true,
-      }))
-
-      const result: any = await new Promise((resolve, reject) => {
-        svc.route(
-          {
-            origin: plan.origin,
-            destination: plan.destination,
-            waypoints,
-            optimizeWaypoints: false, // จุดใหม่ต่อท้าย ไม่จัดลำดับใหม่
-            travelMode: g.maps.TravelMode.DRIVING,
-            region: "TH",
-          },
-          (res: any, status: any) => (status === "OK" && res ? resolve(res) : reject(status))
-        )
-      })
-
-      const { km, minutes } = sumRouteLegs(result.routes[0].legs)
-      if (!(km > 0)) return
-
-      const fuelRate = trip.fuelRateUsed || settings?.defaultFuelRate || 10
-      const diesel = trip.dieselPriceUsed || settings?.dieselPrice || 32.5
-      await updateTripWithQueueGuard(db, trip.id, {
-        totalDistanceKm: km,
-        fuelCost: (km / fuelRate) * diesel,
-        totalEstimatedTimeMinutes: minutes,
-        updatedAt: serverTimestamp(),
-      })
-    } catch (e) {
-      console.error("[recalcMergedTripDistance]", e)
     }
   }
 
@@ -836,8 +797,7 @@ export default function TripGroupingPage() {
         order: lastOrder + index + 1,
         siteId: d.siteId || null,
         siteName: d.siteName || d.customName,
-        lat: d.lat,
-        lng: d.lng,
+        ...stopCoords(d),
         cargoDetails: d.jobDescription || '',
         requestedBy: d.requestedBy || '',
         requestedByPhone: d.requestedByPhone || '',
@@ -862,9 +822,25 @@ export default function TripGroupingPage() {
         group.expectedDestinationFingerprints.push(d.sourceFingerprint)
       })
 
+      // คิด กม./เวลา/ค่าน้ำมันใหม่ก่อนรวม แล้วเขียนพร้อมจุดในครั้งเดียว — ตัวคิดกลางเดียวกับหน้าประวัติ/ใบสรุป (planDistance)
+      // คิดไม่ได้ = ยังไม่รวม ให้กดใหม่ (เดิมรวมสำเร็จแล้วคิดตามหลัง ล้มแบบเงียบ เลข กม. ค้างค่าก่อนรวม)
+      // ไม่มีจุดที่มีพิกัดเลย = คงเลขเดิม (กติกาเดียวกับหน้าประวัติ) · มีคนแก้จุดของทริประหว่างรอ = ด่าน expected.stops ไม่ให้เขียน
+      const plan = await computeTripPlanDistance(
+        process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || settings?.googleMapsApiKeyReference || "",
+        latestTrip,
+        mergedStops,
+      )
+      if (cancelled()) return
+      if (plan === 'failed') {
+        toast({ title: "ยังไม่ได้รวม Trip", description: "คิดระยะทางไม่ได้ (เชื่อม Google Maps ไม่สำเร็จ) — กดรวมอีกครั้ง", variant: "destructive" })
+        return
+      }
+      const distancePatch = plan === 'no-coords' ? {} : { totalDistanceKm: plan.km, totalEstimatedTimeMinutes: plan.minutes, fuelCost: plan.fuelCost }
+
       await updateTripWithQueueGuard(db, existingTrip.id, {
         stops: mergedStops,
         sourceVRIds,
+        ...distancePatch,
         updatedAt: serverTimestamp()
       }, {
         assignments: Object.entries(vrGroups).map(([requestId, indexes]) => ({ requestId, ...indexes })),
@@ -876,7 +852,6 @@ export default function TripGroupingPage() {
           sourceVRIds: latestTrip.sourceVRIds || []
         }
       })
-      void recalcMergedTripDistance(latestTrip, mergedStops) // เลข กม. ต้องขยับตามจุดที่รวมเข้า
 
       toast({ title: "สำเร็จ", description: `รวมจุดใหม่เข้า Trip ${latestTrip.tripId} ของ ${latestTrip.driverName} แล้ว` })
       resetAll()
@@ -912,9 +887,6 @@ export default function TripGroupingPage() {
       setManualOrder([]);
       setSelectedIds(new Set());
       setOptimizedOrder([]);
-      if (typeof window !== 'undefined') {
-        (window as any).__lastTripStats = { distance: 0, fuelCost: 0 };
-      }
       toast({ title: "โหมดจัดลำดับเอง", description: "กรุณาเลือกจุดหมายบนแผนที่ตามลำดับที่ต้องการ" });
     }
     setMode(newMode);

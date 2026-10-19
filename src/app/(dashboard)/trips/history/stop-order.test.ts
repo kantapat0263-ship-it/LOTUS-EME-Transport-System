@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { validCoordinates } from '@/lib/tripCoordinateSync'
+import { routeStopsKey } from '@/lib/planDistance'
+import { calculateFuelCost } from '@/lib/calculations'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function handler(name: string) {
@@ -68,20 +70,96 @@ it('เปิด history editor เก็บ index ต้นฉบับแล�
   form.stops[0].cargoDetails = 'แก้'
   expect(original.stops[0].cargoDetails).toBe('A')
 })
+// รันฟังก์ชันบันทึกตัวจริงของหน้า history ด้วย dependency ปลอม (Firestore/Maps/toast)
+function saveEdit(original: any, form: any, opts: { plan?: unknown; vehicles?: any[]; trips?: any[]; onPlan?: () => void } = {}) {
+  const deps = {
+    update: vi.fn().mockResolvedValue({}), log: vi.fn(), close: vi.fn(), toast: vi.fn(),
+    plan: vi.fn(async (..._args: unknown[]) => { opts.onPlan?.(); return opts.plan ?? { km: 120, minutes: 90, fuelCost: 360 } }),
+    version: { current: 1 },
+  }
+  const work = new Function('editingTrip', 'user', 'isManagedTrip', 'editFormData', 'toast', 'saveEditBusyRef', 'confirmLeaveBeforeAssign', 'checkLeave', 'drivers', 'vehicles', 'editVersionRef', 'editOpenRef', 'window', 'updateTripWithQueueGuard', 'db', 'serverTimestamp', 'collection', 'addDoc', 'setIsEditOpen', 'routeStopsKey', 'computeTripPlanDistance', 'companySettings', 'calculateFuelCost', 'trips', `${handler('handleSaveEdit')}return work`)(
+    original, { email: 'test@example.invalid' }, () => false, form, deps.toast, { current: false }, vi.fn(), vi.fn(), [{ id: 'D1', name: 'คนขับ' }], opts.vehicles ?? [{ id: 'V1', licensePlate: 'ทะเบียน' }], deps.version, { current: true }, { confirm: () => true }, deps.update, {}, () => 'test-time', vi.fn(), deps.log, deps.close,
+    routeStopsKey, deps.plan, { googleMapsApiKeyReference: 'key' }, calculateFuelCost, opts.trips,
+  )
+  return { work, ...deps }
+}
 it('บันทึก history ส่ง binding แยกจาก stops ที่ renumber แล้วโดยไม่เก็บ binding ในฐาน', async () => {
   const original = trip()
   const added = { siteId: 'A', siteName: 'A', order: 0, cargoDetails: 'เพิ่มใหม่' }
   const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1], added], originalStopIndexes: [1, null], note: 'ลบ A เพิ่มใหม่' }
-  const update = vi.fn().mockResolvedValue({})
-  const log = vi.fn()
-  const close = vi.fn()
-  const work = new Function('editingTrip', 'user', 'isManagedTrip', 'editFormData', 'toast', 'saveEditBusyRef', 'confirmLeaveBeforeAssign', 'checkLeave', 'drivers', 'vehicles', 'editVersionRef', 'editOpenRef', 'window', 'updateTripWithQueueGuard', 'db', 'serverTimestamp', 'collection', 'addDoc', 'setIsEditOpen', `${handler('handleSaveEdit')}return work`)(
-    original, { email: 'test@example.invalid' }, () => false, form, vi.fn(), { current: false }, vi.fn(), vi.fn(), [{ id: 'D1', name: 'คนขับ' }], [{ id: 'V1', licensePlate: 'ทะเบียน' }], { current: 1 }, { current: true }, { confirm: () => true }, update, {}, () => 'test-time', vi.fn(), log, close,
-  )
+  const { work, update, log, close } = saveEdit(original, form)
   await work()
   expect(update.mock.calls[0][4]).toEqual({ expectedStops: original.stops, sourceIndexes: [1, null] })
   expect(update.mock.calls[0][2].stops.map((s: any) => s.order)).toEqual([0, 1])
   expect(update.mock.calls[0][2].originalStopIndexes).toBeUndefined()
   expect(log).toHaveBeenCalledOnce()
   expect(close).toHaveBeenCalledWith(false)
+})
+it('จุดส่งของเปลี่ยน = คิดระยะใหม่ก่อน แล้วบันทึก กม./เวลา/ค่าน้ำมันพร้อมจุดในครั้งเดียว + ลงประวัติการแก้', async () => {
+  const original = { ...trip(), totalDistanceKm: 50 }
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1]], originalStopIndexes: [1], note: 'ลบ A' }
+  const { work, update, log, plan } = saveEdit(original, form)
+  await work()
+  expect(plan).toHaveBeenCalledWith('key', original, form.stops, undefined)
+  expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 120, totalEstimatedTimeMinutes: 90, fuelCost: 360 })
+  expect(log.mock.calls[0][1].changes.distance).toEqual({ from: 50, to: 120 })
+})
+it('คิดระยะใหม่ไม่ได้ = ไม่บันทึกอะไรเลย ให้ลองใหม่ (ผู้ใช้เลือก)', async () => {
+  const original = trip()
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1]], originalStopIndexes: [1], note: 'ลบ A' }
+  const { work, update, log, close, toast } = saveEdit(original, form, { plan: 'failed' })
+  await work()
+  expect(update).not.toHaveBeenCalled()
+  expect(log).not.toHaveBeenCalled()
+  expect(close).not.toHaveBeenCalled()
+  expect(toast.mock.calls[0][0].title).toBe('ยังไม่ได้บันทึก')
+})
+it('จุดไม่เปลี่ยน (แก้รายละเอียด) = ไม่คิดระยะใหม่ · เปลี่ยนรถ = ค่าน้ำมันตามอัตรารถคันใหม่', async () => {
+  const original = { ...trip(), totalDistanceKm: 100, fuelRateUsed: 10, dieselPriceUsed: 30 }
+  const form = { driverId: 'D1', vehicleId: 'V2', stops: original.stops.map((s: any) => ({ ...s, cargoDetails: 'แก้' })), originalStopIndexes: [0, 1], note: 'เปลี่ยนรถ' }
+  const { work, update, plan } = saveEdit(original, form, { vehicles: [{ id: 'V2', licensePlate: 'ใหม่', fuelRate: 5 }] })
+  await work()
+  expect(plan).not.toHaveBeenCalled()
+  expect(update.mock.calls[0][2]).toMatchObject({ fuelRateUsed: 5, fuelCost: 600 })
+  expect(update.mock.calls[0][2].totalDistanceKm).toBeUndefined()
+})
+it('คิดระยะได้ผล "ไม่มีพิกัด" = บันทึกจุดได้ กม. คงเดิม ไม่ลงประวัติระยะ', async () => {
+  const original = { ...trip(), totalDistanceKm: 50 }
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1]], originalStopIndexes: [1], note: 'ลบ A' }
+  const { work, update, log } = saveEdit(original, form, { plan: 'no-coords' })
+  await work()
+  expect(update.mock.calls[0][2].totalDistanceKm).toBeUndefined()
+  expect(log.mock.calls[0][1].changes.distance).toBeUndefined()
+})
+it('ลบจุดจนไม่เหลือ = ระยะ/เวลา/ค่าน้ำมัน 0 โดยไม่ต้องเรียกแผนที่', async () => {
+  const original = { ...trip(), totalDistanceKm: 50 }
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [], originalStopIndexes: [], note: 'ลบหมด' }
+  const { work, update, plan } = saveEdit(original, form)
+  await work()
+  expect(plan).not.toHaveBeenCalled()
+  expect(update.mock.calls[0][2]).toMatchObject({ totalDistanceKm: 0, totalEstimatedTimeMinutes: 0, fuelCost: 0 })
+})
+it('ฟอร์มเปลี่ยนระหว่างคิดระยะ = ไม่เขียนอะไร (ผลคิดอาจไม่ตรงกับฟอร์มใหม่)', async () => {
+  const original = trip()
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1]], originalStopIndexes: [1], note: 'ลบ A' }
+  const harness: any = {}
+  Object.assign(harness, saveEdit(original, form, { onPlan: () => { harness.version.current++ } }))
+  await harness.work()
+  expect(harness.update).not.toHaveBeenCalled()
+})
+it('เปลี่ยนรถพร้อมแก้จุด = คิดระยะด้วยอัตราน้ำมันรถคันใหม่ + บันทึก fuelRateUsed', async () => {
+  const original = { ...trip(), fuelRateUsed: 10 }
+  const form = { driverId: 'D1', vehicleId: 'V2', stops: [original.stops[1]], originalStopIndexes: [1], note: 'เปลี่ยนรถ+ลบ A' }
+  const { work, update, plan } = saveEdit(original, form, { vehicles: [{ id: 'V2', licensePlate: 'ใหม่', fuelRate: 5 }] })
+  await work()
+  expect(plan.mock.calls[0][3]).toBe(5)
+  expect(update.mock.calls[0][2]).toMatchObject({ fuelRateUsed: 5, totalDistanceKm: 120, fuelCost: 360 })
+})
+it('คิดระยะด้วยข้อมูลทริปล่าสุด (เช่นรูปแบบเส้นทางที่แท็บอื่นเพิ่งเปลี่ยน) ไม่ใช่ตอนเปิดหน้าต่าง', async () => {
+  const original = trip()
+  const live = { ...original, routeMode: 'outbound' }
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [original.stops[1]], originalStopIndexes: [1], note: 'ลบ A' }
+  const { work, plan } = saveEdit(original, form, { trips: [live] })
+  await work()
+  expect(plan.mock.calls[0][1]).toBe(live)
 })

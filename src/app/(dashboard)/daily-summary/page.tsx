@@ -55,11 +55,11 @@ import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
 import { cn } from "@/lib/utils"
 import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
-import { ROUTE_MODES, routePlan, sumRouteLegs, tripRouteMode, type RouteMode } from "@/lib/routeMode"
+import { ROUTE_MODES, tripRouteMode, type RouteMode } from "@/lib/routeMode"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
+import { computeTripPlanDistance } from "@/lib/planDistance"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
-import { Loader } from "@googlemaps/js-api-loader"
 import { QueuePanel } from "@/components/continuous-queue/QueuePanel"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueueGuard, assertTripStopsUnchanged, type TripStopEdit } from "@/lib/tripQueueGuard"
@@ -729,69 +729,10 @@ export default function DailySummaryPage() {
   // คิดระยะทางทั้งทริปใหม่จาก stops ที่มีพิกัด (คลัง → ทุกจุด → กลับคลัง) แล้วบันทึก totalDistanceKm + fuelCost
   // ใช้ตอนแทรกงานด่วน — ไม่งั้นเลข กม. ในใบสรุป/บอร์ดนักขับจะค้างที่เส้นทางเดิม
   // จุดที่ไม่มีพิกัด (พิมพ์ชื่อเอง) คิดไม่ได้ → ปล่อยตัวเลขเดิมไว้ ไม่ทำให้แทรกงานล้มเหลว
-  // คิด กม./ค่าน้ำมันตามแผน (Google Directions) ของทริป — ไม่เขียนอะไรลงฐาน
+  // คิด กม./ค่าน้ำมันตามแผน (Google Directions) ของทริป — ไม่เขียนอะไรลงฐาน · ตัวกลางเดียวกับหน้าประวัติ (lib/planDistance)
   // "no-coords" = ไม่มีจุดที่มีพิกัด (ไม่มีอะไรให้คิด) · "failed" = คิดไม่ได้ (แผนที่ไม่พร้อม/เน็ต/Directions ล้ม)
-  const computePlanDistance = async (
-    tripDoc: Trip,
-    stops: TripStop[]
-  ): Promise<{ km: number; fuelCost: number; minutes: number } | "no-coords" | "failed"> => {
-    try {
-      const coordStops = (stops || []).filter(
-        (s: any) => typeof s.lat === "number" && typeof s.lng === "number"
-      )
-      if (coordStops.length === 0) return "no-coords"
-
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference || ""
-      if (!apiKey) {
-        console.error("[computePlanDistance] ไม่พบคีย์ Google Maps (env/ตั้งค่าระบบ)")
-        return "failed"
-      }
-      const loader = new Loader({ apiKey, version: "weekly", libraries: ["places", "geometry"] })
-      await loader.load()
-      const g = (window as any).google
-      const svc = new g.maps.DirectionsService()
-
-      const office = {
-        lat: (tripDoc as any).originLat ?? 14.0815,
-        lng: (tripDoc as any).originLng ?? 100.7129,
-      }
-      // รูปแบบเส้นทาง: ไป-กลับ (ปกติ) / ไปอย่างเดียว / กลับอย่างเดียว — ดู src/lib/routeMode.ts
-      const plan = routePlan(
-        tripRouteMode(tripDoc),
-        office,
-        coordStops.map((s: any) => ({ lat: s.lat as number, lng: s.lng as number }))
-      )
-      if (!plan) return "no-coords"
-      const waypoints = plan.waypoints.map((p) => ({
-        location: new g.maps.LatLng(p.lat, p.lng),
-        stopover: true,
-      }))
-
-      const result: any = await new Promise((resolve, reject) => {
-        svc.route(
-          {
-            origin: plan.origin,
-            destination: plan.destination,
-            waypoints,
-            optimizeWaypoints: false, // งานแทรกต่อท้าย ไม่จัดลำดับใหม่
-            travelMode: g.maps.TravelMode.DRIVING,
-            region: "TH",
-          },
-          (res: any, status: any) => (status === "OK" && res ? resolve(res) : reject(status))
-        )
-      })
-
-      const { km, minutes } = sumRouteLegs(result.routes[0].legs)
-      if (!(km > 0)) return "failed"
-
-      const fuelRate = (tripDoc as any).fuelRateUsed || 10
-      const diesel = (tripDoc as any).dieselPriceUsed || 32.5
-      return { km, fuelCost: (km / fuelRate) * diesel, minutes }
-    } catch (e) {
-      console.error("[computePlanDistance]", e)
-      return "failed"
-    }
-  }
+  const computePlanDistance = (tripDoc: Trip, stops: TripStop[]) =>
+    computeTripPlanDistance(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || companySettings?.googleMapsApiKeyReference || "", tripDoc, stops)
 
   // รุ่นการคิดระยะต่อทริป — ผลที่ตอบช้ากว่ารุ่นล่าสุดของทริปเดียวกันทิ้ง ไม่เขียนทับ
   // (เช่น แทรก/ลบงานระหว่างเปลี่ยนรูปแบบเส้นทาง → ผลของคำสั่งที่เริ่มทีหลังเท่านั้นที่ได้เขียน)
