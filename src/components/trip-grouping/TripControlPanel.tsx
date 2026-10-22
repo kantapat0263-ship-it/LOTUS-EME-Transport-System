@@ -60,7 +60,7 @@ export function TripControlPanel({
   const orderedDrivers = React.useMemo(() => regularDriversFirst(drivers), [drivers])
   const orderedVehicles = React.useMemo(() => sortVehiclesByType(vehicles), [vehicles])
   return (
-    <Card className="fixed bottom-4 left-4 right-4 lg:left-[17rem] lg:right-8 z-30 shadow-xl border-accent/20 bg-card/95 backdrop-blur-md">
+    <Card className="shrink-0 border-accent/20 bg-card">
       <CardContent className="p-4">
         <div className="flex flex-col xl:flex-row items-stretch xl:items-center gap-4">
           {/* Summary */}
@@ -75,7 +75,7 @@ export function TripControlPanel({
           </div>
 
           {/* Controls */}
-          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-accent flex items-center gap-1 uppercase">
                 <Truck className="h-3 w-3" /> เลือกรถ
@@ -120,9 +120,11 @@ export function TripControlPanel({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1 md:col-span-2">
-              <label htmlFor="continuous-queue-end" className="text-xs text-muted-foreground">คิวต่อเนื่องถึงวันที่ <span className="text-[10px]">เว้นว่างหากทำวันเดียว</span></label>
-              <input id="continuous-queue-end" type="date" min={startDate} value={endDate} onChange={e => setEndDate(e.target.value)} disabled={isProcessing || hasQueueConflict} className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm" />
+            <div className="space-y-1">
+              <label htmlFor="continuous-queue-end" className="text-[10px] font-bold text-muted-foreground flex items-center gap-1">คิวต่อเนื่องถึงวันที่ <span className="font-normal">(ว่าง = วันเดียว)</span></label>
+              <input id="continuous-queue-end" type="date" min={startDate} value={endDate} onChange={e => setEndDate(e.target.value)} disabled={isProcessing || hasQueueConflict} className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm" />
+            </div>
+            <div className="space-y-1 md:col-span-3 empty:hidden">
               {hasQueueConflict && <p className="text-xs text-amber-300">คนขับหรือรถมีคิวต่อเนื่องอยู่ ปรับเฉพาะวันที่เลือกได้หลังตกลงกับไซต์เดิม</p>}
               {queueStatus !== 'ready' && <p className="text-xs text-amber-300">{queueStatus === 'loading' ? 'กำลังตรวจคิวต่อเนื่อง' : 'ตรวจคิวต่อเนื่องไม่ได้ ลองโหลดข้อมูลอีกครั้ง'}</p>}
               {queueStatus === 'error' && <Button variant="outline" size="sm" type="button" onClick={onRefreshQueues}>ตรวจคิวอีกครั้ง</Button>}

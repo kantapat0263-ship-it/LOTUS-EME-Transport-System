@@ -905,7 +905,7 @@ export default function TripGroupingPage() {
         <p className="text-sm text-muted-foreground">รวมจุดส่งจากใบขอใช้รถที่ค้างอยู่เป็นเที่ยววิ่งเดียว</p>
       </div>
 
-      {/* แถบสถานะตรวจวันลา — อยู่เหนือพื้นที่จัดคิว (ไม่วางหน้า panel เพราะ panel เป็น fixed ทับด้านล่าง จะบังแถบ) */}
+      {/* แถบสถานะตรวจวันลา — อยู่เหนือพื้นที่จัดคิว */}
       <LeaveCheckBanner status={leaveStatus} lastOkAt={leaveLastOkAt} />
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-hidden min-h-0">
@@ -978,7 +978,7 @@ export default function TripGroupingPage() {
                 </select>
               </div>
               {filteredDestinations.length > 0 ? (
-                <div className="space-y-3 pb-24">
+                <div className="space-y-3 pb-2">
                   {selectedDestinations.map((dest, idx) => (
                     <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
