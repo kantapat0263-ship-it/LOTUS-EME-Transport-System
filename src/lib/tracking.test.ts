@@ -36,6 +36,7 @@ import {
   handoverTimeError,
   sortTrailByTime,
   insertTrailPoint,
+  positionSyncKey,
   type TrailPoint,
 } from './tracking'
 
@@ -1079,5 +1080,77 @@ describe('tracking: จุด GPS ย้อนเวลา (จุดที่�
     const feed = [road(0), road(20), road(1), road(21), road(1), road(2), road(22), road(22), road(3)]
     for (const p of feed) trail = insertTrailPoint(trail, p, 2880) ?? trail
     expect(trail.map((p) => p.t)).toEqual([0, 1, 2, 3, 20, 21, 22].map(min))
+  })
+})
+
+describe('tracking: positionSyncKey — ข้ามรอบ sync ที่ไม่มีอะไรเปลี่ยน (ประหยัดโควตา Vercel)', () => {
+  const M = 60000
+  const pos = { deviceId: 'D1', lat: 13.75, lng: 100.55, speed: 0, direction: 90, time: 10 * M, alarmState: 0, mileage: 1000 }
+  const job = { stops: [{ order: 1, siteName: 'A', lat: 13.75, lng: 100.55 }], origin: { lat: 13.7, lng: 100.5 }, gpsEndAt: null }
+  const key = (o: { date?: string; plate?: string; pos?: object; job?: object | null } = {}) =>
+    positionSyncKey(o.date ?? '2026-10-28', o.plate ?? 'กข-1', o.pos ?? pos, 'job' in o ? o.job : job)
+
+  it('ข้อมูลเดิมทุกตัว = รหัสเดิม (ข้ามได้)', () => {
+    expect(key()).toBe(key({ pos: { ...pos }, job: JSON.parse(JSON.stringify(job)) }))
+  })
+
+  it('อะไรเปลี่ยนแม้ตัวเดียว = รหัสใหม่ (ต้องคำนวณใหม่)', () => {
+    const base = key()
+    const changed = [
+      key({ date: '2026-10-29' }), // ข้ามวันตอนตี 4 → รอบแรกของวันใหม่ทำเต็ม (จอดค้างคืน)
+      key({ plate: 'กข-2' }), // ย้ายเครื่อง GPS ไปคันอื่น
+      ...(['lat', 'lng', 'speed', 'direction', 'time', 'alarmState', 'mileage'] as const).map((f) =>
+        key({ pos: { ...pos, [f]: (pos[f] as number) + 1 } })
+      ),
+      key({ job: null }), // ทริปถูกยกเลิก
+      key({ job: { ...job, gpsEndAt: 30 * M } }), // กด "จบการใช้รถ"
+      key({ job: { ...job, origin: { lat: 13.71, lng: 100.5 } } }), // แก้พิกัดออฟฟิศ
+      key({ job: { ...job, stops: [...job.stops, { order: 2, siteName: 'B', lat: 13.8, lng: 100.6 }] } }), // เพิ่มจุดงาน
+      key({ job: { ...job, stops: [{ ...job.stops[0], lat: 13.76 }] } }), // แก้พิกัดจุดงาน
+      key({ job: { ...job, stops: [{ ...job.stops[0], siteName: 'A2' }] } }), // แก้ชื่อไซต์ (เขียนลงสรุป)
+      key({ job: { ...job, stops: [{ ...job.stops[0], order: 2 }] } }), // สลับลำดับจุด
+    ]
+    for (const k of changed) expect(k).not.toBe(base)
+  })
+
+  it('ไม่มีงาน: null กับ undefined ถือว่าเหมือนกัน', () => {
+    expect(key({ job: null })).toBe(key({ job: undefined }))
+  })
+
+  it('จอดนิ่ง 90 นาทีที่ GPS ส่งจุดเดิมซ้ำทุกนาที → ข้ามได้ทุกรอบ และเวลาจอดยังได้ 90 นาทีเท่าเดิม', () => {
+    const office = { lat: 13.7, lng: 100.5 }
+    const site = { order: 1, siteName: 'A', lat: 13.75, lng: 100.55 }
+    const at = (t: number, ll = site) => ({ deviceId: 'D1', lat: ll.lat, lng: ll.lng, speed: 0, direction: 0, time: t * M, alarmState: 0, mileage: 0 })
+    // ออกออฟฟิศ 0' → ถึงไซต์ 20' → ดับเครื่อง (GPS ส่งจุด 20' ซ้ำถึง 109') → ติดเครื่อง 110' → ออกไป 115'
+    const feed = [at(0, { ...site, ...office }), at(10, { ...site, lat: 13.72, lng: 100.52 }), at(20)]
+    for (let m = 21; m < 110; m++) feed.push(at(20)) // SinoTrack คืนจุดเดิม
+    feed.push(at(110), at(115, { ...site, lat: 13.78, lng: 100.58 }))
+
+    const jobSum = { stops: [site], origin: office, gpsEndAt: null }
+    // แบบเดิม: คำนวณสรุปทุกรอบ · แบบใหม่: คำนวณเฉพาะรอบที่รหัสเปลี่ยน
+    let trailOld: TrailPoint[] = []
+    let trailNew: TrailPoint[] = []
+    let sumOld: ReturnType<typeof computeDailySummary> | null = null
+    let sumNew: ReturnType<typeof computeDailySummary> | null = null
+    let prevKey: string | null = null
+    let computed = 0
+    for (const p of feed) {
+      const pt = { lat: p.lat, lng: p.lng, t: p.time, sp: p.speed }
+      trailOld = insertTrailPoint(trailOld, pt, 2880) ?? trailOld
+      sumOld = computeDailySummary(trailOld, jobSum.stops, jobSum.origin)
+
+      const k = positionSyncKey('2026-10-28', 'กข-1', p, jobSum)
+      if (k === prevKey) continue
+      trailNew = insertTrailPoint(trailNew, pt, 2880) ?? trailNew
+      sumNew = computeDailySummary(trailNew, jobSum.stops, jobSum.origin)
+      prevKey = k
+      computed++
+    }
+    expect(computed).toBe(5) // 94 รอบ คำนวณจริงแค่ 5 รอบ
+    expect(trailNew).toEqual(trailOld)
+    expect(sumNew).toEqual(sumOld)
+    expect(sumNew!.stops[0].arrivedAt).toBe(20 * M)
+    expect(sumNew!.stops[0].departedAt).toBe(110 * M)
+    expect(sumNew!.stops[0].dwellMin).toBe(90)
   })
 })

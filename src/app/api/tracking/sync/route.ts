@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb, verifyStaffToken } from '@/firebase/admin'
 import { sinotrackLogin, fetchLastPositions, SINOTRACK_SERVER, type VehiclePosition } from '@/lib/sinotrack'
-import { trackingDateKey, computeDailySummary, cutTrailAt, insertTrailPoint, OFFICE_LOCATION } from '@/lib/tracking'
+import { trackingDateKey, computeDailySummary, cutTrailAt, insertTrailPoint, positionSyncKey, OFFICE_LOCATION } from '@/lib/tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,6 +14,9 @@ const MAX_TRAIL_POINTS = 2880
 
 /** กันยิงถี่เกิน (หลายคนเปิดหน้าติดตามพร้อมกัน) — ถ้าเพิ่ง sync ไปไม่ถึงเวลานี้ ให้ข้าม */
 const MIN_SYNC_INTERVAL_MS = 45_000
+
+/** คันที่ข้อมูลไม่เปลี่ยนยังทำเต็มอย่างน้อยทุกช่วงนี้ — ซ่อมเองถ้ามีคนแก้/ลบ doc ใน Console หรือ sync ชนกันแล้วเขียนทับผิด */
+const FULL_SYNC_EVERY_MS = 15 * 60_000
 
 /**
  * ดึงตำแหน่งรถล่าสุดจาก SinoTrack → เขียนลง Firestore
@@ -64,9 +68,12 @@ export async function GET(req: NextRequest) {
 
   // --- กันยิงถี่เกิน: ถ้าเพิ่ง sync ไป <45 วิ ให้ข้าม (จองคิวทันทีกันชนกัน) ---
   const metaRef = db.collection('trackingMeta').doc('sync')
+  // รหัสสถานะต่อคันของรอบก่อน (deviceId → hash) — อ่านพลาด/ไม่มี = ทำเต็มทุกคันเหมือนเดิม
+  let prevKeys: Record<string, string> = {}
   try {
     const metaSnap = await metaRef.get()
     const lastRunAt = metaSnap.exists ? (metaSnap.data()?.lastRunAt as number | undefined) : undefined
+    prevKeys = (metaSnap.exists && metaSnap.data()?.syncKeys) || {}
     if (lastRunAt && Date.now() - lastRunAt < MIN_SYNC_INTERVAL_MS) {
       return NextResponse.json({ ok: true, skipped: true, reason: 'recently-synced', lastRunAt })
     }
@@ -167,10 +174,22 @@ export async function GET(req: NextRequest) {
   const nowMs = Date.now()
   const date = dateKey
   let written = 0
+  let unchanged = 0
+  const nextKeys: Record<string, string> = { ...prevKeys }
+  // deploy ใหม่ (แก้วิธีคิดสรุป) / ครบรอบทำเต็ม → รหัสเปลี่ยนทุกคัน ทำเต็ม 1 รอบ
+  const keySalt = `${process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev'}|${Math.floor(nowMs / FULL_SYNC_EVERY_MS)}`
 
   // 3) เขียนตำแหน่งล่าสุด + ต่อ trail
   for (const p of positions) {
     const plate = deviceToPlate[p.deviceId] ?? ''
+    const job = plateToJob[plate]
+    // ข้อมูลเข้าเหมือนรอบก่อนทุกตัว (รถจอดนิ่ง GPS ส่งจุดเดิม) = ผลที่จะเขียนเหมือนเดิม → ข้ามทั้งคัน
+    const key = createHash('sha1').update(`${keySalt}|${positionSyncKey(date, plate, p, job)}`).digest('base64')
+    if (nextKeys[p.deviceId] === key) {
+      unchanged++
+      continue
+    }
+    delete nextKeys[p.deviceId] // เขียนไม่ครบ = ไม่เก็บรหัส → รอบหน้าทำใหม่
     try {
       await db
         .collection('vehiclePositions')
@@ -207,7 +226,6 @@ export async function GET(req: NextRequest) {
       }
 
       // สรุปรายวัน (เวลาจอด/เดินทาง/เข้า-ออกออฟฟิศ) — คำนวณจาก trail + งานของคันนั้น
-      const job = plateToJob[plate]
       if (job) {
         const sum = computeDailySummary(cutTrailAt(effPoints, job.gpsEndAt), job.stops, job.origin)
         await db
@@ -232,14 +250,25 @@ export async function GET(req: NextRequest) {
           )
       }
       written++
+      nextKeys[p.deviceId] = key
     } catch (e: any) {
       console.error('[tracking-sync] write failed for', p.deviceId, e?.message)
+    }
+  }
+
+  if (written > 0 || Object.keys(nextKeys).length !== Object.keys(prevKeys).length) {
+    try {
+      // mergeFields = แทนทั้ง map (คันที่เขียนพลาดต้องหายไป ไม่ใช่ค้างรหัสเก่า)
+      await metaRef.set({ syncKeys: nextKeys }, { mergeFields: ['syncKeys'] })
+    } catch {
+      /* เก็บรหัสไม่ได้ → รอบหน้าทำเต็มเหมือนเดิม */
     }
   }
 
   return NextResponse.json({
     ok: true,
     synced: written,
+    unchanged,
     devices: deviceIds.length,
     positions: positions.length,
     accounts: accounts.length,

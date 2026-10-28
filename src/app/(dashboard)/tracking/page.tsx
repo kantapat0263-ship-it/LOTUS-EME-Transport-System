@@ -166,7 +166,7 @@ export default function TrackingPage() {
   const [selectedDate, setSelectedDate] = React.useState<string>(() => trackingDateKey())
   const isToday = selectedDate === todayKey
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
-  const [syncInfo, setSyncInfo] = React.useState<{ ok: boolean; error?: string; detail?: string; synced?: number; skipped?: boolean } | null>(null)
+  const [syncInfo, setSyncInfo] = React.useState<{ ok: boolean; error?: string; detail?: string; synced?: number; unchanged?: number; skipped?: boolean } | null>(null)
   const { toast } = useToast()
   const shownArrivalsRef = React.useRef<Set<string>>(new Set())
   const shownPowerCutRef = React.useRef<Set<string>>(new Set())
@@ -605,7 +605,7 @@ export default function TrackingPage() {
     if (positions.length > 0) return null // อ่านตำแหน่งได้แล้ว
     if (!syncInfo) return null // กำลัง sync ครั้งแรก
     if (syncInfo.ok) {
-      if ((syncInfo.synced ?? 0) > 0 || syncInfo.skipped)
+      if ((syncInfo.synced ?? 0) > 0 || (syncInfo.unchanged ?? 0) > 0 || syncInfo.skipped)
         return {
           tone: "warn",
           msg: "เซิร์ฟเวอร์ดึงตำแหน่งได้แล้ว แต่หน้าเว็บอ่านไม่ได้ — ต้อง Publish firestore.rules (vehiclePositions / vehiclePositionTrails ให้ allow read) ที่ Firebase Console",
