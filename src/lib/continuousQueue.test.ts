@@ -20,7 +20,9 @@ it('แจ้งวันยืมเป็นไซต์ B เฉพาะว�
   expect(queueNotice(booking, '2026-10-05')).toMatchObject({ startDate: '2026-10-03', endDate: '2026-10-10', effectiveSiteName: 'ไซต์ B', borrowedDriver: true, borrowedVehicle: false })
   expect(queueNotice(booking, '2026-10-06')).toMatchObject({ effectiveSiteName: 'ไซต์ A', borrowedDriver: false, borrowedVehicle: false })
   expect(queueNotice(booking, '2026-10-11')).toBeNull()
-  expect(queueNotice({ ...booking, overrides: { '2026-10-05': { ...booking.overrides['2026-10-05'], state: 'returned' } } }, '2026-10-05')).toMatchObject({ effectiveSiteName: 'ไซต์ A', borrowedDriver: false })
+  expect(queueNotice({ ...booking, overrides: { '2026-10-05': { ...booking.overrides['2026-10-05'], state: 'returned' } } }, '2026-10-05')).toMatchObject({ effectiveSiteName: 'ไซต์ A', borrowedDriver: false, released: false })
+  // ปลดล็อค = งดไซต์เดิมวันนั้น ไม่ใช่ยืมไปไซต์อื่น
+  expect(queueNotice({ ...booking, overrides: { '2026-10-05': { ...booking.overrides['2026-10-05'], state: 'released', targetTripId: '', targetSiteName: '', borrowVehicle: true } } }, '2026-10-05')).toMatchObject({ effectiveSiteName: 'ไซต์ A', borrowedDriver: false, borrowedVehicle: false, released: true })
 })
 
 it('รายงานนับเฉพาะคิวที่ยังใช้งานและ guard ใช้คนขับจริง', () => {

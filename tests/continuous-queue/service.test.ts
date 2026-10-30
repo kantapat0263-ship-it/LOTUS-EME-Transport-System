@@ -33,6 +33,11 @@ const borrow = (bookingId: string, patch: Partial<Extract<QueueCommand, { action
   assignments: [assignment('B')], borrowDriver: true, borrowVehicle: false,
   reason: 'ตกลงทางโทรศัพท์แล้ว', compensationRequired: true, ...patch,
 }, actor, NOW)
+const release = (bookingId: string, patch: Partial<Extract<QueueCommand, { action: 'release' }>> = {}) => executeQueueCommand(db, {
+  operationId: operationId(), action: 'release', bookingId, date: '2026-10-05', reason: 'ไซต์แจ้งว่าไม่ต้องไปวันนี้', compensationRequired: false, ...patch,
+}, actor, NOW)
+const returnDay = (bookingId: string, date = '2026-10-05') => executeQueueCommand(db, { operationId: operationId(), action: 'return', bookingId, date, reason: 'ไซต์ขอกลับมาใช้คิวเดิม' }, actor, NOW)
+const guardDoc = async (key: string) => (await db.collection('queueResourceDays').doc(key).get()).data()
 
 beforeAll(async () => {
   const host = process.env.FIRESTORE_EMULATOR_HOST
@@ -474,5 +479,108 @@ describe('continuous queue service on an isolated Firestore project', () => {
     expect(records.slice(1).every(t => (t.totalDistanceKm || 0) === 0 && (t.totalEstimatedTimeMinutes || 0) === 0 && (t.fuelCost || 0) === 0)).toBe(true)
     expect(records.slice(1).every(t => t.originLat === 13.7 && t.originLng === 100.5 && t.departurePoint === 'ไซต์ A')).toBe(true)
     expect(records.reduce((sum, t) => sum + (t.fuelCost || 0), 0)).toBe(200)
+  })
+
+  describe('ปลดล็อควันที่เลือก (release) — งดไซต์เดิมวันนั้น ปล่อยทั้งคนขับและรถให้จัดงานอื่น', () => {
+    const client = () => env.authenticatedContext(actor.id, { email: 'dispatcher@example.test' }).firestore() as unknown as ClientFirestore
+    const ordinary = (id: string, patch: Record<string, unknown> = {}) => ({ ...tripInput('2026-10-05', 'DRF สามพราน'), vehicleId: 'V2', id, tripId: `T-0510-${id}`, status: 'Planned', ...patch })
+
+    it('ยกเลิกเฉพาะวันนั้น ปลดทั้งคนขับและรถ แล้วจัดทริปธรรมดาให้ทั้งสองได้', async () => {
+      const original = await create()
+      const before = await booking(original.bookingId)
+      await expect(createTripWithQueueGuard(client(), 'N1', ordinary('N1'))).rejects.toThrow('คิวต่อเนื่อง')
+      const result = await release(original.bookingId)
+      const after = await booking(original.bookingId)
+      expect(after.startDate).toBe(before.startDate)
+      expect(after.endDate).toBe(before.endDate)
+      expect(after.dayTripIds).toEqual(before.dayTripIds)
+      expect(after.overrides['2026-10-05']).toMatchObject({ state: 'released', borrowDriver: true, borrowVehicle: true, compensation: 'not-required', approvedBy: actor.id, reason: 'ไซต์แจ้งว่าไม่ต้องไปวันนี้' })
+      expect(result.tripIds).toEqual([before.dayTripIds['2026-10-05']])
+      expect((await trip(before.dayTripIds['2026-10-05'])).status).toBe('Cancelled')
+      expect((await trip(before.dayTripIds['2026-10-06'])).status).toBe('Planned')
+      expect(await guardDoc('driver__D1__2026-10-05')).toEqual({ version: 2 })
+      expect(await guardDoc('vehicle__V1__2026-10-05')).toEqual({ version: 2 })
+      expect(await guardDoc('driver__D1__2026-10-06')).toMatchObject({ bookingId: original.bookingId })
+      // คนขับไปงานอื่นด้วยรถคันอื่น + รถเดิมให้คนอื่นใช้ได้
+      await createTripWithQueueGuard(client(), 'N1', ordinary('N1'))
+      await createTripWithQueueGuard(client(), 'N2', ordinary('N2', { driverId: 'D2', vehicleId: 'V1' }))
+      const publicView = await readQueueSnapshot(db, '2026-10-05', false)
+      expect(publicView.notices[0]).toMatchObject({ released: true, borrowedDriver: false, borrowedVehicle: false, effectiveSiteName: 'ไซต์ A' })
+      expect(JSON.stringify(publicView)).not.toContain('ไซต์แจ้งว่าไม่ต้องไปวันนี้')
+      expect((await readQueueSnapshot(db, '2026-10-06', false)).notices[0].released).toBe(false)
+      expect((await readQueueSnapshot(db, '2026-10-05', true)).bookings.map(item => item.id)).toEqual([original.bookingId])
+    })
+
+    it('คืนคิวได้เฉพาะตอนคนขับและรถยังว่าง แล้วล็อคกลับให้ไซต์เดิม', async () => {
+      const original = await create()
+      await release(original.bookingId)
+      await createTripWithQueueGuard(client(), 'N1', ordinary('N1'))
+      await expect(returnDay(original.bookingId)).rejects.toThrow('มีคิวอยู่แล้ว')
+      expect((await booking(original.bookingId)).overrides['2026-10-05'].state).toBe('released')
+      await db.collection('trips').doc('N1').update({ status: 'Cancelled' })
+      await returnDay(original.bookingId)
+      const range = await booking(original.bookingId)
+      expect(range.overrides['2026-10-05']).toMatchObject({ state: 'returned', compensation: 'not-required' })
+      expect((await trip(range.dayTripIds['2026-10-05'])).status).toBe('Planned')
+      for (const key of ['driver__D1__2026-10-05', 'vehicle__V1__2026-10-05']) expect(await guardDoc(key)).toMatchObject({ bookingId: original.bookingId, tripId: range.dayTripIds['2026-10-05'] })
+      expect((await readQueueSnapshot(db, '2026-10-05', false)).notices[0].released).toBe(false)
+      await expect(createTripWithQueueGuard(client(), 'N3', ordinary('N3'))).rejects.toThrow('คิวต่อเนื่อง')
+    })
+
+    it('ไม่ปลดล็อควันย้อนหลัง วันที่เริ่มงานแล้ว หรือวันที่ปรับคิวอยู่แล้ว', async () => {
+      const original = await create()
+      const range = await booking(original.bookingId)
+      await expect(executeQueueCommand(db, { operationId: operationId(), action: 'release', bookingId: original.bookingId, date: '2026-10-05', reason: 'ย้อนหลัง', compensationRequired: false }, actor, new Date('2026-10-06T05:00:00Z'))).rejects.toThrow('ย้อนหลัง')
+      await db.collection('trips').doc(range.dayTripIds['2026-10-06']).update({ gpsEndAt: 1 })
+      await expect(release(original.bookingId, { date: '2026-10-06' })).rejects.toThrow('ยังไม่เริ่มงาน')
+      await borrow(original.bookingId)
+      await expect(release(original.bookingId)).rejects.toThrow('ปรับคิวอยู่แล้ว')
+      expect((await booking(original.bookingId)).overrides['2026-10-05'].state).toBe('borrowed')
+      await release(original.bookingId, { date: '2026-10-07' })
+      await expect(release(original.bookingId, { date: '2026-10-07' })).rejects.toThrow('ปรับคิวอยู่แล้ว')
+      await expect(release(original.bookingId, { date: '2026-10-11' })).rejects.toThrow('นอกช่วงคิวเดิม')
+    })
+
+    it('ตกลงชดเชยแล้วค้างชดเชย จัดวันชดเชยได้เหมือนวันที่ยืม และต้องยกเลิกชดเชยก่อนคืนคิว', async () => {
+      const original = await create()
+      await release(original.bookingId, { compensationRequired: true })
+      expect((await booking(original.bookingId)).overrides['2026-10-05'].compensation).toBe('owed')
+      expect((await readQueueSnapshot(db, '2026-11-01', true)).bookings.map(item => item.id)).toEqual([original.bookingId])
+      const scheduled = await executeQueueCommand(db, { operationId: operationId(), action: 'schedule-compensation', bookingId: original.bookingId, originalDate: '2026-10-05', date: '2026-10-11' }, actor, NOW)
+      expect((await booking(original.bookingId)).overrides['2026-10-05']).toMatchObject({ state: 'released', compensation: 'scheduled', compensationDate: '2026-10-11', compensationTripId: scheduled.tripIds[0] })
+      expect((await readQueueSnapshot(db, '2026-10-11', false)).notices.map(notice => notice.bookingId)).toEqual([original.bookingId])
+      await expect(returnDay(original.bookingId)).rejects.toThrow('ยกเลิกคิวชดเชยก่อน')
+      await executeQueueCommand(db, { operationId: operationId(), action: 'cancel-compensation', bookingId: original.bookingId, originalDate: '2026-10-05' }, actor, NOW)
+      expect((await booking(original.bookingId)).overrides['2026-10-05'].compensation).toBe('owed')
+    })
+
+    it('วันชดเชยต้องอยู่นอกช่วงคิวเดิม แม้วันในช่วงจะถูกปลดล็อคจนว่าง', async () => {
+      const original = await create()
+      await release(original.bookingId, { compensationRequired: true })
+      for (const date of ['2026-10-05', '2026-10-08']) {
+        if (date === '2026-10-08') await release(original.bookingId, { date })
+        await expect(executeQueueCommand(db, { operationId: operationId(), action: 'schedule-compensation', bookingId: original.bookingId, originalDate: '2026-10-05', date }, actor, NOW)).rejects.toThrow('นอกช่วงคิวเดิม')
+      }
+      expect((await booking(original.bookingId)).overrides['2026-10-05'].compensation).toBe('owed')
+    })
+
+    it('คืนคิวถูกกันเมื่อรถเดิมถูกคนอื่นใช้ และบอกรหัสทริปที่ชน · ยืมคิววันที่ปลดล็อคไม่ได้ · ส่งซ้ำได้ผลเดิม', async () => {
+      const original = await create()
+      const command: QueueCommand = { operationId: operationId(), action: 'release', bookingId: original.bookingId, date: '2026-10-05', reason: 'งดวันนี้', compensationRequired: false }
+      const first = await executeQueueCommand(db, command, actor, NOW)
+      expect(await executeQueueCommand(db, command, actor, NOW)).toEqual(first)
+      await createTripWithQueueGuard(client(), 'N2', ordinary('N2', { tripId: 'T-0510-0420', driverId: 'D2', driverName: 'คนขับ 2', vehicleId: 'V1', vehiclePlate: '40-1000' }))
+      await expect(returnDay(original.bookingId)).rejects.toThrow('ทริป T-0510-0420')
+      await expect(borrow(original.bookingId)).rejects.toThrow('ปลดล็อคอยู่แล้ว')
+      expect((await booking(original.bookingId)).overrides['2026-10-05'].state).toBe('released')
+    })
+
+    it('ไม่ปลดล็อคใบรายวันที่ยังรับงานโยกเข้า (กันงานหายเงียบ)', async () => {
+      const original = await create()
+      const range = await booking(original.bookingId)
+      await db.collection('trips').doc('SRC').set({ tripDate: '2026-10-05', driverId: 'D2', vehicleId: 'V2', status: 'Planned', stops: [{ order: 1, siteName: 'ไซต์ X', outcome: 'reassigned', reassignedToTripId: range.dayTripIds['2026-10-05'] }] })
+      await expect(release(original.bookingId)).rejects.toThrow('งานที่โยกมา')
+      expect((await trip(range.dayTripIds['2026-10-05'])).status).toBe('Planned')
+    })
   })
 })

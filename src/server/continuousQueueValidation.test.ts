@@ -17,3 +17,11 @@ it('create/borrow ต้องมี snapshot ต้นฉบับครบท�
   expect(() => parseQueueCommand({ ...command, assignments: [{ ...command.assignments[0], expectedDestinationFingerprints: [] }] })).toThrow()
   expect(() => parseQueueCommand({ ...command, assignments: [{ ...command.assignments[0], expectedDestinationFingerprints: ['one', 'two'] }] })).toThrow()
 })
+
+it('รับคำสั่งปลดล็อควันที่เลือกพร้อมเหตุผลและการชดเชย', () => {
+  const command = { action: 'release', bookingId: 'B1', date: '2026-10-06', reason: 'ไซต์แจ้งงดวันนี้', compensationRequired: false, operationId: 'op-123456' }
+  expect(parseQueueCommand(command)).toEqual(command)
+  expect(() => parseQueueCommand({ ...command, reason: ' ' })).toThrow()
+  expect(() => parseQueueCommand({ ...command, compensationRequired: undefined })).toThrow()
+  expect(() => parseQueueCommand({ ...command, trip: {} })).toThrow()
+})

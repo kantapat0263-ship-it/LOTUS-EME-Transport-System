@@ -20,7 +20,9 @@ export function QueueNoticeCard({ date, status, notices }: { date: string; statu
     <p className="font-semibold">{current[0].startDate === current[0].endDate
       ? `${current[0].driverName} มีคิววันที่ ${queueDateLabel(current[0].startDate)}`
       : `${current[0].driverName} มีคิวต่อเนื่อง วันที่ ${queueDateLabel(current[0].startDate)} ถึง ${queueDateLabel(current[0].endDate)}`}</p>
-    <p className="text-xs">{current[0].borrowedDriver || current[0].borrowedVehicle
+    <p className="text-xs">{current[0].released
+      ? `วันที่ ${queueDateLabel(date)} งดคิว ${current[0].siteName} — คนขับและรถไม่ได้ประจำไซต์นี้วันนั้น`
+      : current[0].borrowedDriver || current[0].borrowedVehicle
       ? `วันที่ ${queueDateLabel(date)} ${[current[0].borrowedDriver ? 'คนขับ' : '', current[0].borrowedVehicle ? 'รถ' : ''].filter(Boolean).join('และ')} มีคิว ${current[0].effectiveSiteName} แล้ว`
       : `วันที่ ${queueDateLabel(date)} ประจำ ${current[0].siteName} พร้อมรถ ${current[0].vehiclePlate}`}</p>
     {current.length > 1 && <p className="text-xs">มีคิวต่อเนื่องอีก {current.length - 1} รายการ</p>}
@@ -30,6 +32,7 @@ export function QueueNoticeCard({ date, status, notices }: { date: string; statu
         {current.map(n => <div key={n.bookingId} className="space-y-1">
           <p className="font-medium">{`${n.driverName} · ${n.vehiclePlate}`}</p>
           <p>{n.startDate === n.endDate ? `คิว ${n.siteName} วันที่ ${queueDateLabel(n.startDate)}` : `คิวเดิม ${n.siteName} วันที่ ${queueDateLabel(n.startDate)} ถึง ${queueDateLabel(n.endDate)}`}</p>
+          {n.released && <p>{`เฉพาะวันที่ ${queueDateLabel(date)} งดคิว ${n.siteName}`}</p>}
           {(n.borrowedDriver || n.borrowedVehicle) && <>
             <p>{`เฉพาะวันที่ ${queueDateLabel(date)} ${[n.borrowedDriver ? 'คนขับ' : '', n.borrowedVehicle ? 'รถ' : ''].filter(Boolean).join('และ')} ไป ${n.effectiveSiteName}`}</p>
             {!n.borrowedVehicle && <p>{`${n.vehiclePlate} ยังจองให้${n.siteName}`}</p>}

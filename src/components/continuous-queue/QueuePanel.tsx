@@ -4,7 +4,8 @@ import * as React from 'react'
 import { useUser } from '@/firebase'
 import { useContinuousQueues } from '@/hooks/use-continuous-queues'
 import { runContinuousQueueCommand } from '@/lib/continuousQueueClient'
-import { expandQueueDates, isManagedTrip } from '@/lib/continuousQueue'
+import { expandQueueDates, isActiveOverride, isManagedTrip } from '@/lib/continuousQueue'
+import { liveMoveTarget, tripDriverLabel } from '@/lib/reassign'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -15,11 +16,30 @@ import { createQueueCommandFlight } from './queue-command-flight'
 
 type QueueAction =
   | { action: 'extend'; tripId: string }
-  | { action: 'return' | 'schedule-compensation' | 'complete-compensation' | 'cancel-compensation' | 'complete-day'; bookingId: string; date: string }
+  | { action: 'return' | 'release' | 'schedule-compensation' | 'complete-compensation' | 'cancel-compensation' | 'complete-day'; bookingId: string; date: string }
 
-export function QueueBookingSummary({ booking, date }: { booking: ContinuousBooking; date: string }) {
+/** วันที่ปลดล็อค: คนขับ/รถของคิวไปทำงานอะไรแทน — คิดจากทริปของวันนั้นเอง (โยก/ยกเลิกงานทีหลัง ข้อความเปลี่ยนตาม) */
+export function releasedDayWork(booking: ContinuousBooking, date: string, trips: Trip[]): { driver: string; vehicle: string } {
+  const live = trips.filter(t => t.tripDate === date && t.status !== 'Cancelled')
+  const describe = (t: Trip) => {
+    const own = (t.stops || []).filter(s => !s.postponedToDate && !liveMoveTarget(s, live)).map(s => s.siteName)
+    const incoming = live.flatMap(other => other.id === t.id ? [] : (other.stops || []).filter(s => liveMoveTarget(s, live)?.id === t.id).map(s => s.siteName))
+    const sites = [...own, ...incoming].filter(Boolean)
+    return sites.length ? [...new Set(sites)].join(', ') : `ยังไม่มีจุดงาน · ทริป ${t.tripId || t.id}`
+  }
+  const driverTrips = live.filter(t => (t.actualDriverId || t.driverId) === booking.driverId)
+  const vehicleTrips = live.filter(t => t.vehicleId === booking.vehicleId)
+  return {
+    driver: driverTrips.length ? `${booking.driverName} ไป ${driverTrips.map(t => `${describe(t)} (${t.vehiclePlate})`).join(' · ')}` : `${booking.driverName} ยังไม่มีงาน`,
+    vehicle: vehicleTrips.length ? `รถ ${booking.vehiclePlate} ไป ${vehicleTrips.map(t => `${describe(t)} (${tripDriverLabel(t)})`).join(' · ')}` : `รถ ${booking.vehiclePlate} ว่าง`,
+  }
+}
+
+export function QueueBookingSummary({ booking, date, trips }: { booking: ContinuousBooking; date: string; trips?: Trip[] }) {
   const override = booking.overrides[date]
   const borrowed = override?.state === 'borrowed'
+  const released = override?.state === 'released'
+  const work = released && trips ? releasedDayWork(booking, date, trips) : null
   const owed = Object.values(booking.overrides).filter(o => o.compensation === 'owed').length
   const scheduled = Object.values(booking.overrides).filter(o => o.compensation === 'scheduled').length
   return <div className="space-y-1 text-sm">
@@ -29,7 +49,12 @@ export function QueueBookingSummary({ booking, date }: { booking: ContinuousBook
     {scheduled > 0 && <p className="text-xs font-medium text-amber-300">{`นัดชดเชย ${scheduled} วัน ยังไม่ได้ยืนยันทำงาน`}</p>}
     {date >= booking.startDate && date <= booking.endDate && <p>{borrowed
       ? `วันที่ ${queueDateLabel(date)} ${[override.borrowDriver ? 'คนขับ' : '', override.borrowVehicle ? 'รถ' : ''].filter(Boolean).join('และ')} ไป ${override.targetSiteName}`
+      : released ? `🔓 ปลดล็อควันที่ ${queueDateLabel(date)} (งด ${booking.siteName})`
       : `วันที่ ${queueDateLabel(date)} ทำงานให้ ${booking.siteName}`}</p>}
+    {work && <>
+      <p className="text-xs text-amber-300">{work.driver}</p>
+      <p className="text-xs text-amber-300">{work.vehicle}</p>
+    </>}
     {borrowed && <>
       {!override.borrowDriver && <p className="text-xs text-amber-300">{booking.driverName} ยังจองให้ {booking.siteName}</p>}
       {!override.borrowVehicle && <p className="text-xs text-amber-300">รถ {booking.vehiclePlate} ยังจองให้ {booking.siteName}</p>}
@@ -38,7 +63,7 @@ export function QueueBookingSummary({ booking, date }: { booking: ContinuousBook
 }
 
 const actionLabels: Record<QueueAction['action'], string> = {
-  extend: 'กำหนดคิวต่อเนื่อง', return: 'คืนคิวให้ไซต์เดิม', 'schedule-compensation': 'จัดวันชดเชย',
+  extend: 'กำหนดคิวต่อเนื่อง', return: 'คืนคิวให้ไซต์เดิม', release: 'ปลดล็อควันที่เลือก', 'schedule-compensation': 'จัดวันชดเชย',
   'complete-compensation': 'ยืนยันทำงานชดเชยแล้ว', 'cancel-compensation': 'ยกเลิกวันที่นัดชดเชย', 'complete-day': 'ยืนยันทำงานวันนี้แล้ว',
 }
 
@@ -53,12 +78,13 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
   const [action, setAction] = React.useState<QueueAction | null>(null)
   const [newDate, setNewDate] = React.useState('')
   const [reason, setReason] = React.useState('')
+  const [compensationRequired, setCompensationRequired] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
   const mountedRef = React.useRef(false)
   const contextRef = React.useRef('')
   const commandFlightRef = React.useRef(createQueueCommandFlight())
-  contextRef.current = `${date}|${JSON.stringify(action)}|${newDate}|${reason}`
+  contextRef.current = `${date}|${JSON.stringify(action)}|${newDate}|${reason}|${compensationRequired}`
   React.useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const normalTrips = trips.filter(t => t.status === 'Planned' && t.gpsEndAt == null && !isManagedTrip(t))
   const [extendTripId, setExtendTripId] = React.useState('')
@@ -68,7 +94,7 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
 
   const open = (next: QueueAction) => {
     if (commandFlightRef.current.isPending()) return
-    setAction(next); setNewDate(''); setReason(''); setError('')
+    setAction(next); setNewDate(''); setReason(''); setCompensationRequired(false); setError('')
   }
 
   const confirm = async () => {
@@ -98,6 +124,9 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
           if (!reason.trim()) throw new Error('กรอกเหตุผลการคืนคิว')
           if (!await checkAssignments([{ driverId: booking.driverId, date: action.date }])) return
           command = { action: 'return', bookingId: booking.id, date: action.date, reason: reason.trim(), operationId }
+        } else if (action.action === 'release') {
+          if (!reason.trim()) throw new Error('กรอกเหตุผลการปลดล็อค')
+          command = { action: 'release', bookingId: booking.id, date: action.date, reason: reason.trim(), compensationRequired, operationId }
         } else if (action.action === 'complete-day') {
           command = { action: 'complete-day', bookingId: booking.id, date: action.date, operationId }
         } else {
@@ -136,11 +165,14 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
         const override = b.overrides[date]
         const effectiveId = override?.state === 'borrowed' ? override.targetTripId : b.dayTripIds[date]
         const effective = trips.find(t => t.id === effectiveId)
-        const canReturn = override?.state === 'borrowed' && date >= today && effective?.status === 'Planned' && effective.gpsEndAt == null
+        // วันที่ปลดล็อค: ใบรายวันถูกยกเลิกไว้ — server ตรวจว่าคนขับ+รถยังว่างก่อนล็อคกลับ
+        const canReturn = (override?.state === 'borrowed' && date >= today && effective?.status === 'Planned' && effective.gpsEndAt == null) || (override?.state === 'released' && date >= today)
+        const canRelease = !isActiveOverride(override) && date >= today && date >= b.startDate && date <= b.endDate && effective?.status === 'Planned' && effective.gpsEndAt == null
         return <div key={b.id} className="space-y-3 rounded-lg border border-border p-3">
-          <QueueBookingSummary booking={b} date={date} />
+          <QueueBookingSummary booking={b} date={date} trips={trips} />
           <div className="flex flex-wrap gap-2">
             {canReturn && <Button size="sm" variant="outline" disabled={busy} onClick={() => open({ action: 'return', bookingId: b.id, date })}>คืนคิวให้ไซต์เดิม</Button>}
+            {canRelease && <Button size="sm" variant="outline" disabled={busy} onClick={() => open({ action: 'release', bookingId: b.id, date })}>{`ปลดล็อควันที่ ${queueDateLabel(date)}`}</Button>}
             {effective && effective.status !== 'Completed' && effective.status !== 'Cancelled' && date <= today && <Button size="sm" variant="outline" disabled={busy} onClick={() => open({ action: 'complete-day', bookingId: b.id, date })}>ยืนยันทำงานวันนี้แล้ว</Button>}
             {effective?.status === 'Completed' && <p className="text-xs text-green-400">ยืนยันปิดผลงานวันนี้แล้ว</p>}
           </div>
@@ -148,7 +180,7 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
             <summary className="cursor-pointer text-muted-foreground">ประวัติปรับคิวและวันชดเชย</summary>
             <div className="mt-2 space-y-3">
               {Object.entries(b.overrides).sort(([a], [c]) => a.localeCompare(c)).map(([originalDate, ov]) => <div key={originalDate} className="space-y-2 rounded-md bg-secondary/20 p-2">
-                <p>{`${queueDateLabel(originalDate)} · ${ov.state === 'returned' ? 'คืนคิวแล้ว' : `ไป ${ov.targetSiteName}`} · ${ov.reason}`}</p>
+                <p>{`${queueDateLabel(originalDate)} · ${ov.state === 'returned' ? 'คืนคิวแล้ว' : ov.state === 'released' ? `ปลดล็อค งด ${b.siteName}` : `ไป ${ov.targetSiteName}`} · ${ov.reason}`}</p>
                 <p className="text-muted-foreground">{`บันทึกโดย ${ov.approvedByName || ov.approvedBy} เวลา ${new Date(ov.approvedAt).toLocaleString('th-TH')}`}</p>
                 {ov.compensation === 'owed' && <div className="flex flex-wrap items-center gap-2 text-amber-300"><span>ค้างชดเชย 1 วัน</span><Button size="sm" variant="outline" disabled={busy} onClick={() => open({ action: 'schedule-compensation', bookingId: b.id, date: originalDate })}>จัดวันชดเชย</Button></div>}
                 {ov.compensation === 'scheduled' && <div className="flex flex-wrap items-center gap-2">
@@ -174,13 +206,20 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
       <Dialog open={!!action} onOpenChange={next => { if (!next && !commandFlightRef.current.isPending()) setAction(null) }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{action ? actionLabels[action.action] : ''}</DialogTitle>
+            <DialogTitle>{action?.action === 'release' ? `ปลดล็อควันที่ ${queueDateLabel(action.date)}` : action ? actionLabels[action.action] : ''}</DialogTitle>
             <DialogDescription>{booking ? `${booking.siteName} · ${booking.driverName} · ${booking.vehiclePlate}` : trip ? `${trip.driverName} · ${trip.vehiclePlate}` : ''}</DialogDescription>
           </DialogHeader>
           {action?.action === 'extend' && <p className="text-sm">เริ่มวันที่ {trip ? queueDateLabel(trip.tripDate) : ''} จองทั้งคนขับและรถทุกวันในช่วงที่เลือก</p>}
           {action?.action === 'schedule-compensation' && <p className="text-sm">ชดเชยวันที่ยืม {queueDateLabel(action.date)} ใช้คนขับและรถเดิม ระบบจะตรวจว่าทั้งสองมีคิวชนหรือไม่ก่อนบันทึก</p>}
           {(action?.action === 'extend' || action?.action === 'schedule-compensation') && <label className="block space-y-1 text-sm">{action.action === 'extend' ? 'วันที่สิ้นสุดคิว' : 'วันที่ชดเชย'}<input type="date" value={newDate} min={action.action === 'extend' ? trip?.tripDate : today} onChange={e => setNewDate(e.target.value)} disabled={busy} className="w-full rounded-md border border-border bg-background p-2" /></label>}
-          {action?.action === 'return' && <><p className="text-sm">คืนได้ก่อนเริ่มทำงาน คิวใหม่ของวันนี้จะถูกยกเลิก และกลับไปใช้คิวไซต์เดิม</p><label className="block space-y-1 text-sm">เหตุผล<textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} disabled={busy} className="w-full rounded-md border border-border bg-background p-2" /></label></>}
+          {action?.action === 'release' && booking && <>
+            <p className="text-sm">{`งด ${booking.siteName} เฉพาะวันที่ ${queueDateLabel(action.date)} — ${booking.driverName}และรถ ${booking.vehiclePlate} จะว่างให้จัดงานอื่นได้เฉพาะวันที่ ${queueDateLabel(action.date)} วันอื่นในช่วงคิว (${queueDateLabel(booking.startDate)}–${queueDateLabel(booking.endDate)}) ยังล็อคเหมือนเดิม`}</p>
+            <p className="text-xs text-muted-foreground">{`หลังปลดล็อค โยกงานหรือจัดคิวให้${booking.driverName}และรถคันนี้ได้ตามปกติ · เปลี่ยนใจกด "คืนคิวให้ไซต์เดิม" ได้ถ้าทั้งคู่ยังไม่มีงานอื่นวันนั้น`}</p>
+            <label className="block space-y-1 text-sm">เหตุผลและข้อตกลงกับไซต์เดิม<textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} disabled={busy} placeholder="เช่น ไซต์แจ้งในกลุ่ม LINE ว่าไม่ต้องไปวันนี้" className="w-full rounded-md border border-border bg-background p-2" /></label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={compensationRequired} onChange={e => setCompensationRequired(e.target.checked)} disabled={busy} />ตกลงชดเชยให้ไซต์เดิม 1 วัน</label>
+          </>}
+          {action?.action === 'return' && booking?.overrides[action.date]?.state === 'released' && <p className="text-sm">{`ล็อค${booking.driverName}และรถ ${booking.vehiclePlate} กลับให้ ${booking.siteName} วันที่ ${queueDateLabel(action.date)} — ทั้งคู่ต้องยังไม่มีงานอื่นวันนั้น ถ้ามีให้ย้ายงานออกก่อน`}</p>}
+          {action?.action === 'return' && <>{booking?.overrides[action.date]?.state !== 'released' && <p className="text-sm">คืนได้ก่อนเริ่มทำงาน คิวใหม่ของวันนี้จะถูกยกเลิก และกลับไปใช้คิวไซต์เดิม</p>}<label className="block space-y-1 text-sm">เหตุผล<textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} disabled={busy} className="w-full rounded-md border border-border bg-background p-2" /></label></>}
           {action?.action === 'cancel-compensation' && <p className="text-sm">ยกเลิกวันที่นัดชดเชยและกลับเป็นค้างชดเชย 1 วัน</p>}
           {(action?.action === 'complete-day' || action?.action === 'complete-compensation') && <p className="text-sm">ยืนยันเฉพาะเมื่อได้ทำงานแล้ว การผ่านวันนัดหมายไม่ถือว่าทำงานเสร็จ</p>}
           {error && <p role="alert" className="text-sm text-red-400">{error}</p>}

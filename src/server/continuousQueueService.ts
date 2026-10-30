@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { FieldValue, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore'
-import { expandQueueDates, MAX_QUEUE_DAYS, queueNotice, resourceGuardKeys } from '@/lib/continuousQueue'
+import { expandQueueDates, isActiveOverride, MAX_QUEUE_DAYS, queueNotice, resourceGuardKeys } from '@/lib/continuousQueue'
 import type { ContinuousBooking, QueueAuditEvent, QueueCommand, QueueCommandResult, QueueResourceGuard, QueueSnapshot, QueueSourceAssignment, QueueTripInput } from '@/types/continuous-queue'
 import type { Trip } from '@/types/models'
 import { assertRequestDestinationsUnchanged } from '@/lib/requestDestination'
@@ -117,7 +117,8 @@ class QueueTransaction {
 
   async reserve(input: Pick<Trip, 'tripDate' | 'driverId' | 'vehicleId'>, bookingId: string, tripId: string, ignoreTripIds: string[] = []): Promise<void> {
     const trips = await this.trips(input.tripDate)
-    requireValue(!trips.some(t => !ignoreTripIds.includes(t.id) && t.status !== 'Cancelled' && ((t.actualDriverId || t.driverId) === input.driverId || t.vehicleId === input.vehicleId)), `คนขับหรือรถมีคิวอยู่แล้ว วันที่ ${input.tripDate}`)
+    const busy = trips.find(t => !ignoreTripIds.includes(t.id) && t.status !== 'Cancelled' && ((t.actualDriverId || t.driverId) === input.driverId || t.vehicleId === input.vehicleId))
+    requireValue(!busy, `คนขับหรือรถมีคิวอยู่แล้ว วันที่ ${input.tripDate}${busy ? ` (ทริป ${busy.tripId || busy.id} · ${busy.actualDriverName || busy.driverName || ''} · ${busy.vehiclePlate || ''})` : ''}`)
     for (const key of resourceGuardKeys(input)) {
       const guard = await this.guard(key)
       requireValue(!guard.bookingId || (guard.bookingId === bookingId && !!guard.tripId && ignoreTripIds.includes(guard.tripId)), `คนขับหรือรถถูกจองคิวต่อเนื่องแล้ว วันที่ ${input.tripDate}`)
@@ -295,8 +296,8 @@ class QueueTransaction {
   async borrow(command: Extract<QueueCommand, { action: 'borrow' }>): Promise<{ booking: ContinuousBooking; result: QueueCommandResult }> {
     const booking = await this.booking(command.bookingId)
     const original = await this.originalDay(booking, command.date)
+    requireValue(!isActiveOverride(booking.overrides[command.date]), 'วันที่เลือกมีคิวยืมหรือปลดล็อคอยู่แล้ว ต้องคืนคิวก่อน')
     requireValue(command.date >= this.today && unstarted(original), 'ยืมได้เฉพาะวันที่ยังไม่เริ่มงาน และห้ามยืมย้อนหลัง')
-    requireValue(booking.overrides[command.date]?.state !== 'borrowed', 'วันที่เลือกมีคิวยืมอยู่แล้ว ต้องคืนคิวก่อน')
     requireValue(command.borrowDriver || command.borrowVehicle, 'ต้องเลือกยืมคนขับหรือรถอย่างน้อยหนึ่งรายการ', 400)
     requireValue(command.trip.tripDate === command.date, 'วันของใบคิวยืมไม่ตรงกับวันที่เลือก', 400)
     const reason = command.reason.trim()
@@ -314,10 +315,39 @@ class QueueTransaction {
     return { booking, result: { bookingId: booking.id, tripIds: [tripId] } }
   }
 
+  /** ปลดล็อควันที่เลือก: งดไซต์เดิมวันนั้น ยกเลิกใบรายวัน และปล่อยทั้งคนขับและรถให้จัดงานอื่นด้วยเครื่องมือปกติ */
+  async release(command: Extract<QueueCommand, { action: 'release' }>): Promise<{ booking: ContinuousBooking; result: QueueCommandResult }> {
+    const booking = await this.booking(command.bookingId)
+    const original = await this.originalDay(booking, command.date)
+    requireValue(!isActiveOverride(booking.overrides[command.date]), 'วันที่เลือกปรับคิวอยู่แล้ว ต้องคืนคิวก่อน')
+    requireValue(command.date >= this.today && unstarted(original), 'ปลดล็อคได้เฉพาะวันที่ยังไม่เริ่มงาน และห้ามปลดล็อคย้อนหลัง')
+    const incoming = incomingStopsForTrip((await this.trips(command.date)).filter(trip => trip.status !== 'Cancelled'), original.id)
+    requireValue(incoming.length === 0, `ใบงานวันนี้ยังรับงานที่โยกมาจากคันอื่น ${incoming.length} จุด — ย้ายงานนั้นไปคันอื่นก่อนปลดล็อค`)
+    const reason = command.reason.trim()
+    requireValue(reason.length > 0 && reason.length <= 1000, 'ระบุเหตุผลการปลดล็อค 1–1000 ตัวอักษร', 400)
+    await this.preserveReservations(original, booking.id)
+    for (const key of resourceGuardKeys(original)) this.reservations.set(key, null)
+    booking.overrides[command.date] = { state: 'released', targetTripId: '', targetSiteName: '', borrowDriver: true, borrowVehicle: true, reason,
+      approvedBy: this.actor.id, approvedByName: this.actor.name, approvedAt: this.stamp, compensation: command.compensationRequired ? 'owed' : 'not-required' }
+    this.writes.push({ collection: 'trips', id: original.id, merge: true, data: { status: 'Cancelled', updatedAt: this.stamp } })
+    return { booking, result: { bookingId: booking.id, tripIds: [original.id] } }
+  }
+
   async return(command: Extract<QueueCommand, { action: 'return' }>): Promise<{ booking: ContinuousBooking; result: QueueCommandResult }> {
     const booking = await this.booking(command.bookingId)
     const original = await this.originalDay(booking, command.date)
     const override = booking.overrides[command.date]
+    if (override?.state === 'released') {
+      // คืนวันที่ปลดล็อค = ล็อคคนขับ+รถกลับ · reserve ตรวจว่าวันนั้นทั้งคู่ยังไม่มีงานอื่น (กันงานซ้อน)
+      requireValue(command.date >= this.today && original.status === 'Cancelled' && unstarted({ ...original, status: 'Planned' }), 'คืนคิวได้ก่อนเริ่มงานเท่านั้น และห้ามคืนย้อนหลัง')
+      requireValue(override.compensation !== 'scheduled' && override.compensation !== 'completed', 'มีคิวชดเชยแล้ว ต้องยกเลิกคิวชดเชยก่อนคืนคิว')
+      requireValue(command.reason.trim().length > 0 && command.reason.trim().length <= 1000, 'ระบุเหตุผลการคืนคิว 1–1000 ตัวอักษร', 400)
+      await this.reserve(original, booking.id, original.id, [original.id])
+      override.state = 'returned'
+      override.compensation = 'not-required'
+      this.writes.push({ collection: 'trips', id: original.id, merge: true, data: { status: 'Planned', updatedAt: this.stamp } })
+      return { booking, result: { bookingId: booking.id, tripIds: [original.id] } }
+    }
     requireValue(override?.state === 'borrowed', 'ไม่พบคิวยืมที่ต้องคืนในวันที่เลือก')
     const target = await this.read<Trip>('trips', override.targetTripId)
     requireValue(target && target.queueLink?.bookingId === booking.id && target.queueLink.kind === 'borrow' && target.tripDate === command.date, 'ไม่พบใบคิวยืมที่ตรงกับวันที่เลือก')
@@ -340,9 +370,11 @@ class QueueTransaction {
     const booking = await this.booking(command.bookingId)
     await this.originalDay(booking, command.originalDate)
     const override = booking.overrides[command.originalDate]
-    requireValue(override?.state === 'borrowed' && override.compensation === 'owed', 'วันที่เลือกไม่มีวันชดเชยค้างอยู่')
+    requireValue(isActiveOverride(override) && override.compensation === 'owed', 'วันที่เลือกไม่มีวันชดเชยค้างอยู่')
     dateValue(command.date)
     requireValue(command.date >= this.today, 'จัดคิวชดเชยย้อนหลังไม่ได้')
+    // วันในช่วงที่ยัง/ยืมอยู่ถูก guard กันใน reserve แล้ว · วันที่ปลดล็อคว่างจน reserve ผ่าน → กันตรงนี้ (ไม่งั้นผู้ขอเห็น "งดคิว" ทั้งที่มีคิวชดเชยไซต์เดิม)
+    requireValue(booking.overrides[command.date]?.state !== 'released', 'วันที่ปลดล็อคของคิวนี้ใช้เป็นวันชดเชยไม่ได้ เลือกวันนอกช่วงคิวเดิม')
     const input = await this.resources({ ...booking.template, tripDate: command.date, driverId: booking.driverId, vehicleId: booking.vehicleId, stops: planningStops(booking.template.stops) })
     input.sourceVRIds = booking.template.sourceVRIds || []
     const tripId = await this.newTripId(command.date)
@@ -357,7 +389,7 @@ class QueueTransaction {
   async closeCompensation(command: Extract<QueueCommand, { action: 'complete-compensation' | 'cancel-compensation' }>): Promise<{ booking: ContinuousBooking; result: QueueCommandResult }> {
     const booking = await this.booking(command.bookingId)
     const override = booking.overrides[dateValue(command.originalDate)]
-    requireValue(override?.state === 'borrowed' && override.compensation === 'scheduled' && override.compensationTripId && override.compensationDate, 'ไม่มีคิวชดเชยที่รอทำงานในวันที่เลือก')
+    requireValue(isActiveOverride(override) && override.compensation === 'scheduled' && override.compensationTripId && override.compensationDate, 'ไม่มีคิวชดเชยที่รอทำงานในวันที่เลือก')
     const trip = await this.read<Trip>('trips', override.compensationTripId)
     requireValue(trip && trip.queueLink?.bookingId === booking.id && trip.queueLink.kind === 'compensation' && trip.queueLink.originalDate === command.originalDate && trip.tripDate === override.compensationDate, 'ใบคิวชดเชยไม่ตรงกับรายการที่เลือก')
     const completed = command.action === 'complete-compensation'
@@ -421,6 +453,7 @@ export async function executeQueueCommand(db: Firestore, command: QueueCommand, 
       case 'extend': outcome = await context.extend(command); break
       case 'borrow': outcome = await context.borrow(command); break
       case 'return': outcome = await context.return(command); break
+      case 'release': outcome = await context.release(command); break
       case 'schedule-compensation': outcome = await context.scheduleCompensation(command); break
       case 'complete-compensation':
       case 'cancel-compensation': outcome = await context.closeCompensation(command); break
@@ -429,7 +462,7 @@ export async function executeQueueCommand(db: Firestore, command: QueueCommand, 
     }
     const { booking, result } = outcome
     const event: QueueAuditEvent = withoutUndefined({ action: command.action, bookingId: booking.id, date: context.auditDate || ('date' in command ? command.date : 'originalDate' in command ? command.originalDate : booking.startDate), actorId: actor.id, actorName: actor.name, recordedAt: stamp, tripIds: result.tripIds, reason: 'reason' in command ? command.reason.trim() : undefined })
-    const overrides = Object.values(booking.overrides).filter(item => item.state === 'borrowed')
+    const overrides = Object.values(booking.overrides).filter(isActiveOverride)
     const hasOpenCompensation = overrides.some(item => item.compensation === 'owed' || item.compensation === 'scheduled')
     const compensationDates = [...new Set(overrides.filter(item => (item.compensation === 'scheduled' || item.compensation === 'completed') && item.compensationTripId && item.compensationDate).map(item => item.compensationDate!))]
     context.writes.push({ collection: 'continuousBookings', id: booking.id, data: { ...booking, hasOpenCompensation, compensationDates } },
@@ -459,7 +492,7 @@ export async function readQueueSnapshot(db: Firestore, date: string, staff: bool
   const notices = all.flatMap(booking => {
     const covering = queueNotice(booking, date)
     if (covering) return [covering]
-    const compensation = Object.values(booking.overrides).some(item => item.state === 'borrowed' && (item.compensation === 'scheduled' || item.compensation === 'completed') && item.compensationDate === date && item.compensationTripId)
+    const compensation = Object.values(booking.overrides).some(item => isActiveOverride(item) && (item.compensation === 'scheduled' || item.compensation === 'completed') && item.compensationDate === date && item.compensationTripId)
     return compensation ? [{ bookingId: booking.id, startDate: date, endDate: date, date, driverId: booking.driverId, driverName: booking.driverName,
       vehicleId: booking.vehicleId, vehiclePlate: booking.vehiclePlate, siteName: booking.siteName, effectiveSiteName: booking.siteName, borrowedDriver: false, borrowedVehicle: false }] : []
   })

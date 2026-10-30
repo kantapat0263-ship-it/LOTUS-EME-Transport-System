@@ -214,7 +214,8 @@ export default function TripGroupingPage() {
   // ส่ง `drivers ?? undefined`: useCollection คืน null ก่อน snapshot แรก — ห้ามส่ง [] (จะกลายเป็น "โหลดแล้วว่าง" → driver_missing ทุกคน)
   const badgeDate = selectedDestinations[0]?.requestDate ?? targetDateStr
   const continuousQueues = useContinuousQueues(badgeDate)
-  const queueConflicts = continuousQueues.bookings.filter(b => b.startDate <= badgeDate && b.endDate >= badgeDate && (b.driverId === driverId || b.vehicleId === vehicleId))
+  // วันที่ปลดล็อคแล้ว คนขับ+รถว่าง ไม่นับเป็นคิวชน
+  const queueConflicts = continuousQueues.bookings.filter(b => b.startDate <= badgeDate && b.endDate >= badgeDate && b.overrides[badgeDate]?.state !== 'released' && (b.driverId === driverId || b.vehicleId === vehicleId))
   const { status: leaveStatus, lastOkAt: leaveLastOkAt, forDriver: leaveForDriver, check: checkLeave } =
     useDriverLeaves(drivers ?? undefined, badgeDate, badgeDate)
 

@@ -45,4 +45,10 @@ describe('continuous queue notice', () => {
     expect(html).not.toContain('มีคิวต่อเนื่อง')
     expect(html).toContain('ยังไม่ยืนยันคนขับและรถ')
   })
+  it('วันที่ปลดล็อค บอกผู้ขอรถว่างดคิวไซต์เดิม ไม่ใช่ยังประจำไซต์', () => {
+    const html = renderToStaticMarkup(<QueueNoticeCard date="2026-10-05" status="ready" notices={[{ ...notice, effectiveSiteName: 'ไซต์ A', borrowedDriver: false, released: true }]} />)
+    expect(html).toContain('งดคิว ไซต์ A')
+    expect(html).not.toContain('ประจำ ไซต์ A')
+    expect(html).not.toContain('ยังจองให้')
+  })
 })

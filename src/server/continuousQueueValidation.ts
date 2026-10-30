@@ -22,6 +22,7 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('extend'), operationId, tripId: id, endDate: date }).strict(),
   z.object({ action: z.literal('borrow'), operationId, bookingId: id, date, trip, assignments, borrowDriver: z.boolean(), borrowVehicle: z.boolean(), reason, compensationRequired: z.boolean() }).strict(),
   z.object({ action: z.literal('return'), operationId, bookingId: id, date, reason }).strict(),
+  z.object({ action: z.literal('release'), operationId, bookingId: id, date, reason, compensationRequired: z.boolean() }).strict(),
   z.object({ action: z.literal('schedule-compensation'), operationId, bookingId: id, originalDate: date, date }).strict(),
   z.object({ action: z.literal('complete-compensation'), operationId, bookingId: id, originalDate: date }).strict(),
   z.object({ action: z.literal('cancel-compensation'), operationId, bookingId: id, originalDate: date }).strict(),

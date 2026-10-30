@@ -8,7 +8,8 @@ export interface QueueLink {
 }
 
 export interface QueueOverride {
-  state: 'borrowed' | 'returned'
+  /** borrowed = ยืมไปไซต์อื่น · released = ปลดล็อค งดไซต์เดิมวันนั้น ปล่อยคนขับ+รถว่าง (target ว่าง) · returned = คืนคิวแล้ว */
+  state: 'borrowed' | 'released' | 'returned'
   targetTripId: string
   targetSiteName: string
   borrowDriver: boolean
@@ -53,6 +54,8 @@ export interface QueueNotice {
   effectiveSiteName: string
   borrowedDriver: boolean
   borrowedVehicle: boolean
+  /** ปลดล็อควันนั้นแล้ว — คนขับและรถว่าง ไม่ได้ทำงานให้ไซต์เดิม (optional: ข้อมูลจาก server เก่าไม่มี) */
+  released?: boolean
 }
 
 export type QueueTripInput = Pick<Trip, 'tripDate' | 'driverId' | 'driverName' | 'vehicleId' | 'vehiclePlate' | 'stops'> & Partial<Pick<Trip, 'vehicleType' | 'sourceVRIds' | 'totalDistanceKm' | 'totalEstimatedTimeMinutes' | 'fuelCost' | 'dieselPriceUsed' | 'fuelRateUsed' | 'departurePoint' | 'originLat' | 'originLng'>>
@@ -64,6 +67,7 @@ export type QueueCommand = Operation & (
   | { action: 'extend'; tripId: string; endDate: string }
   | { action: 'borrow'; bookingId: string; date: string; trip: QueueTripInput; assignments: QueueSourceAssignment[]; borrowDriver: boolean; borrowVehicle: boolean; reason: string; compensationRequired: boolean }
   | { action: 'return'; bookingId: string; date: string; reason: string }
+  | { action: 'release'; bookingId: string; date: string; reason: string; compensationRequired: boolean }
   | { action: 'schedule-compensation'; bookingId: string; originalDate: string; date: string }
   | { action: 'complete-compensation' | 'cancel-compensation'; bookingId: string; originalDate: string }
   | { action: 'complete-day'; bookingId: string; date: string }

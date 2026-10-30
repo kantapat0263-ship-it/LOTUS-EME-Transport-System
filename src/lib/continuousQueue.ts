@@ -32,7 +32,12 @@ export function queueNotice(booking: ContinuousBooking, date: string): QueueNoti
   if (date < booking.startDate || date > booking.endDate) return null
   const override = booking.overrides[date]
   const borrowed = override?.state === 'borrowed'
-  return { bookingId: booking.id, startDate: booking.startDate, endDate: booking.endDate, date, driverId: booking.driverId, driverName: booking.driverName, vehicleId: booking.vehicleId, vehiclePlate: booking.vehiclePlate, siteName: booking.siteName, effectiveSiteName: borrowed ? override.targetSiteName : booking.siteName, borrowedDriver: borrowed && override.borrowDriver, borrowedVehicle: borrowed && override.borrowVehicle }
+  return { bookingId: booking.id, startDate: booking.startDate, endDate: booking.endDate, date, driverId: booking.driverId, driverName: booking.driverName, vehicleId: booking.vehicleId, vehiclePlate: booking.vehiclePlate, siteName: booking.siteName, effectiveSiteName: borrowed ? override.targetSiteName : booking.siteName, borrowedDriver: borrowed && override.borrowDriver, borrowedVehicle: borrowed && override.borrowVehicle, released: override?.state === 'released' }
+}
+
+/** วันที่ยืม/ปลดล็อคยังมีผล (ยังไม่คืนคิว) — ใช้นับหนี้ชดเชยร่วมกัน */
+export function isActiveOverride(override: { state: string } | undefined): boolean {
+  return override?.state === 'borrowed' || override?.state === 'released'
 }
 
 export function resourceGuardKeys(trip: Pick<Trip, 'driverId' | 'actualDriverId' | 'vehicleId'> & { tripDate?: string; date?: string }): string[] {
