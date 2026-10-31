@@ -450,3 +450,67 @@ describe('sites — ตรวจชนิด/ความยาว/พิกั�
     await assertFails(updateDoc(doc(d, 'sites', 'S-LEGACY'), { name: '' }))
   })
 })
+
+describe('parcelWatches (ฝากของไปไซต์) — เจ้าของรายการเห็น/แก้ได้คนเดียว', () => {
+  const parcel = (extra: Record<string, unknown> = {}) => ({
+    userId: 'viewer', siteId: 'S1', siteName: 'DRF สามพราน', item: 'Notebook', note: 'ให้พี่หน้างาน', deadline: '2026-11-05',
+    status: 'waiting', skippedTripIds: [], createdAt: serverTimestamp(), updatedAt: serverTimestamp(), ...extra,
+  })
+  const seedMine = () => env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'parcelWatches', 'P-MINE'), parcel({ createdAt: null, updatedAt: null })))
+
+  it('ทุก role ที่อนุมัติแล้วสร้างรายการของตัวเองได้ และอ่านรายการตัวเอง (where userId ==) ได้', async () => {
+    for (const uid of ['viewer', 'dispatcher', 'admin'] as Uid[]) {
+      await assertSucceeds(setDoc(doc(as(uid), 'parcelWatches', `P-${uid}`), parcel({ userId: uid })))
+      await assertSucceeds(getDocs(query(collection(as(uid), 'parcelWatches'), where('userId', '==', uid))))
+      await assertSucceeds(getDoc(doc(as(uid), 'parcelWatches', `P-${uid}`)))
+    }
+    await assertSucceeds(setDoc(doc(as('viewer'), 'parcelWatches', 'P-MIN'), { userId: 'viewer', siteId: 'S1', siteName: 'ไซต์', item: 'ของ', status: 'waiting' }))
+  })
+
+  it('คนอื่น รวมคนจัดรถ/แอดมิน อ่านรายการของคนอื่นไม่ได้ และ list ทั้ง collection ไม่ได้', async () => {
+    await seedMine()
+    for (const uid of ['otherViewer', 'dispatcher', 'admin'] as Uid[]) {
+      await assertFails(getDoc(doc(as(uid), 'parcelWatches', 'P-MINE')))
+      await assertFails(getDocs(query(collection(as(uid), 'parcelWatches'), where('userId', '==', 'viewer'))))
+      await assertFails(getDocs(collection(as(uid), 'parcelWatches')))
+    }
+    await assertFails(getDoc(doc(anon(), 'parcelWatches', 'P-MINE')))
+  })
+
+  it('สร้างในชื่อคนอื่น / สถานะอื่นที่ไม่ใช่รอรถ / บัญชีรออนุมัติหรือไม่มีโปรไฟล์ → ปฏิเสธ', async () => {
+    await assertFails(setDoc(doc(as('viewer'), 'parcelWatches', 'P1'), parcel({ userId: 'otherViewer' })))
+    await assertFails(setDoc(doc(as('viewer'), 'parcelWatches', 'P2'), parcel({ status: 'handed' })))
+    await assertFails(setDoc(doc(as('pendingViewer'), 'parcelWatches', 'P3'), parcel({ userId: 'pendingViewer' })))
+    await assertFails(setDoc(doc(as('noProfile'), 'parcelWatches', 'P4'), parcel({ userId: 'noProfile' })))
+    await assertFails(setDoc(doc(anon(), 'parcelWatches', 'P5'), parcel()))
+  })
+
+  it('ข้อความว่าง/ยาวเกิน/ผิดชนิด วันที่ผิดรูปแบบ ฟิลด์แปลกปลอม → ปฏิเสธ', async () => {
+    const v = as('viewer')
+    for (const bad of [
+      { item: '' }, { item: 'ก'.repeat(201) }, { item: 5 }, { siteId: '' }, { siteName: '' }, { siteName: 'ก'.repeat(201) },
+      { note: 'ก'.repeat(301) }, { note: 1 }, { deadline: '5/11/2026' }, { status: 'done' },
+      { skippedTripIds: 'T1' }, { skippedTripIds: Array.from({ length: 101 }, (_, i) => `T${i}`) }, { role: 'admin' },
+    ]) await assertFails(setDoc(doc(v, 'parcelWatches', 'P-BAD'), parcel(bad)))
+    await assertSucceeds(setDoc(doc(v, 'parcelWatches', 'P-OK'), parcel({ deadline: null })))
+  })
+
+  it('เจ้าของกดฝากแล้ว / รอรอบถัดไป / ยกเลิก / ลบได้ แต่โอนรายการให้คนอื่นไม่ได้', async () => {
+    await seedMine()
+    const ref = doc(as('viewer'), 'parcelWatches', 'P-MINE')
+    await assertSucceeds(updateDoc(ref, { skippedTripIds: ['T1'], updatedAt: serverTimestamp() }))
+    await assertSucceeds(updateDoc(ref, { status: 'handed', handedAt: '2026-10-31T08:00:00.000Z', handedTripId: 'T2', handedTripDate: '2026-11-01', handedPlate: '1ฒษ-4413' }))
+    await assertSucceeds(updateDoc(ref, { status: 'cancelled' }))
+    await assertFails(updateDoc(ref, { userId: 'otherViewer' }))
+    await assertFails(updateDoc(ref, { handedTripDate: 'พรุ่งนี้' }))
+    await assertSucceeds(deleteDoc(ref))
+  })
+
+  it('คนอื่น รวมคนจัดรถ/แอดมิน แก้หรือลบรายการของคนอื่นไม่ได้', async () => {
+    await seedMine()
+    for (const uid of ['otherViewer', 'dispatcher', 'admin'] as Uid[]) {
+      await assertFails(updateDoc(doc(as(uid), 'parcelWatches', 'P-MINE'), { status: 'handed' }))
+      await assertFails(deleteDoc(doc(as(uid), 'parcelWatches', 'P-MINE')))
+    }
+  })
+})

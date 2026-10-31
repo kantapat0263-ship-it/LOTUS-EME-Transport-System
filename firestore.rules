@@ -124,6 +124,30 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
 
+    // ฝากของไปไซต์ (2026-10-31) — รายการส่วนตัว: เจ้าของเห็น/แก้/ลบได้คนเดียว (คนจัดรถ/แอดมินก็อ่านไม่ได้)
+    // ความยาวตรงกับ PARCEL_LIMITS ใน src/lib/parcelWatch.ts
+    function requiredText(data, key, max) {
+      return data.get(key, null) is string && data[key].size() > 0 && data[key].size() <= max;
+    }
+    function optionalIsoDate(data, key) {
+      return data.get(key, null) == null || (data[key] is string && data[key].matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+    }
+    function validParcel(data) {
+      return data.keys().hasOnly(['userId', 'siteId', 'siteName', 'item', 'note', 'deadline', 'status', 'skippedTripIds',
+          'handedAt', 'handedTripId', 'handedTripDate', 'handedPlate', 'createdAt', 'updatedAt'])
+        && requiredText(data, 'siteId', 200) && requiredText(data, 'siteName', 200) && requiredText(data, 'item', 200)
+        && optionalText(data, 'note', 300) && optionalIsoDate(data, 'deadline')
+        && data.status in ['waiting', 'handed', 'cancelled']
+        && data.get('skippedTripIds', []) is list && data.get('skippedTripIds', []).size() <= 100
+        && optionalText(data, 'handedAt', 40) && optionalText(data, 'handedTripId', 200)
+        && optionalIsoDate(data, 'handedTripDate') && optionalText(data, 'handedPlate', 50);
+    }
+    match /parcelWatches/{parcelId} {
+      allow read, delete: if isActiveOwner(resource.data);
+      allow create: if isActiveOwner(request.resource.data) && request.resource.data.status == 'waiting' && validParcel(request.resource.data);
+      allow update: if isActiveOwner(resource.data) && request.resource.data.userId == resource.data.userId && validParcel(request.resource.data);
+    }
+
     // token ลิงก์ใบงานคนขับ (รุ่นต่อทริป) และรหัสการส่งใบขอรถ (กันใบซ้ำ) — server เท่านั้น
     match /driverLinks/{tripId} { allow read, write: if false; }
     match /vehicleRequestOperations/{operationId} { allow read, write: if false; }

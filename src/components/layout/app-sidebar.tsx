@@ -19,7 +19,8 @@ import {
   Car,
   Layers,
   FileText,
-  BarChart2
+  BarChart2,
+  Package
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -30,6 +31,7 @@ import { UserRole, VehicleCompliance } from "@/types/models"
 import { attentionLevel, todayBangkok } from "@/lib/vehicle-compliance"
 import { collection, query, where, onSnapshot } from "firebase/firestore"
 import { clearPrivateApiCache } from "@/lib/privateCache"
+import { useParcelRunAlerts, useParcelWatches } from "@/hooks/use-parcel-watches"
 
 interface AppSidebarProps {
   userRole: UserRole;
@@ -53,6 +55,9 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   // พ.ร.บ./ภาษี ใกล้หมด/เกินกำหนด (staff) — เก็บ doc ไว้แล้วนับตอน render ให้ตามวันที่ปัจจุบันเสมอ
   const [vehicleIds, setVehicleIds] = React.useState<Set<string>>(new Set())
   const [complianceDocs, setComplianceDocs] = React.useState<VehicleCompliance[]>([])
+  // ฝากของไปไซต์ — จำนวนรายการที่มีรถไปแล้ว · popup/ไอคอนแอปทำเฉพาะเมนูฝั่งจอใหญ่ (กันเด้งซ้ำตอนเปิดเมนูมือถือ)
+  const parcelWatch = useParcelWatches()
+  useParcelRunAlerts(parcelWatch.entries, parcelWatch.today, parcelWatch.readyCount, !isMobile)
 
   // Listen for requests and urgent alerts
   React.useEffect(() => {
@@ -154,6 +159,10 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
         ? (pendingReqCount + (userRole !== 'viewer' ? urgentReqCount : 0)) 
         : null,
       badgeColor: urgentReqCount > 0 ? "bg-red-500" : "bg-destructive"
+    },
+    { name: "ฝากของไปไซต์", href: "/parcels", icon: Package, roles: ['admin', 'dispatcher', 'viewer'],
+      badge: parcelWatch.readyCount > 0 ? parcelWatch.readyCount : null,
+      badgeColor: "bg-red-500"
     },
     { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'],

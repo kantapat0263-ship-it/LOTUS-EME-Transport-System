@@ -304,6 +304,31 @@ export interface TripEditLog {
   };
 }
 
+/** ของที่ผู้ใช้ฝากไปไซต์ — `parcelWatches/{autoId}` · เจ้าของรายการเห็นคนเดียว (rules) ไม่เกี่ยวกับคนจัดรถ */
+export type ParcelWatchStatus = 'waiting' | 'handed' | 'cancelled';
+
+export interface ParcelWatch {
+  id: string;
+  userId: string;
+  siteId: string;
+  siteName: string;
+  item: string;
+  /** ส่งให้ใคร / หมายเหตุ */
+  note?: string;
+  /** ต้องถึงภายในวันที่ `YYYY-MM-DD` — ไม่บังคับ */
+  deadline?: string | null;
+  status: ParcelWatchStatus;
+  /** trip doc id ที่กด "รอรอบถัดไป" — ไม่นับเป็นรถที่จะฝากอีก */
+  skippedTripIds?: string[];
+  /** ตอนกด "ฝากแล้ว" (ISO) + เที่ยวที่ฝากไป */
+  handedAt?: string;
+  handedTripId?: string;
+  handedTripDate?: string;
+  handedPlate?: string;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
 export type UserRole = 'admin' | 'dispatcher' | 'viewer';
 
 export interface UserProfile {
