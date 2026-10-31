@@ -57,7 +57,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
   const [complianceDocs, setComplianceDocs] = React.useState<VehicleCompliance[]>([])
   // ฝากของไปไซต์ — จำนวนรายการที่มีรถไปแล้ว · popup/ไอคอนแอปทำเฉพาะเมนูฝั่งจอใหญ่ (กันเด้งซ้ำตอนเปิดเมนูมือถือ)
   const parcelWatch = useParcelWatches()
-  useParcelRunAlerts(parcelWatch.entries, parcelWatch.today, parcelWatch.readyCount, !isMobile)
+  useParcelRunAlerts(parcelWatch, !isMobile)
 
   // Listen for requests and urgent alerts
   React.useEffect(() => {

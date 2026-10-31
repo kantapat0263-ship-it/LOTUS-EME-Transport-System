@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { addDoc, arrayUnion, collection, deleteDoc, deleteField, doc, serverTimestamp, updateDoc } from "firebase/firestore"
+import { addDoc, collection, deleteDoc, deleteField, doc, serverTimestamp, updateDoc } from "firebase/firestore"
 import { AlertTriangle, Bell, Check, Loader2, Package, Phone, Plus, Search, SkipForward, Trash2, Truck, Undo2, X } from "lucide-react"
 import { useCollection, useFirestore, useMemoFirebase, useUser } from "@/firebase"
 import { Card, CardContent } from "@/components/ui/card"
@@ -17,10 +17,12 @@ import type { Driver, ParcelWatch, Site } from "@/types/models"
 
 const HISTORY_AFTER_MS = 30 * 86_400_000
 
-/** เวลาที่รายการจบ (ฝากแล้ว/ยกเลิก) — ใช้เรียงและพับเข้าประวัติ */
+const SKIP_LIMIT = 100 // ตรงกับ firestore.rules (parcelWatches.skippedTripIds)
+
+/** เวลาที่รายการจบ (ฝากแล้ว/ยกเลิก) — ใช้เรียงและพับเข้าประวัติ · ยังไม่มีเวลาจาก server = เพิ่งเปลี่ยน */
 function doneAtMs(p: ParcelWatch): number {
-  if (p.handedAt) return Date.parse(p.handedAt) || 0
-  return p.updatedAt?.toMillis?.() ?? 0
+  if (p.handedAt) return Date.parse(p.handedAt) || Date.now()
+  return p.updatedAt?.toMillis?.() ?? Date.now()
 }
 
 export default function ParcelsPage() {
@@ -60,7 +62,10 @@ export default function ParcelsPage() {
     handed: (p: ParcelWatch, r: ParcelRun) => run(() => updateDoc(ref(p), {
       status: "handed", handedAt: new Date().toISOString(), handedTripId: r.tripDocId, handedTripDate: r.date, handedPlate: r.plate, updatedAt: serverTimestamp(),
     }), "บันทึกว่าฝากแล้ว"),
-    skip: (p: ParcelWatch, r: ParcelRun) => run(() => updateDoc(ref(p), { skippedTripIds: arrayUnion(r.tripDocId), updatedAt: serverTimestamp() }), "ข้ามเที่ยวนี้ รอรอบถัดไป"),
+    // เก็บล่าสุดไม่เกิน SKIP_LIMIT (ตัดเที่ยวเก่าสุด ซึ่งมักผ่านไปแล้ว) — เกินแล้ว rules ปฏิเสธ
+    skip: (p: ParcelWatch, r: ParcelRun) => run(() => updateDoc(ref(p), {
+      skippedTripIds: [...(p.skippedTripIds ?? []).filter((id) => id !== r.tripDocId).slice(-(SKIP_LIMIT - 1)), r.tripDocId], updatedAt: serverTimestamp(),
+    }), "ข้ามเที่ยวนี้ รอรอบถัดไป"),
     unskip: (p: ParcelWatch) => run(() => updateDoc(ref(p), { skippedTripIds: [], updatedAt: serverTimestamp() }), "นับเที่ยวที่ข้ามไว้กลับมาแล้ว"),
     cancel: (p: ParcelWatch) => run(() => updateDoc(ref(p), { status: "cancelled", updatedAt: serverTimestamp() }), "ยกเลิกรายการแล้ว"),
     reopen: (p: ParcelWatch) => run(() => updateDoc(ref(p), {
@@ -91,7 +96,7 @@ export default function ParcelsPage() {
           <span className="flex-1 min-w-[12rem]">เปิด popup แจ้งเตือนมุมจอ เพื่อให้รู้ทันทีเมื่อมีรถไปไซต์ที่ฝากของ (ต้องเปิดระบบค้างไว้)</span>
           <Button size="sm" variant="outline" onClick={() => {
             if (!("Notification" in window)) return
-            Notification.requestPermission().then(setPermission).catch(() => {})
+            requestParcelNotifyPermission().then((p) => p && setPermission(p))
           }}>เปิดแจ้งเตือน</Button>
         </div>
       )}
@@ -198,6 +203,7 @@ function ParcelCard({ entry, today, phoneOf, actions }: { entry: ParcelEntry; to
               {phone && <a href={`tel:${phone}`} className="ml-2 inline-flex items-center gap-1 text-accent underline"><Phone className="h-3 w-3" />{phone}</a>}
             </p>
             {first.otherSites.length > 0 && <p className="text-muted-foreground">ไปพร้อม: {first.otherSites.join(", ")}</p>}
+            {first.date === today && <p className="text-xs text-orange-700">รถอาจออกไปแล้ว โทรถามคนขับก่อนฝาก</p>}
             {runs.length > 1 && <p className="text-xs text-muted-foreground">เที่ยวถัดไป: {runs.slice(1, 4).map((r) => runDateLabel(r.date, today)).join(", ")}</p>}
           </div>
         )}
@@ -223,7 +229,7 @@ function ParcelCard({ entry, today, phoneOf, actions }: { entry: ParcelEntry; to
           )}
           {!isDone && skippedCount > 0 && (
             <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => actions.unskip(parcel)}>
-              นับ {skippedCount} เที่ยวที่ข้ามกลับมา
+              ล้างเที่ยวที่ข้ามไว้
             </Button>
           )}
           {!isDone && (

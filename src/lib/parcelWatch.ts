@@ -5,6 +5,7 @@
  */
 import type { ParcelWatch, Trip, TripStop } from '@/types/models'
 import { liveMoveTarget, tripDriverLabel } from '@/lib/reassign'
+import { tripRouteMode } from '@/lib/routeMode'
 import { daysBetween } from '@/lib/vehicle-compliance'
 
 /** ดูทริปล่วงหน้ากี่วัน (นับจากวันนี้) */
@@ -64,12 +65,15 @@ function effectiveStops(trip: Trip, sameDay: Trip[]): TripStop[] {
   return [...own, ...incoming]
 }
 
-/** รหัสไซต์ตรงกัน หรือ (จุดงานพิมพ์ชื่อเอง) ชื่อตรงกัน */
+/** รหัสไซต์ตรงกัน · จุดงานที่พิมพ์ชื่อเอง (ไม่มีรหัส / `custom-N` จากหน้าวางแผน) เทียบชื่อแทน
+ *  ไซต์ในระบบคนละรหัสไม่จับคู่แม้ชื่อซ้ำ (เช่น "สำนักงานใหญ่" คนละบริษัท) */
 function stopAtSite(s: TripStop, p: Pick<ParcelWatch, 'siteId' | 'siteName'>): boolean {
-  return (!!s.siteId && s.siteId === p.siteId) || (!!norm(s.siteName) && norm(s.siteName) === norm(p.siteName))
+  if (s.siteId && !s.siteId.startsWith('custom-')) return s.siteId === p.siteId
+  return !!norm(s.siteName) && norm(s.siteName) === norm(p.siteName)
 }
 
-/** เที่ยวที่ยังฝากของได้ (ตั้งแต่วันนี้ ไม่ยกเลิก ไม่จบงาน ไม่กดรอรอบถัดไป) ที่ไปไซต์ของรายการนี้ — ใกล้สุดก่อน */
+/** เที่ยวที่ยังฝากของได้ (ตั้งแต่วันนี้ ไม่ยกเลิก ไม่จบงาน ไม่กดรอรอบถัดไป) ที่ไปไซต์ของรายการนี้ — ใกล้สุดก่อน
+ *  ทริปกลับอย่างเดียว (เริ่มจากไซต์) ไม่นับ เพราะรถไม่ได้ออกจากออฟฟิศ */
 export function matchParcelRuns(parcel: Pick<ParcelWatch, 'siteId' | 'siteName' | 'skippedTripIds'>, trips: Trip[], today: string): ParcelRun[] {
   const skipped = new Set(parcel.skippedTripIds ?? [])
   const live = trips.filter(t => t.status !== 'Cancelled' && t.tripDate >= today)
@@ -78,7 +82,7 @@ export function matchParcelRuns(parcel: Pick<ParcelWatch, 'siteId' | 'siteName' 
 
   const runs: ParcelRun[] = []
   for (const t of live) {
-    if (t.status === 'Completed' || t.gpsEndAt != null || skipped.has(t.id)) continue
+    if (t.status === 'Completed' || t.gpsEndAt != null || tripRouteMode(t) === 'return' || skipped.has(t.id)) continue
     const stops = effectiveStops(t, byDate.get(t.tripDate)!)
     if (!stops.some(s => stopAtSite(s, parcel))) continue
     runs.push({
@@ -119,7 +123,8 @@ export function parcelAlertMessage(alerts: ParcelAlert[], today: string): { titl
     const { item, siteName, run } = alerts[0]
     return {
       title: `มีรถไป ${siteName} ${runDateLabel(run.date, today)}`,
-      body: `ฝาก "${item}" ไปกับ ${run.plate}${run.driverName ? ` · ${run.driverName}` : ''}`,
+      // ทริปไม่มีสถานะ "ออกจากออฟฟิศแล้ว" — เที่ยววันนี้อาจออกไปแล้ว
+      body: `ฝาก "${item}" ไปกับ ${run.plate}${run.driverName ? ` · ${run.driverName}` : ''}${run.date === today ? ' · รถอาจออกไปแล้ว โทรถามคนขับก่อน' : ''}`,
     }
   }
   return {

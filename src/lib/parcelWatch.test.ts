@@ -25,8 +25,20 @@ describe('matchParcelRuns — หาเที่ยวรถที่ไปไ�
     const runs = matchParcelRuns(parcel({ siteName: 'Site  ABC' }), [
       trip('a', TODAY, [stop('', ' site abc ')]),
       trip('b', TODAY, [stop('', 'Site ABCD')]),
+      trip('c', TODAY, [stop('custom-1', 'site abc')]),
     ], TODAY)
-    expect(runs.map(r => r.tripDocId)).toEqual(['a'])
+    expect(runs.map(r => r.tripDocId)).toEqual(['a', 'c'])
+  })
+
+  it('จุดงานที่เป็นไซต์ในระบบคนละรหัส ไม่จับคู่แม้ชื่อซ้ำ (เช่น "สำนักงานใหญ่" คนละบริษัท)', () => {
+    expect(matchParcelRuns(parcel({ siteName: 'สำนักงานใหญ่' }), [trip('a', TODAY, [stop('other-site', 'สำนักงานใหญ่')])], TODAY)).toEqual([])
+  })
+
+  it('ทริปกลับอย่างเดียว (เริ่มจากไซต์) ไม่นับ — รถไม่ได้ออกจากออฟฟิศ', () => {
+    expect(matchParcelRuns(parcel(), [
+      trip('ret', TODAY, [stop('drf', 'DRF')], { routeMode: 'return' }),
+      trip('out', TODAY, [stop('drf', 'DRF')], { routeMode: 'outbound' }),
+    ], TODAY).map(r => r.tripDocId)).toEqual(['out'])
   })
 
   it('ไม่นับทริปยกเลิก จบงานแล้ว จบการใช้รถแล้ว ย้อนหลัง และเที่ยวที่กดรอรอบถัดไป', () => {
@@ -99,6 +111,12 @@ describe('การแจ้งเตือน popup', () => {
     ], TODAY)
     expect(many.title).toBe('มีรถไปไซต์ที่คุณฝากของ 2 รายการ')
     expect(many.body).toContain('จอ → ไซต์ Y')
+  })
+  it('เที่ยววันนี้บอกว่ารถอาจออกไปแล้ว (ทริปไม่มีสถานะออกจากออฟฟิศ)', () => {
+    const msg = parcelAlertMessage([{ key: 'p1:a', parcelId: 'p1', item: 'Notebook', siteName: 'DRF', run: { ...runA, date: TODAY } }], TODAY)
+    expect(msg.title).toBe('มีรถไป DRF วันนี้')
+    expect(msg.body).toContain('รถอาจออกไปแล้ว')
+    expect(parcelAlertMessage([{ key: 'p1:a', parcelId: 'p1', item: 'Notebook', siteName: 'DRF', run: runA }], TODAY).body).not.toContain('อาจออกไปแล้ว')
   })
 })
 

@@ -493,6 +493,7 @@ describe('parcelWatches (ฝากของไปไซต์) — เจ้า�
       { skippedTripIds: 'T1' }, { skippedTripIds: Array.from({ length: 101 }, (_, i) => `T${i}`) }, { role: 'admin' },
     ]) await assertFails(setDoc(doc(v, 'parcelWatches', 'P-BAD'), parcel(bad)))
     await assertSucceeds(setDoc(doc(v, 'parcelWatches', 'P-OK'), parcel({ deadline: null })))
+    await assertSucceeds(setDoc(doc(v, 'parcelWatches', 'P-MAX'), parcel({ item: 'ก'.repeat(200), siteName: 'ก'.repeat(200), note: 'ก'.repeat(300), skippedTripIds: Array.from({ length: 100 }, (_, i) => `T${i}`) })))
   })
 
   it('เจ้าของกดฝากแล้ว / รอรอบถัดไป / ยกเลิก / ลบได้ แต่โอนรายการให้คนอื่นไม่ได้', async () => {

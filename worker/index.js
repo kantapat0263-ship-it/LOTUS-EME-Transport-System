@@ -12,3 +12,18 @@ async function dropDriverTicketPages() {
 self.addEventListener('activate', (event) => {
   event.waitUntil(Promise.all([...['apis', 'cross-origin'].map((name) => caches.delete(name)), dropDriverTicketPages()]))
 })
+
+// แตะ popup "ฝากของไปไซต์" ที่สร้างผ่าน service worker (Android) → โฟกัสแท็บที่เปิดอยู่แล้วไปหน้าฝากของ หรือเปิดหน้าต่างใหม่
+self.addEventListener('notificationclick', (event) => {
+  const url = event.notification.data && event.notification.data.url
+  if (!event.notification.tag.startsWith('parcel-watch') || !url) return
+  event.notification.close()
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => new URL(w.url).origin === self.location.origin)
+      // แท็บที่ SW ยังไม่คุม navigate ไม่ได้ → เปิดหน้าต่างใหม่แทน
+      if (open) return open.focus().then((w) => w.navigate(url)).catch(() => self.clients.openWindow(url))
+      return self.clients.openWindow(url)
+    })
+  )
+})
