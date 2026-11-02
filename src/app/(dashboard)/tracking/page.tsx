@@ -52,6 +52,9 @@ import {
   clockWithDay,
   pickupAreaRadiusM,
   ARRIVAL_RADIUS_M,
+  truckStatus,
+  tripOfficeReturn,
+  type TruckStatus,
 } from "@/lib/tracking"
 import { classifyDriverStops, type DriverStop, type DrivingPoint } from '@/lib/driverStopSummary'
 import { formatDurationMinutes as fmtDur } from '@/lib/formatDuration'
@@ -63,7 +66,6 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { AlertTriangle, WifiOff, Navigation, Clock } from "lucide-react"
 
-type TruckStatus = "ok" | "stale" | "done" | "unmapped"
 
 interface TruckView {
   trip: Trip
@@ -117,6 +119,9 @@ interface TimelineEntry {
 
 const STATUS_META: Record<TruckStatus, { label: string; cls: string }> = {
   ok: { label: "ตามแผน", cls: "bg-emerald-500/15 text-emerald-400" },
+  returning: { label: "ครบจุด · กำลังกลับ", cls: "bg-sky-500/15 text-sky-400" },
+  returned: { label: "กลับถึงออฟฟิศแล้ว", cls: "bg-emerald-500/15 text-emerald-400" },
+  away: { label: "ครบจุด · ไม่กลับออฟฟิศ", cls: "bg-amber-500/15 text-amber-400" },
   done: { label: "จบงานแล้ว", cls: "bg-emerald-500/15 text-emerald-400" },
   stale: { label: "GPS ออฟไลน์", cls: "bg-amber-500/15 text-amber-400" },
   unmapped: { label: "ยังไม่จับคู่ GPS", cls: "bg-muted text-muted-foreground" },
@@ -513,14 +518,32 @@ export default function TrackingPage() {
       const mKm = position ? mileageKm(position.mileage ?? 0) : 0
 
       // กลับอย่างเดียว: ถึงไซต์ (จุดเริ่ม) ยังไม่ใช่จบงาน — ต้องพารถถึงออฟฟิศก่อน
-      const officeReturnAt = dailyDoc?.returnedOfficeAt ?? (isReturnMode ? dailyDoc?.vehicleReturnedAt ?? null : null)
-      const allDone = totalStops > 0 && arrivedCount >= totalStops && (!isReturnMode || officeReturnAt != null)
-      let status: TruckStatus
-      if (!deviceId) status = "unmapped"
-      else if (!isToday || endAt != null) status = allDone ? "done" : "ok"
-      else if (stale) status = "stale"
-      else if (allDone) status = "done"
-      else status = "ok"
+      const machineReturnAt = dailyDoc?.returnedOfficeAt ?? (isReturnMode ? dailyDoc?.vehicleReturnedAt ?? null : null)
+      // ครบจุด แยกจาก "กลับถึงออฟฟิศ" (truckStatus ตัดสินต่อ) · กลับอย่างเดียว = ต้องออกจากไซต์รับรถแล้ว (รถจอดรอที่ไซต์ตั้งแต่เช้าไม่นับ)
+      const allDone =
+        totalStops > 0 && arrivedCount >= totalStops && (!isReturnMode || ret?.siteDepartAt != null || machineReturnAt != null)
+      // เวลากลับของทริป: ไม่หลุดเมื่อคนใช้รถต่อโดยยังไม่กด ✂️ / หมุดงานใกล้ออฟฟิศ (ดู tripOfficeReturn)
+      const officeReturnAt = tripOfficeReturn({
+        trail,
+        office: origin,
+        jobs: routeStops.filter((s) => s.lat != null && s.lng != null).map((s) => ({ lat: s.lat!, lng: s.lng! })),
+        machineReturnAt,
+        allDone,
+        isToday,
+        sinceFloor: isReturnMode ? ret?.siteDepartAt ?? null : null,
+      })
+      const lastTrailPt = trail.length ? trail[trail.length - 1] : null
+      const endedAway = dailyDoc?.endedAwayFromOffice ?? (!!lastTrailPt && !!origin && haversineMeters(origin, lastTrailPt) > OFFICE_RADIUS_M)
+      const status = truckStatus({
+        mapped: !!deviceId,
+        isToday,
+        ended: endAt != null,
+        stale,
+        allStopsDone: allDone,
+        returnedToOffice: officeReturnAt != null,
+        outbound: tripRouteMode(trip) === "outbound",
+        endedAway,
+      })
 
       return {
         trip,
@@ -549,7 +572,8 @@ export default function TrackingPage() {
   }, [vehicles, positions, trails, prevTrails, daily, trips, settings, now, isToday, selectedDate, overspeedLimit])
 
   // เรียง: คันมีปัญหาสำคัญ (ตัดไฟ/ความเร็วเกิน) ขึ้นก่อน แล้วตามสถานะ
-  const order: Record<TruckStatus, number> = { stale: 0, ok: 1, unmapped: 2, done: 3 }
+  // คันที่กำลังกลับยังอยู่บนถนน → ต่อจากคันที่วิ่งงาน ก่อนคันที่จบแล้ว
+  const order: Record<TruckStatus, number> = { stale: 0, ok: 1, returning: 2, unmapped: 3, away: 4, done: 5, returned: 5 }
   const priority = (t: TruckView) => (t.powerCut ? -2 : t.overspeed ? -1 : order[t.status])
   const sortedTrucks = React.useMemo(
     () => [...trucks].sort((a, b) => priority(a) - priority(b)),

@@ -11,6 +11,9 @@ import {
   isPowerCut,
   isOverspeed,
   mileageKm,
+  truckStatus,
+  officeStayAfter,
+  tripOfficeReturn,
   ARRIVAL_RADIUS_M,
   minutesOutsideLunch,
   computeRecurringStops,
@@ -1152,5 +1155,110 @@ describe('tracking: positionSyncKey — ข้ามรอบ sync ที่ไ�
     expect(sumNew!.stops[0].arrivedAt).toBe(20 * M)
     expect(sumNew!.stops[0].departedAt).toBe(110 * M)
     expect(sumNew!.stops[0].dwellMin).toBe(90)
+  })
+})
+
+describe('tracking: truckStatus — ป้ายสถานะรถแยก "ครบจุดแต่ยังไม่กลับ" ออกจาก "จบงาน"', () => {
+  const base = { mapped: true, isToday: true, ended: false, stale: false, allStopsDone: true, returnedToOffice: false, outbound: false, endedAway: true }
+  it('วันนี้ ครบทุกจุดแต่ยังไม่ถึงออฟฟิศ = กำลังกลับ · ถึงออฟฟิศแล้ว = กลับถึงออฟฟิศ', () => {
+    expect(truckStatus(base)).toBe('returning')
+    expect(truckStatus({ ...base, returnedToOffice: true })).toBe('returned')
+  })
+  it('ไปอย่างเดียว หรือคนจัดรถกดจบการใช้รถ = จบงาน (ไม่ต้องรอกลับออฟฟิศ)', () => {
+    expect(truckStatus({ ...base, outbound: true })).toBe('done')
+    expect(truckStatus({ ...base, ended: true })).toBe('done')
+    expect(truckStatus({ ...base, ended: true, returnedToOffice: true })).toBe('returned')
+  })
+  it('ดูย้อนหลัง: ครบจุดแต่ไม่กลับออฟฟิศ = ไม่กลับออฟฟิศ · กลับแล้ว = กลับถึงออฟฟิศ', () => {
+    expect(truckStatus({ ...base, isToday: false })).toBe('away')
+    expect(truckStatus({ ...base, isToday: false, returnedToOffice: true })).toBe('returned')
+    expect(truckStatus({ ...base, isToday: false, outbound: true })).toBe('done')
+  })
+  it('ดูย้อนหลัง: จุดสุดท้ายของวันอยู่ในออฟฟิศ (เข้าไม่ครบ 5 นาทีก่อนตัดวัน/GPS เงียบหลังเข้า) = กลับถึงออฟฟิศ ไม่ใช่ไม่กลับ', () => {
+    expect(truckStatus({ ...base, isToday: false, endedAway: false })).toBe('returned')
+    expect(truckStatus({ ...base, endedAway: false })).toBe('returning') // วันนี้ เพิ่งเข้าเขตยังไม่ครบเวลา = ยังกำลังกลับ
+  })
+  it('ยังไม่ครบจุด = ตามแผน แม้กลับออฟฟิศแล้ว (คงพฤติกรรมเดิม)', () => {
+    expect(truckStatus({ ...base, allStopsDone: false })).toBe('ok')
+    expect(truckStatus({ ...base, allStopsDone: false, returnedToOffice: true })).toBe('ok')
+    expect(truckStatus({ ...base, allStopsDone: false, isToday: false })).toBe('ok')
+  })
+  it('ยังไม่จับคู่ GPS มาก่อนทุกอย่าง · GPS ออฟไลน์เฉพาะวันนี้ที่ยังไม่จบการใช้รถ (คงลำดับเดิม)', () => {
+    expect(truckStatus({ ...base, mapped: false, returnedToOffice: true })).toBe('unmapped')
+    expect(truckStatus({ ...base, stale: true })).toBe('stale')
+    expect(truckStatus({ ...base, stale: true, ended: true })).toBe('done')
+    expect(truckStatus({ ...base, stale: true, isToday: false })).toBe('away')
+  })
+})
+
+describe('tracking: officeStayAfter — รถกลับมาจอดออฟฟิศหลังถึงจุดงานสุดท้ายแล้ว (ใช้ตัดสินป้ายกลับถึงออฟฟิศ)', () => {
+  const office = OFFICE_LOCATION
+  const far = { lat: office.lat - 0.05, lng: office.lng - 0.05 } // ~7 กม.
+  const nearJob = { lat: office.lat + 0.001, lng: office.lng } // หมุดงาน ~110 ม. จากออฟฟิศ
+  const at = (p: { lat: number; lng: number }, min: number) => ({ ...p, t: min * 60_000 })
+  const stay = (p: { lat: number; lng: number }, from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => at(p, from + i))
+
+  it('จอดออฟฟิศ ≥ 5 นาทีหลังจุดสุดท้าย = กลับแล้ว · เพิ่งเข้า 3 นาที = ยังไม่', () => {
+    expect(officeStayAfter([at(far, 100), ...stay(office, 110, 116)], office, 100 * 60_000)).toBe(110 * 60_000)
+    expect(officeStayAfter([at(far, 100), ...stay(office, 110, 113)], office, 100 * 60_000)).toBeNull()
+  })
+  it('กลับมาจอดแล้วมีคนขับออกไปอีก (ยังไม่กด ✂️) = ยังนับว่ากลับแล้ว', () => {
+    expect(officeStayAfter([at(far, 100), ...stay(office, 110, 120), at(far, 140)], office, 100 * 60_000)).toBe(110 * 60_000)
+  })
+  it('จอดออฟฟิศก่อนถึงจุดสุดท้าย (กลับพักเที่ยงแล้วออกงานบ่าย) ไม่นับ', () => {
+    expect(officeStayAfter([...stay(office, 50, 70), at(far, 100), at(far, 110)], office, 100 * 60_000)).toBeNull()
+  })
+  it('หมุดงานใกล้ออฟฟิศไม่ทำให้สถานะกลับหลุด (จอดในออฟฟิศต่อเนื่อง)', () => {
+    // หมุดงาน ~110 ม. อยู่ในรัศมีออฟฟิศ (250 ม.) — นับจอดตั้งแต่จุดนั้น
+    expect(officeStayAfter([at(nearJob, 100), ...stay(office, 105, 135)], office, 100 * 60_000)).toBe(100 * 60_000)
+  })
+  it('GPS เงียบระหว่างจอด (หัว-ท้ายอยู่ในออฟฟิศ) = จอดต่อเนื่อง', () => {
+    expect(officeStayAfter([at(far, 100), at(office, 110), at(office, 140)], office, 100 * 60_000)).toBe(110 * 60_000)
+  })
+})
+
+describe('tracking: tripOfficeReturn — เวลากลับถึงออฟฟิศของทริป (ใช้กับป้าย/แผงรายละเอียด/ตัวนับ)', () => {
+  const office = OFFICE_LOCATION
+  const siteX = { lat: office.lat - 0.05, lng: office.lng - 0.05 } // ~7 กม.
+  const siteY = { lat: office.lat - 0.08, lng: office.lng - 0.02 }
+  const road = { lat: office.lat - 0.02, lng: office.lng - 0.02 } // ระหว่างทาง ไม่ใกล้งาน
+  const nearOffice = { lat: office.lat + 0.001, lng: office.lng } // งานติดออฟฟิศ ~110 ม. (ในเขตออฟฟิศ)
+  const M = 60_000
+  const at = (p: { lat: number; lng: number }, min: number) => ({ ...p, t: min * M })
+  const stay = (p: { lat: number; lng: number }, from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => at(p, from + i))
+  const base = { office, jobs: [siteX, siteY], machineReturnAt: null, allDone: true, isToday: true, sinceFloor: null }
+
+  it('กลับมาจอดหลังจบงาน = เวลาเข้าออฟฟิศ แม้ภายหลังมีคนขับรถออกไปอีก (ยังไม่กด ✂️)', () => {
+    const trail = [...stay(office, 0, 10), at(road, 30), ...stay(siteX, 60, 75), at(road, 100), ...stay(office, 120, 135), at(road, 160), at(siteY, 200)]
+    // หลังจอดออฟฟิศ 120–135 มีคนขับรถออกไปที่อื่น (ไม่ใช่จุดงานของทริปนี้)
+    expect(tripOfficeReturn({ ...base, jobs: [siteX], trail })).toBe(120 * M)
+  })
+  it('ใช้เวลาหลังจบงานก่อนเวลาของ state machine (คนใช้รถต่อกลับมาตอนค่ำ เวลากลับของทริปไม่เปลี่ยน)', () => {
+    const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), ...stay(office, 120, 135), at(road, 160), ...stay(office, 300, 310)]
+    expect(tripOfficeReturn({ ...base, jobs: [siteX], trail, machineReturnAt: 300 * M })).toBe(120 * M)
+  })
+  it('กลับพักเที่ยงแล้วไปไซต์เดิมอีกรอบ = ยังไม่กลับ (ไม่เอาการพักเที่ยงมานับ)', () => {
+    const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), ...stay(siteY, 100, 110), ...stay(office, 180, 240), ...stay(siteX, 300, 330)]
+    expect(tripOfficeReturn({ ...base, trail })).toBeNull()
+  })
+  it('ยังไม่ครบจุด = ใช้เวลาของ state machine ตามเดิม (กลับพักเที่ยงยังโชว์ได้)', () => {
+    const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), ...stay(office, 120, 135)]
+    expect(tripOfficeReturn({ ...base, trail, allDone: false, machineReturnAt: 120 * M })).toBe(120 * M)
+    expect(tripOfficeReturn({ ...base, trail, allDone: false })).toBeNull()
+  })
+  it('งานติดออฟฟิศทุกจุด (ไม่มีจุดงานนอกเขตออฟฟิศ) = ไม่เดาเวลา ใช้ state machine — กันได้เวลากลับปลอมตอนเช้า', () => {
+    const trail = [...stay(office, 0, 30), ...stay(nearOffice, 31, 60)]
+    expect(tripOfficeReturn({ ...base, jobs: [nearOffice], trail })).toBeNull()
+    expect(tripOfficeReturn({ ...base, jobs: [nearOffice], trail, machineReturnAt: 50 * M })).toBe(50 * M)
+  })
+  it('ทริปกลับอย่างเดียว: นับหลังเวลาออกจากไซต์ (ลานจอดห่างหมุดเกิน 300 ม. ก็ได้)', () => {
+    const lot = { lat: siteX.lat + 0.004, lng: siteX.lng } // ~450 ม. จากหมุด
+    const trail = [...stay(lot, 0, 120), at(road, 150), ...stay(office, 180, 190)]
+    expect(tripOfficeReturn({ ...base, jobs: [siteX], trail, sinceFloor: 121 * M })).toBe(180 * M)
+  })
+  it('ดูย้อนหลัง: จบวันในออฟฟิศแต่จอดไม่ครบ 5 นาที (เข้า 03:57) = เวลาเข้าออฟฟิศรอบสุดท้าย · วันนี้ยังไม่นับ', () => {
+    const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), at(road, 100), ...stay(office, 120, 122)]
+    expect(tripOfficeReturn({ ...base, trail, isToday: false })).toBe(120 * M)
+    expect(tripOfficeReturn({ ...base, trail })).toBeNull()
   })
 })

@@ -266,6 +266,36 @@ export function isTripNotRun(stops: { outcome?: string }[], incomingCount: numbe
   return stops.every((s) => !!s.outcome && s.outcome !== 'delivered')
 }
 
+/** สถานะบนการ์ดรถ — "ครบทุกจุด" ยังไม่ใช่จบงานจนกว่ารถจะกลับถึงออฟฟิศ (ผู้ใช้ขอแยก 2026-11-02)
+ *  returning = วันนี้ครบจุดแล้ว กำลังกลับ · returned = กลับถึงออฟฟิศ · away = ย้อนหลังครบจุดแต่ไม่กลับออฟฟิศ
+ *  done = ไปอย่างเดียว (รถไม่กลับอยู่แล้ว) หรือคนจัดรถกดจบการใช้รถ */
+export type TruckStatus = 'ok' | 'stale' | 'returning' | 'returned' | 'away' | 'done' | 'unmapped'
+
+export function truckStatus(p: {
+  /** จับคู่อุปกรณ์ GPS แล้ว */
+  mapped: boolean
+  isToday: boolean
+  /** กดจบการใช้รถแล้ว (trip.gpsEndAt) */
+  ended: boolean
+  stale: boolean
+  /** ถึงครบทุกจุด (ทริปกลับอย่างเดียว = ออกจากไซต์รับรถแล้ว) */
+  allStopsDone: boolean
+  returnedToOffice: boolean
+  outbound: boolean
+  /** จุดสุดท้ายของ trail อยู่นอกรัศมีออฟฟิศ (ใช้เฉพาะดูย้อนหลัง) */
+  endedAway: boolean
+}): TruckStatus {
+  if (!p.mapped) return 'unmapped'
+  const live = p.isToday && !p.ended
+  if (live && p.stale) return 'stale'
+  if (!p.allStopsDone) return 'ok'
+  if (p.returnedToOffice) return 'returned'
+  if (p.outbound || p.ended) return 'done'
+  if (live) return 'returning'
+  // ย้อนหลัง: จุดสุดท้ายของวันอยู่ในออฟฟิศ = รถอยู่ออฟฟิศแล้ว (เข้าไม่ครบเวลาก่อนตัดวัน / GPS เงียบหลังเข้า)
+  return p.endedAway ? 'away' : 'returned'
+}
+
 /** วันทำการของระบบติดตามรถเริ่ม 04:00 เวลาไทย (ตรงกับเวลาที่ cron เริ่มดึงตำแหน่ง)
  *  เลื่อนจาก 05:00 เมื่อ 2026-10-06 — คนขับออกก่อนตี 5 บ่อยขึ้น จุดช่วงออกรถหาย */
 export const TRACKING_DAY_START_HOUR = 4
@@ -883,6 +913,68 @@ export function suggestHandoverTime(
     }
   }
   return best
+}
+
+/**
+ * เวลาที่รถกลับมาจอดออฟฟิศต่อเนื่อง ≥ RETURN_DWELL_MIN หลังเวลา after (ถึงจุดงานสุดท้าย) — null = ยังไม่กลับ
+ * ใช้เป็นเวลากลับสำรองของป้าย/แผงรายละเอียด
+ * ต่างจาก returnedOfficeAt: ไม่ถูกล้างเมื่อรถถูกขับออกไปอีก (คนอื่นใช้รถต่อโดยยังไม่กด ✂️) และไม่ขึ้นกับหมุดงานใกล้ออฟฟิศ
+ * (state machine ของ computeDailySummary ตั้งใจไม่แตะ — ดู CLAUDE.md) · GPS เงียบระหว่างจอด (หัว-ท้ายในรัศมี) = จอดต่อเนื่อง
+ */
+export function officeStayAfter(
+  trail: TrailPoint[],
+  office: LatLng,
+  after: number,
+  opts: { radius?: number; minStayMin?: number } = {}
+): number | null {
+  const radius = opts.radius ?? OFFICE_RADIUS_M
+  const minMs = (opts.minStayMin ?? RETURN_DWELL_MIN) * 60_000
+  let start: number | null = null
+  for (const p of trail.filter((q) => q.t != null && q.t >= after).sort((a, b) => a.t! - b.t!)) {
+    if (haversineMeters(office, p) <= radius) {
+      if (start == null) start = p.t!
+      if (p.t! - start >= minMs) return start
+    } else start = null
+  }
+  return null
+}
+
+/**
+ * เวลากลับถึงออฟฟิศของทริป (ป้าย/แผงรายละเอียด/ตัวนับ) — null = ยังไม่กลับ
+ * ครบจุดแล้ว: ใช้การจอดออฟฟิศ ≥ RETURN_DWELL_MIN ครั้งแรกหลัง "จุดสุดท้ายที่รถอยู่ที่จุดงาน (นอกเขตออฟฟิศ)" ก่อน
+ *   — คนใช้รถต่อโดยยังไม่กด ✂️ / หมุดงานใกล้ออฟฟิศ ไม่ทำให้หลุด · พักเที่ยงก่อนไปจุดงานรอบหลังไม่นับ
+ *   ไม่มีจุดงานนอกเขตออฟฟิศเลย = ไม่เดา ใช้ machineReturnAt (state machine ของ computeDailySummary)
+ * ดูย้อนหลังที่จบวันในออฟฟิศแต่จอดไม่ครบเกณฑ์ (เข้าก่อนตัดวัน/GPS เงียบหลังเข้า) = เวลาเข้าออฟฟิศรอบสุดท้าย
+ * sinceFloor = ขอบล่างเพิ่ม (ทริปกลับอย่างเดียว = เวลาออกจากไซต์ — ลานจอดอาจห่างหมุดเกิน 300 ม.)
+ */
+export function tripOfficeReturn(p: {
+  trail: TrailPoint[]
+  office: LatLng | null
+  jobs: LatLng[]
+  machineReturnAt: number | null
+  allDone: boolean
+  isToday: boolean
+  sinceFloor?: number | null
+}): number | null {
+  if (!p.allDone || !p.office) return p.machineReturnAt
+  const office = p.office
+  const inOffice = (q: LatLng) => haversineMeters(office, q) <= OFFICE_RADIUS_M
+  let since = p.sinceFloor ?? null
+  for (const q of p.trail) {
+    if (q.t == null || inOffice(q) || !p.jobs.some((j) => haversineMeters(j, q) <= ARRIVAL_RADIUS_M)) continue
+    if (since == null || q.t > since) since = q.t
+  }
+  if (since == null) return p.machineReturnAt
+  const stayed = officeStayAfter(p.trail, office, since)
+  if (stayed != null) return stayed
+  if (p.machineReturnAt != null && p.machineReturnAt >= since) return p.machineReturnAt
+  if (!p.isToday) {
+    const pts = p.trail.filter((q) => q.t != null).sort((a, b) => a.t! - b.t!)
+    let entry: number | null = null
+    for (let i = pts.length - 1; i >= 0 && inOffice(pts[i]); i--) entry = pts[i].t!
+    if (entry != null && entry >= since) return entry
+  }
+  return null
 }
 
 /** เวลาจบการใช้รถที่จะบันทึก: ไม่ได้แก้เวลาตั้งต้น (ข้อเสนอ/ตอนนี้) = ใช้ค่านั้นเป๊ะ (มีวินาที — ปัดเป็นนาทีแล้วจะตัดจุดที่ทำให้จอดครบ 5 นาทีทิ้ง)
