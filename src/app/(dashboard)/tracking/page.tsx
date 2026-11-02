@@ -469,6 +469,7 @@ export default function TrackingPage() {
       let dailyDoc: TrackingDailyDoc | null = stored
       // ย้อนหลัง: คิดใหม่จาก trail "เฉพาะเวลาที่จุดงาน" ให้ตรงกับป้าย "ถึงแล้ว" ที่คิดสดเสมอ (วันก่อนแก้เกณฑ์ server เก็บแบบเก่า)
       // เวลาออก/กลับออฟฟิศ + กม. คงค่าที่เก็บไว้ของวันนั้น (ไม่ให้พิกัดออฟฟิศ/งานที่เปลี่ยนภายหลังไปแก้ประวัติ)
+      // ยกเว้นเวลากลับที่แสดง/ป้าย: คิดจาก trail ด้วย tripOfficeReturn ก่อน (ค่าที่เก็บไว้เป็นตัวสำรอง) — เปลี่ยนพิกัดออฟฟิศแล้วย้อนหลังขยับตาม
       if (!isToday && deviceId && stored && trail.length >= 2) {
         dailyDoc = { ...stored, stops: computeDailySummary(trail, routeStops, origin).stops }
       }
@@ -529,7 +530,7 @@ export default function TrackingPage() {
         jobs: routeStops.filter((s) => s.lat != null && s.lng != null).map((s) => ({ lat: s.lat!, lng: s.lng! })),
         machineReturnAt,
         allDone,
-        isToday,
+        final: !isToday || endAt != null,
         sinceFloor: isReturnMode ? ret?.siteDepartAt ?? null : null,
       })
       const lastTrailPt = trail.length ? trail[trail.length - 1] : null

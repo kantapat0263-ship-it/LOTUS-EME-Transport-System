@@ -919,7 +919,8 @@ export function suggestHandoverTime(
  * เวลาที่รถกลับมาจอดออฟฟิศต่อเนื่อง ≥ RETURN_DWELL_MIN หลังเวลา after (ถึงจุดงานสุดท้าย) — null = ยังไม่กลับ
  * ใช้เป็นเวลากลับสำรองของป้าย/แผงรายละเอียด
  * ต่างจาก returnedOfficeAt: ไม่ถูกล้างเมื่อรถถูกขับออกไปอีก (คนอื่นใช้รถต่อโดยยังไม่กด ✂️) และไม่ขึ้นกับหมุดงานใกล้ออฟฟิศ
- * (state machine ของ computeDailySummary ตั้งใจไม่แตะ — ดู CLAUDE.md) · GPS เงียบระหว่างจอด (หัว-ท้ายในรัศมี) = จอดต่อเนื่อง
+ * (state machine ของ computeDailySummary ตั้งใจไม่แตะ — ดู CLAUDE.md)
+ * นิยามจอดเดียวกับ firstOfficeStayStart: GPS เงียบระหว่างจอด = จอดถึงจุดถัดไป (แม้จุดนั้นอยู่นอกออฟฟิศ)
  */
 export function officeStayAfter(
   trail: TrailPoint[],
@@ -927,24 +928,18 @@ export function officeStayAfter(
   after: number,
   opts: { radius?: number; minStayMin?: number } = {}
 ): number | null {
-  const radius = opts.radius ?? OFFICE_RADIUS_M
-  const minMs = (opts.minStayMin ?? RETURN_DWELL_MIN) * 60_000
-  let start: number | null = null
-  for (const p of trail.filter((q) => q.t != null && q.t >= after).sort((a, b) => a.t! - b.t!)) {
-    if (haversineMeters(office, p) <= radius) {
-      if (start == null) start = p.t!
-      if (p.t! - start >= minMs) return start
-    } else start = null
-  }
-  return null
+  const pts = trail.filter((q) => q.t != null && q.t >= after).sort((a, b) => a.t! - b.t!)
+  return firstOfficeStayStart(pts, office, opts.radius ?? OFFICE_RADIUS_M, (opts.minStayMin ?? RETURN_DWELL_MIN) * 60_000)
 }
 
 /**
  * เวลากลับถึงออฟฟิศของทริป (ป้าย/แผงรายละเอียด/ตัวนับ) — null = ยังไม่กลับ
- * ครบจุดแล้ว: ใช้การจอดออฟฟิศ ≥ RETURN_DWELL_MIN ครั้งแรกหลัง "จุดสุดท้ายที่รถอยู่ที่จุดงาน (นอกเขตออฟฟิศ)" ก่อน
- *   — คนใช้รถต่อโดยยังไม่กด ✂️ / หมุดงานใกล้ออฟฟิศ ไม่ทำให้หลุด · พักเที่ยงก่อนไปจุดงานรอบหลังไม่นับ
- *   ไม่มีจุดงานนอกเขตออฟฟิศเลย = ไม่เดา ใช้ machineReturnAt (state machine ของ computeDailySummary)
- * ดูย้อนหลังที่จบวันในออฟฟิศแต่จอดไม่ครบเกณฑ์ (เข้าก่อนตัดวัน/GPS เงียบหลังเข้า) = เวลาเข้าออฟฟิศรอบสุดท้าย
+ * ครบจุดแล้ว: ใช้การจอดออฟฟิศ ≥ RETURN_DWELL_MIN ครั้งแรกหลัง "ออกจากรอบจอดสุดท้ายที่จุดงาน" (stopTiming.departedAt) ก่อน
+ *   — ขับผ่านหมุดงาน < STAY_MIN (เช่น ทางกลับบ้าน) ไม่นับ · คนใช้รถต่อโดยยังไม่กด ✂️ / พักเที่ยงก่อนไปจุดงานรอบหลังไม่ทำให้ผิด
+ *   หมุดงานที่ห่างออฟฟิศไม่เกิน OFFICE_RADIUS_M + ARRIVAL_RADIUS_M แยกจากการจอดออฟฟิศไม่ได้ จึงไม่ใช้ —
+ *   ไม่มีจุดงานไกลกว่านั้นเลย = ไม่เดา ใช้ machineReturnAt (state machine ของ computeDailySummary)
+ *   (ข้อจำกัด: ทุกจุดงานติดออฟฟิศและรถไม่เคยออกนอกเขต → วันนี้ป้ายค้าง "กำลังกลับ")
+ * final (ดูย้อนหลัง / ตัดด้วยจบการใช้รถแล้ว — ข้อมูลไม่เพิ่ม): จบในออฟฟิศแต่จอดไม่ครบเกณฑ์ = เวลาเข้าออฟฟิศรอบสุดท้าย
  * sinceFloor = ขอบล่างเพิ่ม (ทริปกลับอย่างเดียว = เวลาออกจากไซต์ — ลานจอดอาจห่างหมุดเกิน 300 ม.)
  */
 export function tripOfficeReturn(p: {
@@ -953,22 +948,23 @@ export function tripOfficeReturn(p: {
   jobs: LatLng[]
   machineReturnAt: number | null
   allDone: boolean
-  isToday: boolean
+  final: boolean
   sinceFloor?: number | null
 }): number | null {
   if (!p.allDone || !p.office) return p.machineReturnAt
   const office = p.office
   const inOffice = (q: LatLng) => haversineMeters(office, q) <= OFFICE_RADIUS_M
   let since = p.sinceFloor ?? null
-  for (const q of p.trail) {
-    if (q.t == null || inOffice(q) || !p.jobs.some((j) => haversineMeters(j, q) <= ARRIVAL_RADIUS_M)) continue
-    if (since == null || q.t > since) since = q.t
+  for (const job of p.jobs) {
+    if (haversineMeters(office, job) <= OFFICE_RADIUS_M + ARRIVAL_RADIUS_M) continue
+    const left = stopTiming(job, p.trail, ARRIVAL_RADIUS_M, arrivalDwellMin(job, office))?.departedAt
+    if (left != null && (since == null || left > since)) since = left
   }
   if (since == null) return p.machineReturnAt
   const stayed = officeStayAfter(p.trail, office, since)
   if (stayed != null) return stayed
   if (p.machineReturnAt != null && p.machineReturnAt >= since) return p.machineReturnAt
-  if (!p.isToday) {
+  if (p.final) {
     const pts = p.trail.filter((q) => q.t != null).sort((a, b) => a.t! - b.t!)
     let entry: number | null = null
     for (let i = pts.length - 1; i >= 0 && inOffice(pts[i]); i--) entry = pts[i].t!

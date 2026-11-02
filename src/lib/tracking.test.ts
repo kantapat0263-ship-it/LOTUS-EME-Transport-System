@@ -1214,6 +1214,8 @@ describe('tracking: officeStayAfter — รถกลับมาจอดออ�
   })
   it('GPS เงียบระหว่างจอด (หัว-ท้ายอยู่ในออฟฟิศ) = จอดต่อเนื่อง', () => {
     expect(officeStayAfter([at(far, 100), at(office, 110), at(office, 140)], office, 100 * 60_000)).toBe(110 * 60_000)
+    // จอดแล้ว GPS เงียบ จุดถัดไปคือคนอื่นขับออกไป → นับจอดถึงจุดนั้น (เหมือน firstOfficeStayStart)
+    expect(officeStayAfter([at(far, 100), at(office, 110), at(far, 140)], office, 100 * 60_000)).toBe(110 * 60_000)
   })
 })
 
@@ -1226,7 +1228,7 @@ describe('tracking: tripOfficeReturn — เวลากลับถึงออ
   const M = 60_000
   const at = (p: { lat: number; lng: number }, min: number) => ({ ...p, t: min * M })
   const stay = (p: { lat: number; lng: number }, from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => at(p, from + i))
-  const base = { office, jobs: [siteX, siteY], machineReturnAt: null, allDone: true, isToday: true, sinceFloor: null }
+  const base = { office, jobs: [siteX, siteY], machineReturnAt: null, allDone: true, final: false, sinceFloor: null }
 
   it('กลับมาจอดหลังจบงาน = เวลาเข้าออฟฟิศ แม้ภายหลังมีคนขับรถออกไปอีก (ยังไม่กด ✂️)', () => {
     const trail = [...stay(office, 0, 10), at(road, 30), ...stay(siteX, 60, 75), at(road, 100), ...stay(office, 120, 135), at(road, 160), at(siteY, 200)]
@@ -1258,7 +1260,15 @@ describe('tracking: tripOfficeReturn — เวลากลับถึงออ
   })
   it('ดูย้อนหลัง: จบวันในออฟฟิศแต่จอดไม่ครบ 5 นาที (เข้า 03:57) = เวลาเข้าออฟฟิศรอบสุดท้าย · วันนี้ยังไม่นับ', () => {
     const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), at(road, 100), ...stay(office, 120, 122)]
-    expect(tripOfficeReturn({ ...base, trail, isToday: false })).toBe(120 * M)
+    expect(tripOfficeReturn({ ...base, trail, final: true })).toBe(120 * M)
     expect(tripOfficeReturn({ ...base, trail })).toBeNull()
+  })
+  it('กลับแล้วขับผ่านใกล้หมุดงานจุดเดียว (ทางกลับบ้าน) ไม่ทำให้เวลากลับหาย — ขับผ่าน < 2 นาทีไม่นับเป็นอยู่ที่จุดงาน', () => {
+    const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), at(road, 100), ...stay(office, 120, 135), at(road, 150), at(siteX, 160), at(road, 170)]
+    expect(tripOfficeReturn({ ...base, jobs: [siteX], trail })).toBe(120 * M)
+  })
+  it('ตัดด้วยจบการใช้รถหลังเข้าออฟฟิศไม่ครบ 5 นาที = ใช้กติกาเดียวกับดูย้อนหลัง (ข้อมูลไม่เพิ่มแล้ว)', () => {
+    const trail = [...stay(office, 0, 10), ...stay(siteX, 60, 75), at(road, 100), ...stay(office, 120, 123)]
+    expect(tripOfficeReturn({ ...base, jobs: [siteX], trail, final: true })).toBe(120 * M)
   })
 })
