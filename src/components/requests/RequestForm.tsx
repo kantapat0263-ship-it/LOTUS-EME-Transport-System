@@ -58,7 +58,7 @@ import {
 import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
 import {
-  URGENT_DETAIL_LIMITS, latestUrgentRequest, urgentDetailsError, urgentFormStatus, urgentPrefill, urgentRejectReason, type UrgentDetails,
+  URGENT_DETAIL_LIMITS, planUrgentCancel, urgentDetailsError, urgentFormStatus, urgentPrefill, urgentRejectReason, type UrgentDetails,
 } from "@/lib/urgentRequest"
 import { buildDropDescription, type TransferRole } from "@/lib/transfer"
 
@@ -267,19 +267,21 @@ export function RequestForm() {
 
   // ผู้ขอยกเลิกคำขออนุมัติที่ยังรออยู่ (เช่น ไม่ต้องใช้รถแล้ว / กรอกผิดอยากขอใหม่) — ยกเลิกแล้วขอใหม่ได้
   // อ่านซ้ำใน transaction: คนจัดรถอาจเพิ่งกดอนุมัติ/ปฏิเสธระหว่างเปิดหน้าต่างยืนยัน → ไม่เขียนทับผลนั้น
+  // ยกเลิกทุกใบของวันนั้นที่ยังรออนุมัติ (ส่งซ้ำจาก 2 เครื่องได้) — ไม่ให้ใบเก่าค้างที่การ์ดคนจัดรถ
   const cancelUrgentApproval = async () => {
-    const target = latestUrgentRequest(urgentRequests)
-    if (!target?.id || target.status !== "pending") return
+    const refs = (urgentRequests ?? []).filter((r: any) => r.status === "pending").map((r: any) => doc(db, "urgentRequests", r.id))
+    if (refs.length === 0) return
     setIsCancellingUrgent(true)
     try {
-      const ref = doc(db, "urgentRequests", target.id)
-      const cancelled = await runTransaction(db, async (t) => {
-        const snap = await t.get(ref)
-        if (snap.data()?.status !== "pending") return false
-        t.update(ref, { status: "cancelled", cancelledAt: serverTimestamp() })
-        return true
+      const message = await runTransaction(db, async (t) => {
+        const current = await Promise.all(refs.map(async (ref) => ({ ...(await t.get(ref)).data(), id: ref.id })))
+        const plan = planUrgentCancel(current)
+        for (const ref of refs) {
+          if (plan.cancelIds.includes(ref.id)) t.update(ref, { status: "cancelled", cancelledAt: serverTimestamp() })
+        }
+        return plan.message
       })
-      toast(cancelled ? { title: "ยกเลิกคำขออนุมัติแล้ว" } : { title: "คนจัดรถเพิ่งตอบคำขอนี้แล้ว" })
+      toast({ title: message })
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
     } finally {

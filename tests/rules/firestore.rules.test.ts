@@ -23,6 +23,7 @@ import {
   serverTimestamp,
   setDoc,
   setLogLevel,
+  Timestamp,
   updateDoc,
   writeBatch,
   where,
@@ -322,6 +323,22 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
       }))
     })
 
+    it('ส่งซ้ำจาก 2 เครื่อง: ยกเลิก pending ทั้ง 2 ใบใน transaction เดียวได้ (แบบฟอร์ม)', async () => {
+      await seed({ 'U-DUP-1': urgentDoc('viewer', 'pending'), 'U-DUP-2': urgentDoc('viewer', 'pending') })
+      const db = as('viewer')
+      const refs = ['U-DUP-1', 'U-DUP-2'].map(id => doc(db, 'urgentRequests', id))
+      await assertSucceeds(runTransaction(db, async (t) => {
+        const snaps = await Promise.all(refs.map(ref => t.get(ref)))
+        if (snaps.some(s => s.data()?.status !== 'pending')) throw new Error('expected pending')
+        for (const ref of refs) t.update(ref, cancel)
+      }))
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        for (const id of ['U-DUP-1', 'U-DUP-2']) {
+          if ((await getDoc(doc(ctx.firestore(), 'urgentRequests', id))).data()?.status !== 'cancelled') throw new Error(`${id} not cancelled`)
+        }
+      })
+    })
+
     it('ใบที่อนุมัติ/ปฏิเสธ/ยกเลิกไปแล้ว ยกเลิกไม่ได้', async () => {
       await seed({ 'U-A': urgentDoc('viewer', 'approved'), 'U-R': urgentDoc('viewer', 'rejected'), 'U-C': urgentDoc('viewer', 'cancelled') })
       const db = as('viewer')
@@ -341,6 +358,16 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
       ]) {
         await assertFails(updateDoc(ref, { ...cancel, ...extra }))
       }
+    })
+
+    it('cancelledAt ต้องเป็นเวลาเซิร์ฟเวอร์ — ข้อความ / เวลาย้อนหลัง / ไม่ใส่ = ไม่ได้', async () => {
+      await seed({ 'U-MINE': urgentDoc('viewer', 'pending') })
+      const ref = doc(as('viewer'), 'urgentRequests', 'U-MINE')
+      for (const cancelledAt of ['2026-11-06T10:00:00Z', Timestamp.fromMillis(Date.now() - 60 * 60 * 1000), null]) {
+        await assertFails(updateDoc(ref, { status: 'cancelled', cancelledAt }))
+      }
+      await assertFails(updateDoc(ref, { status: 'cancelled' }))
+      await assertSucceeds(updateDoc(ref, cancel))
     })
 
     it('เปลี่ยนใบตัวเองเป็นอนุมัติ/ปฏิเสธเองไม่ได้', async () => {

@@ -75,6 +75,20 @@ export function urgentRejectReason(requests: readonly UrgentRequestDoc[] | null 
   return latest?.status === "rejected" ? displayText(latest.rejectReason) : ""
 }
 
+/**
+ * ผู้ขอกดยกเลิก: ยกเลิกทุกใบของวันนั้นที่ยังรออนุมัติ (เช่น ส่งซ้ำจาก 2 เครื่อง) ไม่ใช่แค่ใบล่าสุด
+ * ไม่งั้นใบเก่าค้างที่การ์ดคนจัดรถ และถ้าคนจัดรถอนุมัติใบเก่า server ก็ไม่ให้ส่งใบอยู่ดี (ใบล่าสุด = ยกเลิก)
+ * `current` = ค่าที่อ่านซ้ำใน transaction · ไม่มีใบไหนรออนุมัติเหลือ = บอกสถานะจริงของใบล่าสุด
+ */
+export function planUrgentCancel<T extends UrgentRequestDoc & { id: string }>(current: readonly T[]): { cancelIds: string[]; message: string } {
+  const cancelIds = current.filter(r => r.status === "pending").map(r => r.id)
+  if (cancelIds.length > 0) return { cancelIds, message: "ยกเลิกคำขออนุมัติแล้ว" }
+  return {
+    cancelIds,
+    message: latestUrgentRequest(current)?.status === "cancelled" ? "คำขอนี้ถูกยกเลิกไปแล้ว" : "คนจัดรถเพิ่งตอบคำขอนี้แล้ว",
+  }
+}
+
 /** คนจัดรถกดอนุมัติ/ปฏิเสธ แต่คำขอไม่ได้รออนุมัติแล้ว (ผู้ขอเพิ่งยกเลิก / คนจัดรถอีกคนตอบไปก่อน) */
 export function urgentNotPendingMessage(status: unknown): string {
   if (status === "cancelled") return "ผู้ขอยกเลิกคำขอนี้ไปแล้ว"

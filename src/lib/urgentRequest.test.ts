@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  displayText, formatIsoDateTh, latestUrgentRequest, urgentDetailsError, urgentFormStatus, urgentNotPendingMessage,
+  displayText, formatIsoDateTh, latestUrgentRequest, planUrgentCancel, urgentDetailsError, urgentFormStatus, urgentNotPendingMessage,
   urgentPrefill, urgentRejectReason,
 } from './urgentRequest'
 import { isOutsideRequestHours, settingHour } from './requestWindow'
@@ -118,6 +118,33 @@ describe('คำขออนุมัติใบล่าสุด (ฟอร�
     expect(urgentRejectReason([urgent('OLD', 'rejected', 1_000, { rejectReason: 'เก่า' }), urgent('NEW', 'pending', 2_000)])).toBe('')
     expect(urgentRejectReason([urgent('A', 'rejected', 1_000, { rejectReason: { text: 'x' } })])).toBe('')
     expect(urgentRejectReason([])).toBe('')
+  })
+})
+
+describe('ผู้ขอกดยกเลิก — ยกเลิกทุกใบของวันนั้นที่ยังรออนุมัติ (ค่าที่อ่านซ้ำใน transaction)', () => {
+  const at = (ms: number) => ({ toMillis: () => ms })
+  const urgent = (id: string, status: string, createdMs: number) => ({ id, status, createdAt: at(createdMs) })
+
+  it('ส่งซ้ำจาก 2 เครื่อง (pending 2 ใบ) = ยกเลิกทั้ง 2 ใบ ไม่เหลือค้างที่การ์ดคนจัดรถ', () => {
+    expect(planUrgentCancel([urgent('OLD', 'pending', 1_000), urgent('NEW', 'pending', 2_000)]))
+      .toEqual({ cancelIds: ['OLD', 'NEW'], message: 'ยกเลิกคำขออนุมัติแล้ว' })
+  })
+
+  it('ยกเลิกเฉพาะใบที่ยังรออนุมัติ — ใบที่คนจัดรถเพิ่งตอบไม่ถูกเขียนทับ', () => {
+    expect(planUrgentCancel([urgent('OLD', 'approved', 1_000), urgent('NEW', 'pending', 2_000)]))
+      .toEqual({ cancelIds: ['NEW'], message: 'ยกเลิกคำขออนุมัติแล้ว' })
+  })
+
+  it('ไม่มีใบไหนรออนุมัติเหลือ: คนจัดรถตอบใบล่าสุดไปแล้ว', () => {
+    expect(planUrgentCancel([urgent('A', 'approved', 1_000)])).toEqual({ cancelIds: [], message: 'คนจัดรถเพิ่งตอบคำขอนี้แล้ว' })
+    expect(planUrgentCancel([urgent('A', 'cancelled', 1_000), urgent('B', 'rejected', 2_000)]))
+      .toEqual({ cancelIds: [], message: 'คนจัดรถเพิ่งตอบคำขอนี้แล้ว' })
+  })
+
+  it('ไม่มีใบไหนรออนุมัติเหลือ: ใบล่าสุดถูกยกเลิกจากอีกแท็บ/เครื่องไปแล้ว', () => {
+    expect(planUrgentCancel([urgent('A', 'cancelled', 1_000)])).toEqual({ cancelIds: [], message: 'คำขอนี้ถูกยกเลิกไปแล้ว' })
+    expect(planUrgentCancel([urgent('A', 'approved', 1_000), urgent('B', 'cancelled', 2_000)]))
+      .toEqual({ cancelIds: [], message: 'คำขอนี้ถูกยกเลิกไปแล้ว' })
   })
 })
 
