@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { incomingStopsForTrip } from '@/lib/calculations'
-import { isInactiveStop, isTransferStop, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from '@/lib/transfer'
+import { isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from '@/lib/transfer'
 import { cn } from '@/lib/utils'
 
 // ป้ายรับ-ส่งในหน้าประวัติ — คอมไพล์โค้ดจริงของหน้า (ไม่บูต Firebase) แล้วเรนเดอร์เป็น HTML
@@ -62,14 +62,15 @@ function worksheet(selectedTrip: { id: string; stops: Stop[] }, trips: unknown[]
   return selectedTrip.stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
 }
 
-/** แถวจุดในหน้าต่างแก้ไขทริป — stops = จุดในฟอร์มตอนนี้ (เช่น หลังกดลบ) */
-function editRows(editingTrip: { id: string }, stops: Stop[], trips: unknown[] = [editingTrip]) {
+/** แถวจุดในหน้าต่างแก้ไขทริป — stops = จุดในฟอร์มตอนนี้ (เช่น หลังกดลบ) · editingTrip.stops = จุดตอนเปิดหน้าต่าง */
+function editRows(editingTrip: { id: string; stops: Stop[] }, stops: Stop[], trips: unknown[] = [editingTrip], originalStopIndexes: (number | null)[] = stops.map((_, i) => i)) {
   const { viewFor } = listViewFor(trips)
-  const editFormData = { stops, originalStopIndexes: stops.map((_, i) => i), vehicleId: '', driverId: '', note: '' }
+  const editFormData = { stops, originalStopIndexes, vehicleId: '', driverId: '', note: '' }
   const editView = new Function('isEditOpen', 'editingTrip', 'editFormData', 'transferViewFor', `${declaration(listSource, 'editView')}return work`)(true, editingTrip, editFormData, viewFor)
+  const editDropSync = new Function('isEditOpen', 'editingTrip', 'editFormData', 'syncDropsInTripEdit', `${declaration(listSource, 'editDropSync')}return work`)(true, editingTrip, editFormData, syncDropsInTripEdit)
   const stub = (tag: string) => ({ children }: { children?: React.ReactNode }) => React.createElement(tag, null, children)
-  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'transferLabel', 'isInactiveStop', 'TRANSFER_WARNING', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
-    React, editFormData, vi.fn(), editView, transferLabel, isInactiveStop, TRANSFER_WARNING, cn, stub('textarea'), stub('button'), stub('i'),
+  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editDropSync', 'transferLabel', 'isInactiveStop', 'TRANSFER_WARNING', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
+    React, editFormData, vi.fn(), editView, editDropSync, transferLabel, isInactiveStop, TRANSFER_WARNING, cn, stub('textarea'), stub('button'), stub('i'),
   ) as (stop: Stop, idx: number) => React.ReactElement
   return stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
 }
@@ -194,6 +195,20 @@ describe('หน้าประวัติ — หน้าต่างแก�
       expect(html).not.toContain('📦')
       expect(html).not.toContain('🏁')
     }
+  })
+
+  it('แก้ของที่จุดรับ → ใต้จุดรับบอกว่ากดบันทึกแล้วจะแก้บรรทัดของที่จุดส่งให้ (จุดส่งอยู่เที่ยวนี้เท่านั้น)', () => {
+    const hint = 'กดบันทึกแล้วระบบจะแก้บรรทัดของที่จุดส่งให้'
+    const opened = trip('T-1', [pickup('วังโค'), drop()])
+    const [p, d] = editRows(opened, [pickup('วังโค', { cargoDetails: 'ปูน 15 ถุง' }), drop()])
+    expect(p).toContain(hint)
+    expect(d).not.toContain(hint)
+    // ยังไม่แก้ / จุดส่งไม่อยู่ในเที่ยว / ทริปปกติ = ไม่บอก
+    for (const html of editRows(opened, opened.stops)) expect(html).not.toContain(hint)
+    const alone = trip('T-2', [pickup('วังโค')])
+    expect(editRows(alone, [pickup('วังโค', { cargoDetails: 'ปูน 15 ถุง' })])[0]).not.toContain(hint)
+    const plain = trip('T-3', [normal('ไซต์ A')])
+    expect(editRows(plain, [{ ...normal('ไซต์ A'), cargoDetails: 'แก้' }])[0]).not.toContain(hint)
   })
 })
 

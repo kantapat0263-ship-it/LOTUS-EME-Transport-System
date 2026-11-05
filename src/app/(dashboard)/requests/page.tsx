@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { isTransferStop } from "@/lib/transfer"
+import { applyPickupItemsEdit, isTransferStop, pickupEditMessage } from "@/lib/transfer"
 import { dispatchedDestinationIndexes } from "@/lib/requestDestination"
 import { RequestForm } from "@/components/requests/RequestForm"
 import { SubmissionLogTab } from "@/components/requests/SubmissionLogTab"
@@ -401,6 +401,32 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     } finally {
       flight.finish(true)
       setIsSavingNote(null)
+    }
+  }
+
+  // งานรับของไปส่งต่อ: แก้ของที่จุดรับ → บรรทัด "ส่งของที่รับจาก …" ของจุดส่งในใบเดียวกันแก้ตาม (ธุรกรรมเดียว อ่านใบสด)
+  // ไม่แตะทริป (จุดในทริปไม่มีตัวชี้กลับมาใบขอ) — จุดที่จัดเข้าเที่ยวแล้ว บอกให้ไปแก้ที่ประวัติการส่ง
+  const savePickupItems = async (index: number, before: any, items: string) => {
+    if (!selectedReq || !isStaff) return
+    const vrRef = doc(db, "vehicleRequests", selectedReq.id)
+    try {
+      const plan = await runTransaction(db, async (tx) => {
+        const fresh = await tx.get(vrRef)
+        if (!fresh.exists()) throw new Error('ไม่พบใบขอแล้ว')
+        const data = fresh.data() as any
+        const current = data?.destinations?.[index]
+        // จุดนี้ถูกแก้/ย้ายจากอีกเครื่องหลังเปิดหน้าต่าง → ไม่เขียนทับ (ข้อความบนจอไม่ใช่ของล่าสุด)
+        if (!current || current.transferRole !== 'pickup' || current.transferId !== before?.transferId || (current.jobDescription ?? '') !== (before?.jobDescription ?? '')) {
+          throw new Error('รายละเอียดจุดนี้เพิ่งถูกแก้จากอีกเครื่อง — ปิดแล้วเปิดใบนี้ใหม่ แล้วแก้อีกครั้ง')
+        }
+        const next = applyPickupItemsEdit(data, index, items)
+        tx.update(vrRef, { destinations: next.destinations, updatedAt: serverTimestamp() })
+        return next
+      })
+      const note = pickupEditMessage(plan)
+      toast({ title: "บันทึกรายละเอียดงานแล้ว", ...(note.text ? { description: note.text } : {}), ...(note.warn ? { variant: "destructive" as const } : {}) })
+    } catch (e: any) {
+      toast({ title: "บันทึกไม่สำเร็จ", description: e?.message || 'กรุณาลองอีกครั้ง', variant: "destructive" })
     }
   }
 
@@ -954,10 +980,13 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                 <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
                                 {isStaff ? (
                                   <Textarea
+                                    // ใบรับ-ส่ง: ช่องโหลดข้อความใหม่เมื่อข้อความในใบเปลี่ยน (จุดส่งถูกซิงก์) — ไม่งั้น defaultValue ค้างของเก่า แล้วคลิกเข้า-ออกช่องจะเขียนของเก่ากลับทับ
+                                    key={isTransferStop(dest) ? `jd-${idx}-${dest.jobDescription}` : undefined}
                                     defaultValue={dest.jobDescription}
                                     onBlur={async (e) => {
                                       const newValue = e.target.value;
                                       if (newValue === dest.jobDescription) return;
+                                      if (isTransferStop(dest) && dest.transferRole === "pickup") return savePickupItems(idx, dest, newValue);
                                       const newDestinations = [...selectedReq.destinations];
                                       newDestinations[idx] = { ...newDestinations[idx], jobDescription: newValue };
                                       await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {

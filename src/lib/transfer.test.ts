@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDropDescription, isInactiveStop, orderPickupsBeforeDrop, postponedPickupNote, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, transferTagStyle, type TransferFields } from './transfer'
+import { applyPickupItemsEdit, buildDropDescription, dropLine, dropSyncNote, isInactiveStop, orderPickupsBeforeDrop, pickupEditMessage, postponedPickupNote, syncDropsInTripEdit, syncDropText, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, transferTagStyle, type TransferFields } from './transfer'
 
 type S = TransferFields & { id: string; siteName: string }
 const P = (id: string, group = 'g1', siteName = id): S => ({ id, transferRole: 'pickup', transferId: group, siteName, transferDropName: 'ดอนเมือง' })
@@ -305,5 +305,258 @@ describe('transferTagStyle (ย้ายมาจากใบสรุป — �
   it('จุดรับ = ส้ม · จุดส่ง = เขียว · ขนาดเดิม', () => {
     expect(transferTagStyle({ role: 'pickup' })).toEqual({ fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: '#ffedd5', color: '#9a3412' })
     expect(transferTagStyle({ role: 'drop' })).toEqual({ fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: '#dcfce7', color: '#166534' })
+  })
+})
+
+// ---------- แก้ของที่จุดรับ แล้วจุดส่งอัปเดตตาม (drop-sync) ----------
+
+describe('dropLine (รูปบรรทัดเดียวกับตอนส่งใบ)', () => {
+  it('ตรงกับ buildDropDescription ทุกตัวอักษร · ไม่มีชื่อ = "จุดรับ"', () => {
+    expect(dropLine(' ดูโฮม ', ' ปูน 10 ถุง ')).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')
+    expect(buildDropDescription([{ name: ' ดูโฮม ', items: ' ปูน 10 ถุง ' }], '')).toBe(dropLine(' ดูโฮม ', ' ปูน 10 ถุง '))
+    expect(dropLine('  ', 'เหล็ก')).toBe('ส่งของที่รับจาก จุดรับ: เหล็ก')
+  })
+})
+
+describe('syncDropText', () => {
+  const two = buildDropDescription([{ name: 'ดูโฮม', items: 'ปูน 10 ถุง' }, { name: 'วานิช', items: 'ยางมะตอย' }], 'ท่อ EMT จากออฟฟิศ')
+  it('จุดรับเดียว → แทนบรรทัด (updated)', () => {
+    expect(syncDropText('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง', 'ดูโฮม', 'ปูน 10 ถุง', 'ปูน 15 ถุง')).toEqual({ text: 'ส่งของที่รับจาก ดูโฮม: ปูน 15 ถุง', result: 'updated' })
+  })
+  it('รับ 2 ร้าน → เปลี่ยนเฉพาะบรรทัดของร้านที่แก้ · บรรทัดงานอื่นของผู้ขอยังอยู่ครบ', () => {
+    const r = syncDropText(two, 'วานิช', 'ยางมะตอย', 'ยางมะตอย 2 ถัง')
+    expect(r.result).toBe('updated')
+    expect(r.text).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง\nส่งของที่รับจาก วานิช: ยางมะตอย 2 ถัง\nท่อ EMT จากออฟฟิศ')
+  })
+  it('ของหลายบรรทัด (ทั้งก่อนและหลังแก้)', () => {
+    const text = buildDropDescription([{ name: 'ดูโฮม', items: 'ปูน 10 ถุง\nทราย 2 คิว' }, { name: 'วานิช', items: 'ยางมะตอย' }], '')
+    const r = syncDropText(text, 'ดูโฮม', 'ปูน 10 ถุง\nทราย 2 คิว', 'ปูน 10 ถุง\nทราย 3 คิว\nหิน 1 คิว')
+    expect(r).toEqual({ text: 'ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง\nทราย 3 คิว\nหิน 1 คิว\nส่งของที่รับจาก วานิช: ยางมะตอย', result: 'updated' })
+  })
+  it('ของเดิม "ปูน 10" ไม่ไปจับบรรทัด "ปูน 10 ถุง" (ต้องจบบรรทัดพอดี)', () => {
+    expect(syncDropText('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง', 'ดูโฮม', 'ปูน 10', 'ปูน 12')).toEqual({ text: 'ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง', result: 'manual' })
+    expect(syncDropText('หมายเหตุ ส่งของที่รับจาก ดูโฮม: ปูน 10', 'ดูโฮม', 'ปูน 10', 'ปูน 12').result).toBe('manual')
+  })
+  it('แก้แค่ช่องว่างหัวท้าย / มีบรรทัดใหม่อยู่แล้ว → same (ไม่แตะข้อความ)', () => {
+    expect(syncDropText(two, 'ดูโฮม', ' ปูน 10 ถุง ', 'ปูน 10 ถุง')).toEqual({ text: two, result: 'same' })
+    expect(syncDropText(two, 'ดูโฮม', 'ปูน 5 ถุง', 'ปูน 10 ถุง')).toEqual({ text: two, result: 'same' })
+  })
+  it('ข้อความถูกแก้มือจนหาบรรทัดเดิมไม่เจอ → manual และข้อความไม่เปลี่ยน', () => {
+    const edited = 'รับปูนจากดูโฮมมาด้วย\nท่อ EMT จากออฟฟิศ'
+    expect(syncDropText(edited, 'ดูโฮม', 'ปูน 10 ถุง', 'ปูน 15 ถุง')).toEqual({ text: edited, result: 'manual' })
+  })
+  it('ร้านเดียวกัน 2 บรรทัด ของเหมือนกัน → manual (ไม่รู้ว่าบรรทัดไหน)', () => {
+    const text = buildDropDescription([{ name: 'ดูโฮม', items: 'ปูน' }, { name: 'ดูโฮม', items: 'ปูน' }], '')
+    expect(syncDropText(text, 'ดูโฮม', 'ปูน', 'เหล็ก')).toEqual({ text, result: 'manual' })
+  })
+  it('ของใหม่ว่าง → บรรทัดที่ไม่มีรายการของ (รูปเดียวกับตอนส่งใบ)', () => {
+    expect(syncDropText('ส่งของที่รับจาก ดูโฮม: ปูน', 'ดูโฮม', 'ปูน', '  ').text).toBe(buildDropDescription([{ name: 'ดูโฮม', items: '' }], ''))
+  })
+  it('ชื่อร้านมีอักขระพิเศษ ( ) . + * ? → หาแบบข้อความธรรมดา ไม่ใช่ RegExp', () => {
+    const name = 'บ.ดูโฮม (สาขา+รังสิต)*?'
+    const text = buildDropDescription([{ name, items: 'ปูน 10 ถุง' }, { name: 'ABC', items: 'ปูน 10 ถุง' }], '')
+    expect(syncDropText(text, name, 'ปูน 10 ถุง', 'ปูน 15 ถุง')).toEqual({ text: `ส่งของที่รับจาก ${name}: ปูน 15 ถุง\nส่งของที่รับจาก ABC: ปูน 10 ถุง`, result: 'updated' })
+    // "A.C" ต้องไม่จับ "ABC" (ถ้าใช้ RegExp โดยไม่ escape จะจับ)
+    expect(syncDropText(text, 'A.C', 'ปูน 10 ถุง', 'ปูน 15 ถุง')).toEqual({ text, result: 'manual' })
+  })
+})
+
+describe('applyPickupItemsEdit (หน้าคำขอ)', () => {
+  type Dest = TransferFields & { siteName: string; jobDescription: string; withdrawn?: boolean }
+  const pickup = (siteName: string, jobDescription: string, group = 'tf_1'): Dest => ({ siteName, jobDescription, transferRole: 'pickup', transferId: group, transferDropName: 'ดอนเมือง' })
+  const drop = (jobDescription: string, group = 'tf_1', extra: Partial<Dest> = {}): Dest => ({ siteName: 'ดอนเมือง', jobDescription, transferRole: 'drop', transferId: group, ...extra })
+  const dropText = buildDropDescription([{ name: 'ดูโฮม', items: 'ปูน 10 ถุง' }, { name: 'วานิช', items: 'ยางมะตอย' }], 'ท่อ EMT จากออฟฟิศ')
+  const request = (assignedDestinations: number[] = [], extra: Dest[] = []) => ({ destinations: [pickup('ดูโฮม', 'ปูน 10 ถุง'), pickup('วานิช', 'ยางมะตอย'), drop(dropText), ...extra], assignedDestinations })
+
+  it('จุดส่งยังไม่จัด → ข้อความจุดส่งถูกซิงก์ · ไม่แก้ array/object เดิม', () => {
+    const req = request()
+    const plan = applyPickupItemsEdit(req, 0, 'ปูน 15 ถุง')
+    expect(plan).toMatchObject({ drop: 'updated', dropName: 'ดอนเมือง', pickupOnTrip: false })
+    expect(plan.destinations[0].jobDescription).toBe('ปูน 15 ถุง')
+    expect(plan.destinations[2].jobDescription).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 15 ถุง\nส่งของที่รับจาก วานิช: ยางมะตอย\nท่อ EMT จากออฟฟิศ')
+    expect(plan.destinations[1]).toBe(req.destinations[1])
+    expect(req.destinations[0].jobDescription).toBe('ปูน 10 ถุง')
+    expect(req.destinations[2].jobDescription).toBe(dropText)
+    expect(plan.destinations).not.toBe(req.destinations)
+  })
+  it('จุดส่งจัดเข้าเที่ยวแล้ว → on-trip และไม่แตะจุดส่ง · สำเนาคันคู่ที่ถอนแล้ว → none', () => {
+    const onTrip = request([2])
+    const plan = applyPickupItemsEdit(onTrip, 0, 'ปูน 15 ถุง')
+    expect(plan.drop).toBe('on-trip')
+    expect(plan.destinations[2]).toBe(onTrip.destinations[2])
+    expect(plan.destinations[0].jobDescription).toBe('ปูน 15 ถุง')
+    const withdrawn = { destinations: [pickup('ดูโฮม', 'ปูน 10 ถุง'), drop('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง', 'tf_1', { withdrawn: true })], assignedDestinations: [1] }
+    expect(applyPickupItemsEdit(withdrawn, 0, 'ปูน 15 ถุง').drop).toBe('none')
+  })
+  it('pickupOnTrip = จุดรับนี้จัดเข้าเที่ยวแล้ว (ไม่นับสำเนาที่ถอน) · จุดส่งที่ยังไม่จัดยังซิงก์', () => {
+    const plan = applyPickupItemsEdit(request([0]), 0, 'ปูน 15 ถุง')
+    expect(plan).toMatchObject({ pickupOnTrip: true, drop: 'updated' })
+    expect(applyPickupItemsEdit(request([1]), 0, 'ปูน 15 ถุง').pickupOnTrip).toBe(false)
+    const withdrawn = { destinations: [{ ...pickup('ดูโฮม', 'ปูน 10 ถุง'), withdrawn: true }, drop('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')], assignedDestinations: [0] }
+    expect(applyPickupItemsEdit(withdrawn, 0, 'ปูน 15 ถุง').pickupOnTrip).toBe(false)
+  })
+  it('ชุดคันคู่ (transferId ต่างกัน) ไม่ถูกแตะ', () => {
+    const copyDrop = drop(dropText, 'tf_copy')
+    const req = request([], [pickup('ดูโฮม', 'ปูน 10 ถุง', 'tf_copy'), pickup('วานิช', 'ยางมะตอย', 'tf_copy'), copyDrop])
+    const plan = applyPickupItemsEdit(req, 0, 'ปูน 15 ถุง')
+    expect(plan.destinations[2].jobDescription).toContain('ปูน 15 ถุง')
+    expect(plan.destinations[5]).toBe(copyDrop)
+    expect(plan.destinations[3].jobDescription).toBe('ปูน 10 ถุง')
+  })
+  it('ใบปกติ → none และเปลี่ยนแค่จุดนั้น · จุดส่งถูกแก้มือ → manual (ไม่แตะ)', () => {
+    const normal = { destinations: [{ siteName: 'ไซต์ A', jobDescription: 'งาน A' }, { siteName: 'ไซต์ B', jobDescription: 'งาน B' }] }
+    const plan = applyPickupItemsEdit(normal, 1, 'งาน B ใหม่')
+    expect(plan).toMatchObject({ drop: 'none', dropName: '', pickupOnTrip: false })
+    expect(plan.destinations).toEqual([{ siteName: 'ไซต์ A', jobDescription: 'งาน A' }, { siteName: 'ไซต์ B', jobDescription: 'งาน B ใหม่' }])
+    const handEdited = { destinations: [pickup('ดูโฮม', 'ปูน 10 ถุง'), drop('รับปูนจากดูโฮม')] }
+    const manual = applyPickupItemsEdit(handEdited, 0, 'ปูน 15 ถุง')
+    expect(manual.drop).toBe('manual')
+    expect(manual.destinations[1]).toBe(handEdited.destinations[1])
+  })
+})
+
+describe('pickupEditMessage (ข้อความต่อท้าย toast หน้าคำขอ)', () => {
+  it('ซิงก์แล้ว / ไม่มีอะไรต้องบอก', () => {
+    expect(pickupEditMessage({ drop: 'updated', dropName: 'ดอนเมือง', pickupOnTrip: false })).toEqual({ text: 'อัปเดตรายการของที่จุดส่ง ดอนเมือง ให้ตามแล้ว', warn: false })
+    expect(pickupEditMessage({ drop: 'same', dropName: 'ดอนเมือง', pickupOnTrip: false })).toEqual({ text: null, warn: false })
+    expect(pickupEditMessage({ drop: 'none', dropName: '', pickupOnTrip: false })).toEqual({ text: null, warn: false })
+  })
+  it('หาบรรทัดไม่เจอ → เตือนให้แก้จุดส่งเอง', () => {
+    const m = pickupEditMessage({ drop: 'manual', dropName: 'ดอนเมือง', pickupOnTrip: false })
+    expect(m.warn).toBe(true)
+    expect(m.text).toContain('จุดส่ง ดอนเมือง ยังเป็นรายการเดิม')
+  })
+  it('จุดส่งจัดแล้วแต่จุดรับยังไม่จัด → ให้แก้ช่องจุดส่งในเที่ยวนั้นเอง (ไม่สัญญาว่าจะแก้ตามให้) + ทางคิวต่อเนื่อง', () => {
+    const m = pickupEditMessage({ drop: 'on-trip', dropName: 'ดอนเมือง', pickupOnTrip: false })
+    expect(m.warn).toBe(true)
+    expect(m.text).toContain('จุดส่ง ดอนเมือง จัดเข้าเที่ยวแล้ว — แก้ช่องรายละเอียดของจุดส่งในเที่ยวนั้นเอง')
+    expect(m.text).toContain('ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง')
+    expect(m.text).not.toContain('แก้ตามให้')
+  })
+  it('จุดรับจัดแล้ว → บอกให้แก้ที่เที่ยว และบอกว่าจุดส่งในใบนี้อัปเดตแล้ว / จุดส่งก็จัดแล้ว', () => {
+    const updated = pickupEditMessage({ drop: 'updated', dropName: 'ดอนเมือง', pickupOnTrip: true })
+    expect(updated.warn).toBe(true)
+    expect(updated.text).toContain('จุดรับนี้จัดเข้าเที่ยวแล้ว')
+    expect(updated.text).toContain('จุดส่ง ดอนเมือง ในใบนี้อัปเดตแล้ว')
+    expect(pickupEditMessage({ drop: 'on-trip', dropName: 'ดอนเมือง', pickupOnTrip: true }).text).toContain('ถ้าอยู่เที่ยวเดียวกัน')
+  })
+})
+
+describe('syncDropsInTripEdit (หน้าต่างแก้ไขเที่ยววิ่ง)', () => {
+  type Stop = TransferFields & { siteName: string; cargoDetails: string; outcome?: string; assistForPlate?: string; postponedToDate?: string; postponedRequestId?: string }
+  const pk = (siteName: string, cargoDetails: string, extra: Partial<Stop> = {}): Stop => ({ siteName, cargoDetails, transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง', ...extra })
+  const dr = (cargoDetails: string, extra: Partial<Stop> = {}): Stop => ({ siteName: 'ดอนเมือง', cargoDetails, transferRole: 'drop', transferId: 'tf_1', ...extra })
+  const plain = (siteName: string, cargoDetails = 'งานปกติ'): Stop => ({ siteName, cargoDetails })
+  const dropText = buildDropDescription([{ name: 'ดูโฮม', items: 'ปูน 10 ถุง' }, { name: 'วานิช', items: 'ยางมะตอย' }], 'ท่อ EMT จากออฟฟิศ')
+  const opened = () => [pk('ดูโฮม', 'ปูน 10 ถุง'), plain('ไซต์ X'), pk('วานิช', 'ยางมะตอย'), dr(dropText)]
+  const editRow = (stops: Stop[], index: number, cargoDetails: string) => stops.map((s, i) => (i === index ? { ...s, cargoDetails } : s))
+
+  it('จุดส่งอยู่เที่ยวเดียวกัน → แทนบรรทัด · ไม่แก้ฟอร์มเดิม', () => {
+    const original = opened()
+    const form = editRow(original, 0, 'ปูน 15 ถุง')
+    const sync = syncDropsInTripEdit(original, form, [0, 1, 2, 3])
+    expect(sync.stops[3].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 15 ถุง\nส่งของที่รับจาก วานิช: ยางมะตอย\nท่อ EMT จากออฟฟิศ')
+    expect(sync).toMatchObject({ updated: ['ดอนเมือง'], replacedFor: [0], notInTrip: [], check: [] })
+    expect(form[3].cargoDetails).toBe(dropText)
+    expect(sync.stops.slice(0, 3)).toEqual(form.slice(0, 3))
+  })
+  it('แก้ 2 จุดรับพร้อมกัน → แทนครบทั้ง 2 บรรทัด', () => {
+    const original = opened()
+    const form = editRow(editRow(original, 0, 'ปูน 15 ถุง'), 2, 'ยางมะตอย 2 ถัง')
+    const sync = syncDropsInTripEdit(original, form, [0, 1, 2, 3])
+    expect(sync.stops[3].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 15 ถุง\nส่งของที่รับจาก วานิช: ยางมะตอย 2 ถัง\nท่อ EMT จากออฟฟิศ')
+    expect(sync.updated).toEqual(['ดอนเมือง'])
+    expect(sync.replacedFor).toEqual([0, 2])
+  })
+  it('คนจัดรถพิมพ์เรื่องอื่นเพิ่มที่จุดส่งในหน้าต่างเดียวกัน + แก้จุดรับ → บรรทัดของยังถูกแทน ข้อความที่พิมพ์ยังอยู่ (ผลตรวจข้อ 1)', () => {
+    const original = opened()
+    const form = editRow(editRow(original, 3, `${dropText}\nโทรหาโฟร์แมนก่อนถึง`), 0, 'ปูน 15 ถุง')
+    const sync = syncDropsInTripEdit(original, form, [0, 1, 2, 3])
+    expect(sync.stops[3].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 15 ถุง\nส่งของที่รับจาก วานิช: ยางมะตอย\nท่อ EMT จากออฟฟิศ\nโทรหาโฟร์แมนก่อนถึง')
+    expect(sync.check).toEqual([])
+  })
+  it('คนจัดรถแก้บรรทัดที่จุดส่งเป็นของใหม่เองแล้ว → same ไม่เตือน · แก้จนหาบรรทัดไม่เจอ → เตือนให้แก้เอง (ไม่แตะ)', () => {
+    const original = opened()
+    const already = editRow(editRow(original, 3, dropText.replace('ปูน 10 ถุง', 'ปูน 15 ถุง')), 0, 'ปูน 15 ถุง')
+    const same = syncDropsInTripEdit(original, already, [0, 1, 2, 3])
+    expect(same.stops).toEqual(already)
+    expect(same).toMatchObject({ updated: [], replacedFor: [], check: [], notInTrip: [] })
+    const lost = editRow(editRow(original, 3, 'ส่งของทั้งหมด'), 0, 'ปูน 15 ถุง')
+    const manual = syncDropsInTripEdit(original, lost, [0, 1, 2, 3])
+    expect(manual.stops[3].cargoDetails).toBe('ส่งของทั้งหมด')
+    expect(manual.check).toEqual(['จุดส่ง ดอนเมือง ยังเป็นรายการเดิม (หาบรรทัดของ ดูโฮม เดิมไม่เจอ) — เปิดแก้ไขอีกครั้งแล้วแก้ช่องของจุดส่งเอง'])
+  })
+  it('จุดส่งไม่อยู่ในเที่ยว → notInTrip ด้วยชื่อจาก transferDropName · จุดส่งถูกลบในหน้าต่างนี้เอง → ไม่เตือน', () => {
+    const alone = [pk('ดูโฮม', 'ปูน 10 ถุง'), plain('ไซต์ X')]
+    const split = syncDropsInTripEdit(alone, editRow(alone, 0, 'ปูน 15 ถุง'), [0, 1])
+    expect(split).toMatchObject({ notInTrip: ['ดอนเมือง'], updated: [], check: [] })
+    const original = opened()
+    const removed = editRow(original, 0, 'ปูน 15 ถุง').slice(0, 3)
+    expect(syncDropsInTripEdit(original, removed, [0, 1, 2])).toMatchObject({ notInTrip: [], updated: [], check: [] })
+  })
+  it('จุดส่งเลื่อนวันแล้ว → ไม่แตะ บอกวันกับเลขใบ · จุดรับเลื่อนวันแล้ว → ไม่ซิงก์ บอกวันกับเลขใบ', () => {
+    const postponedDrop = [pk('ดูโฮม', 'ปูน 10 ถุง'), dr('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง', { outcome: 'postponed', postponedToDate: '2026-11-06', postponedRequestId: 'VR-20261106-003' })]
+    const a = syncDropsInTripEdit(postponedDrop, editRow(postponedDrop, 0, 'ปูน 15 ถุง'), [0, 1])
+    expect(a.stops[1].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')
+    expect(a.check).toEqual(['จุดส่ง ดอนเมือง เลื่อนไปวันที่ 06/11/2026 แล้ว — แก้รายละเอียดที่ใบ VR-20261106-003 ในหน้าคำขอ'])
+    const postponedPickup = [pk('ดูโฮม', 'ปูน 10 ถุง', { outcome: 'postponed', postponedToDate: '2026-11-07', postponedRequestId: 'VR-20261107-001' }), dr('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')]
+    const b = syncDropsInTripEdit(postponedPickup, editRow(postponedPickup, 0, 'ปูน 15 ถุง'), [0, 1])
+    expect(b.stops[1].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')
+    expect(b.check).toEqual(['จุดรับ ดูโฮม เลื่อนไปวันที่ 07/11/2026 แล้ว — แก้รายละเอียดที่ใบ VR-20261107-001 ในหน้าคำขอ (จุดส่งไม่ถูกแก้ตาม)'])
+    expect(b.updated).toEqual([])
+  })
+  it('จุดรับที่โยกไปคันอื่นยังซิงก์ (คันที่รับงานอ่านรายละเอียดจากจุดต้นทาง) · แถวที่เพิ่มใหม่ (sourceIndex null) ไม่สน', () => {
+    const moved = [pk('ดูโฮม', 'ปูน 10 ถุง', { outcome: 'reassigned' }), dr('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')]
+    expect(syncDropsInTripEdit(moved, editRow(moved, 0, 'ปูน 15 ถุง'), [0, 1]).stops[1].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 15 ถุง')
+    const original = [dr('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')]
+    const form = [...original, pk('ดูโฮม', 'อะไรก็ได้')]
+    expect(syncDropsInTripEdit(original, form, [0, null]).stops).toEqual(form)
+  })
+  it('สำเนาคันช่วย: จับคู่เฉพาะ assistForPlate เดียวกัน (ผลตรวจข้อขัดกัน 5)', () => {
+    // T2 = [B รับ (จริง), Y ส่ง (จริง), A' สำเนาจุดรับ A ของคัน T1]
+    const t2 = [pk('B', 'เหล็ก'), dr(buildDropDescription([{ name: 'A', items: 'ปูน' }, { name: 'B', items: 'เหล็ก' }], '')), pk('A', 'ปูน', { assistForPlate: 'T1' })]
+    const copyEdited = syncDropsInTripEdit(t2, editRow(t2, 2, 'ปูน 2 ถุง'), [0, 1, 2])
+    expect(copyEdited.stops[1]).toBe(t2[1]) // จุดส่งจริงไม่ถูกแก้ตามสำเนา
+    expect(copyEdited).toMatchObject({ updated: [], notInTrip: [], check: [], changed: [{ transferId: 'tf_1', assistForPlate: 'T1' }] })
+    const realEdited = syncDropsInTripEdit(t2, editRow(t2, 0, 'เหล็ก 2 เส้น'), [0, 1, 2])
+    expect(realEdited.stops[1].cargoDetails).toBe('ส่งของที่รับจาก A: ปูน\nส่งของที่รับจาก B: เหล็ก 2 เส้น')
+    // สำเนาจุดรับ + สำเนาจุดส่งจากคันเดียวกัน → สำเนาจุดส่งแก้ตาม
+    const helper = [pk('A', 'ปูน', { assistForPlate: 'T1' }), dr('ส่งของที่รับจาก A: ปูน', { assistForPlate: 'T1' })]
+    expect(syncDropsInTripEdit(helper, editRow(helper, 0, 'ปูน 2 ถุง'), [0, 1]).stops[1].cargoDetails).toBe('ส่งของที่รับจาก A: ปูน 2 ถุง')
+  })
+  it('ทริปปกติ → stops เท่าเดิมทุกค่า ไม่มีข้อความ', () => {
+    const original = [plain('ไซต์ A', 'a'), plain('ไซต์ B', 'b')]
+    const form = editRow(original, 0, 'a แก้')
+    const sync = syncDropsInTripEdit(original, form, [0, 1])
+    expect(sync.stops).toEqual(form)
+    expect(sync).toMatchObject({ updated: [], replacedFor: [], notInTrip: [], check: [], changed: [] })
+  })
+})
+
+describe('dropSyncNote (ข้อความต่อท้าย toast หน้าประวัติ)', () => {
+  const empty = { updated: [], notInTrip: [], check: [], changed: [] }
+  it('ไม่มีอะไรต้องบอก = ว่าง ไม่แดง', () => {
+    expect(dropSyncNote(empty, [])).toEqual({ text: '', warn: false })
+  })
+  it('แก้จุดส่งให้แล้ว → บอกให้คนขับเปิดลิงก์ใหม่ (ใบงานไม่โหลดเอง)', () => {
+    const n = dropSyncNote({ ...empty, updated: ['ดอนเมือง'], changed: [{ transferId: 'tf_1', assistForPlate: '' }] }, [])
+    expect(n).toEqual({ text: ' · อัปเดตรายการของที่จุดส่ง ดอนเมือง ให้ตามแล้ว · ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่', warn: false })
+  })
+  it('จุดส่งไม่อยู่ในเที่ยว → ใช้คำเดียวกับป้าย + ทางคิวต่อเนื่อง · ต้องตรวจเอง → แดง', () => {
+    const n = dropSyncNote({ ...empty, notInTrip: ['ดอนเมือง'], check: ['ตรวจเอง'] }, [])
+    expect(n.warn).toBe(true)
+    expect(n.text).toContain(`⚠️ ${TRANSFER_WARNING.dropMissing} (ดอนเมือง) — ถ้าจัดไปเที่ยวอื่นแล้ว`)
+    expect(n.text).toContain('ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง')
+    expect(n.text).toContain('⚠️ ตรวจเอง')
+  })
+  it('มีสำเนาคันช่วยบนคันอื่น (หรือแก้ที่สำเนา) → บอกว่าคันนั้นไม่ถูกแก้ตาม · จุดส่งจริงที่อยู่คันอื่นไม่นับเป็นคันช่วย', () => {
+    const changed = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: '' }] }
+    const copy = { siteName: 'A', transferRole: 'pickup' as const, transferId: 'tf_1', assistForPlate: 'T1' }
+    expect(dropSyncNote(changed, [copy]).text).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
+    expect(dropSyncNote(changed, [{ ...copy, transferId: 'tf_2' }]).text).toBe('')
+    const realDrop = { siteName: 'ดอนเมือง', transferRole: 'drop' as const, transferId: 'tf_1' }
+    expect(dropSyncNote(changed, [realDrop])).toEqual({ text: '', warn: false })
+    const fromCopy = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: 'T1' }] }
+    expect(dropSyncNote(fromCopy, [realDrop]).text).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
   })
 })

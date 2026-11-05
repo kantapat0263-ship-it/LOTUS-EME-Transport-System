@@ -47,9 +47,12 @@ export function transferShapeProblem(roles: readonly (string | undefined)[]): st
   return null
 }
 
+/** บรรทัดของจุดรับ 1 จุดในรายละเอียดงานของจุดส่ง — รูปเดียวที่ใช้ทั้งตอนส่งใบและตอนแก้ของทีหลัง (syncDropText หาบรรทัดด้วยรูปนี้) */
+export const dropLine = (name: string, items: string) => `ส่งของที่รับจาก ${name.trim() || 'จุดรับ'}: ${items.trim()}`
+
 /** รายละเอียดงานของจุดส่ง เขียนให้อัตโนมัติจากของที่รับแต่ละจุด (ผู้ขอไม่ต้องพิมพ์ซ้ำ) + งานอื่นที่จุดส่ง (ถ้ามี) */
 export function buildDropDescription(pickups: readonly { name: string; items: string }[], extra: string): string {
-  const lines = pickups.map(p => `ส่งของที่รับจาก ${p.name.trim() || 'จุดรับ'}: ${p.items.trim()}`)
+  const lines = pickups.map(p => dropLine(p.name, p.items))
   if (extra.trim()) lines.push(extra.trim())
   return lines.join('\n')
 }
@@ -264,4 +267,189 @@ export function postponedPickupNote(peers: readonly Peer[], index: number): stri
   const drop = peers.find((peer, i) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && peer.transferRole === 'drop')
   const name = (drop?.siteName || stop.transferDropName || '').trim()
   return name ? `(รับของแล้วเอาไปส่งต่อที่ ${name})` : '(รับของแล้วเอาไปส่งต่อ — ถามผู้ขอว่าส่งที่ไหน)'
+}
+
+// ---------------------------------------------------------------------------
+// แก้ของที่จุดรับแล้ว จุดส่งอัปเดตตาม (ผู้ใช้ขอ 2026-11-05)
+// รายละเอียดของจุดส่งถูกเขียนรวมก้อนเดียวตอนส่งใบ — แก้ของที่จุดรับทีหลัง ให้แทน "เฉพาะบรรทัดของจุดรับนั้น" ที่ตรงทุกตัวอักษร
+// ข้อความอื่นในจุดส่ง (งานอื่นที่ผู้ขอพิมพ์ / ที่คนจัดรถแก้เอง) คงเดิม · หาไม่เจอ = ไม่แตะ แล้วเตือนให้แก้เอง
+// แก้แค่ข้อความในฟิลด์เดิม (jobDescription ของใบขอ / cargoDetails ของจุดในทริป) ไม่เพิ่มฟิลด์ ไม่สลับลำดับจุด
+// ---------------------------------------------------------------------------
+
+/** ตำแหน่งที่ `line` อยู่เต็มบรรทัด (ต้นข้อความหรือหลัง \n และจบที่ท้ายข้อความหรือก่อน \n) — ค้นข้อความธรรมดา ไม่ใช้ RegExp (ชื่อร้านมี ( ) . + * ? ได้) */
+function wholeLineAt(text: string, line: string): number[] {
+  const found: number[] = []
+  for (let at = text.indexOf(line); at !== -1; at = text.indexOf(line, at + 1)) {
+    const end = at + line.length
+    if ((at === 0 || text[at - 1] === '\n') && (end === text.length || text[end] === '\n')) found.push(at)
+  }
+  return found
+}
+
+export type DropTextSync = 'updated' | 'same' | 'manual'
+
+/**
+ * แทนบรรทัด "ส่งของที่รับจาก <ชื่อ>: <ของเดิม>" ในรายละเอียดจุดส่ง ด้วยของใหม่
+ * updated = เจอบรรทัดเดิม 1 ที่แล้วแทน · same = บรรทัดเหมือนเดิม/มีบรรทัดใหม่อยู่แล้ว · manual = ไม่เจอ หรือเจอหลายที่ (ไม่แตะข้อความ)
+ * ของเดิมเป็น "ปูน 10" ไม่ไปจับบรรทัด "ปูน 10 ถุง" (ต้องจบบรรทัดพอดี) · ของหลายบรรทัดใช้ได้
+ */
+export function syncDropText(dropText: string, pickupName: string, oldItems: string, newItems: string): { text: string; result: DropTextSync } {
+  const oldLine = dropLine(pickupName, oldItems)
+  const newLine = dropLine(pickupName, newItems)
+  if (oldLine === newLine) return { text: dropText, result: 'same' }
+  const found = wholeLineAt(dropText, oldLine)
+  if (found.length === 1) return { text: dropText.slice(0, found[0]) + newLine + dropText.slice(found[0] + oldLine.length), result: 'updated' }
+  if (found.length === 0 && wholeLineAt(dropText, newLine).length) return { text: dropText, result: 'same' }
+  return { text: dropText, result: 'manual' }
+}
+
+type RequestDestinationLike = TransferFields & { siteName?: string; jobDescription?: string; withdrawn?: boolean }
+
+export interface PickupItemsEdit<T> {
+  destinations: T[]
+  /** on-trip = จุดส่งจัดเข้าเที่ยวแล้ว (ไม่แตะ) · none = ไม่ใช่จุดรับ / ไม่มีจุดส่งในใบ / จุดส่งเป็นสำเนาคันคู่ที่ถอนแล้ว */
+  drop: DropTextSync | 'on-trip' | 'none'
+  dropName: string
+  /** จุดรับนี้จัดเข้าเที่ยวแล้ว (ไม่นับสำเนาที่ถอน) — ใบงานคนขับยังเป็นของเดิม */
+  pickupOnTrip: boolean
+}
+
+/**
+ * หน้าคำขอ: แก้รายละเอียดงานของจุดที่ `index` แล้วซิงก์จุดส่งของกลุ่มเดียวกันในใบนี้ (คืน destinations ชุดใหม่ ไม่แก้ array/object เดิม)
+ * ไม่แตะทริป — จุดในทริปไม่มีตัวชี้กลับมาใบขอ · ชุดคันคู่มี transferId ของตัวเอง จึงไม่ปนกัน
+ */
+export function applyPickupItemsEdit<T extends RequestDestinationLike>(
+  request: { destinations?: readonly T[]; assignedDestinations?: readonly unknown[] },
+  index: number,
+  items: string,
+): PickupItemsEdit<T> {
+  const destinations = [...(request.destinations || [])]
+  const pickup = destinations[index]
+  const assigned = Array.isArray(request.assignedDestinations) ? request.assignedDestinations : []
+  destinations[index] = { ...pickup, jobDescription: items }
+  const pickupOnTrip = assigned.includes(index) && !pickup?.withdrawn
+  if (!isTransferStop(pickup) || pickup.transferRole !== 'pickup') return { destinations, drop: 'none', dropName: '', pickupOnTrip }
+  const drops = destinations.flatMap((d, i) => (isTransferStop(d) && d.transferRole === 'drop' && d.transferId === pickup.transferId ? [i] : []))
+  const fallbackName = (pickup.transferDropName || '').trim()
+  if (drops.length === 0) return { destinations, drop: 'none', dropName: fallbackName, pickupOnTrip }
+  if (drops.length > 1) return { destinations, drop: 'manual', dropName: fallbackName, pickupOnTrip }
+  const at = drops[0]
+  const drop = destinations[at]
+  const dropName = (drop.siteName || '').trim() || fallbackName
+  if (assigned.includes(at)) return { destinations, drop: drop.withdrawn ? 'none' : 'on-trip', dropName, pickupOnTrip }
+  const synced = syncDropText(drop.jobDescription || '', pickup.siteName || '', pickup.jobDescription || '', items)
+  if (synced.result === 'updated') destinations[at] = { ...drop, jobDescription: synced.text }
+  return { destinations, drop: synced.result, dropName, pickupOnTrip }
+}
+
+/** ที่แก้ของในเที่ยว — ปุ่มดินสอไม่เปิดให้เที่ยวคิวต่อเนื่อง (handleOpenEdit) จึงต้องบอกทางออกไว้ด้วย */
+const EDIT_IN_TRIP = 'เมนู ประวัติการส่ง → ปุ่มดินสอ · ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง'
+
+/** ข้อความต่อท้าย toast "บันทึกรายละเอียดงานแล้ว" ของหน้าคำขอ · warn = ต้องให้คนจัดรถไปแก้ต่อเอง (toast สีแดง) */
+export function pickupEditMessage(plan: Pick<PickupItemsEdit<unknown>, 'drop' | 'dropName' | 'pickupOnTrip'>): { text: string | null; warn: boolean } {
+  const dropLabel = `จุดส่ง${plan.dropName ? ` ${plan.dropName}` : ''}`
+  const parts: string[] = []
+  if (plan.pickupOnTrip) parts.push(`⚠️ จุดรับนี้จัดเข้าเที่ยวแล้ว ใบงานคนขับยังเป็นรายการเดิม — แก้ของที่จุดรับในเที่ยวนั้นด้วย (${EDIT_IN_TRIP})`)
+  if (plan.drop === 'updated') parts.push(plan.pickupOnTrip ? `${dropLabel} ในใบนี้อัปเดตแล้ว` : `อัปเดตรายการของที่${dropLabel} ให้ตามแล้ว`)
+  if (plan.drop === 'manual') parts.push(`⚠️ ${dropLabel} ยังเป็นรายการเดิม (ระบบแก้ให้เองไม่ได้) — แก้รายละเอียดที่จุดส่งด้วย`)
+  if (plan.drop === 'on-trip') {
+    parts.push(plan.pickupOnTrip
+      ? `${dropLabel} ก็จัดเข้าเที่ยวแล้ว — ถ้าอยู่เที่ยวเดียวกัน แก้ของที่จุดรับในเที่ยวนั้นแล้วจุดส่งจะแก้ตามให้`
+      : `⚠️ ${dropLabel} จัดเข้าเที่ยวแล้ว — แก้ช่องรายละเอียดของจุดส่งในเที่ยวนั้นเอง (${EDIT_IN_TRIP})`)
+  }
+  return { text: parts.length ? parts.join(' · ') : null, warn: plan.pickupOnTrip || plan.drop === 'manual' || plan.drop === 'on-trip' }
+}
+
+type TripStopLike = TransferFields & {
+  siteName?: string
+  cargoDetails?: string
+  outcome?: string | null
+  assistForPlate?: string
+  postponedToDate?: string
+  postponedRequestId?: string
+}
+
+export interface TripDropSync<T> {
+  /** stops ของฟอร์มที่แก้บรรทัดของในจุดส่งแล้ว (ลำดับ/จำนวนเท่าเดิม) */
+  stops: T[]
+  /** ชื่อจุดส่งที่แทนบรรทัดของให้แล้ว */
+  updated: string[]
+  /** ตำแหน่งในฟอร์มของจุดรับที่บรรทัดของในจุดส่งถูกแทน — ใช้บอกในหน้าต่างก่อนกดบันทึก */
+  replacedFor: number[]
+  /** จุดส่งไม่อยู่ในเที่ยวนี้ (ชื่อจากจุดรับ) */
+  notInTrip: string[]
+  /** ต้องตรวจเอง: หาบรรทัดเดิมไม่เจอ / จุดส่งหรือจุดรับเลื่อนวันแล้ว */
+  check: string[]
+  /** จุดรับที่ของเปลี่ยน — ใช้เช็กสำเนาคันช่วยบนคันอื่น */
+  changed: { transferId: string; assistForPlate: string }[]
+}
+
+/** YYYY-MM-DD → DD/MM/YYYY แบบเดียวกับหน้าประวัติ */
+const dayText = (iso?: string) => (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split('-').reverse().join('/') : iso || '')
+const postponedText = (stop: TripStopLike) =>
+  `เลื่อน${stop.postponedToDate ? `ไปวันที่ ${dayText(stop.postponedToDate)} ` : 'วัน'}แล้ว — แก้รายละเอียดที่ใบ${stop.postponedRequestId ? ` ${stop.postponedRequestId}` : 'วันใหม่'} ในหน้าคำขอ`
+
+/**
+ * หน้าต่าง "แก้ไขเที่ยววิ่ง": จุดรับที่ของเปลี่ยน (เทียบกับตอนเปิดหน้าต่าง) → แทนบรรทัดของในจุดส่งของกลุ่มเดียวกัน "ในฟอร์มตอนนี้"
+ * เทียบกับข้อความจุดส่งในฟอร์มเสมอ (คนจัดรถพิมพ์อย่างอื่นเพิ่มที่จุดส่งไว้ก็ยังแทนเฉพาะบรรทัดเดิม)
+ * จับคู่เฉพาะจุดที่ assistForPlate เหมือนกัน (จุดจริงกับจุดจริง / สำเนาคันช่วยจากคันเดียวกัน) · จุดรับที่เลื่อนวันแล้วไม่ซิงก์ (งานจริงอยู่ใบวันใหม่)
+ * จุดรับที่โยกไปคันอื่นยังซิงก์ — คันที่รับงานอ่านรายละเอียดจากจุดต้นทาง · ทริปปกติ = stops เดิมทุกค่า
+ */
+export function syncDropsInTripEdit<T extends TripStopLike>(
+  originalStops: readonly T[],
+  editedStops: readonly T[],
+  sourceIndexes: readonly (number | null)[],
+): TripDropSync<T> {
+  const sync: TripDropSync<T> = { stops: [...editedStops], updated: [], replacedFor: [], notInTrip: [], check: [], changed: [] }
+  const kept = new Set(sourceIndexes.filter((i): i is number => typeof i === 'number'))
+  const assistOf = (stop: TripStopLike) => stop.assistForPlate || ''
+  const addOnce = (list: string[], text: string) => { if (!list.includes(text)) list.push(text) }
+  editedStops.forEach((row, at) => {
+    const source = sourceIndexes[at]
+    if (typeof source !== 'number' || !isTransferStop(row) || row.transferRole !== 'pickup') return
+    const oldItems = originalStops[source]?.cargoDetails || ''
+    const newItems = row.cargoDetails || ''
+    if (oldItems === newItems) return
+    sync.changed.push({ transferId: row.transferId!, assistForPlate: assistOf(row) })
+    const pickupName = (row.siteName || '').trim() || 'จุดรับ'
+    if (row.outcome === 'postponed') { addOnce(sync.check, `จุดรับ ${pickupName} ${postponedText(row)} (จุดส่งไม่ถูกแก้ตาม)`); return }
+    const isMate = (stop: TripStopLike) => isTransferStop(stop) && stop.transferRole === 'drop' && stop.transferId === row.transferId && assistOf(stop) === assistOf(row)
+    const drops = sync.stops.flatMap((stop, i) => (isMate(stop) ? [i] : []))
+    const fallbackName = (row.transferDropName || '').trim()
+    if (drops.length === 0) {
+      // จุดส่งถูกลบในหน้าต่างนี้เอง = คนจัดรถตั้งใจ ไม่เตือน · สำเนาคันช่วยไม่มีจุดส่งสำเนา = ไม่เตือน (dropSyncNote บอกเรื่องงานต้นทางบนคันอื่นแทน)
+      if (!assistOf(row) && !originalStops.some((stop, i) => isMate(stop) && !kept.has(i))) addOnce(sync.notInTrip, fallbackName)
+      return
+    }
+    const dropName = (sync.stops[drops[0]].siteName || '').trim() || fallbackName || 'จุดส่ง'
+    if (drops.length > 1) { addOnce(sync.check, `จุดส่ง ${dropName} ยังเป็นรายการเดิม (มีหลายจุดส่งของงานเดียวกัน) — ตรวจแล้วแก้เอง`); return }
+    const drop = sync.stops[drops[0]]
+    if (drop.outcome === 'postponed') { addOnce(sync.check, `จุดส่ง ${dropName} ${postponedText(drop)}`); return }
+    const synced = syncDropText(drop.cargoDetails || '', row.siteName || '', oldItems, newItems)
+    if (synced.result === 'updated') {
+      sync.stops[drops[0]] = { ...drop, cargoDetails: synced.text }
+      addOnce(sync.updated, dropName)
+      sync.replacedFor.push(at)
+    } else if (synced.result === 'manual') {
+      addOnce(sync.check, `จุดส่ง ${dropName} ยังเป็นรายการเดิม (หาบรรทัดของ ${pickupName} เดิมไม่เจอ) — เปิดแก้ไขอีกครั้งแล้วแก้ช่องของจุดส่งเอง`)
+    }
+  })
+  return sync
+}
+
+/**
+ * ข้อความต่อท้าย toast "แก้ไขสำเร็จ" ของหน้าประวัติ (ขึ้นต้นด้วย " · " / ว่าง = ไม่มีอะไรต้องบอก) · warn = มีเรื่องต้องไปแก้ต่อ (toast สีแดง)
+ * otherStops = จุดของทริปอื่นที่ยังไม่ยกเลิก — มีสำเนาคันช่วยของงานนี้ (หรือแก้ที่คันช่วย แล้วงานต้นทางอยู่คันอื่น) = บอกว่าคันนั้นไม่ถูกแก้ตาม
+ * ใบงานคนขับไม่โหลดข้อมูลใหม่เอง (ดึงครั้งเดียวตอนเปิดลิงก์) จึงต้องบอกให้คนขับเปิดลิงก์ใหม่ — ไม่ใช้การดึงซ้ำเป็นระยะ (โควตา Vercel)
+ */
+export function dropSyncNote(sync: Pick<TripDropSync<unknown>, 'updated' | 'notInTrip' | 'check' | 'changed'>, otherStops: readonly TripStopLike[]): { text: string; warn: boolean } {
+  const parts: string[] = []
+  if (sync.updated.length) parts.push(`อัปเดตรายการของที่จุดส่ง ${sync.updated.join(', ')} ให้ตามแล้ว · ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่`)
+  const warnings = [
+    ...sync.notInTrip.map(name => `${TRANSFER_WARNING.dropMissing}${name ? ` (${name})` : ''} — ถ้าจัดไปเที่ยวอื่นแล้ว ให้แก้รายการที่จุดส่งในเที่ยวนั้นด้วย (ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง)`),
+    ...sync.check,
+  ]
+  const assisted = sync.changed.some(p => otherStops.some(stop => isTransferStop(stop) && stop.transferId === p.transferId && !!(p.assistForPlate || stop.assistForPlate)))
+  if (assisted) warnings.push('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม — แก้ที่คันนั้นด้วย')
+  return { text: [...parts, ...warnings.map(w => `⚠️ ${w}`)].map(part => ` · ${part}`).join(''), warn: warnings.length > 0 }
 }

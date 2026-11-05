@@ -50,7 +50,7 @@ import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQu
 import { inThailand } from "@/lib/roadFlood"
 import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
 import { calculateFuelCost, incomingStopsForTrip } from "@/lib/calculations"
-import { isInactiveStop, isTransferStop, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from "@/lib/transfer"
+import { dropSyncNote, isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from "@/lib/transfer"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -341,13 +341,17 @@ export default function TripHistoryPage() {
         }
       }
 
+      // งานรับของไปส่งต่อ: ของที่จุดรับเปลี่ยน → แทนบรรทัด "ส่งของที่รับจาก …" ในจุดส่งของเที่ยวนี้ให้ (เทียบกับข้อความจุดส่งในฟอร์มตอนนี้)
+      // แก้แค่ข้อความ ไม่สลับ/เพิ่ม/ลบจุด → กม. (routeStopsKey ด้านบน) และหมายเหตุ stop_<i> ไม่กระทบ · ทริปปกติ = stops เดิมทุกค่า
+      const dropSync = syncDropsInTripEdit(editingTrip.stops, editFormData.stops, editFormData.originalStopIndexes)
+
       // Update Trip
       await updateTripWithQueueGuard(db, editingTrip.id, {
         vehicleId: editFormData.vehicleId,
         vehiclePlate: selectedVehicle?.licensePlate || "",
         driverId: editFormData.driverId,
         driverName: selectedDriver?.name || "",
-        stops: editFormData.stops.map((s, idx) => ({ ...s, order: idx })),
+        stops: dropSync.stops.map((s, idx) => ({ ...s, order: idx })),
         ...distancePatch,
         updatedAt: serverTimestamp()
       }, undefined, { expectedStops: editingTrip.stops, sourceIndexes: editFormData.originalStopIndexes })
@@ -361,7 +365,9 @@ export default function TripHistoryPage() {
         changes
       })
 
-      toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลเที่ยววิ่ง ${editingTrip.tripId} เรียบร้อยแล้ว${distanceNote}` })
+      // จุดของทริปอื่นใช้แค่เช็กสำเนาคันช่วยของงานรับ-ส่งที่แก้ — ทริปปกติไม่ต้องไล่
+      const dropNote = dropSyncNote(dropSync, dropSync.changed.length ? (trips || []).filter(t => t.id !== editingTrip.id && t.status !== 'Cancelled').flatMap(t => t.stops || []) : [])
+      toast({ title: "แก้ไขสำเร็จ", description: `อัปเดตข้อมูลเที่ยววิ่ง ${editingTrip.tripId} เรียบร้อยแล้ว${distanceNote}${dropNote.text}`, ...(dropNote.warn ? { variant: "destructive" as const } : {}) })
       setIsEditOpen(false)
     } catch (e: any) {
       toast({ title: "เกิดข้อผิดพลาด", description: e?.message || "ไม่สามารถบันทึกการแก้ไขได้", variant: "destructive" })
@@ -485,6 +491,8 @@ export default function TripHistoryPage() {
   }
   const worksheetView = isWorksheetOpen && selectedTrip ? transferViewFor(selectedTrip.id, selectedTrip.stops || []) : null
   const editView = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editFormData.stops) : null
+  // จุดรับที่ของเปลี่ยนแล้วจุดส่งในเที่ยวนี้จะถูกแก้ตอนกดบันทึก (ป้ายเปลี่ยนทันที แต่ช่องจุดส่งยังเป็นข้อความเดิมจนกว่าจะบันทึก)
+  const editDropSync = isEditOpen && editingTrip ? syncDropsInTripEdit(editingTrip.stops, editFormData.stops, editFormData.originalStopIndexes) : null
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -889,6 +897,9 @@ export default function TripHistoryPage() {
                           setEditFormData({...editFormData, stops: newStops})
                         }}
                       />
+                      {editDropSync?.replacedFor.includes(idx) && (
+                        <p className="text-[10px] text-amber-400">กดบันทึกแล้วระบบจะแก้บรรทัดของที่จุดส่งให้</p>
+                      )}
                     </div>
                     <Button 
                       variant="ghost" 

@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { inThailand } from '@/lib/roadFlood'
 import { routeStopsKey } from '@/lib/planDistance'
 import { calculateFuelCost } from '@/lib/calculations'
+import { dropSyncNote, syncDropsInTripEdit } from '@/lib/transfer'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function handler(name: string) {
@@ -80,9 +81,9 @@ function saveEdit(original: any, form: any, opts: { plan?: unknown; vehicles?: a
     plan: vi.fn(async (..._args: unknown[]) => { opts.onPlan?.(); return opts.plan ?? { km: 120, minutes: 90, fuelCost: 360 } }),
     version: { current: 1 },
   }
-  const work = new Function('editingTrip', 'user', 'isManagedTrip', 'editFormData', 'toast', 'saveEditBusyRef', 'confirmLeaveBeforeAssign', 'checkLeave', 'drivers', 'vehicles', 'editVersionRef', 'editOpenRef', 'window', 'updateTripWithQueueGuard', 'db', 'serverTimestamp', 'collection', 'addDoc', 'setIsEditOpen', 'routeStopsKey', 'computeTripPlanDistance', 'companySettings', 'calculateFuelCost', 'trips', `${handler('handleSaveEdit')}return work`)(
+  const work = new Function('editingTrip', 'user', 'isManagedTrip', 'editFormData', 'toast', 'saveEditBusyRef', 'confirmLeaveBeforeAssign', 'checkLeave', 'drivers', 'vehicles', 'editVersionRef', 'editOpenRef', 'window', 'updateTripWithQueueGuard', 'db', 'serverTimestamp', 'collection', 'addDoc', 'setIsEditOpen', 'routeStopsKey', 'computeTripPlanDistance', 'companySettings', 'calculateFuelCost', 'trips', 'syncDropsInTripEdit', 'dropSyncNote', `${handler('handleSaveEdit')}return work`)(
     original, { email: 'test@example.invalid' }, () => false, form, deps.toast, { current: false }, vi.fn(), vi.fn(), [{ id: 'D1', name: 'คนขับ' }], opts.vehicles ?? [{ id: 'V1', licensePlate: 'ทะเบียน' }], deps.version, { current: true }, { confirm: () => true }, deps.update, {}, () => 'test-time', vi.fn(), deps.log, deps.close,
-    routeStopsKey, deps.plan, { googleMapsApiKeyReference: 'key' }, calculateFuelCost, opts.trips,
+    routeStopsKey, deps.plan, { googleMapsApiKeyReference: 'key' }, calculateFuelCost, opts.trips, syncDropsInTripEdit, dropSyncNote,
   )
   return { work, ...deps }
 }
@@ -165,4 +166,59 @@ it('คิดระยะด้วยข้อมูลทริปล่าส�
   const { work, plan } = saveEdit(original, form, { trips: [live] })
   await work()
   expect(plan.mock.calls[0][1]).toBe(live)
+})
+
+// ---- งานรับของไปส่งต่อ: แก้ของที่จุดรับ แล้วจุดส่งในเที่ยวเดียวกันแก้ตาม (drop-sync) ----
+const pickupStop = (extra: any = {}) => ({ siteId: 'S-WK', siteName: 'วังโค', order: 0, cargoDetails: 'ปูน 10 ถุง', lat: 14.1, lng: 100.6, transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง', ...extra })
+const dropStop = (extra: any = {}) => ({ siteId: 'S-DM', siteName: 'ดอนเมือง', order: 2, cargoDetails: 'ส่งของที่รับจาก วังโค: ปูน 10 ถุง\nท่อ EMT จากออฟฟิศ', lat: 13.9, lng: 100.6, transferRole: 'drop', transferId: 'tf_1', ...extra })
+const transferTrip = (stops: any[]) => ({ id: 'T1', tripId: 'T1', tripDate: '2026-11-05', status: 'Planned', vehicleId: 'V1', vehiclePlate: 'ทะเบียน', driverId: 'D1', stops })
+it('ทริปรับ-ส่ง: แก้ของที่จุดรับ → บันทึกจุดส่งเที่ยวเดียวกันเป็นบรรทัดใหม่ (งานอื่นในจุดส่งคงเดิม) · ไม่คิดระยะใหม่ · toast บอกชื่อจุดส่ง + ให้คนขับเปิดลิงก์ใหม่', async () => {
+  const original = transferTrip([pickupStop(), { siteId: 'X', siteName: 'ไซต์ X', order: 1, cargoDetails: 'งานปกติ' }, dropStop()])
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: original.stops.map((s: any, i: number) => (i === 0 ? { ...s, cargoDetails: 'ปูน 15 ถุง' } : { ...s })), originalStopIndexes: [0, 1, 2], note: 'ผู้ขอโทรมาแก้' }
+  const { work, update, plan, toast } = saveEdit(original, form)
+  await work()
+  expect(plan).not.toHaveBeenCalled()
+  const saved = update.mock.calls[0][2].stops
+  expect(saved.map((s: any) => s.cargoDetails)).toEqual(['ปูน 15 ถุง', 'งานปกติ', 'ส่งของที่รับจาก วังโค: ปูน 15 ถุง\nท่อ EMT จากออฟฟิศ'])
+  expect(saved.map((s: any) => s.order)).toEqual([0, 1, 2])
+  expect(update.mock.calls[0][4]).toEqual({ expectedStops: original.stops, sourceIndexes: [0, 1, 2] })
+  expect(form.stops[2].cargoDetails).toBe(dropStop().cargoDetails) // ไม่แก้ฟอร์มของ render ก่อนหน้า
+  const shown = toast.mock.calls[0][0]
+  expect(shown.title).toBe('แก้ไขสำเร็จ')
+  expect(shown.description).toContain('อัปเดตรายการของที่จุดส่ง ดอนเมือง ให้ตามแล้ว')
+  expect(shown.description).toContain('ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่')
+  expect(shown.variant).toBeUndefined()
+})
+it('ทริปรับ-ส่งที่จุดส่งอยู่คนละเที่ยว → toast สีแดงเตือนให้แก้ที่เที่ยวนั้น (บอกทางคิวต่อเนื่อง) · จุดอื่นไม่เปลี่ยน', async () => {
+  const original = transferTrip([pickupStop(), { siteId: 'X', siteName: 'ไซต์ X', order: 1, cargoDetails: 'งานปกติ' }])
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [{ ...original.stops[0], cargoDetails: 'ปูน 15 ถุง' }, { ...original.stops[1] }], originalStopIndexes: [0, 1], note: 'แก้ของ' }
+  const { work, update, toast } = saveEdit(original, form)
+  await work()
+  expect(update.mock.calls[0][2].stops.map((s: any) => s.cargoDetails)).toEqual(['ปูน 15 ถุง', 'งานปกติ'])
+  const shown = toast.mock.calls[0][0]
+  expect(shown.variant).toBe('destructive')
+  expect(shown.description).toContain('จุดส่งไม่อยู่ในเที่ยวนี้ (ดอนเมือง)')
+  expect(shown.description).toContain('ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง')
+  expect(shown.description).not.toContain('เปิดลิงก์ใหม่')
+})
+it('ทริปรับ-ส่งที่มีสำเนาคันช่วยบนคันอื่น → toast บอกว่าสำเนาไม่ถูกแก้ตาม (ไม่นับทริปที่ยกเลิก)', async () => {
+  const original = transferTrip([pickupStop(), dropStop()])
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: [{ ...original.stops[0], cargoDetails: 'ปูน 15 ถุง' }, { ...original.stops[1] }], originalStopIndexes: [0, 1], note: 'แก้ของ' }
+  const helper = { id: 'T2', status: 'Planned', stops: [pickupStop({ assistForPlate: 'ทะเบียน' })] }
+  const live = saveEdit(original, form, { trips: [original, helper] })
+  await live.work()
+  expect(live.toast.mock.calls[0][0].description).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
+  expect(live.toast.mock.calls[0][0].variant).toBe('destructive')
+  const cancelled = saveEdit(original, form, { trips: [original, { ...helper, status: 'Cancelled' }] })
+  await cancelled.work()
+  expect(cancelled.toast.mock.calls[0][0].description).not.toContain('สำเนาคันช่วย')
+  expect(cancelled.toast.mock.calls[0][0].variant).toBeUndefined()
+})
+it('ทริปปกติแก้รายละเอียด: payload และ toast เหมือนเดิมทุกตัวอักษร (ไม่มีข้อความรับ-ส่ง ไม่มีสีแดง)', async () => {
+  const original = trip()
+  const form = { driverId: 'D1', vehicleId: 'V1', stops: original.stops.map((s: any) => ({ ...s, cargoDetails: `${s.cargoDetails} แก้` })), originalStopIndexes: [0, 1], note: 'แก้รายละเอียด' }
+  const { work, update, toast } = saveEdit(original, form)
+  await work()
+  expect(update.mock.calls[0][2].stops).toEqual(form.stops.map((s: any, idx: number) => ({ ...s, order: idx })))
+  expect(toast.mock.calls[0][0]).toEqual({ title: 'แก้ไขสำเร็จ', description: 'อัปเดตข้อมูลเที่ยววิ่ง T1 เรียบร้อยแล้ว' })
 })
