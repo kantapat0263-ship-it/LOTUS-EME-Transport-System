@@ -687,4 +687,16 @@ describe('transferSetOutside (รายชื่อที่ทำทั้ง�
     // ไม่รู้ทะเบียนของเที่ยวนี้ = ไม่เดาสำเนาบนคันอื่น
     expect(transferSetOutside(own, 0, [], others, '')).toHaveLength(1)
   })
+  it('จุดจริงของกลุ่มเดียวกันที่จัดไว้บนคันอื่น → บอกรถ/คนขับ ไม่ถูกทำตาม · จุดที่โยกเข้าคันนี้/ไม่ทำแล้วไม่ขึ้นซ้ำ · ไม่ต้องรู้ทะเบียนของเที่ยวนี้', () => {
+    // ใบขอ ร้าน A + ร้าน B (รับ) → ไซต์ D (ส่ง) ตอนจัดกลุ่มเอา D ไว้ T2 ส่วน A, B อยู่ T1
+    const own = [P('ร้าน A'), P('ร้าน B')]
+    const others = [
+      { vehiclePlate: 'รถสอง', driverName: 'คนประจำ', actualDriverName: 'คนขับแทน', stops: [N('งานอื่น'), D('ไซต์ D'), D('กลุ่มอื่น', 'g2')] },
+      // งานที่โยกเข้าคันนี้ (ขึ้นในลิสต์งานโยกเข้าแล้ว) / เลื่อนไปแล้ว — ไม่ขึ้นซ้ำ
+      { vehiclePlate: 'รถสาม', driverName: 'คนสาม', stops: [{ ...P('ร้าน C'), outcome: 'reassigned', reassignedToVehiclePlate: 'รถ 1' } as S, { ...D('ไซต์ D'), outcome: 'postponed' } as S] },
+    ]
+    const line = 'ไซต์ D (จุดส่ง) — อยู่บนรถ รถสอง (คนขับแทน) ไม่ถูกทำตาม — จัดการเองที่คันนั้น'
+    expect(transferSetOutside(own, 0, [], others, 'รถ 1')).toEqual([line])
+    expect(transferSetOutside(own, 0, [], others, '')).toEqual([line])
+  })
 })

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { incomingStopsForTrip } from '@/lib/calculations'
 import { isManagedTrip } from '@/lib/continuousQueue'
 import { tripDriverLabel } from '@/lib/reassign'
-import { activeTransferSet, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, transferSetOutside, transferStopName } from '@/lib/transfer'
+import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, transferMateReminder, transferSetOutside, transferStopName } from '@/lib/transfer'
 import { assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
 
 // งานรับของไปส่งต่อ "ทำทั้งชุด" (โยก/คนขับปฏิเสธ/ยกเลิก) — คอมไพล์ handler/ปุ่ม/หน้าต่างตัวจริงจากหน้าใบสรุป ไม่ต้องบูต Firebase
@@ -39,12 +39,12 @@ const X = { siteId: 'S-X', siteName: 'ไปรษณีย์', order: 2, cargo
 const D = { siteId: 'S-D', siteName: 'ดอนเมือง', order: 3, cargoDetails: 'ส่งของที่รับจาก วังโค: ปูน', transferRole: 'drop', transferId: 'tf1' }
 const target = { id: 'T2', tripDate: '2026-11-05', driverId: 'D2', driverName: 'คนประจำ', actualDriverId: 'D3', actualDriverName: 'คนขับแทน', vehiclePlate: 'รถสอง', status: 'Planned', stops: [] as Raw[] }
 
-const shared = (trip: Raw, live: Raw[] | null, toast: ReturnType<typeof vi.fn>, setTrips: ReturnType<typeof vi.fn>) => ({
-  // readLiveTrip ตัวจริง: ทริปบนฐาน = live (ค่าเริ่มต้นตรงกับตอนเปิดหน้าต่าง)
-  getDoc: async () => ({ exists: () => true, data: () => structuredClone({ ...trip, stops: live ?? trip.stops }) }),
+const shared = (trip: Raw, base: { stops: Raw[] | null }, toast: ReturnType<typeof vi.fn>, setTrips: ReturnType<typeof vi.fn>) => ({
+  // readLiveTrip ตัวจริง: ทริปบนฐาน = base.stops (ค่าเริ่มต้นตรงกับตอนเปิดหน้าต่าง) · เทสต์เปลี่ยนกลางทางได้ = อีกแท็บแก้ระหว่างบันทึก
+  getDoc: async () => ({ exists: () => true, data: () => structuredClone({ ...trip, stops: base.stops ?? trip.stops }) }),
   doc: () => 'trip-ref', db: {}, isManagedTrip, assertTripStopsUnchanged, TRANSFER_SET_CONFLICT, toast, setTrips, recordedBy: 'น้าสาว', transferStopName, tripDriverLabel,
 })
-const realHelpers = `${body('stripOutcome')}${body('readLiveTrip')}${body('transferSetStops')}${body('transferSetFresh')}`
+const realHelpers = `${body('stripOutcome')}${body('readLiveTrip')}${body('transferSetStops')}${body('transferSetFresh')}${body('transferSetStale')}`
 
 function arrange(action: 'reassigned' | 'driver-refused' | 'cancel', opts: { stops?: Raw[]; form?: { targetTripId: string; reason: string }; live?: Raw[]; screen?: Raw[]; leave?: boolean; save?: boolean; incoming?: boolean; allowTarget?: boolean } = {}) {
   const stops = opts.stops ?? [P, X, D]
@@ -60,14 +60,15 @@ function arrange(action: 'reassigned' | 'driver-refused' | 'cancel', opts: { sto
   const remove = vi.fn(async (..._args: unknown[]) => undefined)
   const passLeaveGate = vi.fn(async (..._args: unknown[]) => opts.leave !== false)
   const allowOrdinaryEdit = vi.fn((t: Raw | undefined) => !(t?.id === 'T2' && opts.allowTarget === false))
+  const base = { stops: opts.live ?? stops }
   const deps = {
-    ...shared(trip, opts.live ?? stops, toast, setTrips),
+    ...shared(trip, base, toast, setTrips),
     transferSetDialog: dialog, trips, setTransferSetDialog: setDialog, allowOrdinaryEdit, incomingStopsForTrip, deleteTripWithQueueGuard: remove,
     setRefusalDrafts: vi.fn(), setStatsRefreshKey: stats, applyStopsWithDistance, applyStops, transferSetForm: opts.form ?? { targetTripId: '', reason: '' },
     setReassignNewForm: setNewForm, setReassignNewDialog: setNewDialog, passLeaveGate,
   }
   const handler = new Function(...Object.keys(deps), `${realHelpers}${body('applyTransferSet')}return applyTransferSet`)(...Object.values(deps)) as () => Promise<void>
-  return { handler, trip, dialog, toast, setTrips, setDialog, setNewDialog, applyStops, applyStopsWithDistance, remove, passLeaveGate, stats, allowOrdinaryEdit }
+  return { handler, trip, dialog, base, toast, setTrips, setDialog, setNewDialog, applyStops, applyStopsWithDistance, remove, passLeaveGate, stats, allowOrdinaryEdit }
 }
 const strip = ({ outcome: _o, outcomeReason: _r, reassignedToTripId: _t, reassignedToVehiclePlate: _p, reassignedToDriverName: _n, outcomeRecordedBy: _b, outcomeAt: _a, postponedToDate: _d, postponedRequestId: _q, ...rest }: Raw) => rest
 
@@ -151,6 +152,14 @@ describe('applyTransferSet: โยก/คนขับปฏิเสธทั้
     expect(ui.setDialog).not.toHaveBeenCalled()
     expect(ui.toast).not.toHaveBeenCalled()
   })
+  it('บันทึกไม่ผ่านเพราะงานบนฐานเปลี่ยนหลังด่านแรก (ด่านในธุรกรรม) → อ่านทริปซ้ำครั้งเดียว ปิดหน้าต่าง บอกประโยคเดียวกัน', async () => {
+    const ui = arrange('driver-refused', { form: { targetTripId: 'T2', reason: '' } })
+    ui.applyStops.mockImplementationOnce(async () => { ui.base.stops = [X, D]; return false })
+    await ui.handler()
+    expect(ui.applyStops).toHaveBeenCalledOnce()
+    expect(ui.setDialog).toHaveBeenCalledWith(null)
+    expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ description: TRANSFER_SET_CONFLICT, variant: 'destructive' })
+  })
 })
 
 describe('applyTransferSet: ยกเลิกทั้งชุด', () => {
@@ -195,6 +204,29 @@ describe('applyTransferSet: ยกเลิกทั้งชุด', () => {
     expect(ui.setDialog).not.toHaveBeenCalled()
     expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'ลบไม่สำเร็จ', variant: 'destructive' })
   })
+  it('คิด กม./บันทึกไม่ผ่านเพราะงานบนฐานเปลี่ยนหลังด่านแรก (ระหว่างอ่านซ้ำ/รอ Google) → อ่านทริปซ้ำครั้งเดียว ปิดหน้าต่าง บอกประโยคเดียวกัน', async () => {
+    // [วังโค(รับ), ไปรษณีย์, ดอนเมือง(ส่ง)] ผ่านด่านแรกแล้ว อีกแท็บลบไปรษณีย์ก่อนอ่านทริปรอบสอง
+    const ui = arrange('cancel')
+    ui.applyStopsWithDistance.mockImplementationOnce(async () => { ui.base.stops = [P, D]; return false })
+    await ui.handler()
+    expect(ui.applyStopsWithDistance).toHaveBeenCalledOnce()
+    expect(ui.setDialog).toHaveBeenCalledWith(null)
+    expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ description: TRANSFER_SET_CONFLICT, variant: 'destructive' })
+  })
+  it('คิด กม. ไม่ได้ (Google/เน็ต) แต่งานบนฐานยังตรง → หน้าต่างค้างไว้ให้กดซ้ำ ไม่มีข้อความเพิ่ม', async () => {
+    const ui = arrange('cancel', { save: false })
+    await ui.handler()
+    expect(ui.applyStopsWithDistance).toHaveBeenCalledOnce()
+    expect(ui.setDialog).not.toHaveBeenCalled()
+    expect(ui.toast).not.toHaveBeenCalled()
+  })
+  it('ลบทริปไม่ผ่านเพราะงานบนฐานเปลี่ยนหลังด่านแรก → ปิดหน้าต่าง บอกประโยคเดียวกัน', async () => {
+    const ui = arrange('cancel', { stops: [P, D] })
+    ui.remove.mockImplementationOnce(async () => { ui.base.stops = [P, X, D]; throw new Error('รายการงานหรือผลปิดงานเปลี่ยนระหว่างแก้ไข') })
+    await ui.handler()
+    expect(ui.setDialog).toHaveBeenCalledWith(null)
+    expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ description: TRANSFER_SET_CONFLICT, variant: 'destructive' })
+  })
 })
 
 describe('createReassignTarget: ทั้งชุดให้คน/รถใหม่ (หน้าต่างเดิม + set)', () => {
@@ -204,8 +236,9 @@ describe('createReassignTarget: ทั้งชุดให้คน/รถใ�
     const toast = vi.fn(), setTrips = vi.fn(), setNewDialog = vi.fn(), standalone = vi.fn()
     const applyStops = vi.fn(async (..._args: unknown[]) => opts.save !== false)
     const passLeaveGate = vi.fn(async (..._args: unknown[]) => opts.leave !== false)
+    const base: { stops: Raw[] | null } = { stops: opts.live ?? null }
     const deps = {
-      ...shared(trip, opts.live ?? null, toast, setTrips),
+      ...shared(trip, base, toast, setTrips),
       reassignNewDialog: { tripId: 'T1', stopIdx: 0, expectedStops: structuredClone(stops), ...(set ? { set } : {}) }, trips: [trip], setReassignNewDialog: setNewDialog, setReassignNewForm: vi.fn(),
       allowOrdinaryEdit: () => true, driversData: [{ id: 'D9', name: 'คนใหม่' }], vehiclesData: [{ id: 'V9', licensePlate: opts.vehicle ?? 'รถใหม่' }], reassignNewForm: { driverId: 'D9', vehicleId: 'V9' },
       passLeaveGate, buildStops: (t: Raw, index: number, fn: (s: Raw) => Raw) => t.stops.map((s: Raw, i: number) => (i === index ? fn(s) : s)), applyStops, serverTimestamp: () => 'time', createTripWithQueueGuard: standalone,
@@ -213,7 +246,7 @@ describe('createReassignTarget: ทั้งชุดให้คน/รถใ�
     const handler = new Function(...Object.keys(deps), `${realHelpers}${body('createReassignTarget')}return createReassignTarget`)(...Object.values(deps)) as () => Promise<void>
     // readLiveTrip ก็เรียก setTrips (อัปเดตจอด้วยข้อมูลบนฐาน) — นับเฉพาะการเพิ่มทริปใหม่บนจอ
     const added = () => setTrips.mock.calls.filter(([fn]) => (fn as (p: Raw[]) => Raw[])([]).length > 0).length
-    return { handler, applyStops, passLeaveGate, added, setNewDialog, toast, standalone }
+    return { handler, base, applyStops, passLeaveGate, added, setNewDialog, toast, standalone }
   }
   it('โยกทั้งชุด: ทริปใหม่ว่างสร้างในธุรกรรมเดียวกับต้นทาง · ทุกจุดในชุดได้ผล+ชี้ทริปใหม่ · จุดอื่นไม่เปลี่ยน · เพิ่มบนจอหลังบันทึกผ่าน', async () => {
     const ui = newUi({ idxs: [0, 2], outcome: 'reassigned', reason: '' })
@@ -257,6 +290,19 @@ describe('createReassignTarget: ทั้งชุดให้คน/รถใ�
     await ui.handler()
     expect(ui.added()).toBe(0)
     expect(ui.setNewDialog).not.toHaveBeenCalled()
+  })
+  it('บันทึกไม่ผ่านเพราะงานบนฐานเปลี่ยนหลังด่านแรก → อ่านทริปซ้ำ ปิดหน้าต่าง บอกประโยคเดียวกัน ไม่เพิ่มทริปบนจอ · ทางทีละจุดเดิมไม่อ่านซ้ำ', async () => {
+    const ui = newUi({ idxs: [0, 2], outcome: 'reassigned', reason: '' })
+    ui.applyStops.mockImplementationOnce(async () => { ui.base.stops = [P, X]; return false })
+    await ui.handler()
+    expect(ui.added()).toBe(0)
+    expect(ui.setNewDialog).toHaveBeenCalledWith(null)
+    expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ description: TRANSFER_SET_CONFLICT, variant: 'destructive' })
+    const single = newUi(undefined)
+    single.applyStops.mockImplementationOnce(async () => { single.base.stops = [P, X]; return false })
+    await single.handler()
+    expect(single.setNewDialog).not.toHaveBeenCalled()
+    expect(single.toast).not.toHaveBeenCalled()
   })
 })
 
@@ -312,16 +358,19 @@ describe('แถวในแผงปิดผลงาน: ปุ่มไห�
 })
 
 describe('หน้าต่าง "ทำทั้งชุดไหม?"', () => {
-  function dialog(action: 'reassigned' | 'driver-refused' | 'cancel', form = { targetTripId: '', reason: '' }) {
-    const stops = [P, X, D]
-    const trip = { id: 'T1', tripDate: '2026-11-05', driverName: 'สมชาย', vehiclePlate: 'กข 1', stops }
+  function dialog(action: 'reassigned' | 'driver-refused' | 'cancel', form = { targetTripId: '', reason: '' }, opts: { stops?: Raw[]; stopIdx?: number; screen?: Raw[] } = {}) {
+    const stops = opts.stops ?? [P, X, D]
+    const stopIdx = opts.stopIdx ?? 0
+    // screen = ทริปบนจอตอนกด (readLiveTrip อัปเดตจอระหว่างบันทึกทั้งชุดได้) · ค่าเริ่มต้น = ตอนเปิดหน้าต่าง
+    const trip = { id: 'T1', tripDate: '2026-11-05', driverName: 'สมชาย', vehiclePlate: 'กข 1', stops: opts.screen ?? stops }
     const feeder = { id: 'T3', tripDate: '2026-11-05', driverName: 'สมศรี', vehiclePlate: 'รถสาม', stops: [{ siteName: 'ดูโฮม', transferRole: 'pickup', transferId: 'tf1', reassignedToTripId: 'T1', outcome: 'reassigned' }] }
     const helper = { id: 'T4', tripDate: '2026-11-05', driverName: 'คนช่วย', vehiclePlate: 'รถช่วย', stops: [{ ...P, assistForPlate: 'กข 1' }] }
     const trips = [trip, target, feeder, helper]
     const calls: unknown[][] = []
-    const setDialog = vi.fn()
+    const setDialog = vi.fn(), toast = vi.fn()
     const deps = {
-      React, transferSetDialog: { tripId: 'T1', stopIdx: 0, idxs: [0, 2], action, expectedStops: stops }, trips, incomingOf: (id: string) => incomingStopsForTrip(trips as never[], id),
+      React, transferSetDialog: { tripId: 'T1', stopIdx, idxs: activeTransferSet(stops as never[], stopIdx), action, expectedStops: stops }, trips, incomingOf: (id: string) => incomingStopsForTrip(trips as never[], id),
+      assertTripStopsUnchanged, toast, TRANSFER_SET_CONFLICT,
       transferSetOutside, transferStopName, transferSetForm: form, setTransferSetForm: () => {}, ordinaryBusy: false, isManagedTrip, tripDriverLabel,
       Button: 'button', DialogFooter: 'footer', setTransferSetDialog: setDialog, cn: (...c: unknown[]) => c.filter(Boolean).join(' '),
       runOrdinaryAction: (fn: () => unknown) => { calls.push(['run']); fn() },
@@ -330,7 +379,7 @@ describe('หน้าต่าง "ทำทั้งชุดไหม?"', () 
     }
     const tree = new Function(...Object.keys(deps), `${arrowWith('transferSetOutside(d.expectedStops')}return work()`)(...Object.values(deps))
     const press = (label: string) => { calls.length = 0; setDialog.mockClear(); clickable(tree, label).props.onClick(); return { calls: [...calls], closed: setDialog.mock.calls.some(c => c[0] === null) } }
-    return { tree, press }
+    return { tree, press, toast }
   }
   it('รายชื่อในชุด + จุดที่ไม่แตะ (งานโยกเข้า/สำเนาคันช่วยบนคันอื่น)', () => {
     const out = text(dialog('reassigned').tree)
@@ -347,12 +396,47 @@ describe('หน้าต่าง "ทำทั้งชุดไหม?"', () 
     expect(dialog('cancel').press('ยกเลิกทั้งชุด 2 จุด').calls).toEqual([['run'], ['set']])
     expect(dialog('reassigned', { targetTripId: 'T2', reason: '' }).press('โยกทั้งชุด 2 จุด').calls).toEqual([['run'], ['set']])
   })
+  it('"เฉพาะจุดนี้" แต่งานบนจอเปลี่ยนจากตอนเปิดหน้าต่าง → ไม่เรียกทางทีละจุด (เลขข้อเก่าชี้ผิดจุด) ปิดหน้าต่าง บอกให้กดใหม่ที่จุดนั้น', () => {
+    // [ไปรษณีย์, วังโค(รับ), ดอนเมือง(ส่ง)] กดที่วังโค (index 1) — อีกแท็บลบไปรษณีย์ จอได้ [วังโค, ดอนเมือง]: index 1 บนจอ = ดอนเมือง
+    for (const [action, label] of [['cancel', 'ยกเลิกเฉพาะจุดนี้'], ['reassigned', 'โยกเฉพาะจุดนี้'], ['driver-refused', 'ปฏิเสธเฉพาะจุดนี้']] as const) {
+      const ui = dialog(action, undefined, { stops: [X, P, D], stopIdx: 1, screen: [P, D] })
+      expect(ui.press(label)).toEqual({ calls: [], closed: true })
+      expect(ui.toast.mock.calls.at(-1)?.[0]).toMatchObject({ description: TRANSFER_SET_CONFLICT, variant: 'destructive' })
+    }
+    // งานบนจอยังตรง (เลขข้อเดิม) → ทางทีละจุดตามเดิม
+    expect(dialog('cancel', undefined, { stops: [X, P, D], stopIdx: 1 }).press('ยกเลิกเฉพาะจุดนี้')).toEqual({ calls: [['run'], ['cancel', 'T1', 1]], closed: true })
+  })
   it('โยกทั้งชุดต้องเลือกคันก่อน (ปุ่มกดไม่ได้) · ปฏิเสธไม่บังคับ · ปุ่มปิดไม่ใช้คำว่า "ยกเลิก"', () => {
     const disabled = (tree: unknown, label: string) => clickable(tree, label).props.disabled
     expect(disabled(dialog('reassigned').tree, 'โยกทั้งชุด')).toBe(true)
     expect(disabled(dialog('reassigned', { targetTripId: 'T2', reason: '' }).tree, 'โยกทั้งชุด')).toBe(false)
     expect(disabled(dialog('driver-refused').tree, 'ปฏิเสธทั้งชุด')).toBe(false)
     expect(text(clickable(dialog('cancel').tree, 'ปิด'))).toBe('ปิด')
+  })
+})
+
+describe('หน้าต่างเลื่อน: กล่องงานรับของไปส่งต่อ', () => {
+  function box(stops: Raw[], stopIdx: number, others: Raw[] = []) {
+    const trip = { id: 'T1', tripDate: '2026-11-05', driverName: 'สมชาย', vehiclePlate: 'กข 1', stops }
+    const trips = [trip, ...others]
+    const deps = {
+      React, postponeDialog: { tripId: 'T1', stopIdx, expectedStops: stops }, trips, postponeSet: activeTransferSet(stops as never[], stopIdx),
+      transferMateReminder, incomingStopsForTrip, postponedPickupNote, transferSetOutside, transferStopName, incomingOf: (id: string) => incomingStopsForTrip(trips as never[], id),
+    }
+    return text(new Function(...Object.keys(deps), `${body('transferPeersOf')}${body('transferReminderFor')}${arrowWith('transferSetOutside(expected')}return work()`)(...Object.values(deps)))
+  }
+  const B = { ...P, siteId: 'S-B', siteName: 'ร้าน B', cargoDetails: 'ท่อ' }
+  it('ชุดมีจุดส่งในเที่ยวนี้ → บอกชื่อจุดส่งก่อนวิธีกด', () => {
+    expect(box([P, X, D], 0)).toContain('⚠️ งานรับของไปส่งต่อ: ยังมีจุดส่ง ดอนเมือง ของงานเดียวกันอยู่ในเที่ยวนี้ — กด "เลื่อนทั้งชุด" = เลื่อนพร้อมกัน 2 จุด')
+  })
+  it('ชุดมีแต่จุดรับ (จุดส่งโยกออก / อยู่บนคันอื่น) → ประโยคไม่ขาดกลาง · จุดส่งบนคันอื่นขึ้นในรายชื่อที่ไม่แตะ', () => {
+    const moved = box([P, B, { ...D, outcome: 'reassigned', reassignedToVehiclePlate: 'รถสอง' }], 0)
+    expect(moved).toContain('⚠️ งานรับของไปส่งต่อ: กด "เลื่อนทั้งชุด" = เลื่อนพร้อมกัน 2 จุด')
+    expect(moved).not.toContain(':  —')
+    expect(moved).toContain('ดอนเมือง (จุดส่ง) — โยกไปรถ รถสอง แล้ว')
+    const elsewhere = box([P, B], 1, [{ ...target, stops: [X, D] }])
+    expect(elsewhere).toContain('⚠️ งานรับของไปส่งต่อ: กด "เลื่อนทั้งชุด" = เลื่อนพร้อมกัน 2 จุด')
+    expect(elsewhere).toContain('ดอนเมือง (จุดส่ง) — อยู่บนรถ รถสอง (คนขับแทน) ไม่ถูกทำตาม — จัดการเองที่คันนั้น')
   })
 })
 

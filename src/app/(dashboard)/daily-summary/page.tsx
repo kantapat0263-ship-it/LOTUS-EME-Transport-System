@@ -1454,6 +1454,10 @@ export default function DailySummaryPage() {
     }
     return true
   }
+  // ทำทั้งชุดบันทึกไม่ผ่าน: อ่านทริปซ้ำครั้งเดียว (getDoc อย่างเดียว ไม่เรียก Google) — งานบนฐานเปลี่ยนหลังด่านแรก (ระหว่างอ่านซ้ำ/รอคิดระยะ/ในธุรกรรม)
+  // = true ให้คนเรียกปิดหน้าต่าง (transferSetFresh บอกประโยคเดียวกับด่านแรกแล้ว) · ยังตรง (เน็ต/Google/ด่านอื่น) หรืออ่านไม่ได้ = false หน้าต่างค้างไว้ให้กดซ้ำ
+  const transferSetStale = async (trip: Trip, expectedStops: TripStop[], action: string) =>
+    !(await transferSetFresh(trip, expectedStops, action).catch(() => true))
 
   const setReassignTarget = async (trip: Trip, stopIdx: number, targetTripId: string) => {
     const target = trips.find(t => t.id === targetTripId)
@@ -1487,9 +1491,10 @@ export default function DailySummaryPage() {
     if (veh.licensePlate === srcTrip.vehiclePlate) { toast({ title: "เลือกรถคนละคันกับต้นทาง", variant: "destructive" }); return }
     // ด่านวันลา: คนที่เลือก ตามวันของทริปใหม่ (= วันทริปต้นทาง) · ยกเลิก = dialog ค้างไว้ ไม่สร้างทริป
     const set = reassignNewDialog.set
+    const setVerb = set?.outcome === 'driver-refused' ? "บันทึกปฏิเสธทั้งชุด" : "โยกงานทั้งชุด"
     if (!(await passLeaveGate(`reassign-new:${srcTrip.id}:${set ? `set:${set.idxs.join(",")}` : reassignNewDialog.stopIdx}:${driver.id}:${veh.id}`, [{ driverId: driver.id, date: srcTrip.tripDate }]))) return
     // ทั้งชุด (มาจากหน้าต่างทำทั้งชุด): งานต้องยังตรงกับตอนเปิดหน้าต่าง — ไม่ตรง = ปิดหน้าต่าง ให้กดใหม่ที่จุดนั้น
-    if (set && !(await transferSetFresh(srcTrip, reassignNewDialog.expectedStops, set.outcome === 'driver-refused' ? "บันทึกปฏิเสธทั้งชุด" : "โยกงานทั้งชุด"))) {
+    if (set && !(await transferSetFresh(srcTrip, reassignNewDialog.expectedStops, setVerb))) {
       setReassignNewDialog(null)
       return
     }
@@ -1519,7 +1524,11 @@ export default function DailySummaryPage() {
       expectedStops: reassignNewDialog.expectedStops,
       sourceIndexes: (set ? reassignNewDialog.expectedStops : srcTrip.stops).map((_, index) => index),
       createTarget: { id: tripId, data: { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() } },
-    })) return
+    })) {
+      // ทั้งชุด: งานบนฐานเปลี่ยนหลังด่านแรก (ด่านในธุรกรรม) = ปิดหน้าต่างพร้อมประโยคเดียวกัน · ทางทีละจุดคงเดิม (หน้าต่างค้างไว้)
+      if (set && await transferSetStale(srcTrip, reassignNewDialog.expectedStops, setVerb)) setReassignNewDialog(null)
+      return
+    }
     setTrips(prev => [...prev, newTrip])
     toast(set
       ? {
@@ -1555,7 +1564,9 @@ export default function DailySummaryPage() {
       // ไม่เหลืองานและไม่ถืองานโยกเข้า = ลบทริปทิ้งทั้งใบ (แบบเดียวกับยกเลิกงานสุดท้ายทีละจุด) — หน้าต่างนี้คือการยืนยันแล้ว
       if (remaining.length === 0 && incomingStopsForTrip(trips as any, trip.id).length === 0) {
         try { await deleteTripWithQueueGuard(db, trip.id, expectedStops, undefined, { cancelJob: true }) } catch (e: any) {
-          toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
+          toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' })
+          if (await transferSetStale(trip, expectedStops, verb)) setTransferSetDialog(null)
+          return
         }
         setTrips(prev => prev.filter(t => t.id !== trip.id))
         setRefusalDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${trip.id}:`))))
@@ -1565,10 +1576,14 @@ export default function DailySummaryPage() {
         return
       }
       // กม. คิดใหม่ครั้งเดียวจากจุดที่เหลือ คิดไม่ได้ = ยังไม่ยกเลิกสักจุด · ส่ง trip เป็นชุดตอนเปิดหน้าต่าง (ด่านอ่านทริปเทียบกับชุดนี้ก่อนเรียก Google)
+      // ไม่ผ่านเพราะงานบนฐานเปลี่ยนหลังด่านแรก (อ่านทริปรอบสอง/ระหว่างรอ Google/ในธุรกรรม) = ปิดหน้าต่างพร้อมประโยคเดียวกัน — ไม่งั้นจอได้งานชุดใหม่แต่หน้าต่างยังถือเลขข้อชุดเก่า
       if (!await applyStopsWithDistance({ ...trip, stops: expectedStops }, remaining, verb, {
         expectedStops,
         sourceIndexes: expectedStops.map((_, index) => index).filter(index => !idxs.includes(index)),
-      })) return
+      })) {
+        if (await transferSetStale(trip, expectedStops, verb)) setTransferSetDialog(null)
+        return
+      }
       setTransferSetDialog(null)
       toast({ title: `${verb}แล้ว`, description: `เอา ${idxs.length} จุด (${names}) ออกจากใบสรุปเรียบร้อย` })
       return
@@ -1593,7 +1608,10 @@ export default function DailySummaryPage() {
     const newStops = transferSetStops(expectedStops, idxs, action, target
       ? { reassignedToTripId: target.id, reassignedToVehiclePlate: target.vehiclePlate, reassignedToDriverName: tripDriverLabel(target) } // คนขับจริง (ขับแทน)
       : null, transferSetForm.reason)
-    if (!await applyStops(trip, newStops, true, { expectedStops, sourceIndexes: expectedStops.map((_, index) => index) })) return
+    if (!await applyStops(trip, newStops, true, { expectedStops, sourceIndexes: expectedStops.map((_, index) => index) })) {
+      if (await transferSetStale(trip, expectedStops, verb)) setTransferSetDialog(null)
+      return
+    }
     setTransferSetDialog(null)
     toast(action === 'driver-refused'
       ? { title: "บันทึกคนขับปฏิเสธทั้งชุดแล้ว", description: `${idxs.length} จุด (${names})${target ? ` — ${tripDriverLabel(target)} (${target.vehiclePlate}) รับไปทำแทน` : ""}` }
@@ -2653,7 +2671,8 @@ export default function DailySummaryPage() {
                 <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
                   {postponeSet.length > 1 ? (
                     <>
-                      <p>⚠️ งานรับของไปส่งต่อ: {reminder} — กด &quot;เลื่อนทั้งชุด&quot; = เลื่อนพร้อมกัน {postponeSet.length} จุด · กด &quot;เลื่อนเฉพาะจุดนี้&quot; = จุดคู่ไม่เลื่อนตาม (เขียน ✏️ หมายเหตุบอกคนขับ)</p>
+                      {/* ชุดมีแต่จุดรับ (จุดส่งไม่ไปกับเที่ยวนี้) = ไม่มีชื่อจุดคู่ให้บอก — ตัดส่วนนั้นทิ้ง รายชื่อในชุดอยู่ด้านล่าง */}
+                      <p>⚠️ งานรับของไปส่งต่อ: {reminder ? `${reminder} — ` : ""}กด &quot;เลื่อนทั้งชุด&quot; = เลื่อนพร้อมกัน {postponeSet.length} จุด · กด &quot;เลื่อนเฉพาะจุดนี้&quot; = จุดคู่ไม่เลื่อนตาม (เขียน ✏️ หมายเหตุบอกคนขับ)</p>
                       {postponeSet.map(i => <p key={i}>• {transferStopName(expected[i])}</p>)}
                       {outside.length > 0 && (
                         <>
@@ -2877,7 +2896,7 @@ export default function DailySummaryPage() {
             </DialogDescription>
           </DialogHeader>
           {(() => {
-            // รายชื่อเรียกด้วยชื่อ (เลขข้อบนจอ ≠ index ที่บันทึก) · "ไม่รวม" = งานโยกเข้า/สำเนาคันช่วย/จุดที่ไม่ทำแล้ว ที่ทั้งชุดไม่แตะ
+            // รายชื่อเรียกด้วยชื่อ (เลขข้อบนจอ ≠ index ที่บันทึก) · "ไม่รวม" = งานโยกเข้า/สำเนาคันช่วย/จุดที่ไม่ทำแล้ว/จุดของงานเดียวกันบนคันอื่น ที่ทั้งชุดไม่แตะ
             if (!transferSetDialog) return null
             const d = transferSetDialog
             const sTrip = trips.find(t => t.id === d.tripId)
@@ -2949,7 +2968,13 @@ export default function DailySummaryPage() {
                     onClick={() => {
                       // ทางทีละจุดตัวเดิม (เตือนจุดคู่ / ยกเลิกถามยืนยันอีกรอบ) — ใช้ทริปบนจอตอนกด เหมือนกดปุ่มที่แถว
                       setTransferSetDialog(null)
-                      if (sTrip) void runOrdinaryAction(() => d.action === 'cancel' ? cancelStop(sTrip, d.stopIdx) : chooseOutcome(sTrip, d.stopIdx, d.action))
+                      if (!sTrip) return
+                      // d.stopIdx เป็นเลขข้อตอนเปิดหน้าต่าง — งานบนจอเปลี่ยนแล้ว (อ่านทริปซ้ำตอนบันทึกทั้งชุด) = เลขข้ออาจชี้ไปจุดอื่น ไม่ทำ ให้กดใหม่ที่จุดนั้น
+                      try { assertTripStopsUnchanged(sTrip.stops, d.expectedStops) } catch {
+                        toast({ title: `ยังไม่ได้${short}เฉพาะจุดนี้`, description: TRANSFER_SET_CONFLICT, variant: "destructive" })
+                        return
+                      }
+                      void runOrdinaryAction(() => d.action === 'cancel' ? cancelStop(sTrip, d.stopIdx) : chooseOutcome(sTrip, d.stopIdx, d.action))
                     }}
                     disabled={ordinaryBusy || !sTrip}
                   >
