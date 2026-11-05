@@ -44,8 +44,8 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
-import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
-import { postponedPickupNote, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, type TransferLabel } from "@/lib/transfer"
+import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat, type IncomingJob } from "@/lib/calculations"
+import { postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, type TransferDisplay, type TransferLabel } from "@/lib/transfer"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -1591,6 +1591,35 @@ export default function DailySummaryPage() {
     if (!incomingCache.has(tripId)) incomingCache.set(tripId, incomingStopsForTrip(trips as any, tripId))
     return incomingCache.get(tripId)!
   }
+  // ลำดับบนจอของแต่ละทริป (จุดรับที่โยกเข้ามาขึ้นก่อนจุดส่งของมัน — เหมือนใบพิมพ์/ใบงานคนขับ) — ใช้กับเลขข้อ/ป้ายเท่านั้น
+  // ปุ่มทุกปุ่ม (หมายเหตุ/ยกเลิก/ผล/โยก/คันช่วย) ยังส่ง index ที่บันทึก · คิดครั้งเดียวต่อ render แบบ incomingCache
+  const displayCache = new Map<string, TransferDisplay<TripStop, IncomingJob>>()
+  const displayOf = (trip: Trip) => {
+    if (!displayCache.has(trip.id)) displayCache.set(trip.id, transferDisplayOrder(trip.stops || [], incomingOf(trip.id)))
+    return displayCache.get(trip.id)!
+  }
+
+  // งานโยกเข้าที่ถูกแทรกก่อนจุดส่งของคันนี้ — แสดงอย่างเดียวให้เลขข้อตรงกับใบพิมพ์ (ผลของงานเก็บที่คันต้นทาง จึงไม่มีปุ่ม ไม่เขียนอะไรลงฐาน)
+  const renderIncomingRow = (trip: Trip, job: IncomingJob, incomingIdx: number, pos: number) => {
+    const label = transferLabel(displayOf(trip).peers, pos)
+    return (
+      <div key={`${trip.id}-inc-${incomingIdx}`} className="flex flex-col gap-1 rounded-md border border-dashed border-blue-500/30 bg-secondary/10 p-2.5">
+        <span className="text-sm font-medium text-muted-foreground">
+          {pos + 1}. {job.siteName || "ไม่ระบุสถานที่"}
+          <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-300">
+            🔄 รับโยกงานต่อ{(job.fromVehiclePlate || job.fromDriverName) ? ` · จาก ${job.fromVehiclePlate}${job.fromDriverName ? ` (${job.fromDriverName})` : ""}` : ""}
+          </span>
+          {label && (
+            <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+              {label.text}
+              {label.warning && <span className="ml-1 text-red-400">⚠️ {label.warning}</span>}
+            </span>
+          )}
+        </span>
+        <p className="text-[11px] text-muted-foreground">{TRANSFER_EDIT_AT_SOURCE}</p>
+      </div>
+    )
+  }
 
   const renderStopRow = (trip: Trip, stop: TripStop, sIdx: number) => {
     if (isManagedTrip(trip)) return <div key={`${trip.id}-${sIdx}`} className="rounded-md bg-secondary/20 p-2.5 text-sm">
@@ -1598,6 +1627,8 @@ export default function DailySummaryPage() {
       <p className="mt-1 text-xs text-muted-foreground">{stop.cargoDetails}</p>
     </div>
     const current: StopOutcome = stop.outcome || 'delivered'
+    // เลขข้อ/ป้าย = ตำแหน่งบนจอ (ตรงกับใบพิมพ์) · ปุ่มด้านล่างใช้ sIdx ที่บันทึกเหมือนเดิม
+    const view = displayOf(trip)
     const inputClass = "w-full h-9 rounded-md bg-background border border-border/50 text-sm px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
     const btn = (key: StopOutcome, label: string, Icon: any, activeClass: string) => (
       <button
@@ -1617,7 +1648,7 @@ export default function DailySummaryPage() {
       <div key={`${trip.id}-${sIdx}`} className="flex flex-col gap-2 rounded-md bg-secondary/20 p-2.5">
         <div className="flex items-start gap-2">
           <span className="flex-1 text-sm font-medium text-white">
-            {sIdx + 1}. {stop.siteName}
+            {view.ownPos[sIdx] + 1}. {stop.siteName}
             {(stop as any).assistForPlate ? (
               <span className="ml-2 rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-teal-300">
                 🤝 คันช่วย · จาก {(stop as any).assistForPlate}{(stop as any).assistForDriver ? ` (${(stop as any).assistForDriver})` : ""}
@@ -1628,8 +1659,8 @@ export default function DailySummaryPage() {
               </span>
             ) : null}
             {(() => {
-              // งานรับของไปส่งต่อ: จับคู่กับจุดของคันนี้ + งานที่โยกเข้ามา · เตือนคนจัดรถถ้าจุดคู่อยู่คนละคัน/ลำดับส่งก่อนรับ
-              const label = transferLabel([...(trip.stops || []), ...incomingOf(trip.id)], sIdx)
+              // งานรับของไปส่งต่อ: จับคู่กับจุดของคันนี้ + งานที่โยกเข้ามา (ลำดับบนจอ) · เตือนคนจัดรถถ้าจุดคู่อยู่คนละคัน/ลำดับส่งก่อนรับ
+              const label = transferLabel(view.peers, view.ownPos[sIdx])
               return label && (
                 <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
                   {label.text}
@@ -1915,8 +1946,11 @@ export default function DailySummaryPage() {
                           const movedToPlates = Array.from(new Set(
                             stops.map((s) => (s as any).reassignedToVehiclePlate).filter(Boolean)
                           ));
-                          // ป้ายงานรับของไปส่งต่อ: ลำดับเดียวกับแถวในใบ (งานตัวเอง แล้วต่อด้วยงานรับโยก)
-                          const transferPeers = [...stops, ...incoming];
+                          // ลำดับแถวในใบ + ป้ายงานรับของไปส่งต่อ: งานตัวเองตามที่บันทึก แล้วต่อด้วยงานรับโยก
+                          // ยกเว้นจุดรับที่โยกเข้ามา ขึ้นก่อนจุดส่งของมันในคันนี้ (แสดงผลอย่างเดียว — หมายเหตุยังใช้ stop_<index ที่บันทึก>)
+                          // แถวแรกบนจอจึงอาจเป็นแถวรับโยกงาน → ช่องวันที่/คนขับ (rowSpan) ผูกกับ "ตำแหน่ง 0 บนจอ" เสมอ
+                          const view = transferDisplayOrder(stops, incoming);
+                          const { peers: transferPeers, ownPos, incomingPos } = view;
 
                           // คอลัมน์วันที่ (col 1, rowSpan ทั้งคัน) — render บน "แถวแรก" ของคันเช่นกัน
                           // ต้องแยกออกมาเพราะคันที่มีแต่งานรับโยก (ไม่มีงานตัวเอง) ก็ต้องมีคอลัมน์นี้ ไม่งั้นตารางเหลื่อม
@@ -1974,19 +2008,20 @@ export default function DailySummaryPage() {
                             // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
                             const movedToPlate = (stop as any).reassignedToVehiclePlate;
                             const movedToDriver = (stop as any).reassignedToDriverName;
-                            const tLabel = transferLabel(transferPeers, sIdx);
+                            const tLabel = transferLabel(transferPeers, ownPos[sIdx]);
                             const tNote = transferNoteForDriver(tLabel);
 
                             return (
                               <tr key={`${trip.id}-${sIdx}`}>
-                                {sIdx === 0 && dateCell}
+                                {ownPos[sIdx] === 0 && dateCell}
                                 <td className="border border-black p-2 text-center align-top font-bold whitespace-nowrap">
                                   {stopTime || "08:30"} น.
                                 </td>
                                 <td className="border border-black p-2 align-top">
                                   <div className="space-y-1">
                                     <div className="flex gap-1.5 font-bold items-center flex-wrap">
-                                      {trip.stops.length > 1 && <span>{sIdx + 1}.</span>}
+                                      {/* คันที่มีงานตัวเอง 1 จุด ไม่มีเลขเหมือนเดิม — เว้นแต่มีจุดรับโยกมาแทรกข้างหน้า */}
+                                      {(trip.stops.length > 1 || ownPos[sIdx] > 0) && <span>{ownPos[sIdx] + 1}.</span>}
                                       <span>{stop.siteName}</span>
                                       {(stop as any).assistForPlate && (
                                         <span style={{
@@ -2060,7 +2095,7 @@ export default function DailySummaryPage() {
                                     </div>
                                   </div>
                                 </td>
-                                {sIdx === 0 && driverCell}
+                                {ownPos[sIdx] === 0 && driverCell}
                               </tr>
                             );
                           });
@@ -2069,19 +2104,19 @@ export default function DailySummaryPage() {
                           // รายละเอียดครบเท่าแถวปกติ (เวลา/ผู้ขอ/เบอร์/หมายเหตุ) — เพราะแถวนี้อาจ
                           // "แทนที่" แถวของคันต้นทางทั้งคัน (เคสรถต้นทางไม่ได้วิ่ง ถูกซ่อนจากใบสรุป)
                           const incomingRows = incoming.map((job, i) => {
-                            const tLabel = transferLabel(transferPeers, stops.length + i);
+                            const tLabel = transferLabel(transferPeers, incomingPos[i]);
                             const tNote = transferNoteForDriver(tLabel);
                             return (
                             <tr key={`${trip.id}-inc-${i}`} className="bg-blue-50">
-                              {/* คันที่มีแต่งานรับโยก — คอลัมน์วันที่มาอยู่แถวรับโยกแถวแรก (กัน col เหลื่อม) */}
-                              {stops.length === 0 && i === 0 && dateCell}
+                              {/* แถวรับโยกเป็นแถวแรกบนจอ (คันที่มีแต่งานรับโยก / จุดรับที่ขึ้นก่อนจุดส่ง) — คอลัมน์วันที่มาอยู่แถวนี้ (กัน col เหลื่อม) */}
+                              {incomingPos[i] === 0 && dateCell}
                               <td className="border border-black p-2 text-center align-top font-bold whitespace-nowrap">
                                 {job.requestTime ? `${job.requestTime} น.` : "—"}
                               </td>
                               <td className="border border-black p-2 align-top">
                                 <div className="space-y-1">
                                   <div className="flex gap-1.5 font-bold items-center flex-wrap">
-                                    <span>{stops.length + i + 1}.</span>
+                                    <span>{incomingPos[i] + 1}.</span>
                                     <span>{job.siteName || "ไม่ระบุสถานที่"}</span>
                                     <span style={{
                                       fontSize: '11px', fontWeight: 700, padding: '1px 6px',
@@ -2121,13 +2156,13 @@ export default function DailySummaryPage() {
                                   </div>
                                 </div>
                               </td>
-                              {/* คันที่มีแต่งานรับโยก (ไม่มีงานตัวเอง) — คอลัมน์คนขับมาอยู่แถวรับโยกแถวแรก */}
-                              {stops.length === 0 && i === 0 && driverCell}
+                              {/* แถวรับโยกเป็นแถวแรกบนจอ — คอลัมน์คนขับมาอยู่แถวนี้ */}
+                              {incomingPos[i] === 0 && driverCell}
                             </tr>
                             );
                           });
 
-                          return [...stopRows, ...incomingRows];
+                          return view.order.map((e) => e.kind === 'own' ? stopRows[e.index] : incomingRows[e.index]);
                         })}
                       </tbody>
                     </table>
@@ -2338,7 +2373,10 @@ export default function DailySummaryPage() {
                       </button>
                     )}
                     <div className="space-y-2">
-                      {(trip.stops || []).map((stop, sIdx) => renderStopRow(trip, stop, sIdx))}
+                      {/* ลำดับบนจอ — งานโยกเข้าขึ้นเป็นบรรทัดอ่านอย่างเดียวเฉพาะจุดรับที่แทรกก่อนจุดส่งของคันนี้ (งานโยกเข้าท้ายใบไม่แสดงเหมือนเดิม) */}
+                      {displayOf(trip).order.map((e, pos) => e.kind === 'own'
+                        ? renderStopRow(trip, trip.stops[e.index], e.index)
+                        : e.inline ? renderIncomingRow(trip, incomingOf(trip.id)[e.index], e.index, pos) : null)}
                     </div>
                     </div>
                   </div>

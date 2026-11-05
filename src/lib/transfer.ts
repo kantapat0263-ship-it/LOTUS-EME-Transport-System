@@ -154,6 +154,62 @@ export function transferLabel(peers: readonly Peer[], index: number): TransferLa
   return { role: 'drop', text }
 }
 
+/** บรรทัดใต้งานโยกเข้าที่แสดงอย่างเดียว (แผงปิดผลงาน) — ผลของงานโยกเก็บที่คันต้นทาง · ใช้ประโยคนี้ทุกที่ที่บอกให้ไปแก้ที่คันต้นทาง */
+export const TRANSFER_EDIT_AT_SOURCE = 'แก้ผล/โยก/เลื่อนงานนี้ที่การ์ดของคันต้นทาง'
+
+/** ตำแหน่งบนจอ: จุดของเที่ยว (index ที่บันทึก) หรืองานที่โยกเข้ามา (index ในลิสต์งานโยกเข้า) */
+export type TransferDisplayEntry =
+  | { kind: 'own'; index: number }
+  /** inline = ยังมีจุดของเที่ยวอยู่หลังตำแหน่งนี้ (ถูกแทรกก่อนจุดส่งของคันนี้) · false = อยู่ท้ายใบเหมือนเดิม */
+  | { kind: 'incoming'; index: number; inline: boolean }
+
+export interface TransferDisplay<O extends Peer, I extends Peer> {
+  order: TransferDisplayEntry[]
+  /** จุดเรียงตามลำดับบนจอ — ส่งให้ transferLabel */
+  peers: (O | I)[]
+  /** ตำแหน่งบนจอ (เริ่ม 0) ของจุดของเที่ยว / งานโยกเข้าแต่ละงาน — เลขข้อที่แสดง = ตำแหน่ง + 1 */
+  ownPos: number[]
+  incomingPos: number[]
+}
+
+/**
+ * ลำดับที่แสดงบนใบสรุป/ใบงานคนขับ/แผงปิดผลงาน — เริ่มจาก [จุดของเที่ยวตามที่บันทึก..., งานโยกเข้า...] (แบบเดิม)
+ * แล้วย้ายงานโยกเข้าที่เป็น "จุดรับ" ไปไว้หน้าจุดส่งของกลุ่มเดียวกันที่ยังไปกับเที่ยวนี้ (ถ้าจุดส่งมาก่อน)
+ * รับหลายร้านคงลำดับเดิม (P1, P2, D) · จุดของเที่ยวไม่สลับกันเอง · งานอื่นอยู่ท้ายเหมือนเดิม · ทริปปกติได้ลำดับเดิมทุกตำแหน่ง
+ * แสดงผลอย่างเดียว: ไม่เรียง stops ที่บันทึก — ปุ่ม/หมายเหตุ (stop_<i>)/กม. ยังใช้ index ที่บันทึก
+ */
+export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readonly O[], incoming: readonly I[]): TransferDisplay<O, I> {
+  type Slot = { kind: 'own'; index: number; stop: O } | { kind: 'incoming'; index: number; stop: I }
+  const slots: Slot[] = [
+    ...own.map((stop, index): Slot => ({ kind: 'own', index, stop })),
+    ...incoming.map((stop, index): Slot => ({ kind: 'incoming', index, stop })),
+  ]
+  incoming.forEach((job, index) => {
+    if (!isTransferStop(job) || job.transferRole !== 'pickup') return
+    const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
+    const drop = slots.findIndex(s => isTransferStop(s.stop) && s.stop.transferRole === 'drop' && s.stop.transferId === job.transferId && !inactive(s.stop))
+    if (drop === -1 || drop > at) return
+    const [slot] = slots.splice(at, 1)
+    slots.splice(drop, 0, slot) // drop อยู่ก่อน at → ตัด at ออกแล้วตำแหน่ง drop ไม่เลื่อน = วางหน้าจุดส่งพอดี
+  })
+  const ownPos: number[] = new Array(own.length)
+  const incomingPos: number[] = new Array(incoming.length)
+  const order: TransferDisplayEntry[] = new Array(slots.length)
+  let ownAfter = false
+  for (let pos = slots.length - 1; pos >= 0; pos--) {
+    const slot = slots[pos]
+    if (slot.kind === 'own') {
+      ownPos[slot.index] = pos
+      order[pos] = { kind: 'own', index: slot.index }
+      ownAfter = true
+    } else {
+      incomingPos[slot.index] = pos
+      order[pos] = { kind: 'incoming', index: slot.index, inline: ownAfter }
+    }
+  }
+  return { order, peers: slots.map(s => s.stop), ownPos, incomingPos }
+}
+
 /** คำอธิบายใต้ป้ายสำหรับคนขับ (ภาษาคนขับ ไม่ใช่ภาษาคนจัดรถ) */
 export function transferNoteForDriver(label: TransferLabel | null): string | null {
   if (!label?.warning) return null

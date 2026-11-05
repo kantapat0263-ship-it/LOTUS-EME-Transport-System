@@ -20,8 +20,9 @@ function receivingRow(surface: 'summary' | 'driver') {
   if (!row) throw new Error(`Receiving row not found: ${surface}`)
   const compiled = ts.transpileModule(`const renderRow = ${row.getText(source)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
   const icon = () => React.createElement('span')
-  return new Function('React', 'trip', 'stops', 'dateCell', 'driverCell', 'Navigation', 'FileText', 'transferLabel', 'transferNoteForDriver', 'transferPeers', 'transferTagStyle', 'TransferTag', `${compiled}; return renderRow`)(
-    React, { id: 'receiver', stops: [] }, [], null, null, icon, icon, transferLabel, transferNoteForDriver, [], () => ({}), () => null,
+  // incomingPos = ตำแหน่งบนจอของงานโยกเข้า (transferDisplayOrder) — คันไม่มีงานตัวเอง งานแรกอยู่ตำแหน่ง 0
+  return new Function('React', 'trip', 'stops', 'dateCell', 'driverCell', 'Navigation', 'FileText', 'transferLabel', 'transferNoteForDriver', 'transferPeers', 'transferTagStyle', 'TransferTag', 'incomingPos', `${compiled}; return renderRow`)(
+    React, { id: 'receiver', stops: [] }, [], null, null, icon, icon, transferLabel, transferNoteForDriver, [], () => ({}), () => null, [0],
   ) as (job: IncomingJob, index: number) => React.ReactElement
 }
 

@@ -23,7 +23,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
-import { transferLabel, transferNoteForDriver, type TransferFields, type TransferLabel } from "@/lib/transfer"
+import { transferDisplayOrder, transferLabel, transferNoteForDriver, type TransferFields, type TransferLabel } from "@/lib/transfer"
 
 /** ป้ายงานรับของไปส่งต่อบนใบงานคนขับ — บอกว่าจุดนี้รับของไปส่งที่ไหน / ส่งของที่รับมาจากไหน */
 function TransferTag({ label }: { label: TransferLabel }) {
@@ -181,8 +181,183 @@ export default function DriverTripPage() {
   const monthLabel = trip.tripDate
     ? new Date(trip.tripDate + "T00:00:00").toLocaleDateString("th-TH", { month: "long" })
     : ""
-  // ป้ายงานรับ-ส่งจับคู่จากจุดของคันนี้ + งานที่โยกมาเพิ่ม (เลขลำดับเดียวกับที่แสดง: งานโยกต่อท้าย)
-  const transferPeers: (TransferFields & { siteName?: string })[] = [...(trip.stops || []), ...incoming]
+  // ลำดับบนจอ: จุดรับที่โยกมาให้คันนี้ขึ้นก่อนจุดส่งของมันในรายการหลัก งานโยกอื่นอยู่ในกล่อง "รับงานต่อ" ด้านบนเหมือนเดิม
+  // ป้าย/เลขข้อคิดจากตำแหน่งบนจอ (ตรงกับใบสรุป) · หมายเหตุยังใช้ stop_<index ที่บันทึก>
+  const view = transferDisplayOrder(trip.stops || [], incoming)
+  const { peers: transferPeers, ownPos, incomingPos } = view
+  const boxedIncoming = view.order.filter((e) => e.kind === "incoming" && !e.inline)
+
+  const incomingCards = incoming.map((job, i) => (
+    <div key={i} className="bg-white rounded-xl border border-blue-200 p-3">
+      {(() => {
+        const label = transferLabel(transferPeers, incomingPos[i])
+        return label && <TransferTag label={label} />
+      })()}
+      <div className="flex items-start gap-2">
+        <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
+          {incomingPos[i] + 1}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-lg font-bold text-gray-900 leading-tight">{job.siteName || "ไม่ระบุสถานที่"}</h3>
+          {job.cargoDetails && (
+            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-snug mt-0.5">{job.cargoDetails}</p>
+          )}
+          {job.dispatcherNote && (
+            <div className="mt-2 flex gap-2">
+              <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700 font-medium whitespace-pre-line break-words">
+                บันทึกจัดรถ: {job.dispatcherNote}{job.dispatcherName ? ` (โดย ${job.dispatcherName})` : ""}
+              </p>
+            </div>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {(job.fromVehiclePlate || job.fromDriverName) && (
+              <span className="text-[11px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                โยกจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}
+              </span>
+            )}
+            {job.siteName && (
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.siteName)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
+              >
+                <Navigation className="h-3 w-3" /> นำทาง
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  ))
+
+  const ownCards = trip.stops?.map((stop, index) => {
+    const movedToPlate = (stop as any).reassignedToVehiclePlate
+    const movedToDriver = (stop as any).reassignedToDriverName
+    // ฝั่งต้นทาง: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
+    const movedAway = movedToPlate && (stop as any).outcome && (stop as any).outcome !== 'delivered'
+    // จุดที่คนจัดรถเลื่อนวัน / ถอนออก แต่ไม่ได้โยกให้คันไหน → วันนี้ไม่ต้องไป (เดิมยังขึ้นปุ่มนำทางเหมือนงานปกติ)
+    const skippedToday = !movedAway && !!(stop as any).outcome && (stop as any).outcome !== 'delivered'
+    const postponed = skippedToday && (stop as any).outcome === 'postponed'
+    // หมายเหตุจัดรถ: อ่านจากแหล่ง canonical (trip.stopNotes) เหมือนใบสรุป + ชื่อคนจัดรถ
+    const dispatcherNote = (trip as any)?.stopNotes?.[`stop_${index}`] || (stop as any).dispatcherNote
+    const dispatcherBy = (trip as any)?.stopNoteAuthors?.[`stop_${index}`] || (stop as any).dispatcherName
+    return (
+    <section
+      key={index}
+      className="relative bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all active:scale-[0.98]"
+    >
+      <div className={`absolute left-0 top-0 bottom-0 w-2 ${movedAway ? 'bg-amber-400' : skippedToday ? 'bg-gray-400' : 'bg-blue-600'}`} />
+
+      <div className="p-5">
+        <div className="flex justify-between items-start mb-4">
+          <div className="flex gap-3">
+            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-lg shrink-0">
+              {ownPos[index] + 1}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <p className="text-blue-600 text-xs font-black uppercase tracking-wider">📍 สถานที่</p>
+                {(stop as any).requestTime && (
+                  <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">
+                    ⏰ { (stop as any).requestTime } น.
+                  </span>
+                )}
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 leading-tight">{stop.siteName}</h3>
+              {movedAway && (
+                <span className="inline-block mt-1 text-[11px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                  🔄 โยกไปให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate})
+                </span>
+              )}
+              {skippedToday && (
+                <span className="inline-block mt-1 text-[11px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">
+                  {postponed ? '⏭️ เลื่อนไปวันอื่น' : '⏭️ วันนี้ไม่ต้องไป'}
+                </span>
+              )}
+              {(stop as any).assistForPlate && (
+                <span className="inline-block mt-1 text-[11px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">
+                  🤝 ไปช่วยขนงานของ {(stop as any).assistForDriver ? `${(stop as any).assistForDriver} ` : ""}({(stop as any).assistForPlate})
+                </span>
+              )}
+              {(() => {
+                // จุดที่ไม่ต้องทำวันนี้ (โยกไปคันอื่น/เลื่อน/ปฏิเสธ — ใบงานส่งมาเป็น postponed / not-delivered) ไม่ขึ้นป้ายรับ-ส่ง
+                // ไม่งั้นป้าย "รับของ → ไปส่งต่อ" จะขัดกับคำเตือนของจุดคู่ที่บอกว่าจุดนี้ไม่อยู่ในใบงาน
+                if ((stop as any).outcome && (stop as any).outcome !== 'delivered') return null
+                const label = transferLabel(transferPeers, ownPos[index])
+                return label && <TransferTag label={label} />
+              })()}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-4">
+          <div>
+            <p className="text-gray-500 text-[10px] font-bold uppercase mb-1">📦 รายละเอียดงาน</p>
+            <p className="text-base font-medium text-gray-800 whitespace-pre-wrap leading-snug">
+              {stop.cargoDetails || "ส่งวัสดุตามใบเบิก"}
+            </p>
+          </div>
+
+          {stop.requestedBy && (
+            <div className="flex flex-col gap-1 pt-2 border-t border-gray-200">
+              <div className="flex items-center gap-2">
+                <User className="h-3 w-3 text-gray-400" />
+                <span className="text-xs text-gray-500">ผู้ขอใช้งาน: <strong className="text-gray-700">{stop.requestedBy}</strong></span>
+              </div>
+              {(stop as any).requestedByPhone && (
+                <a href={`tel:${(stop as any).requestedByPhone}`} className="flex items-center gap-2 text-sm font-bold text-orange-600 ml-5 hover:underline">
+                  <Phone className="h-3.5 w-3.5" /> {(stop as any).requestedByPhone}
+                </a>
+              )}
+            </div>
+          )}
+
+          {((stop as any).note || dispatcherNote) && (
+            <div className="pt-2 border-t border-gray-200 space-y-2">
+              {(stop as any).note && (
+                <div className="flex gap-2">
+                  <Info className="h-3 w-3 text-orange-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-gray-600 italic">หมายเหตุผู้ขอ: &quot;{(stop as any).note}&quot;</p>
+                </div>
+              )}
+              {dispatcherNote && (
+                <div className="flex gap-2">
+                  <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
+                  <p className="text-xs text-blue-700 font-medium whitespace-pre-line break-words">บันทึกจัดรถ: {dispatcherNote}{dispatcherBy ? ` (โดย ${dispatcherBy})` : ''}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {movedAway ? (
+          <div className="w-full min-h-[52px] bg-amber-50 text-amber-800 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-amber-200 px-3 py-2 text-center">
+            ✋ งานนี้โยกให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate}) แล้ว — ไม่ต้องวิ่งจุดนี้
+          </div>
+        ) : skippedToday ? (
+          <div className="w-full min-h-[52px] bg-gray-100 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-gray-300 px-3 py-2 text-center">
+            {postponed
+              ? '⏭️ เลื่อนไปวันอื่นแล้ว — วันนี้ไม่ต้องไปจุดนี้'
+              : '⏭️ วันนี้ไม่ต้องไปจุดนี้ — คนจัดรถเอาออกจากเที่ยวนี้แล้ว'}
+          </div>
+        ) : (
+        <a
+          href={validCoordinates(stop.lat, stop.lng)
+            ? `https://www.google.com/maps/dir/?api=1&destination=${(stop as any).lat},${(stop as any).lng}&travelmode=driving`
+            : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.siteName)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full h-[52px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-200 transition-colors"
+        >
+          <Navigation className="h-5 w-5" />
+          นำทางด้วย Google Maps
+        </a>
+        )}
+      </div>
+    </section>
+  )}) ?? []
 
   return (
     <div className="min-h-screen bg-gray-50 flex justify-center font-sans antialiased">
@@ -280,195 +455,34 @@ export default function DriverTripPage() {
 
         {/* Stops List */}
         <main className="p-4 space-y-6">
-          {/* งานที่ถูกโยกมาให้คันนี้เพิ่ม — public-safe: โชว์ "รับงานต่อ" ไม่ใช่ "ปฏิเสธ" */}
-          {incoming.length > 0 && (
+          {/* งานที่ถูกโยกมาให้คันนี้เพิ่ม — public-safe: โชว์ "รับงานต่อ" ไม่ใช่ "ปฏิเสธ" · จุดรับที่ขึ้นก่อนจุดส่งของคันนี้ไปอยู่ในรายการหลัก */}
+          {boxedIncoming.length > 0 && (
             <div className="rounded-2xl border-2 border-blue-300 bg-blue-50 overflow-hidden">
               <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center gap-2">
                 <Repeat className="h-5 w-5 shrink-0" />
-                <span className="font-bold">รับงานต่อ {incoming.length} จุด — โยกมาให้คันนี้เพิ่ม</span>
+                <span className="font-bold">รับงานต่อ {boxedIncoming.length} จุด — โยกมาให้คันนี้เพิ่ม</span>
               </div>
               <div className="p-3 space-y-2">
-                {incoming.map((job, i) => (
-                  <div key={i} className="bg-white rounded-xl border border-blue-200 p-3">
-                    {(() => {
-                      const label = transferLabel(transferPeers, (trip.stops?.length || 0) + i)
-                      return label && <TransferTag label={label} />
-                    })()}
-                    <div className="flex items-start gap-2">
-                      <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
-                        {(trip.stops?.length || 0) + i + 1}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-lg font-bold text-gray-900 leading-tight">{job.siteName || "ไม่ระบุสถานที่"}</h3>
-                        {job.cargoDetails && (
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-snug mt-0.5">{job.cargoDetails}</p>
-                        )}
-                        {job.dispatcherNote && (
-                          <div className="mt-2 flex gap-2">
-                            <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-blue-700 font-medium whitespace-pre-line break-words">
-                              บันทึกจัดรถ: {job.dispatcherNote}{job.dispatcherName ? ` (โดย ${job.dispatcherName})` : ""}
-                            </p>
-                          </div>
-                        )}
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {(job.fromVehiclePlate || job.fromDriverName) && (
-                            <span className="text-[11px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-                              โยกจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}
-                            </span>
-                          )}
-                          {job.siteName && (
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.siteName)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
-                            >
-                              <Navigation className="h-3 w-3" /> นำทาง
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                {boxedIncoming.map((e) => incomingCards[e.index])}
               </div>
             </div>
           )}
 
           <div className="flex items-center justify-between px-2 pt-2">
             <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <Navigation className="h-5 w-5 text-blue-600" /> ลำดับจุดส่งของ ({trip.stops?.length || 0})
+              <Navigation className="h-5 w-5 text-blue-600" /> ลำดับจุดส่งของ ({view.order.length - boxedIncoming.length})
             </h2>
           </div>
 
           <div className="space-y-4">
-            {trip.stops?.map((stop, index) => {
-              const movedToPlate = (stop as any).reassignedToVehiclePlate
-              const movedToDriver = (stop as any).reassignedToDriverName
-              // ฝั่งต้นทาง: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
-              const movedAway = movedToPlate && (stop as any).outcome && (stop as any).outcome !== 'delivered'
-              // จุดที่คนจัดรถเลื่อนวัน / ถอนออก แต่ไม่ได้โยกให้คันไหน → วันนี้ไม่ต้องไป (เดิมยังขึ้นปุ่มนำทางเหมือนงานปกติ)
-              const skippedToday = !movedAway && !!(stop as any).outcome && (stop as any).outcome !== 'delivered'
-              const postponed = skippedToday && (stop as any).outcome === 'postponed'
-              // หมายเหตุจัดรถ: อ่านจากแหล่ง canonical (trip.stopNotes) เหมือนใบสรุป + ชื่อคนจัดรถ
-              const dispatcherNote = (trip as any)?.stopNotes?.[`stop_${index}`] || (stop as any).dispatcherNote
-              const dispatcherBy = (trip as any)?.stopNoteAuthors?.[`stop_${index}`] || (stop as any).dispatcherName
-              return (
-              <section
-                key={index}
-                className="relative bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all active:scale-[0.98]"
-              >
-                <div className={`absolute left-0 top-0 bottom-0 w-2 ${movedAway ? 'bg-amber-400' : skippedToday ? 'bg-gray-400' : 'bg-blue-600'}`} />
-                
-                <div className="p-5">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex gap-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-lg shrink-0">
-                        {index + 1}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="text-blue-600 text-xs font-black uppercase tracking-wider">📍 สถานที่</p>
-                          {(stop as any).requestTime && (
-                            <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">
-                              ⏰ { (stop as any).requestTime } น.
-                            </span>
-                          )}
-                        </div>
-                        <h3 className="text-xl font-bold text-gray-900 leading-tight">{stop.siteName}</h3>
-                        {movedAway && (
-                          <span className="inline-block mt-1 text-[11px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
-                            🔄 โยกไปให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate})
-                          </span>
-                        )}
-                        {skippedToday && (
-                          <span className="inline-block mt-1 text-[11px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">
-                            {postponed ? '⏭️ เลื่อนไปวันอื่น' : '⏭️ วันนี้ไม่ต้องไป'}
-                          </span>
-                        )}
-                        {(stop as any).assistForPlate && (
-                          <span className="inline-block mt-1 text-[11px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">
-                            🤝 ไปช่วยขนงานของ {(stop as any).assistForDriver ? `${(stop as any).assistForDriver} ` : ""}({(stop as any).assistForPlate})
-                          </span>
-                        )}
-                        {(() => {
-                          // จุดที่ไม่ต้องทำวันนี้ (โยกไปคันอื่น/เลื่อน/ปฏิเสธ — ใบงานส่งมาเป็น postponed / not-delivered) ไม่ขึ้นป้ายรับ-ส่ง
-                          // ไม่งั้นป้าย "รับของ → ไปส่งต่อ" จะขัดกับคำเตือนของจุดคู่ที่บอกว่าจุดนี้ไม่อยู่ในใบงาน
-                          if ((stop as any).outcome && (stop as any).outcome !== 'delivered') return null
-                          const label = transferLabel(transferPeers, index)
-                          return label && <TransferTag label={label} />
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-4">
-                    <div>
-                      <p className="text-gray-500 text-[10px] font-bold uppercase mb-1">📦 รายละเอียดงาน</p>
-                      <p className="text-base font-medium text-gray-800 whitespace-pre-wrap leading-snug">
-                        {stop.cargoDetails || "ส่งวัสดุตามใบเบิก"}
-                      </p>
-                    </div>
-
-                    {stop.requestedBy && (
-                      <div className="flex flex-col gap-1 pt-2 border-t border-gray-200">
-                        <div className="flex items-center gap-2">
-                          <User className="h-3 w-3 text-gray-400" />
-                          <span className="text-xs text-gray-500">ผู้ขอใช้งาน: <strong className="text-gray-700">{stop.requestedBy}</strong></span>
-                        </div>
-                        {(stop as any).requestedByPhone && (
-                          <a href={`tel:${(stop as any).requestedByPhone}`} className="flex items-center gap-2 text-sm font-bold text-orange-600 ml-5 hover:underline">
-                            <Phone className="h-3.5 w-3.5" /> {(stop as any).requestedByPhone}
-                          </a>
-                        )}
-                      </div>
-                    )}
-
-                    {((stop as any).note || dispatcherNote) && (
-                      <div className="pt-2 border-t border-gray-200 space-y-2">
-                        {(stop as any).note && (
-                          <div className="flex gap-2">
-                            <Info className="h-3 w-3 text-orange-400 shrink-0 mt-0.5" />
-                            <p className="text-xs text-gray-600 italic">หมายเหตุผู้ขอ: &quot;{(stop as any).note}&quot;</p>
-                          </div>
-                        )}
-                        {dispatcherNote && (
-                          <div className="flex gap-2">
-                            <FileText className="h-3 w-3 text-blue-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-blue-700 font-medium whitespace-pre-line break-words">บันทึกจัดรถ: {dispatcherNote}{dispatcherBy ? ` (โดย ${dispatcherBy})` : ''}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {movedAway ? (
-                    <div className="w-full min-h-[52px] bg-amber-50 text-amber-800 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-amber-200 px-3 py-2 text-center">
-                      ✋ งานนี้โยกให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate}) แล้ว — ไม่ต้องวิ่งจุดนี้
-                    </div>
-                  ) : skippedToday ? (
-                    <div className="w-full min-h-[52px] bg-gray-100 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-gray-300 px-3 py-2 text-center">
-                      {postponed
-                        ? '⏭️ เลื่อนไปวันอื่นแล้ว — วันนี้ไม่ต้องไปจุดนี้'
-                        : '⏭️ วันนี้ไม่ต้องไปจุดนี้ — คนจัดรถเอาออกจากเที่ยวนี้แล้ว'}
-                    </div>
-                  ) : (
-                  <a
-                    href={validCoordinates(stop.lat, stop.lng)
-                      ? `https://www.google.com/maps/dir/?api=1&destination=${(stop as any).lat},${(stop as any).lng}&travelmode=driving`
-                      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.siteName)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full h-[52px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-200 transition-colors"
-                  >
-                    <Navigation className="h-5 w-5" />
-                    นำทางด้วย Google Maps
-                  </a>
-                  )}
-                </div>
-              </section>
-            )})}
+            {view.order.map((e) => e.kind === "own" ? ownCards[e.index] : e.inline ? (
+              <div key={`inc-${e.index}`} className="rounded-2xl border-2 border-blue-300 bg-blue-50 p-2 space-y-1.5">
+                <p className="px-1 text-[11px] font-bold text-blue-700 flex items-center gap-1">
+                  <Repeat className="h-3.5 w-3.5 shrink-0" /> รับงานต่อ — โยกมาให้คันนี้
+                </p>
+                {incomingCards[e.index]}
+              </div>
+            ) : null)}
           </div>
 
           {/* Footer Stats */}

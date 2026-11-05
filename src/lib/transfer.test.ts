@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDropDescription, orderPickupsBeforeDrop, postponedPickupNote, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, type TransferFields } from './transfer'
+import { buildDropDescription, orderPickupsBeforeDrop, postponedPickupNote, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, type TransferFields } from './transfer'
 
 type S = TransferFields & { id: string; siteName: string }
 const P = (id: string, group = 'g1', siteName = id): S => ({ id, transferRole: 'pickup', transferId: group, siteName, transferDropName: 'ดอนเมือง' })
@@ -150,6 +150,100 @@ describe('ใบสรุปหลังเลื่อน/ปฏิเสธ/�
   })
   it('จุดส่งเองถูกเลื่อน → ไม่เตือน (มีป้ายเลื่อนอยู่แล้ว)', () => {
     expect(transferLabel([{ ...P('บางขันธ์'), outcome: 'postponed' }, P('วังโค'), { ...D('ดอนเมือง'), outcome: 'postponed' }], 2)?.warning).toBeUndefined()
+  })
+})
+
+describe('transferDisplayOrder (จุดรับที่โยกเข้ามาขึ้นก่อนจุดส่ง — แสดงผลอย่างเดียว)', () => {
+  const shown = (v: { peers: { id: string }[] }) => ids(v.peers)
+  // จุดของเที่ยวต้องเรียงตาม index ที่บันทึกเสมอ (ข้อ 9)
+  const ownAscending = (v: { order: { kind: string; index: number }[] }) => {
+    const own = v.order.filter(e => e.kind === 'own').map(e => e.index)
+    expect(own).toEqual([...own].sort((a, b) => a - b))
+  }
+
+  it('ทริปปกติมีงานโยกเข้า → ลำดับ/เลขเหมือนเดิมทุกตำแหน่ง', () => {
+    const own = [N('a'), N('b')], incoming = [N('x')]
+    const v = transferDisplayOrder(own, incoming)
+    expect(v.order).toEqual([{ kind: 'own', index: 0 }, { kind: 'own', index: 1 }, { kind: 'incoming', index: 0, inline: false }])
+    expect(v.ownPos).toEqual([0, 1])
+    expect(v.incomingPos).toEqual([2])
+    expect(v.peers).toEqual([...own, ...incoming])
+  })
+
+  it('จุดรับโยกเข้ามา + จุดส่งอยู่ในคันนี้ → ขึ้นก่อนจุดส่ง ป้ายไม่มีคำเตือนลำดับ', () => {
+    const v = transferDisplayOrder([N('a'), D('d')], [P('p')])
+    expect(shown(v)).toBe('a,p,d')
+    expect(v.ownPos).toEqual([0, 2])
+    expect(v.incomingPos).toEqual([1])
+    expect(v.order[1]).toEqual({ kind: 'incoming', index: 0, inline: true })
+    expect(transferLabel(v.peers, 1)).toEqual({ role: 'pickup', text: '📦 รับของ → ไปส่งต่อที่ d' })
+    expect(transferLabel(v.peers, 2)).toEqual({ role: 'drop', text: '🏁 ส่งของที่รับจาก p' })
+    expect(transferNoteForDriver(transferLabel(v.peers, 2))).toBeNull()
+  })
+
+  it('รับหลายร้านที่โยกเข้ามา → คงลำดับเดิม P1, P2 แล้วจุดส่ง', () => {
+    const v = transferDisplayOrder([D('d')], [P('p1'), P('p2')])
+    expect(shown(v)).toBe('p1,p2,d')
+    expect(v.incomingPos).toEqual([0, 1])
+    expect(v.ownPos).toEqual([2])
+    expect(transferLabel(v.peers, 2)?.warning).toBeUndefined()
+  })
+
+  it.each(['reassigned', 'postponed', 'not-delivered', 'driver-refused'])('จุดส่งของคันนี้ไม่ได้ไปแล้ว (%s) → ไม่ย้าย จุดรับอยู่ท้ายพร้อมคำเตือนเดิม', outcome => {
+    const v = transferDisplayOrder([{ ...D('d'), outcome }], [P('p')])
+    expect(shown(v)).toBe('d,p')
+    expect(v.order[1]).toEqual({ kind: 'incoming', index: 0, inline: false })
+    expect(transferLabel(v.peers, 1)?.warning).toBe(TRANSFER_WARNING.dropMissing)
+  })
+
+  it('จุดส่งส่งแล้ว (delivered) ยังนับว่าไปกับเที่ยวนี้ → ย้าย', () => {
+    expect(shown(transferDisplayOrder([{ ...D('d'), outcome: 'delivered' }], [P('p')]))).toBe('p,d')
+  })
+
+  it('คนละกลุ่ม / จุดส่งอยู่หลังจุดรับอยู่แล้ว / งานโยกเข้าที่เป็นจุดส่ง → ไม่ย้าย', () => {
+    expect(shown(transferDisplayOrder([D('d', 'g2')], [P('p', 'g1')]))).toBe('d,p')
+    expect(shown(transferDisplayOrder([N('a')], [P('p'), D('d')]))).toBe('a,p,d')
+    expect(shown(transferDisplayOrder([P('p')], [D('d')]))).toBe('p,d')
+  })
+
+  it('จุดส่งก็เป็นงานโยกเข้าแต่มาก่อนจุดรับ → สลับกันในส่วนท้าย (ไม่แทรกเข้าจุดของคันนี้)', () => {
+    const v = transferDisplayOrder([N('x')], [D('d'), P('p')])
+    expect(shown(v)).toBe('x,p,d')
+    expect(v.order.slice(1)).toEqual([{ kind: 'incoming', index: 1, inline: false }, { kind: 'incoming', index: 0, inline: false }])
+    expect(v.incomingPos).toEqual([2, 1])
+  })
+
+  it('จุดรับของคันนี้ + งานอื่น + จุดส่ง + จุดรับที่โยกเข้ามา → จุดรับที่โยกมาวางหน้าจุดส่งพอดี', () => {
+    const v = transferDisplayOrder([P('p1'), N('x'), D('d')], [P('p2')])
+    expect(shown(v)).toBe('p1,x,p2,d')
+    expect(v.ownPos).toEqual([0, 1, 3])
+    expect(transferLabel(v.peers, 3)).toEqual({ role: 'drop', text: '🏁 ส่งของที่รับจาก p1, p2' })
+  })
+
+  it('จุดของคันนี้เรียงผิดอยู่แล้ว (ส่งก่อนรับ) → ไม่ขยับจุดของคันนี้ คำเตือนเดิมยังขึ้น', () => {
+    const v = transferDisplayOrder([D('d'), P('p1')], [P('p2')])
+    expect(shown(v)).toBe('p2,d,p1')
+    expect(transferLabel(v.peers, 1)?.warning).toBe(TRANSFER_WARNING.pickupAfterDrop)
+  })
+
+  it('ทุกกรณี: จุดของคันนี้เรียงตาม index ที่บันทึก · ทุกตำแหน่งมีครบไม่ซ้ำ · ไม่แก้ array ต้นฉบับ', () => {
+    const cases: [S[], S[]][] = [
+      [[N('a'), N('b')], [N('x')]],
+      [[N('a'), D('d')], [P('p')]],
+      [[D('d1', 'g1'), N('m'), D('d2', 'g2')], [P('q', 'g2'), N('y'), P('p', 'g1')]],
+      [[], [D('d'), P('p')]],
+      [[P('p1'), N('x'), D('d')], [P('p2')]],
+    ]
+    for (const [own, incoming] of cases) {
+      const before = ids([...own, ...incoming])
+      const v = transferDisplayOrder(own, incoming)
+      ownAscending(v)
+      expect([...v.ownPos, ...v.incomingPos].sort((a, b) => a - b)).toEqual(v.peers.map((_, i) => i))
+      v.ownPos.forEach((pos, i) => expect(v.peers[pos]).toBe(own[i]))
+      v.incomingPos.forEach((pos, i) => expect(v.peers[pos]).toBe(incoming[i]))
+      expect(ids([...own, ...incoming])).toBe(before)
+    }
+    expect(shown(transferDisplayOrder([D('d1', 'g1'), N('m'), D('d2', 'g2')], [P('q', 'g2'), N('y'), P('p', 'g1')]))).toBe('p,d1,m,q,d2,y')
   })
 })
 
