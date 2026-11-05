@@ -45,7 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat, type IncomingJob } from "@/lib/calculations"
-import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferStopFields, transferStopName, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
+import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferStopFields, transferStopName, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -2994,13 +2994,23 @@ export default function DailySummaryPage() {
               const label = transferLabel(transferPeersOf(src), assistDialog.stopIdx)
               if (!label) return null
               const reminder = transferReminderFor(src, assistDialog.stopIdx)
+              // จุดคู่แยกตามที่อยู่: จุดของเที่ยวเอง (มีปุ่มคันช่วยในการ์ดนี้) / งานที่โยกเข้ามา (ไม่มีแถวหรือปุ่มคันช่วยในการ์ดนี้ ต้องกดที่การ์ดของคันต้นทางของงานนั้น)
+              // transferPeersOf = [จุดของเที่ยว..., งานโยกเข้า...] จุดที่กดจึงอยู่ลำดับเดียวกันในลิสต์จุดของเที่ยว
+              const own = src.stops || []
+              const ownReminder = reminder && transferMateReminder(own, assistDialog.stopIdx)
+              const incomingReminder = reminder && transferMateReminder([own[assistDialog.stopIdx], ...transferPeersOf(src).slice(own.length)], 0)
+              const pickup = label.role === 'pickup'
               return (
                 <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
                   <p className="font-semibold">{label.text}</p>
-                  <p>คันช่วยจะได้เฉพาะ{label.role === 'pickup' ? 'จุดรับ' : 'จุดส่ง'}นี้ (มีป้ายรับ-ส่งติดไปด้วย)</p>
-                  {reminder && (label.role === 'pickup'
-                    ? <p>👉 {reminder} — ถ้าคันช่วยต้องเอาของไปส่งด้วย ให้กด 🚛+ คันช่วย ที่จุดส่งนั้นต่อ แล้วเลือกคันเดียวกันอีกครั้ง</p>
-                    : <p>👉 {reminder} — ถ้าคันช่วยต้องไปรับของด้วย ต้องกด 🚛+ คันช่วย ที่จุดรับให้คันเดียวกันก่อน แล้วค่อยกดจุดส่งนี้ (ระบบต่อจุดท้ายทริปตามลำดับที่กด) — ถ้ายังไม่ได้กด ให้ปิดหน้านี้ไปกดที่จุดรับก่อน</p>)}
+                  {/* ป้ายบนคันช่วยคิดจากจุดของคันช่วยเอง — ไปจุดเดียว = ไม่มีจุดคู่ ขึ้นคำเตือน และใบงานคนขับให้ถามคนจัดรถ */}
+                  <p>คันช่วยจะได้เฉพาะ{pickup ? 'จุดรับ' : 'จุดส่ง'}นี้ — ถ้าคันช่วยไปแค่จุดนี้ แถวของคันช่วยจะขึ้น ⚠️ {pickup ? TRANSFER_WARNING.dropMissing : TRANSFER_WARNING.pickupMissing} และใบงานคนขับคันช่วยจะให้ถามคนจัดรถ — ให้เขียน ✏️ หมายเหตุบอกคนขับคันช่วยว่าไปช่วยแค่จุดนี้</p>
+                  {ownReminder && (pickup
+                    ? <p>👉 {ownReminder} — ถ้าคันช่วยต้องเอาของไปส่งด้วย ให้กด 🚛+ คันช่วย ที่จุดส่งนั้นต่อ แล้วเลือกคันเดียวกันอีกครั้ง</p>
+                    : <p>👉 {ownReminder} — ถ้าคันช่วยต้องไปรับของด้วย ต้องกด 🚛+ คันช่วย ที่จุดรับให้คันเดียวกันก่อน แล้วค่อยกดจุดส่งนี้ (ระบบต่อจุดท้ายทริปตามลำดับที่กด) — ถ้ายังไม่ได้กด ให้ปิดหน้านี้ไปกดที่จุดรับก่อน</p>)}
+                  {incomingReminder && <p>👉 {incomingReminder} — จุดนั้นเป็นงานที่โยกเข้ามา ไม่มีปุ่ม 🚛+ คันช่วยในการ์ดนี้ — ถ้าคันช่วยต้องไปจุดนั้นด้วย ให้กด 🚛+ คันช่วย ที่จุดนั้นในการ์ดของคันต้นทางของงานนั้น{pickup ? 'ต่อ' : 'ก่อน แล้วค่อยกดจุดส่งนี้'} (ป้าย 🤝 จะขึ้นทะเบียนคันนั้น) แล้วเขียน ✏️ หมายเหตุบอกคนขับคันช่วย</p>}
+                  {/* ไม่มีด่านกันคนขับ/รถซ้ำในวันเดียวกัน — เลือก ➕ ซ้ำ = ได้ทริปที่สอง จุดรับกับจุดส่งไม่จับคู่ และ กม.ไป-กลับ 2 รอบ */}
+                  {reminder && <p>กดครั้งที่สองให้เลือกทริปของคันช่วยในรายการ “คันที่ไปช่วย” — ถ้าครั้งแรกเลือก ➕ สร้างทริปใหม่ ทริปนั้นจะอยู่ในรายการแล้ว อย่าเลือก ➕ ซ้ำ ไม่งั้นจะได้ 2 ทริป</p>}
                 </div>
               )
             })()}

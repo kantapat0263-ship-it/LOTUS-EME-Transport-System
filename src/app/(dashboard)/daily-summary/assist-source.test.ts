@@ -153,10 +153,11 @@ function assistBox(dialog: unknown, trips: unknown[] = []) {
   const helpers = { trips, incomingStopsForTrip, transferMateReminder }
   const transferPeersOf = new Function(...Object.keys(helpers), `${body('transferPeersOf')}return work`)(...Object.values(helpers))
   const transferReminderFor = new Function(...Object.keys(helpers), 'transferPeersOf', `${body('transferReminderFor')}return work`)(...Object.values(helpers), transferPeersOf)
-  const deps = { React, assistDialog: dialog, transferLabel, transferPeersOf, transferReminderFor }
+  const deps = { React, assistDialog: dialog, transferLabel, transferPeersOf, transferReminderFor, transferMateReminder, TRANSFER_WARNING }
   const out = new Function(...Object.keys(deps), `${code}return work()`)(...Object.values(deps))
   const text = (node: any): string => node == null || node === false ? '' : typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : text(node.children)
-  return out === null ? null : text(out)
+  // บรรทัดละ <p> — บรรทัดแรก = ป้ายของคันต้นทาง
+  return out === null ? null : (out.children as unknown[]).map(text).filter(Boolean).join('\n')
 }
 const transferTrip = (stops: Record<string, unknown>[]) => ({ id: 'T1', tripDate: '2026-10-07', vehiclePlate: 'รถเดิม', driverName: 'คนเดิม', status: 'Planned', stops })
 const shopA = { siteName: 'ร้าน A', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ไซต์ Y' }
@@ -173,6 +174,8 @@ it('กล่องรับ-ส่ง: จุดรับที่จุดส�
   expect(box).toContain('คันช่วยจะได้เฉพาะจุดรับนี้')
   expect(box).toContain('ยังมีจุดส่ง ไซต์ Y ของงานเดียวกันอยู่ในเที่ยวนี้')
   expect(box).toContain('เลือกคันเดียวกันอีกครั้ง')
+  expect(box).toContain('อย่าเลือก ➕ ซ้ำ ไม่งั้นจะได้ 2 ทริป')
+  expect(box).not.toContain('งานที่โยกเข้ามา')
 })
 
 it('กล่องรับ-ส่ง: จุดส่ง → บอกให้กดจุดรับก่อน (ต่อท้ายตามลำดับที่กด)', () => {
@@ -181,6 +184,7 @@ it('กล่องรับ-ส่ง: จุดส่ง → บอกให�
   expect(box).toContain('คันช่วยจะได้เฉพาะจุดส่งนี้')
   expect(box).toContain('ยังมีจุดรับ ร้าน A ของงานเดียวกันอยู่ในเที่ยวนี้')
   expect(box).toContain('กด 🚛+ คันช่วย ที่จุดรับให้คันเดียวกันก่อน')
+  expect(box).toContain('อย่าเลือก ➕ ซ้ำ ไม่งั้นจะได้ 2 ทริป')
 })
 
 it('กล่องรับ-ส่ง: จุดคู่ไม่อยู่ในเที่ยวต้นทาง → ไม่บอกให้กดซ้ำ และไม่แสดงคำเตือนของคันต้นทาง', () => {
@@ -189,5 +193,48 @@ it('กล่องรับ-ส่ง: จุดคู่ไม่อยู่�
   expect(box).toContain('คันช่วยจะได้เฉพาะจุดรับนี้')
   expect(box).not.toContain('ยังมีจุดส่ง')
   expect(box).not.toContain('อีกครั้ง')
-  expect(box).not.toContain(TRANSFER_WARNING.dropMissing)
+  expect(box).not.toContain('อย่าเลือก ➕ ซ้ำ')
+  // ป้ายของคันต้นทางแสดงแค่ข้อความ ไม่ต่อคำเตือนของคันต้นทาง
+  expect(box!.split('\n')[0]).toBe('📦 รับของ → ไปส่งต่อที่ ไซต์ Y')
+})
+
+// คันช่วยได้จุดเดียว = ป้ายบนคันช่วยไม่มีจุดคู่ — กล่องต้องบอกผลจริงบนคันช่วย ไม่ใช่บอกว่าป้ายติดไปเหมือนคันต้นทาง
+it.each([
+  [0, TRANSFER_WARNING.dropMissing],
+  [1, TRANSFER_WARNING.pickupMissing],
+])('กล่องรับ-ส่ง: บอกว่าคันช่วยไปจุดเดียวจะขึ้นคำเตือนอะไร + ให้เขียนหมายเหตุ stopIdx=%s', (stopIdx, warning) => {
+  const box = assistBox({ tripId: 'T1', stopIdx, expectedTrip: transferTrip([shopA, siteY]) })
+  expect(box).toContain(`ถ้าคันช่วยไปแค่จุดนี้ แถวของคันช่วยจะขึ้น ⚠️ ${warning}`)
+  expect(box).toContain('ให้เขียน ✏️ หมายเหตุบอกคนขับคันช่วยว่าไปช่วยแค่จุดนี้')
+  expect(box).not.toContain('มีป้ายรับ-ส่งติดไปด้วย')
+})
+
+// จุดคู่เป็นงานที่โยกเข้ามา: การ์ดนี้ไม่มีแถว/ปุ่มคันช่วยของจุดนั้น — ห้ามบอกให้ไปกดที่จุดนั้นในการ์ดนี้
+const fromT0 = (stops: Record<string, unknown>[]) => ({ id: 'T0', tripDate: '2026-10-07', vehiclePlate: 'รถต้นทาง', driverName: 'คนต้นทาง', status: 'Planned', stops: stops.map(s => ({ ...s, outcome: 'reassigned', reassignedToTripId: 'T1' })) })
+
+it('กล่องรับ-ส่ง: จุดรับของคันนี้ จุดส่งเป็นงานที่โยกเข้ามา → บอกให้กดที่การ์ดคันต้นทาง ไม่บอกให้กดในการ์ดนี้', () => {
+  const t1 = transferTrip([shopA])
+  const box = assistBox({ tripId: 'T1', stopIdx: 0, expectedTrip: t1 }, [fromT0([siteY]), t1])
+  expect(box).toContain('ยังมีจุดส่ง ไซต์ Y ของงานเดียวกันอยู่ในเที่ยวนี้')
+  expect(box).toContain('จุดนั้นเป็นงานที่โยกเข้ามา ไม่มีปุ่ม 🚛+ คันช่วยในการ์ดนี้')
+  expect(box).toContain('ในการ์ดของคันต้นทางของงานนั้นต่อ (ป้าย 🤝 จะขึ้นทะเบียนคันนั้น)')
+  expect(box).not.toContain('ที่จุดส่งนั้นต่อ')
+  expect(box).toContain('อย่าเลือก ➕ ซ้ำ')
+})
+
+it('กล่องรับ-ส่ง: จุดส่งของคันนี้ จุดรับเป็นงานที่โยกเข้ามา → กดที่การ์ดคันต้นทางก่อน แล้วค่อยกดจุดส่งนี้', () => {
+  const t1 = transferTrip([siteY])
+  const box = assistBox({ tripId: 'T1', stopIdx: 0, expectedTrip: t1 }, [fromT0([shopA]), t1])
+  expect(box).toContain('ยังมีจุดรับ ร้าน A ของงานเดียวกันอยู่ในเที่ยวนี้')
+  expect(box).toContain('ในการ์ดของคันต้นทางของงานนั้นก่อน แล้วค่อยกดจุดส่งนี้')
+  expect(box).not.toContain('ที่จุดรับให้คันเดียวกันก่อน')
+})
+
+it('กล่องรับ-ส่ง: จุดรับมีทั้งของคันนี้และงานที่โยกเข้ามา → แยกชื่อ กดในการ์ดนี้เฉพาะจุดของคันนี้', () => {
+  const t1 = transferTrip([shopA, siteY])
+  const shopB = { siteName: 'ร้าน B', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ไซต์ Y' }
+  const box = assistBox({ tripId: 'T1', stopIdx: 1, expectedTrip: t1 }, [fromT0([shopB]), t1])!
+  const lines = box.split('\n')
+  expect(lines.find(l => l.includes('ที่จุดรับให้คันเดียวกันก่อน'))).toContain('ยังมีจุดรับ ร้าน A ของงานเดียวกัน')
+  expect(lines.find(l => l.includes('งานที่โยกเข้ามา'))).toContain('ยังมีจุดรับ ร้าน B ของงานเดียวกัน')
 })
