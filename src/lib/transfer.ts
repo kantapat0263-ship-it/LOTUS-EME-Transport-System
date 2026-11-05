@@ -176,13 +176,16 @@ export function transferLabel(peers: readonly Peer[], index: number): TransferLa
  * คำเตือนของหน้าต่างแก้ไขเที่ยววิ่ง (หน้าประวัติ) — เฉพาะ "จุดรับ/จุดส่งไม่อยู่ในเที่ยวนี้" ที่การลบจุดในหน้าต่างนั้นทำให้เกิดได้ (ไม่เตือนลำดับ/ของบางร้าน)
  * จุดคู่ยังอยู่ในลิสต์แต่เลื่อน/โยกออก/ไม่ได้ทำแล้ว = ไม่เตือน: หน้าต่างนั้นไม่มีป้ายเลื่อน/โยกบอกเหตุผล
  * คนจัดรถจะเห็นชื่อร้านอยู่ในลิสต์แต่ระบบบอกว่าไม่อยู่ แล้วลบทิ้ง (ประวัติผลเลื่อน/โยกหายจากทริป) · ลบจุดคู่ออกจากฟอร์มแล้วค่อยเตือน
+ * opened = ลิสต์ตอนเปิดหน้าต่าง (รูปเดียวกับ peers) — ไม่เตือนเฉพาะเมื่อขาดคู่มาตั้งแต่เปิดหน้าต่าง
+ * ตอนเปิดยังมีจุดคู่ที่ไปกับเที่ยว แต่ในฟอร์มไม่เหลือแล้ว = คนจัดรถเพิ่งลบ → เตือน แม้ยังมีจุดคู่ที่ไม่ทำแล้วค้างในลิสต์ · ไม่ส่ง = แบบเดิม
  */
-export function transferMissingWarning(peers: readonly Peer[], index: number): string | null {
+export function transferMissingWarning(peers: readonly Peer[], index: number, opened: readonly Peer[] = peers): string | null {
   const warning = transferLabel(peers, index)?.warning
   if (warning !== TRANSFER_WARNING.pickupMissing && warning !== TRANSFER_WARNING.dropMissing) return null
   const stop = peers[index]
   const listed = peers.some((peer, i) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && peer.transferRole !== stop.transferRole)
-  return listed ? null : warning
+  const removedHere = opened.some(peer => isTransferStop(peer) && peer.transferId === stop.transferId && peer.transferRole !== stop.transferRole && !isInactiveStop(peer))
+  return listed && !removedHere ? null : warning
 }
 
 /** บรรทัดใต้งานโยกเข้าที่แสดงอย่างเดียว (แผงปิดผลงาน) — ผลของงานโยกเก็บที่คันต้นทาง · ใช้ประโยคนี้ทุกที่ที่บอกให้ไปแก้ที่คันต้นทาง */
@@ -464,7 +467,8 @@ export function dropSyncNote(sync: Pick<TripDropSync<unknown>, 'updated' | 'notI
   if (sync.updated.length) parts.push(`อัปเดตรายการของที่จุดส่ง ${sync.updated.join(', ')} ให้ตามแล้ว · ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่`)
   const warnings = [
     // จุดส่งที่ยังไม่จัด (ค้างในใบขอ) หน้านี้ไม่ได้แก้ให้ — แก้จุดรับเดียวกันในหน้าคำขอ แล้ว applyPickupItemsEdit ซิงก์จุดส่งในใบให้ (ตอนจัดทีหลังจะได้ของใหม่)
-    ...sync.notInTrip.map(name => `${TRANSFER_WARNING.dropMissing}${name ? ` (${name})` : ''} — ถ้าจัดไปเที่ยวอื่นแล้ว ให้แก้รายการที่จุดส่งในเที่ยวนั้นด้วย (ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง) · ถ้ายังไม่ได้จัด ให้แก้ของที่จุดรับเดียวกันในหน้าคำขอด้วย (จุดส่งในใบจะแก้ตามให้)`),
+    // หน้าคำขอเห็นว่าจุดรับนี้จัดเข้าเที่ยวแล้ว จึงขึ้น toast แดงให้ไปแก้ในเที่ยว (pickupEditMessage) — บอกไว้ก่อน ไม่งั้นคนจัดรถแก้ในเที่ยวซ้ำ
+    ...sync.notInTrip.map(name => `${TRANSFER_WARNING.dropMissing}${name ? ` (${name})` : ''} — ถ้าจัดไปเที่ยวอื่นแล้ว ให้แก้รายการที่จุดส่งในเที่ยวนั้นด้วย (ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง) · ถ้ายังไม่ได้จัด ให้แก้ของที่จุดรับเดียวกันในหน้าคำขอด้วย (จุดส่งในใบจะแก้ตามให้) — ถ้าหน้าคำขอเตือนว่าจุดรับนี้จัดเข้าเที่ยวแล้ว ไม่ต้องแก้ในเที่ยวซ้ำ (แก้ที่นี่แล้ว)`),
     ...sync.check,
   ]
   const notUpdated = (p: TripDropSync<unknown>['changed'][number], stop: TripStopLike) =>

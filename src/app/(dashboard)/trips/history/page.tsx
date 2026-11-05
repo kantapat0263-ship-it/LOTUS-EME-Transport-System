@@ -490,8 +490,9 @@ export default function TripHistoryPage() {
     const incoming = stops.some(isTransferStop) || openedStops.some(isTransferStop) ? incomingStopsForTrip((trips || []).filter(t => t.status !== 'Cancelled'), tripId) : []
     return transferDisplayOrder(stops, incoming)
   }
-  const worksheetView = isWorksheetOpen && selectedTrip ? transferViewFor(selectedTrip.id, selectedTrip.stops || []) : null
   const editView = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editFormData.stops, editingTrip.stops) : null
+  // ลิสต์ตอนเปิดหน้าต่าง — transferMissingWarning แยก "ขาดคู่มาตั้งแต่เปิด" (ไม่เตือน) กับ "เพิ่งลบจุดคู่ที่ยังไปกับเที่ยวในหน้าต่างนี้" (เตือน)
+  const editOpenedPeers = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editingTrip.stops).peers : undefined
   // จุดรับที่ของเปลี่ยนแล้วจุดส่งในเที่ยวนี้จะถูกแก้ตอนกดบันทึก (ป้ายเปลี่ยนทันที แต่ช่องจุดส่งยังเป็นข้อความเดิมจนกว่าจะบันทึก)
   const editDropSync = isEditOpen && editingTrip ? syncDropsInTripEdit(editingTrip.stops, editFormData.stops, editFormData.originalStopIndexes) : null
 
@@ -880,7 +881,7 @@ export default function TripHistoryPage() {
                         // งานรับของไปส่งต่อ: ป้าย + เตือนเฉพาะ "จุดคู่ไม่อยู่ในเที่ยวนี้" ซึ่งการลบจุดในหน้าต่างนี้ทำให้เกิดได้ (transferMissingWarning)
                         // ไม่เตือนเรื่องลำดับ (หน้าต่างนี้สลับลำดับไม่ได้) · จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย (หน้านี้ไม่มีป้ายโยก/เลื่อนกำกับ)
                         const label = editView && !isInactiveStop(stop) ? transferLabel(editView.peers, editView.ownPos[idx]) : null
-                        const warning = label && editView ? transferMissingWarning(editView.peers, editView.ownPos[idx]) : null
+                        const warning = label && editView ? transferMissingWarning(editView.peers, editView.ownPos[idx], editOpenedPeers) : null
                         return label && (
                           <span className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
                             {label.text}
@@ -917,7 +918,7 @@ export default function TripHistoryPage() {
                 ))}
                 {editView?.incomingPos.map((pos, i) => {
                   // งานรับ-ส่งที่คันอื่นโยกเข้ามา — ไม่มีแถวในหน้าต่างนี้ (ผลเก็บที่คันต้นทาง) แต่ลบจุดคู่ของมันในฟอร์มได้ → ต้องเห็นคำเตือนแบบเดียวกับจุดของเที่ยว
-                  const warning = transferMissingWarning(editView.peers, pos)
+                  const warning = transferMissingWarning(editView.peers, pos, editOpenedPeers)
                   return warning && (
                     <p key={`incoming-${i}`} className="text-[10px] text-red-400">
                       ⚠️ งานที่โยกเข้ามา {transferStopName(editView.peers[pos])}: {warning} · {TRANSFER_EDIT_AT_SOURCE}
@@ -1027,7 +1028,8 @@ export default function TripHistoryPage() {
                       {(() => {
                         // งานรับของไปส่งต่อ: ข้อความป้ายอย่างเดียว — ใบนี้ไม่พิมพ์งานโยกเข้า/ป้ายโยก-เลื่อน จึงไม่พิมพ์คำเตือนหรือคำอธิบายคนขับ
                         // จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย กันคนขับไปรับของที่จุดซึ่งไม่ต้องไปแล้ว (กติกาเดียวกับใบงานคนขับ)
-                        const tLabel = worksheetView && !isInactiveStop(stop) ? transferLabel(worksheetView.peers, worksheetView.ownPos[idx]) : null
+                        // คิดจากจุดของทริปนี้เท่านั้น เหมือนหน้ารายละเอียดทริป — นับงานโยกเข้าแล้วป้ายจุดส่งเอ่ยชื่อร้านที่ไม่มีแถวในใบนี้
+                        const tLabel = isInactiveStop(stop) ? null : transferLabel(selectedTrip?.stops || [], idx)
                         return tLabel && <div className="mt-1"><span style={transferTagStyle(tLabel)}>{tLabel.text}</span></div>
                       })()}
                       <p className="text-xs md:text-sm mt-1 whitespace-pre-wrap">{stop.cargoDetails}</p>

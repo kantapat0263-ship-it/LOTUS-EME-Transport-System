@@ -318,6 +318,23 @@ describe('transferMissingWarning (หน้าต่างแก้ไขเท�
     expect(transferMissingWarning([P('วังโค'), D('ดอนเมือง')], 1)).toBeNull()
     expect(transferMissingWarning([N('ไซต์ A')], 0)).toBeNull()
   })
+  it('ตอนเปิดหน้าต่างยังมีจุดคู่ที่ไปกับเที่ยว แล้วลบออกจากฟอร์ม → เตือน แม้ยังมีจุดคู่ที่เลื่อน/โยกค้างในลิสต์ (ผลตรวจรวม F1)', () => {
+    for (const outcome of ['postponed', 'reassigned']) {
+      const away = { ...P('วังโค'), outcome }
+      const opened = [away, P('ดูโฮม'), D('ดอนเมือง')]
+      const form = [away, D('ดอนเมือง')] // ลบดูโฮมออกจากฟอร์ม
+      expect(transferMissingWarning(form, 1, opened)).toBe(TRANSFER_WARNING.pickupMissing)
+      // ขาดคู่มาตั้งแต่เปิดหน้าต่าง (จุดคู่ไม่ทำแล้วตั้งแต่ก่อนเปิด) = ไม่เตือนแบบเดิม · ไม่ส่งลิสต์ตอนเปิด = แบบเดิม
+      expect(transferMissingWarning(form, 1, form)).toBeNull()
+      expect(transferMissingWarning(form, 1)).toBeNull()
+      // กลับด้าน: จุดส่งที่ยังไปกับเที่ยวถูกลบ เหลือจุดส่งที่ไม่ทำแล้ว → จุดรับเตือน
+      const awayDrop = { ...D('ดอนเมือง'), outcome }
+      expect(transferMissingWarning([awayDrop, P('วังโค')], 1, [awayDrop, D('ดอนเมือง'), P('วังโค')])).toBe(TRANSFER_WARNING.dropMissing)
+    }
+    // จุดคู่ที่ถูกลบเป็นของกลุ่มอื่น → ไม่นับ (ขาดคู่มาตั้งแต่เปิดเหมือนเดิม)
+    const away = { ...P('วังโค'), outcome: 'postponed' }
+    expect(transferMissingWarning([away, D('ดอนเมือง')], 1, [away, P('ดูโฮม', 'g2'), D('ดอนเมือง')])).toBeNull()
+  })
 })
 
 describe('transferTagStyle (ย้ายมาจากใบสรุป — สีต้องเหมือนเดิม)', () => {
@@ -569,6 +586,13 @@ describe('dropSyncNote (ข้อความต่อท้าย toast หน�
     // จุดส่งยังค้างในใบขอ: หน้าประวัติไม่เขียนใบขอ → ต้องบอกทางที่ทำได้จริง (ผลตรวจ drop-sync ข้อ 1)
     expect(n.text).toContain('ถ้ายังไม่ได้จัด ให้แก้ของที่จุดรับเดียวกันในหน้าคำขอด้วย (จุดส่งในใบจะแก้ตามให้)')
     expect(n.text).toContain('⚠️ ตรวจเอง')
+  })
+  it('จุดส่งยังค้างในใบขอ → บอกไว้ก่อนว่าหน้าคำขอจะเตือนว่าจุดรับจัดเข้าเที่ยวแล้ว ไม่ต้องแก้ในเที่ยวซ้ำ (ผลตรวจรวม F2)', () => {
+    // ทำตามแล้ว หน้าคำขอเจอว่าจุดรับนี้จัดเข้าเที่ยว → ขึ้นข้อความแดงให้แก้ในเที่ยว ทั้งที่เพิ่งแก้ในเที่ยวนี้ไป
+    const n = dropSyncNote({ ...empty, notInTrip: ['ดอนเมือง'] }, [])
+    expect(n.text).toBe(` · ⚠️ ${TRANSFER_WARNING.dropMissing} (ดอนเมือง) — ถ้าจัดไปเที่ยวอื่นแล้ว ให้แก้รายการที่จุดส่งในเที่ยวนั้นด้วย (ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง) · ถ้ายังไม่ได้จัด ให้แก้ของที่จุดรับเดียวกันในหน้าคำขอด้วย (จุดส่งในใบจะแก้ตามให้) — ถ้าหน้าคำขอเตือนว่าจุดรับนี้จัดเข้าเที่ยวแล้ว ไม่ต้องแก้ในเที่ยวซ้ำ (แก้ที่นี่แล้ว)`)
+    // คำเตือนนั้นมาจาก pickupEditMessage ของหน้าคำขอจริง (ข้อความฝั่งหน้าคำขอไม่เปลี่ยน)
+    expect(pickupEditMessage({ drop: 'updated', dropName: 'ดอนเมือง', pickupOnTrip: true }).text).toContain('⚠️ จุดรับนี้จัดเข้าเที่ยวแล้ว')
   })
   it('มีสำเนาคันช่วยบนคันอื่น (หรือแก้ที่สำเนา) → บอกว่าคันนั้นไม่ถูกแก้ตาม · จุดส่งจริงที่อยู่คันอื่นไม่นับเป็นคันช่วย', () => {
     const changed = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: '', siteName: 'A', items: 'ปูน 2 ถุง' }] }

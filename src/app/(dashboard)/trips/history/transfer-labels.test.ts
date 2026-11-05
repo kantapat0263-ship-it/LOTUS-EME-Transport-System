@@ -52,25 +52,29 @@ function listViewFor(trips: unknown[]) {
   return { viewFor: work, incoming }
 }
 
-/** การ์ดจุดในหน้าต่าง "ใบงาน" (พิมพ์ให้คนขับ) */
-function worksheet(selectedTrip: { id: string; stops: Stop[] }, trips: unknown[] = [selectedTrip], open = true) {
+/** การ์ดจุดในหน้าต่าง "ใบงาน" (พิมพ์ให้คนขับ) — ป้ายคิดจากจุดของทริปที่เลือกเท่านั้น · ส่ง trips/transferViewFor ของหน้าไปด้วย ถ้าโค้ดกลับไปนับงานโยกเข้า เทสต์จะเห็น */
+function worksheet(selectedTrip: { id: string; stops: Stop[] }, trips: unknown[] = [selectedTrip]) {
   const { viewFor } = listViewFor(trips)
-  const worksheetView = new Function('isWorksheetOpen', 'selectedTrip', 'transferViewFor', `${declaration(listSource, 'worksheetView')}return work`)(open, selectedTrip, viewFor)
-  const render = new Function('React', 'selectedTrip', 'worksheetView', 'transferLabel', 'transferTagStyle', 'isInactiveStop', 'RequestTimingBadge', `${jsxCallback(listSource, 'selectedTrip?.stops?.map', 'RequestTimingBadge')}; return render`)(
-    React, selectedTrip, worksheetView, transferLabel, transferTagStyle, isInactiveStop, () => null,
+  const render = new Function('React', 'selectedTrip', 'trips', 'transferViewFor', 'transferLabel', 'transferTagStyle', 'isInactiveStop', 'RequestTimingBadge', `${jsxCallback(listSource, 'selectedTrip?.stops?.map', 'RequestTimingBadge')}; return render`)(
+    React, selectedTrip, trips, viewFor, transferLabel, transferTagStyle, isInactiveStop, () => null,
   ) as (stop: Stop, idx: number) => React.ReactElement
   return selectedTrip.stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
 }
+
+/** editOpenedPeers ตัวจริงของหน้า (ลิสต์ตอนเปิดหน้าต่างแก้ไข) */
+const openedPeersFor = (editingTrip: { id: string; stops: Stop[] }, viewFor: unknown) =>
+  new Function('isEditOpen', 'editingTrip', 'transferViewFor', `${declaration(listSource, 'editOpenedPeers')}return work`)(true, editingTrip, viewFor) as Stop[]
 
 /** แถวจุดในหน้าต่างแก้ไขทริป — stops = จุดในฟอร์มตอนนี้ (เช่น หลังกดลบ) · editingTrip.stops = จุดตอนเปิดหน้าต่าง */
 function editRows(editingTrip: { id: string; stops: Stop[] }, stops: Stop[], trips: unknown[] = [editingTrip], originalStopIndexes: (number | null)[] = stops.map((_, i) => i)) {
   const { viewFor } = listViewFor(trips)
   const editFormData = { stops, originalStopIndexes, vehicleId: '', driverId: '', note: '' }
   const editView = new Function('isEditOpen', 'editingTrip', 'editFormData', 'transferViewFor', `${declaration(listSource, 'editView')}return work`)(true, editingTrip, editFormData, viewFor)
+  const editOpenedPeers = openedPeersFor(editingTrip, viewFor)
   const editDropSync = new Function('isEditOpen', 'editingTrip', 'editFormData', 'syncDropsInTripEdit', `${declaration(listSource, 'editDropSync')}return work`)(true, editingTrip, editFormData, syncDropsInTripEdit)
   const stub = (tag: string) => ({ children }: { children?: React.ReactNode }) => React.createElement(tag, null, children)
-  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editDropSync', 'transferLabel', 'transferMissingWarning', 'isInactiveStop', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
-    React, editFormData, vi.fn(), editView, editDropSync, transferLabel, transferMissingWarning, isInactiveStop, cn, stub('textarea'), stub('button'), stub('i'),
+  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editOpenedPeers', 'editDropSync', 'transferLabel', 'transferMissingWarning', 'isInactiveStop', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
+    React, editFormData, vi.fn(), editView, editOpenedPeers, editDropSync, transferLabel, transferMissingWarning, isInactiveStop, cn, stub('textarea'), stub('button'), stub('i'),
   ) as (stop: Stop, idx: number) => React.ReactElement
   return stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
 }
@@ -80,8 +84,8 @@ function editIncoming(editingTrip: { id: string; stops: Stop[] }, stops: Stop[],
   const { viewFor } = listViewFor(trips)
   const editFormData = { stops, originalStopIndexes: stops.map(() => null), vehicleId: '', driverId: '', note: '' }
   const editView = new Function('isEditOpen', 'editingTrip', 'editFormData', 'transferViewFor', `${declaration(listSource, 'editView')}return work`)(true, editingTrip, editFormData, viewFor) as { incomingPos: number[] }
-  const render = new Function('React', 'editView', 'transferMissingWarning', 'transferStopName', 'TRANSFER_EDIT_AT_SOURCE', `${jsxCallback(listSource, 'editView?.incomingPos.map', 'TRANSFER_EDIT_AT_SOURCE')}; return render`)(
-    React, editView, transferMissingWarning, transferStopName, TRANSFER_EDIT_AT_SOURCE,
+  const render = new Function('React', 'editView', 'editOpenedPeers', 'transferMissingWarning', 'transferStopName', 'TRANSFER_EDIT_AT_SOURCE', `${jsxCallback(listSource, 'editView?.incomingPos.map', 'TRANSFER_EDIT_AT_SOURCE')}; return render`)(
+    React, editView, openedPeersFor(editingTrip, viewFor), transferMissingWarning, transferStopName, TRANSFER_EDIT_AT_SOURCE,
   ) as (pos: number, i: number) => React.ReactElement | null
   return editView.incomingPos.map(render).filter((el): el is React.ReactElement => !!el).map(el => renderToStaticMarkup(el))
 }
@@ -140,21 +144,21 @@ describe('หน้าประวัติ — หน้าต่าง "ใบ
     expect(d).not.toContain('ไม่ได้มากับเที่ยวนี้')
   })
 
-  it('จุดส่งของคันนี้ + จุดรับที่โยกมาจากคันอื่น → ป้ายมีชื่อร้าน ไม่พิมพ์ "ไปรับของให้ครบก่อน"', () => {
+  it('จุดส่งของคันนี้ + จุดรับที่โยกมาจากคันอื่น → ป้ายคิดจากจุดของทริปนี้เท่านั้น ไม่เอ่ยชื่อร้านที่ไม่มีแถวในใบ (ผลตรวจรวม L1)', () => {
+    // ใบนี้ไม่พิมพ์งานโยกเข้า — เดิมป้ายขึ้น "ส่งของที่รับจาก ดูโฮม" แต่ไม่มีแถวดูโฮม · หน้ารายละเอียดทริปก็คิดแบบนี้
     const receiver = trip('T-B', [normal('ไซต์ A'), drop()])
     const [site, d] = worksheet(receiver, [receiver, trip('T-A', [pickup('ดูโฮม', { outcome: 'reassigned', reassignedToTripId: 'T-B' })])])
     expect(site).not.toContain('🏁')
-    expect(d).toContain('🏁 ส่งของที่รับจาก ดูโฮม')
+    expect(d).toContain('🏁 จุดส่งของ')
+    expect(d).not.toContain('ดูโฮม')
     expect(d).not.toContain('⚠️')
     expect(d).not.toContain('ไปรับของ')
+    expect(d).not.toContain(TRANSFER_WARNING.pickupMissing)
   })
 
-  it('ทริปปกติไม่มีป้าย · ปิดหน้าต่างแล้วไม่คิดป้าย', () => {
+  it('ทริปปกติไม่มีป้าย', () => {
+    // (เดิมมีเช็ก "ปิดหน้าต่างแล้วไม่คิดป้าย" ของ worksheetView ซึ่งกันการไล่งานโยกเข้าจากทุกทริป — ใบนี้ไม่อ่านทริปอื่นแล้ว จึงไม่มีตัวกั้นนั้น)
     for (const html of worksheet(trip('T-1', [normal('ไซต์ A'), normal('ไซต์ B')]))) {
-      expect(html).not.toContain('📦')
-      expect(html).not.toContain('🏁')
-    }
-    for (const html of worksheet(trip('T-1', [pickup('วังโค'), drop()]), undefined, false)) {
       expect(html).not.toContain('📦')
       expect(html).not.toContain('🏁')
     }
@@ -216,6 +220,27 @@ describe('หน้าประวัติ — หน้าต่างแก�
     // ลบจุดที่เลื่อน/โยกแล้วออกจากฟอร์ม = จุดคู่หายจากเที่ยวจริง → เตือน
     expect(editRows(trip('T-1', postponed), [drop()], undefined, [1])[0]).toContain(`⚠️ ${TRANSFER_WARNING.pickupMissing}`)
     expect(editRows(trip('T-2', movedDrop), [pickup('วังโค')], undefined, [1])[0]).toContain(`⚠️ ${TRANSFER_WARNING.dropMissing}`)
+  })
+
+  it('รับ 2 ร้าน ร้านหนึ่งเลื่อน/โยกออกแล้ว → ลบร้านที่ยังไปกับเที่ยวออกจากฟอร์ม จุดส่งต้องเตือน "จุดรับไม่อยู่ในเที่ยวนี้" (ผลตรวจรวม F1)', () => {
+    for (const outcome of ['postponed', 'reassigned']) {
+      const opened = trip('T-1', [pickup('วังโค', { outcome }), pickup('ดูโฮม'), drop()])
+      // ตอนเปิดหน้าต่าง ดูโฮมยังไปกับเที่ยว = ไม่เตือน
+      expect(editRows(opened, opened.stops)[2]).not.toContain('⚠️')
+      const [p, d] = editRows(opened, [opened.stops[0], opened.stops[2]], undefined, [0, 2])
+      expect(p).not.toContain('📦')
+      expect(d).toContain('🏁 ส่งของที่รับจาก วังโค')
+      expect(d).toContain(`⚠️ ${TRANSFER_WARNING.pickupMissing}`)
+    }
+  })
+
+  it('งานจุดส่งที่โยกเข้ามา + จุดรับของคันนี้ 2 ร้าน (ร้านหนึ่งเลื่อนแล้ว) → ลบร้านที่ยังไปกับเที่ยว ใต้รายการต้องเตือนงานโยกเข้า (ผลตรวจรวม F1)', () => {
+    const receiver = trip('T-B', [pickup('วังโค', { outcome: 'postponed' }), pickup('ดูโฮม')])
+    const trips = [receiver, trip('T-A', [drop({ outcome: 'reassigned', reassignedToTripId: 'T-B' })])]
+    expect(editIncoming(receiver, receiver.stops, trips)).toEqual([])
+    const [line, ...rest] = editIncoming(receiver, [receiver.stops[0]], trips)
+    expect(rest).toEqual([])
+    expect(line).toContain(`⚠️ งานที่โยกเข้ามา ดอนเมือง (จุดส่ง): ${TRANSFER_WARNING.pickupMissing} · ${TRANSFER_EDIT_AT_SOURCE}`)
   })
 
   it('ลบจุดส่งที่มีจุดรับโยกเข้ามาจากคันอื่น → ใต้รายการขึ้นเตือนงานโยกเข้า + บอกให้แก้ที่คันต้นทาง', () => {
