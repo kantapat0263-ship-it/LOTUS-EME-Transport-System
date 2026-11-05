@@ -302,6 +302,73 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
     await assertSucceeds(updateDoc(doc(as('dispatcher'), 'urgentRequests', 'U1'), { status: 'approved' }))
   })
 
+  describe('ผู้ขอยกเลิกคำขออนุมัติของตัวเองได้เฉพาะตอนรออนุมัติ', () => {
+    const urgentDoc = (userId: string, status: string) => ({
+      userId, requestedDate: '2026-11-07', status, destination: 'ไซต์บางนา', jobSummary: 'ส่งท่อ', contactPhone: '0812345678',
+    })
+    const seed = (docs: Record<string, ReturnType<typeof urgentDoc>>) => env.withSecurityRulesDisabled(async (ctx) => {
+      for (const [id, data] of Object.entries(docs)) await setDoc(doc(ctx.firestore(), 'urgentRequests', id), data)
+    })
+    const cancel = { status: 'cancelled', cancelledAt: serverTimestamp() }
+
+    it('ยกเลิกใบตัวเองที่รออนุมัติได้ (ทั้งเขียนตรงและผ่าน transaction แบบฟอร์ม)', async () => {
+      await seed({ 'U-MINE': urgentDoc('viewer', 'pending'), 'U-MINE-TX': urgentDoc('viewer', 'pending') })
+      const db = as('viewer')
+      await assertSucceeds(updateDoc(doc(db, 'urgentRequests', 'U-MINE'), cancel))
+      await assertSucceeds(runTransaction(db, async (t) => {
+        const ref = doc(db, 'urgentRequests', 'U-MINE-TX')
+        if ((await t.get(ref)).data()?.status !== 'pending') throw new Error('expected pending')
+        t.update(ref, cancel)
+      }))
+    })
+
+    it('ใบที่อนุมัติ/ปฏิเสธ/ยกเลิกไปแล้ว ยกเลิกไม่ได้', async () => {
+      await seed({ 'U-A': urgentDoc('viewer', 'approved'), 'U-R': urgentDoc('viewer', 'rejected'), 'U-C': urgentDoc('viewer', 'cancelled') })
+      const db = as('viewer')
+      for (const id of ['U-A', 'U-R', 'U-C']) await assertFails(updateDoc(doc(db, 'urgentRequests', id), cancel))
+    })
+
+    it('ใบของคนอื่นยกเลิกไม่ได้', async () => {
+      await seed({ 'U-OTHER': urgentDoc('otherViewer', 'pending') })
+      await assertFails(updateDoc(doc(as('viewer'), 'urgentRequests', 'U-OTHER'), cancel))
+    })
+
+    it('แอบแก้ช่องอื่นพร้อมยกเลิกไม่ได้', async () => {
+      await seed({ 'U-MINE': urgentDoc('viewer', 'pending') })
+      const ref = doc(as('viewer'), 'urgentRequests', 'U-MINE')
+      for (const extra of [
+        { requestedDate: '2026-11-08' }, { userId: 'otherViewer' }, { destination: 'ที่อื่น' }, { updatedAt: serverTimestamp() },
+      ]) {
+        await assertFails(updateDoc(ref, { ...cancel, ...extra }))
+      }
+    })
+
+    it('เปลี่ยนใบตัวเองเป็นอนุมัติ/ปฏิเสธเองไม่ได้', async () => {
+      await seed({ 'U-MINE': urgentDoc('viewer', 'pending') })
+      const ref = doc(as('viewer'), 'urgentRequests', 'U-MINE')
+      await assertFails(updateDoc(ref, { status: 'approved' }))
+      await assertFails(updateDoc(ref, { status: 'rejected' }))
+    })
+
+    it('บัญชียังไม่เปิดใช้งานยกเลิกไม่ได้', async () => {
+      await seed({ 'U-PV': urgentDoc('pendingViewer', 'pending') })
+      await assertFails(updateDoc(doc(as('pendingViewer'), 'urgentRequests', 'U-PV'), cancel))
+    })
+
+    it('ผู้ขอลบใบตัวเองไม่ได้', async () => {
+      await seed({ 'U-MINE': urgentDoc('viewer', 'pending') })
+      await assertFails(deleteDoc(doc(as('viewer'), 'urgentRequests', 'U-MINE')))
+    })
+
+    it('คนจัดรถยังอนุมัติ/ปฏิเสธ/ลบได้เหมือนเดิม', async () => {
+      await seed({ 'U-1': urgentDoc('viewer', 'pending'), 'U-2': urgentDoc('viewer', 'pending') })
+      const db = as('dispatcher')
+      await assertSucceeds(updateDoc(doc(db, 'urgentRequests', 'U-1'), { status: 'approved', approvedBy: 'dispatcher', approvedAt: serverTimestamp() }))
+      await assertSucceeds(updateDoc(doc(db, 'urgentRequests', 'U-2'), { status: 'rejected', rejectReason: 'รถเต็ม', rejectedBy: 'dispatcher', rejectedAt: serverTimestamp() }))
+      await assertSucceeds(deleteDoc(doc(db, 'urgentRequests', 'U-1')))
+    })
+  })
+
   it('viewer แนบปลายทาง/งาน/เบอร์กับคำขออนุมัติพิเศษได้ แต่ข้อความยาวเกินหรือไม่ใช่ข้อความถูกปฏิเสธ', async () => {
     const db = as('viewer')
     const base = { userId: 'viewer', requestedDate: '2026-10-15', status: 'pending', destination: 'ไซต์บางนา', jobSummary: 'ส่งท่อ 10 เส้น', contactPhone: '081-234-5678' }

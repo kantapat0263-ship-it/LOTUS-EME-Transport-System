@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { displayText, formatIsoDateTh, urgentDetailsError, urgentPrefill } from './urgentRequest'
+import {
+  displayText, formatIsoDateTh, latestUrgentRequest, urgentDetailsError, urgentFormStatus, urgentNotPendingMessage,
+  urgentPrefill, urgentRejectReason,
+} from './urgentRequest'
 import { isOutsideRequestHours, settingHour } from './requestWindow'
 
 describe('urgentPrefill — เติมจากฟอร์มที่กรอกไว้', () => {
@@ -65,5 +68,67 @@ describe('ค่าที่ผู้ใช้เขียนเองได้ 
     expect(formatIsoDateTh('2026-02-30')).toBe('2026-02-30')
     expect(formatIsoDateTh({ toDate: 1 })).toBe('')
     expect(formatIsoDateTh(undefined)).toBe('')
+  })
+})
+
+describe('คำขออนุมัติใบล่าสุด (ฟอร์มใช้ตัดสินแบบเดียวกับ server)', () => {
+  const at = (ms: number) => ({ toMillis: () => ms })
+  const urgent = (id: string, status: string, createdMs: number | null, extra: Record<string, unknown> = {}) =>
+    ({ id, status, createdAt: createdMs === null ? null : at(createdMs), ...extra })
+
+  it('เลือกใบที่สร้างทีหลังสุด ไม่ขึ้นกับลำดับที่ได้มา', () => {
+    const list = [urgent('A', 'cancelled', 1_000), urgent('C', 'pending', 3_000), urgent('B', 'cancelled', 2_000)]
+    expect(latestUrgentRequest(list)?.id).toBe('C')
+    expect(latestUrgentRequest([...list].reverse())?.id).toBe('C')
+  })
+
+  it('ไม่มีคำขอ = null', () => {
+    expect(latestUrgentRequest([])).toBeNull()
+    expect(latestUrgentRequest(null)).toBeNull()
+    expect(latestUrgentRequest(undefined)).toBeNull()
+  })
+
+  it('ใบที่เพิ่งส่งในเครื่อง (server ยังไม่ประทับ createdAt) = ใบใหม่สุด — ไม่เด้งกลับไปขึ้นปุ่มขออนุมัติ', () => {
+    expect(latestUrgentRequest([urgent('OLD', 'cancelled', 5_000), urgent('NEW', 'pending', null)])?.id).toBe('NEW')
+  })
+
+  it('ใบล่าสุดถูกยกเลิก = เหมือนยังไม่มีคำขอ (ขออนุมัติใหม่ได้)', () => {
+    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000)])).toBeNull()
+    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000), urgent('B', 'cancelled', 2_000)])).toBeNull()
+    expect(urgentFormStatus([])).toBeNull()
+    expect(urgentFormStatus(null)).toBeNull()
+  })
+
+  it('ยกเลิกแล้วขอใหม่ = ใช้ผลของใบใหม่', () => {
+    expect(urgentFormStatus([urgent('B', 'pending', 2_000), urgent('A', 'cancelled', 1_000)])).toBe('pending')
+    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000), urgent('B', 'approved', 2_000)])).toBe('approved')
+    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000), urgent('B', 'rejected', 2_000)])).toBe('rejected')
+  })
+
+  it('เหตุผลการปฏิเสธมาจากใบล่าสุด ไม่ใช่ใบแรกในรายการ', () => {
+    const list = [
+      urgent('OLD', 'rejected', 1_000, { rejectReason: 'เหตุผลใบเก่า' }),
+      urgent('NEW', 'rejected', 3_000, { rejectReason: 'รถเต็มแล้ว' }),
+      urgent('MID', 'cancelled', 2_000),
+    ]
+    expect(urgentRejectReason(list)).toBe('รถเต็มแล้ว')
+  })
+
+  it('ใบล่าสุดไม่ได้ถูกปฏิเสธ / เหตุผลไม่ใช่ข้อความ = ไม่แสดงเหตุผล', () => {
+    expect(urgentRejectReason([urgent('OLD', 'rejected', 1_000, { rejectReason: 'เก่า' }), urgent('NEW', 'pending', 2_000)])).toBe('')
+    expect(urgentRejectReason([urgent('A', 'rejected', 1_000, { rejectReason: { text: 'x' } })])).toBe('')
+    expect(urgentRejectReason([])).toBe('')
+  })
+})
+
+describe('คนจัดรถตอบคำขอที่ไม่ได้รออนุมัติแล้ว', () => {
+  it.each([
+    ['cancelled', 'ผู้ขอยกเลิกคำขอนี้ไปแล้ว'],
+    ['approved', 'คำขอนี้ได้รับอนุมัติไปแล้ว'],
+    ['rejected', 'คำขอนี้ถูกปฏิเสธไปแล้ว'],
+    [null, 'คำขอนี้ไม่ได้รออนุมัติแล้ว'],
+    [undefined, 'คำขอนี้ไม่ได้รออนุมัติแล้ว'],
+  ])('%s → %s', (status, message) => {
+    expect(urgentNotPendingMessage(status)).toBe(message)
   })
 })

@@ -38,7 +38,7 @@ import {
   Info
 } from "lucide-react"
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase"
-import { doc, collection, query, updateDoc, serverTimestamp, getDocs, getDoc, runTransaction, writeBatch, where, setDoc, onSnapshot } from "firebase/firestore"
+import { doc, collection, query, updateDoc, serverTimestamp, getDocs, getDoc, runTransaction, writeBatch, where, setDoc, onSnapshot, type DocumentData } from "firebase/firestore"
 import { UserProfile, Site } from "@/types/models"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -75,7 +75,7 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
-import { displayText, formatIsoDateTh } from "@/lib/urgentRequest"
+import { displayText, formatIsoDateTh, urgentNotPendingMessage } from "@/lib/urgentRequest"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { isAwaitingPickup, sortForManage, waitingLabel, requestCreatedMs } from "@/lib/requestAttention"
@@ -323,13 +323,29 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     setSelectedDestIndexes(newSet);
   }
 
+  /**
+   * ตอบคำขออนุมัติเฉพาะใบที่ยังรออนุมัติ — อ่านซ้ำใน transaction เพราะผู้ขออาจเพิ่งกดยกเลิก (หรือคนจัดรถอีกคนตอบไปก่อน)
+   * คืน null = บันทึกแล้ว · คืนข้อความ = ไม่ได้บันทึก (สถานะจริงตอนนี้)
+   */
+  const answerUrgent = (urgentId: string, changes: DocumentData) => runTransaction(db, async (t) => {
+    const ref = doc(db, "urgentRequests", urgentId)
+    const status = (await t.get(ref)).data()?.status
+    if (status !== "pending") return urgentNotPendingMessage(status)
+    t.update(ref, changes)
+    return null
+  })
+
   const handleApproveUrgent = async (urgentId: string, requestedBy: string, requestedDate: string) => {
     try {
-      await updateDoc(doc(db, "urgentRequests", urgentId), {
+      const notPending = await answerUrgent(urgentId, {
         status: "approved",
         approvedBy: profileName || "Dispatcher",
         approvedAt: serverTimestamp()
       })
+      if (notPending) {
+        toast({ title: notPending, description: "ไม่ได้บันทึกการอนุมัติ", variant: "destructive" })
+        return
+      }
       toast({ 
         title: "อนุมัติแล้ว", 
         description: `${requestedBy} สามารถขอรถวันที่ ${formatIsoDateTh(requestedDate)} ได้แล้ว` 
@@ -343,12 +359,16 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     const reason = prompt(`เหตุผลที่ปฏิเสธคำขอของ ${requestedBy}:`)
     if (!reason) return
     try {
-      await updateDoc(doc(db, "urgentRequests", urgentId), {
+      const notPending = await answerUrgent(urgentId, {
         status: "rejected",
         rejectReason: reason,
         rejectedBy: profileName || "Dispatcher",
         rejectedAt: serverTimestamp()
       })
+      if (notPending) {
+        toast({ title: notPending, description: "ไม่ได้บันทึกการปฏิเสธ", variant: "destructive" })
+        return
+      }
       toast({ title: "ปฏิเสธแล้ว", description: `ปฏิเสธคำขอของ ${requestedBy} แล้ว` })
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })

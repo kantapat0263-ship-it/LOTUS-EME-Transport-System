@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, doc, setDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore"
+import { collection, doc, setDoc, serverTimestamp, getDocs, query, where, runTransaction } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -44,9 +44,22 @@ import { format } from "date-fns"
 import { useContinuousQueues } from "@/hooks/use-continuous-queues"
 import { QueueNoticeCard } from "@/components/continuous-queue/QueueNoticeCard"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
-import { URGENT_DETAIL_LIMITS, urgentDetailsError, urgentPrefill, type UrgentDetails } from "@/lib/urgentRequest"
+import {
+  URGENT_DETAIL_LIMITS, latestUrgentRequest, urgentDetailsError, urgentFormStatus, urgentPrefill, urgentRejectReason, type UrgentDetails,
+} from "@/lib/urgentRequest"
 import { buildDropDescription, type TransferRole } from "@/lib/transfer"
 
 interface DestinationRequest {
@@ -127,13 +140,9 @@ export function RequestForm() {
 
   const { data: urgentRequests } = useCollection<any>(urgentRequestRef)
 
-  const urgentStatus = React.useMemo(() => {
-    if (!urgentRequests || urgentRequests.length === 0) return null
-    const latest = [...urgentRequests].sort((a: any, b: any) => 
-      (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)
-    )[0]
-    return latest?.status || null
-  }, [urgentRequests])
+  // ผลของคำขออนุมัติ "ใบล่าสุด" (ตัวเดียวกับ server) · ผู้ขอยกเลิกแล้ว = เหมือนยังไม่มีคำขอ (ขอใหม่ได้)
+  const urgentStatus = React.useMemo(() => urgentFormStatus(urgentRequests), [urgentRequests])
+  const rejectReason = React.useMemo(() => urgentRejectReason(urgentRequests), [urgentRequests])
 
   const minDateStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
@@ -170,6 +179,7 @@ export function RequestForm() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
   const [isSendingUrgent, setIsSendingUrgent] = React.useState(false)
+  const [isCancellingUrgent, setIsCancellingUrgent] = React.useState(false)
   // หน้าต่างกรอกรายละเอียดสั้น ๆ ตอนขออนุมัติพิเศษ (null = ปิด)
   const [urgentDetails, setUrgentDetails] = React.useState<UrgentDetails | null>(null)
   const [requestedBy, setRequestedBy] = React.useState("")
@@ -252,6 +262,28 @@ export function RequestForm() {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
     } finally {
       setIsSendingUrgent(false)
+    }
+  }
+
+  // ผู้ขอยกเลิกคำขออนุมัติที่ยังรออยู่ (เช่น ไม่ต้องใช้รถแล้ว / กรอกผิดอยากขอใหม่) — ยกเลิกแล้วขอใหม่ได้
+  // อ่านซ้ำใน transaction: คนจัดรถอาจเพิ่งกดอนุมัติ/ปฏิเสธระหว่างเปิดหน้าต่างยืนยัน → ไม่เขียนทับผลนั้น
+  const cancelUrgentApproval = async () => {
+    const target = latestUrgentRequest(urgentRequests)
+    if (!target?.id || target.status !== "pending") return
+    setIsCancellingUrgent(true)
+    try {
+      const ref = doc(db, "urgentRequests", target.id)
+      const cancelled = await runTransaction(db, async (t) => {
+        const snap = await t.get(ref)
+        if (snap.data()?.status !== "pending") return false
+        t.update(ref, { status: "cancelled", cancelledAt: serverTimestamp() })
+        return true
+      })
+      toast(cancelled ? { title: "ยกเลิกคำขออนุมัติแล้ว" } : { title: "คนจัดรถเพิ่งตอบคำขอนี้แล้ว" })
+    } catch (e) {
+      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    } finally {
+      setIsCancellingUrgent(false)
     }
   }
 
@@ -361,14 +393,14 @@ const handleSubmit = async (e: React.FormEvent) => {
         })()
         
         if (selectedDate === tomorrowStrInside) {
+          // ใบล่าสุดต้องอนุมัติ (เหมือน server) — ใบที่ผู้ขอยกเลิก/ถูกปฏิเสธใช้ส่งใบไม่ได้
           const urgentSnap = await getDocs(query(
             collection(db, "urgentRequests"),
             where("userId", "==", user.uid),
-            where("requestedDate", "==", selectedDate),
-            where("status", "==", "approved")
+            where("requestedDate", "==", selectedDate)
           ))
           
-          if (urgentSnap.empty) {
+          if (urgentFormStatus(urgentSnap.docs.map(d => d.data())) !== "approved") {
             toast({ title: "ไม่สามารถส่งคำขอได้", description: "กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้", variant: "destructive" })
             return
           }
@@ -587,18 +619,46 @@ const handleSubmit = async (e: React.FormEvent) => {
                             <p className="text-xs text-red-400 font-bold flex items-center gap-1">
                               ❌ คำขอถูกปฏิเสธ — กรุณาเลือกวันอื่น
                             </p>
-                            {urgentRequests?.[0]?.rejectReason && (
+                            {rejectReason && (
                               <p className="text-[10px] text-muted-foreground italic">
-                                เหตุผล: {urgentRequests[0].rejectReason}
+                                เหตุผล: {rejectReason}
                               </p>
                             )}
                           </div>
                         )}
                         {urgentStatus === 'pending' && (
-                          <p className="text-xs text-orange-400 font-bold flex items-center gap-2">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            รอ Dispatcher อนุมัติอยู่...
-                          </p>
+                          <>
+                            <p className="text-xs text-orange-400 font-bold flex items-center gap-2">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              รอ Dispatcher อนุมัติอยู่...
+                            </p>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 text-xs w-full"
+                                  disabled={isCancellingUrgent}
+                                >
+                                  {isCancellingUrgent && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                                  ยกเลิกคำขออนุมัติ
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>ยกเลิกคำขออนุมัติ?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    คนจัดรถจะไม่เห็นคำขอนี้แล้ว — ถ้ายังต้องใช้รถพรุ่งนี้ กดขออนุมัติใหม่ได้
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>ปิด</AlertDialogCancel>
+                                  <AlertDialogAction onClick={cancelUrgentApproval} className="bg-red-500 hover:bg-red-600">ยืนยันยกเลิก</AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </>
                         )}
                         {!urgentStatus && (
                           <>
