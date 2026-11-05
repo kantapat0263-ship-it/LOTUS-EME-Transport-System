@@ -18,6 +18,32 @@ function compiledCallback(callee: string, name: string) {
   if (!callback) throw new Error(`${callee} not found`)
   return ts.transpileModule(`const ${name} = ${callback.getText(pageSource)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
 }
+/** คำสั่งจริงของหน้าใบงานตั้งแต่ `const <first>` ถึง `const <last>` (ต่อกันใน block เดียว) */
+function compiledStatements(first: string, last: string) {
+  let found: ts.Statement[] | undefined
+  function find(node: ts.Node) {
+    if (ts.isBlock(node)) {
+      const at = (name: string) => node.statements.findIndex(s => ts.isVariableStatement(s) && s.declarationList.declarations.some(d => d.name.getText(pageSource) === name))
+      const from = at(first), to = at(last)
+      if (from >= 0 && to >= from) found = node.statements.slice(from, to + 1)
+    }
+    ts.forEachChild(node, find)
+  }
+  find(pageSource)
+  if (!found) throw new Error(`${first}..${last} not found`)
+  return ts.transpileModule(found.map(s => s.getText(pageSource)).join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
+}
+/** JSX จริงของ <main> ในหน้าใบงาน (กล่องรับงานต่อ + หัวรายการ + รายการหลัก) */
+function compiledMain() {
+  let main: ts.JsxElement | undefined
+  function find(node: ts.Node) {
+    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(pageSource) === 'main') main = node
+    ts.forEachChild(node, find)
+  }
+  find(pageSource)
+  if (!main) throw new Error('<main> not found')
+  return ts.transpileModule(`const main = (${main.getText(pageSource)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
+}
 
 // เรนเดอร์การ์ดจุดจริงของใบงานคนขับ (callback ของ trip.stops.map) โดยไม่ต้องบูต Firebase
 // ป้าย/เลขข้อคิดจากลำดับบนจอตัวจริง (transferDisplayOrder) ของจุดในคัน + งานที่โยกเข้ามา เหมือนหน้าใบงาน
@@ -121,6 +147,39 @@ describe('ใบงานคนขับ — จุดที่วันนี�
     expect(html.indexOf('INC:ดูโฮม')).toBeLessThan(html.indexOf('OWN:ดอนเมือง'))
     expect(html).toContain('รับงานต่อ — โยกมาให้คันนี้')
     expect(html).not.toContain('INC:งานโยกปกติ')
+  })
+
+  it('ใบงานคนขับทั้งหน้า (โค้ดจริงของ view/boxedIncoming/การ์ด/<main>): จุดรับที่แทรกขึ้นครั้งเดียวในรายการหลัก · กล่องด้านบนนับเฉพาะงานโยกอื่น', () => {
+    const receiver = { id: 'T-B', tripDate: '2026-11-05', driverId: 'D-B', stops: [
+      { siteName: 'ไซต์ A' },
+      { siteName: 'ดอนเมือง', transferRole: 'drop', transferId: 'tf_1' },
+    ] }
+    const source = { id: 'T-A', tripDate: '2026-11-05', driverId: 'D-A', driverName: 'สมชาย', vehiclePlate: 'กข 1', stops: [
+      { siteName: 'วังโค', outcome: 'reassigned', reassignedToTripId: 'T-B' },
+      { siteName: 'ดูโฮม', outcome: 'reassigned', reassignedToTripId: 'T-B', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง' },
+    ] }
+    const ticket = buildDriverTicket(receiver, [receiver, source], '')
+    expect(ticket.incoming).toHaveLength(2)
+    const icon = () => React.createElement('span')
+    const tag = ({ label }: { label: TransferLabel }) => React.createElement('span', null, `TAG:${label.text}${label.warning ? ` WARN:${label.warning}` : ''}`)
+    const page = new Function('React', 'trip', 'incoming', 'transferDisplayOrder', 'transferLabel', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText',
+      `${compiledStatements('view', 'ownCards')}; return { view, boxedIncoming, incomingCards, ownCards }`,
+    )(React, ticket.trip, ticket.incoming, transferDisplayOrder, transferLabel, tag, validCoordinates, icon, icon, icon, icon, icon)
+    const html = renderToStaticMarkup(new Function('React', 'view', 'boxedIncoming', 'incomingCards', 'ownCards', 'Repeat', 'Navigation', 'actualKm', 'trip', 'formatDuration',
+      `${compiledMain()}; return main`,
+    )(React, page.view, page.boxedIncoming, page.incomingCards, page.ownCards, icon, icon, null, ticket.trip, () => '-'))
+    const at = (site: string) => html.indexOf(`>${site}</h3>`)
+    const list = html.indexOf('ลำดับจุดส่งของ')
+    // ดูโฮมขึ้นที่เดียว (ไม่ซ้ำในกล่องด้านบน) และอยู่ระหว่างไซต์ A กับดอนเมืองในรายการหลัก
+    expect(html.split('>ดูโฮม</h3>')).toHaveLength(2)
+    expect(at('วังโค')).toBeLessThan(list)
+    expect(list).toBeLessThan(at('ไซต์ A'))
+    expect(at('ไซต์ A')).toBeLessThan(at('ดูโฮม'))
+    expect(at('ดูโฮม')).toBeLessThan(at('ดอนเมือง'))
+    expect(html).toContain('รับงานต่อ 1 จุด — โยกมาให้คันนี้เพิ่ม')
+    expect(html).toContain('ลำดับจุดส่งของ (3)')
+    expect(html).toContain('TAG:🏁 ส่งของที่รับจาก ดูโฮม')
+    expect(html).not.toContain('WARN:')
   })
 
   it('จุดปกติ / ส่งตามแผน ยังมีปุ่มนำทาง ไม่มีป้าย', () => {

@@ -4,7 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { incomingStopsForTrip } from '@/lib/calculations'
-import { TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferNoteForDriver } from '@/lib/transfer'
+import { isManagedTrip } from '@/lib/continuousQueue'
+import { tripDriverLabel } from '@/lib/reassign'
+import { activeTransferSet, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferNoteForDriver } from '@/lib/transfer'
 
 // จุดรับที่โยกเข้ามาขึ้นก่อนจุดส่งของมัน — ตรวจด้วยโค้ดจริงของหน้าใบสรุป (ใบพิมพ์ + แผงปิดผลงาน) โดยไม่ต้องบูต Firebase
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -132,5 +134,49 @@ describe('แผงปิดผลงานจริง: บรรทัดอ�
     expect(html).not.toContain('งานโยกปกติ')
     expect(html).not.toContain('<button')
     expect(html).not.toContain('⚠️')
+  })
+
+  it('โค้ดจริงทั้งสาย (incomingOf → displayOf → renderStopRow): แถวจุดส่งได้เลข 3 + ป้ายของตัวเอง ไม่มีคำเตือน · ปุ่มยังใช้ index ที่บันทึก', () => {
+    const cn = (...c: unknown[]) => c.filter(Boolean).join(' ')
+    const incomingOf = new Function('incomingCache', 'incomingStopsForTrip', 'trips', `${variable('incomingOf')}return work`)(new Map(), incomingStopsForTrip, trips)
+    const displayOfReal = new Function('displayCache', 'transferDisplayOrder', 'incomingOf', `${variable('displayOf')}return work`)(new Map(), transferDisplayOrder, incomingOf)
+    const renderIncomingRow = new Function('React', 'displayOf', 'transferLabel', 'cn', 'TRANSFER_EDIT_AT_SOURCE', `${variable('renderIncomingRow')}return work`)(
+      React, displayOfReal, transferLabel, cn, TRANSFER_EDIT_AT_SOURCE,
+    )
+    const calls: unknown[][] = []
+    const deps = {
+      React, isManagedTrip, displayOf: displayOfReal, activeTransferSet, openTransferSet: () => {},
+      runOrdinaryAction: (fn: () => unknown) => { fn() }, chooseOutcome: (...args: unknown[]) => calls.push(['outcome', ...args.slice(1)]), cancelStop: () => {},
+      ordinaryBusy: false, cn, transferLabel, RequestTimingBadge: () => null, openNoteDialog: () => {}, Pencil: icon, Trash2: icon, CheckCircle2: icon, ArrowRightLeft: icon, CalendarClock: icon, Ban: icon,
+      setAssistForm: () => {}, setAssistDialog: () => {}, refusalDrafts: {}, setRefuseReason: () => {}, formatThaiDate: (s: string) => s, setReassignNewForm: () => {}, setReassignNewDialog: () => {}, setReassignTarget: () => {},
+      trips, tripDriverLabel, liveMoveTarget: () => null,
+    }
+    const renderStopRow = new Function(...Object.keys(deps), `${variable('renderStopRow')}return work`)(...Object.values(deps))
+    const row = new Function('trip', 'renderStopRow', 'renderIncomingRow', 'incomingOf', `${callbackOf('displayOf(trip).order.map')}return work`)(
+      receiver, renderStopRow, renderIncomingRow, incomingOf,
+    )
+    const elements = (displayOfReal(receiver).order.map(row) as (React.ReactElement | null)[]).filter((e): e is React.ReactElement => !!e)
+    const rows = elements.map(e => renderToStaticMarkup(e))
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toContain('1. ไซต์ A')
+    expect(rows[1]).toContain('2. ดูโฮม')
+    expect(rows[1]).toContain(TRANSFER_EDIT_AT_SOURCE)
+    expect(rows[2]).toContain('3. ดอนเมือง')
+    expect(rows[2]).toContain('🏁 ส่งของที่รับจาก ดูโฮม')
+    expect(rows[2]).not.toContain('📦')
+    expect(rows.join('')).not.toContain('⚠️')
+    // ปุ่มผลของแถวดอนเมืองยังส่ง index ที่บันทึก (1) ไม่ใช่ตำแหน่งบนจอ (2)
+    const press = (el: React.ReactElement, label: string) => {
+      const walk = (n: unknown): React.ReactElement[] => {
+        if (!n || typeof n !== 'object') return []
+        if (Array.isArray(n)) return n.flatMap(walk)
+        const p = (n as React.ReactElement).props as Record<string, unknown>
+        return [n as React.ReactElement, ...walk(p?.children)]
+      }
+      const btn = walk(el).find(n => typeof (n.props as Record<string, unknown>).onClick === 'function' && renderToStaticMarkup(n).includes(label))
+      ;((btn!.props as Record<string, unknown>).onClick as () => void)()
+    }
+    press(elements[2], 'ตามแผน')
+    expect(calls).toEqual([['outcome', 1, 'delivered']])
   })
 })
