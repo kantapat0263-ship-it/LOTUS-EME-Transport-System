@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyPickupItemsEdit, buildDropDescription, dropLine, dropSyncNote, isInactiveStop, orderPickupsBeforeDrop, pickupEditMessage, postponedPickupNote, syncDropsInTripEdit, syncDropText, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, transferTagStyle, type TransferFields } from './transfer'
+import { activeTransferSet, applyPickupItemsEdit, buildDropDescription, dropLine, dropSyncNote, isInactiveStop, orderPickupsBeforeDrop, pickupEditMessage, postponedPickupNote, syncDropsInTripEdit, syncDropText, TRANSFER_EDIT_AT_SOURCE, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferShapeProblem, transferStopFields, transferStopName, transferTagStyle, type TransferFields } from './transfer'
 
 type S = TransferFields & { id: string; siteName: string }
 const P = (id: string, group = 'g1', siteName = id): S => ({ id, transferRole: 'pickup', transferId: group, siteName, transferDropName: 'ดอนเมือง' })
@@ -558,5 +558,92 @@ describe('dropSyncNote (ข้อความต่อท้าย toast หน�
     expect(dropSyncNote(changed, [realDrop])).toEqual({ text: '', warn: false })
     const fromCopy = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: 'T1' }] }
     expect(dropSyncNote(fromCopy, [realDrop]).text).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
+  })
+})
+
+describe('activeTransferSet (ปุ่มทำทั้งชุดในใบสรุป)', () => {
+  const stops = (...list: object[]) => list as never[]
+  it('จุดปกติ / index นอกช่วง → []', () => {
+    expect(activeTransferSet(stops(N('a'), P('p'), D('d')), 0)).toEqual([])
+    expect(activeTransferSet(stops(P('p'), D('d')), 5)).toEqual([])
+  })
+  it('รับ, รับ, งานอื่น, ส่ง ที่ยังไปกับเที่ยวนี้ → [0,1,3] เรียงตาม stops ไม่ว่ากดจุดไหน', () => {
+    const list = stops(P('p1'), P('p2'), N('x'), D('d'))
+    expect(activeTransferSet(list, 0)).toEqual([0, 1, 3])
+    expect(activeTransferSet(list, 3)).toEqual([0, 1, 3])
+  })
+  it('จุดคู่ที่เลื่อน/โยก/ปฏิเสธแล้วไม่นับ แต่ "ส่งแล้ว" (delivered) นับ', () => {
+    const list = stops({ ...P('p1'), outcome: 'postponed' }, { ...P('p2'), outcome: 'reassigned' }, { ...P('p3'), outcome: 'driver-refused' }, { ...P('p4'), outcome: 'delivered' }, D('d'))
+    expect(activeTransferSet(list, 4)).toEqual([3, 4])
+  })
+  it('จุดที่กดไม่ทำแล้ว → [] (กลับไปใช้ปุ่มทีละจุด)', () => {
+    expect(activeTransferSet(stops({ ...P('p'), outcome: 'reassigned' }, D('d')), 0)).toEqual([])
+  })
+  it('กลุ่มอื่นในทริปเดียวกันไม่นับ · มีแต่ตัวเอง → [i] (ไม่ถามทั้งชุด)', () => {
+    const list = stops(P('p1', 'g1'), P('p2', 'g2'), D('d1', 'g1'), D('d2', 'g2'))
+    expect(activeTransferSet(list, 0)).toEqual([0, 2])
+    expect(activeTransferSet(list, 3)).toEqual([1, 3])
+    expect(activeTransferSet(stops(P('p'), { ...D('d'), outcome: 'postponed' }), 0)).toEqual([0])
+  })
+  it('จุดที่กดเป็นสำเนาคันช่วย → [] · สำเนาคันช่วยไม่ถูกนับเข้าชุดของจุดจริง (ข้อขัดกัน 3)', () => {
+    // T2 = [B รับ, Y ส่ง, A' สำเนาคันช่วยของจุดรับ A จากรถ T1]
+    const list = stops(P('B'), D('Y'), { ...P('A'), assistForPlate: 'รถ T1' })
+    expect(activeTransferSet(list, 2)).toEqual([])
+    expect(activeTransferSet(list, 1)).toEqual([0, 1])
+  })
+  it('มีจุดในชุดที่มี postponedRequestId ค้าง → [] ทั้งชุด (ทางทีละจุดปลดใบวันใหม่ให้ถูก — ข้อขัดกัน 4)', () => {
+    const list = stops(P('p'), { ...D('d'), postponedRequestId: 'VR-0611-0011' })
+    expect(activeTransferSet(list, 0)).toEqual([])
+    expect(activeTransferSet(list, 1)).toEqual([])
+    // จุดที่เลื่อนไปแล้ว (ไม่อยู่ในชุด) มี postponedRequestId เป็นปกติ — ไม่กระทบชุด
+    expect(activeTransferSet(stops(P('p1'), { ...P('p2'), outcome: 'postponed', postponedRequestId: 'VR-0611-0011' }, D('d')), 0)).toEqual([0, 2])
+  })
+})
+
+describe('transferStopName', () => {
+  it('ชื่อ + บทบาท · ไม่มีชื่อใช้บทบาท · จุดปกติไม่มีวงเล็บ', () => {
+    expect(transferStopName(P('วังโค'))).toBe('วังโค (จุดรับ)')
+    expect(transferStopName(D('ดอนเมือง'))).toBe('ดอนเมือง (จุดส่ง)')
+    expect(transferStopName({ ...D('x'), siteName: ' ' })).toBe('จุดส่ง (จุดส่ง)')
+    expect(transferStopName(N('ไซต์ A'))).toBe('ไซต์ A')
+  })
+})
+
+describe('transferSetOutside (รายชื่อที่ทำทั้งชุดไม่แตะ)', () => {
+  it('จุดปกติ → [] · ชุดครบในคันเดียว ไม่มีอะไรนอกชุด → []', () => {
+    expect(transferSetOutside([N('a')], 0, [], [], 'รถ 1')).toEqual([])
+    expect(transferSetOutside([P('p'), N('x'), D('d')], 0, [], [], 'รถ 1')).toEqual([])
+  })
+  it('จุดของเที่ยวนี้ที่เลื่อน/โยก/ปฏิเสธแล้ว บอกเหตุผลแยกกัน · กลุ่มอื่นไม่ขึ้น', () => {
+    const lines = transferSetOutside([
+      P('ร้าน A'),
+      { ...P('ร้าน B'), outcome: 'postponed', postponedToDate: '2026-11-06' } as S,
+      { ...P('ร้าน C'), outcome: 'reassigned', reassignedToVehiclePlate: 'ขค 2' } as S,
+      { ...P('ร้าน E'), outcome: 'driver-refused' } as S,
+      P('กลุ่มอื่น', 'g2'),
+      D('ดอนเมือง'),
+    ], 0, [], [], 'รถ 1')
+    expect(lines).toEqual([
+      'ร้าน B (จุดรับ) — เลื่อนไปวันที่ 06/11/2026 แล้ว',
+      'ร้าน C (จุดรับ) — โยกไปรถ ขค 2 แล้ว',
+      'ร้าน E (จุดรับ) — คนขับปฏิเสธแล้ว',
+    ])
+  })
+  it('งานโยกเข้าของกลุ่มเดียวกัน → บอกคันต้นทาง + ประโยคเดียวกับแถวงานโยกเข้า (ข้อขัดกัน 15)', () => {
+    const lines = transferSetOutside([P('ร้าน A'), D('ดอนเมือง')], 1, [{ ...P('ดูโฮม'), fromVehiclePlate: 'กข 1', fromDriverName: 'สมชาย' }, { ...N('งานโยกปกติ'), fromVehiclePlate: 'กข 1' }], [], 'รถ 1')
+    expect(lines).toEqual([`ดูโฮม (จุดรับ) — โยกมาจาก กข 1 (สมชาย) · ${TRANSFER_EDIT_AT_SOURCE}`])
+  })
+  it('สำเนาคันช่วยในเที่ยวนี้ และสำเนาคันช่วยของเที่ยวนี้บนรถคันอื่น → บอกว่าไม่ถูกทำตาม (ข้อขัดกัน 3, 7)', () => {
+    const own = [P('ร้าน A'), D('ดอนเมือง'), { ...P('ร้าน Z'), assistForPlate: 'รถ 9' } as S]
+    const others = [
+      { vehiclePlate: 'รถช่วย', driverName: 'คนประจำ', actualDriverName: 'คนขับแทน', stops: [N('งานของคันช่วย'), { ...P('ร้าน A'), assistForPlate: 'รถ 1' } as S] },
+      { vehiclePlate: 'รถอื่น', driverName: 'คนอื่น', stops: [{ ...D('ดอนเมือง'), assistForPlate: 'รถ 5' } as S, { ...P('ร้าน A'), assistForPlate: 'รถ 1', outcome: 'reassigned' } as S] },
+    ]
+    expect(transferSetOutside(own, 0, [], others, 'รถ 1')).toEqual([
+      'ร้าน Z (จุดรับ) — สำเนาคันช่วยจากรถ รถ 9 ไม่ถูกทำตาม (จัดการเองที่จุดนั้น)',
+      'ร้าน A (จุดรับ) — สำเนาคันช่วยบนรถ รถช่วย (คนขับแทน) ไม่ถูกทำตาม — ไปแก้/ลบเองที่คันนั้น',
+    ])
+    // ไม่รู้ทะเบียนของเที่ยวนี้ = ไม่เดาสำเนาบนคันอื่น
+    expect(transferSetOutside(own, 0, [], others, '')).toHaveLength(1)
   })
 })

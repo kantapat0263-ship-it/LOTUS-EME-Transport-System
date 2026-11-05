@@ -45,7 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat, type IncomingJob } from "@/lib/calculations"
-import { postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
+import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferStopFields, transferStopName, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -71,6 +71,9 @@ import { DriverLinkQr } from "@/components/DriverLinkQr"
 /** ไซต์ที่เลือกเป็นจุดแทรกงานได้ = เปิดใช้งาน + พิกัดถูกต้อง (งานที่แทรกต้องขึ้นแผนที่และนับระยะได้) */
 // พิกัดต้องอยู่ในไทย (กติกาเดียวกับตัวคิด กม.) — (0,0)/นอกไทย เลือกได้แต่คิด กม.ไม่ได้ (เดิมเช็กแค่เป็นตัวเลข)
 const isPickableSite = (s: Site) => s.status === "Active" && inThailand(s.latitude, s.longitude)
+
+/** ปุ่มที่ถาม "ทำทั้งชุด" ของงานรับของไปส่งต่อ (เลื่อนทั้งชุดอยู่ในหน้าต่างเลื่อนเอง) */
+type TransferSetAction = 'reassigned' | 'driver-refused' | 'cancel'
 
 export default function DailySummaryPage() {
   const { toast } = useToast()
@@ -128,11 +131,16 @@ export default function DailySummaryPage() {
   const [insertForm, setInsertForm] = React.useState({ place: "", detail: "", requester: "", vehicleId: "", siteId: "" })
   const [siteListOpen, setSiteListOpen] = React.useState(false)
   // โยกงานให้คน/รถที่ยังไม่มีทริปวันนั้น — เลือกคนขับ+รถ แล้วระบบสร้างทริปให้
-  const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number; expectedStops: TripStop[] } | null>(null)
+  // set = มาจากหน้าต่างทำทั้งชุด: จุดใน idxs ได้ผล + คันใหม่พร้อมกันในการเขียนครั้งเดียว (ไม่มี = ทีละจุดแบบเดิม)
+  const [reassignNewDialog, setReassignNewDialog] = React.useState<{ tripId: string; stopIdx: number; expectedStops: TripStop[]; set?: { idxs: number[]; outcome: 'reassigned' | 'driver-refused'; reason: string } } | null>(null)
   const [reassignNewForm, setReassignNewForm] = React.useState({ driverId: "", vehicleId: "" })
   // "คันช่วย" — copy งานไปให้อีกคันไปช่วยขน (งานต้นทางยังอยู่คันเดิม ไม่ใช่โยก)
   const [assistDialog, setAssistDialog] = React.useState<{ tripId: string; stopIdx: number; expectedTrip: Trip } | null>(null)
   const [assistForm, setAssistForm] = React.useState({ targetTripId: "", driverId: "", vehicleId: "" })
+  // งานรับของไปส่งต่อ: โยก/คนขับปฏิเสธ/ยกเลิก ที่จุดที่ยังมีจุดคู่ไปกับเที่ยวนี้ → ถามก่อนว่าทั้งชุดหรือเฉพาะจุดนี้
+  // เก็บ stops ตอนเปิดหน้าต่าง — ทั้งชุดเขียนจากชุดนี้ และตรวจกับฐานก่อนเขียน (ไม่ตรง = ปิดหน้าต่าง ให้กดใหม่ที่จุดนั้น)
+  const [transferSetDialog, setTransferSetDialog] = React.useState<{ tripId: string; stopIdx: number; idxs: number[]; action: TransferSetAction; expectedStops: TripStop[] } | null>(null)
+  const [transferSetForm, setTransferSetForm] = React.useState({ targetTripId: "", reason: "" })
   const [postponeWarn, setPostponeWarn] = React.useState<string>("")
 
   // ---- วันลาคนขับ (ระบบใบลา): ป้ายในแผงแอดมิน + ด่านยืนยันก่อนมอบงาน (ปุ่มส่งออก LINE/คัดลอก/รูป ไม่มีด่าน) ----
@@ -149,7 +157,7 @@ export default function DailySummaryPage() {
   const pageVersionRef = React.useRef(0)
   React.useEffect(() => {
     pageVersionRef.current++
-  }, [trips, selectedDate, insertDialog, insertForm, reassignNewDialog, reassignNewForm, assistDialog, assistForm])
+  }, [trips, selectedDate, insertDialog, insertForm, reassignNewDialog, reassignNewForm, assistDialog, assistForm, transferSetDialog, transferSetForm])
   // วันที่ที่เลือกล่าสุด — handler ที่มี await ระหว่างทาง (บันทึกรูป) ใช้เช็กว่าวันยังตรงกับตอนกด
   const selectedDateRef = React.useRef(selectedDate)
   React.useEffect(() => { selectedDateRef.current = selectedDate }, [selectedDate])
@@ -372,7 +380,7 @@ export default function DailySummaryPage() {
   const lastReturnRefreshRef = React.useRef(0)
   silentRefreshAllowedRef.current = () =>
     !!selectedDate && !isLoading && !ordinaryBusy && !isSavingImage && !isSendingLine &&
-    !(selectedTripForShare || noteDialog || postponeDialog || insertDialog || reassignNewDialog || assistDialog) &&
+    !(selectedTripForShare || noteDialog || postponeDialog || insertDialog || reassignNewDialog || assistDialog || transferSetDialog) &&
     Object.keys(refusalDrafts).length === 0
   returnRefreshRef.current = () => {
     if (document.hidden || !silentRefreshAllowedRef.current()) return
@@ -1257,7 +1265,9 @@ export default function DailySummaryPage() {
   }
 
   // สร้างใบ rescheduled + ปลดใบเก่า + ติดป้าย postponed ใน transaction เดียว
-  const handlePostpone = async () => {
+  // whole = งานรับของไปส่งต่อ "เลื่อนทั้งชุด" — ใบวันใหม่แยกใบละจุด (หน้าตาเดียวกับเลื่อนทีละจุด N ครั้ง) ในธุรกรรมเดียว
+  // ปุ่มต้องเรียกชัด ๆ handlePostpone(false/true) — ห้ามส่ง handler ตรง ๆ (event ที่ส่งเข้ามาจะกลายเป็น whole)
+  const handlePostpone = async (whole = false) => {
     if (!postponeDialog || !db) return
     const { tripId, stopIdx } = postponeDialog
     // หยิบข้อมูลบนจอ แล้วตรวจ snapshot ตอนเปิด dialog เทียบกับฐานจริงใน transaction
@@ -1266,15 +1276,23 @@ export default function DailySummaryPage() {
     if (!allowOrdinaryEdit(trip)) return
     const stop = trip.stops?.[stopIdx]
     if (!stop) return
+    // ทั้งชุด = จุดของกลุ่มที่ยังไปกับเที่ยวนี้ตามข้อมูลตอนเปิดหน้าต่าง (ไม่มีสำเนาคันช่วย / ไม่มีจุดที่มีใบเลื่อนค้าง)
+    const idxs = whole ? activeTransferSet(postponeDialog.expectedStops, stopIdx) : [stopIdx]
+    if (idxs.length < 2 && whole) {
+      toast({ title: "เลื่อนทั้งชุดไม่ได้", description: "จุดในชุดเปลี่ยนไปแล้ว — กดรีเฟรช 🔄 แล้วลองใหม่", variant: "destructive" })
+      return
+    }
     const newDate = postponeDateStr
     if (!newDate || newDate <= format(new Date(), "yyyy-MM-dd")) {
       toast({ title: "เลือกวันไม่ถูกต้อง", description: "ต้องเลื่อนไปวันถัดจากวันนี้เป็นต้นไป", variant: "destructive" })
       return
     }
     // งานรับของไปส่งต่อ: ใบวันใหม่เป็นจุดปกติจุดเดียว (ไม่มีจุดส่งในใบ) — จุดรับต้องบอกในรายละเอียดว่ารับแล้วเอาไปส่งที่ไหน
-    const pickupNote = postponedPickupNote(transferPeersOf(trip), stopIdx)
-    const postponedJob = [stop.cargoDetails || "", pickupNote || ""].filter(Boolean).join("\n")
+    const peers = transferPeersOf(trip)
+    const jobOf = (i: number) => [trip.stops[i]?.cargoDetails || "", postponedPickupNote(peers, i) || ""].filter(Boolean).join("\n")
     setIsPostponing(true)
+    // งานในทริปเปลี่ยนหลังเปิดหน้าต่าง (เช็กในธุรกรรม) — ทั้งชุดปิดหน้าต่างแล้วให้กดใหม่ที่จุดนั้น
+    let stale = false
     try {
       // ตรวจเบื้องต้นก่อน และตรวจสถานะใบเก่าซ้ำใน transaction เพื่อกันการจัดรถระหว่างรอ
       const existingReqId = (stop as any).postponedRequestId
@@ -1292,90 +1310,117 @@ export default function DailySummaryPage() {
       const startSnap = await getDocs(query(collection(db, "vehicleRequests"), where("requestDate", "==", newDate)))
       const startSeq = startSnap.size + 1
       const tripRef = doc(db, "trips", trip.id)
+      const prefix = requestIdPrefix(newDate)
 
-      const { requestId, nextStops } = await runTransaction(db, async (t) => {
+      // ใบ rescheduled ของจุดเดียว — ทีละจุดและทั้งชุดใช้รูปเดียวกันทุกฟิลด์
+      const rescheduledRequest = (stop: TripStop, id: string, postponedJob: string) => ({
+        id,
+        requestId: id,
+        requestDate: newDate,
+        requestTime: stop.requestTime || "08:30",
+        requestedBy: stop.requestedBy || "",
+        requestedByPhone: stop.requestedByPhone || "",
+        requestedByEmail: "",
+        // เจ้าของใบ = ผู้ขอเดิม เพื่อให้ยังโผล่ในแท็บ "คำขอของฉัน" ของเขา
+        // (ทริปเก่าก่อนมีฟิลด์นี้จะไม่มีค่า → ตกมาเป็นคนจัดรถเหมือนเดิม)
+        userId: (stop as any).requestedByUserId || user?.uid || null,
+        userEmail: user?.email || "",
+        /** คนที่กดเลื่อนจริง — แยกจากเจ้าของใบ เพื่อให้ตรวจย้อนหลังได้ว่าใครเป็นคนสร้าง */
+        createdByUserId: user?.uid || null,
+        createdByEmail: user?.email || "",
+        destinations: [{
+          type: stop.siteId ? "site" : "other",
+          siteId: stop.siteId || null,
+          siteName: stop.siteName,
+          customName: stop.siteId ? null : stop.siteName,
+          lat: stop.lat ?? 0,
+          lng: stop.lng ?? 0,
+          jobDescription: postponedJob,
+          requestTime: stop.requestTime || "08:30",
+        }],
+        note: stop.note || "",
+        status: "rescheduled", // ← ต้องเป็น rescheduled ถึงจะโผล่ในกองจัดเที่ยววิ่ง (pending ถูกตัดออก)
+        rescheduledFromDate: trip.tripDate,
+        rescheduledFromTripId: trip.tripId,
+        createdAt: serverTimestamp(),
+      })
+
+      const { requestIds, nextStops } = await runTransaction(db, async (t) => {
+        stale = false
         // ---- อ่านให้ครบก่อน (ข้อบังคับของ transaction: ห้ามอ่านหลังเขียน) ----
         const tripSnap = await t.get(tripRef)
         if (!tripSnap.exists()) throw new Error("ไม่พบทริปนี้แล้ว")
         if (isManagedTrip(tripSnap.data() as Trip)) throw new Error('คิวต่อเนื่องต้องปรับด้วยแผงคิวต่อเนื่อง')
-        assertTripStopsUnchanged(tripSnap.data().stops, postponeDialog.expectedStops)
+        try { assertTripStopsUnchanged(tripSnap.data().stops, postponeDialog.expectedStops) } catch (e) { stale = true; throw e }
         const oldReqSnap = existingReqId ? await t.get(doc(db, "vehicleRequests", existingReqId)) : null
         if (oldReqSnap?.exists() && ['approved', 'partial'].includes(oldReqSnap.data().status)) throw new Error('ใบที่เลื่อนไว้ถูกจัดรถแล้ว ต้องนำงานออกจากทริปวันใหม่ก่อนเลื่อนซ้ำ')
-        const id = await findFreeRequestId(
-          { exists: async (candidate: string) => (await t.get(doc(db, "vehicleRequests", candidate))).exists() },
-          requestIdPrefix(newDate),
-          startSeq
-        )
+        // หาเลขใบทีละจุด: taken = เลขที่ได้ไปแล้วในรอบนี้ (ประกาศใน callback — transaction ลองใหม่ = เริ่มนับใหม่)
+        // และจุดถัดไปเริ่มหาหลังลำดับที่เพิ่งได้ — สองจุดไม่มีทางได้รหัสเดียวกัน (ไม่งั้น t.set ใบหลังทับใบแรกเงียบ ๆ งานหายจากกองจัด)
+        const taken = new Set<string>()
+        const ids: string[] = []
+        let seq = startSeq
+        for (let k = 0; k < idxs.length; k++) {
+          const id = await findFreeRequestId(
+            { exists: async (candidate: string) => taken.has(candidate) || (await t.get(doc(db, "vehicleRequests", candidate))).exists() },
+            prefix,
+            seq
+          )
+          taken.add(id)
+          ids.push(id)
+          const used = Number(id.slice(prefix.length + 1, -1))
+          seq = Number.isSafeInteger(used) ? used + 1 : seq + 1
+        }
 
         // ---- จากตรงนี้เป็นการเขียนทั้งหมด ----
-        t.set(doc(db, "vehicleRequests", id), {
-          id,
-          requestId: id,
-          requestDate: newDate,
-          requestTime: stop.requestTime || "08:30",
-          requestedBy: stop.requestedBy || "",
-          requestedByPhone: stop.requestedByPhone || "",
-          requestedByEmail: "",
-          // เจ้าของใบ = ผู้ขอเดิม เพื่อให้ยังโผล่ในแท็บ "คำขอของฉัน" ของเขา
-          // (ทริปเก่าก่อนมีฟิลด์นี้จะไม่มีค่า → ตกมาเป็นคนจัดรถเหมือนเดิม)
-          userId: (stop as any).requestedByUserId || user?.uid || null,
-          userEmail: user?.email || "",
-          /** คนที่กดเลื่อนจริง — แยกจากเจ้าของใบ เพื่อให้ตรวจย้อนหลังได้ว่าใครเป็นคนสร้าง */
-          createdByUserId: user?.uid || null,
-          createdByEmail: user?.email || "",
-          destinations: [{
-            type: stop.siteId ? "site" : "other",
-            siteId: stop.siteId || null,
-            siteName: stop.siteName,
-            customName: stop.siteId ? null : stop.siteName,
-            lat: stop.lat ?? 0,
-            lng: stop.lng ?? 0,
-            jobDescription: postponedJob,
-            requestTime: stop.requestTime || "08:30",
-          }],
-          note: stop.note || "",
-          status: "rescheduled", // ← ต้องเป็น rescheduled ถึงจะโผล่ในกองจัดเที่ยววิ่ง (pending ถูกตัดออก)
-          rescheduledFromDate: trip.tripDate,
-          rescheduledFromTripId: trip.tripId,
-          createdAt: serverTimestamp(),
-        })
+        idxs.forEach((i, k) => t.set(doc(db, "vehicleRequests", ids[k]), rescheduledRequest(trip.stops[i], ids[k], jobOf(i))))
 
         // ปลดใบเก่า — ติดป้ายแทนการลบ เพื่อให้ยังตามรอยย้อนหลังได้ (ข้ามถ้าใบหายไปแล้ว)
         if (existingReqId && oldReqSnap?.exists()) {
           t.update(doc(db, "vehicleRequests", existingReqId), {
             status: "superseded",
-            supersededBy: id,
+            supersededBy: ids[0],
             supersededAt: serverTimestamp(),
             supersededByUser: recordedBy || user?.email || "",
           })
         }
 
-        // ติดป้าย postponed ที่จุดเดิม — คิดจาก stops สดในธุรกรรม กันทับงานที่คนอื่นเพิ่งแก้
+        // ติดป้าย postponed ที่จุดเดิม — คิดจาก stops สดในธุรกรรม กันทับงานที่คนอื่นเพิ่งแก้ · ทั้งชุด = แต่ละจุดอ้างใบของตัวเอง
         const freshStops = ((tripSnap.data() as any).stops || []) as TripStop[]
+        const outcomeAt = new Date().toISOString()
         const nextStops = cleanStops(
-          freshStops.map((st, i) => (i === stopIdx
+          freshStops.map((st, i) => (idxs.includes(i)
             ? {
                 ...stripOutcome(st),
                 outcome: 'postponed' as StopOutcome,
                 outcomeRecordedBy: recordedBy,
-                outcomeAt: new Date().toISOString(),
+                outcomeAt,
                 postponedToDate: newDate,
-                postponedRequestId: id,
+                postponedRequestId: ids[idxs.indexOf(i)],
               }
             : st))
         )
         t.update(tripRef, { stops: nextStops, updatedAt: serverTimestamp() })
-        return { requestId: id, nextStops }
+        return { requestIds: ids, nextStops }
       })
 
       // อัปเดตหน้าจอหลังธุรกรรมสำเร็จเท่านั้น — ข้างในถูกรันซ้ำได้ตอน retry
       setTrips(prev => prev.map(tr => (tr.id === trip.id ? { ...tr, stops: nextStops } : tr)))
       setRefusalDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${trip.id}:`))))
 
-      toast({ title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย (${requestId})` })
+      toast(whole
+        ? {
+            title: `เลื่อนทั้งชุด ${idxs.length} จุดแล้ว ✅`,
+            description: `ย้ายไป ${formatThaiDate(newDate)} — วันนั้นได้ใบขอธรรมดา ${idxs.length} ใบ ใบละจุด (${requestIds.join(", ")}) ไม่มีป้ายรับ-ส่ง: ตอนจัดเที่ยววิ่ง ให้ใส่ทุกใบไว้คันเดียวกัน และให้จุดรับมาก่อนจุดส่ง`,
+          }
+        : { title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย (${requestIds[0]})` })
       setPostponeDialog(null)
     } catch (e) {
       console.error(e)
+      if (whole && stale) {
+        setPostponeDialog(null)
+        toast({ title: "ยังไม่ได้เลื่อนทั้งชุด", description: TRANSFER_SET_CONFLICT, variant: "destructive" })
+        return
+      }
       toast({
         title: "เลื่อนงานไม่สำเร็จ",
         description: e instanceof RequestIdExhaustedError
@@ -1386,6 +1431,28 @@ export default function DailySummaryPage() {
     } finally {
       setIsPostponing(false)
     }
+  }
+
+  // ทำทั้งชุด: จุดใน idxs ได้ผลเดียวกัน — ฟิลด์ชุดเดียวกับกดทีละจุด (ผล → คันที่รับ → เหตุผลปฏิเสธ) · จุดอื่นคงเดิม · ไม่สลับลำดับ (หมายเหตุ stop_<i> อยู่ที่เดิม)
+  const transferSetStops = (
+    stops: TripStop[], idxs: number[], outcome: 'reassigned' | 'driver-refused',
+    target: Pick<TripStop, 'reassignedToTripId' | 'reassignedToVehiclePlate' | 'reassignedToDriverName'> | null, reason: string,
+  ): TripStop[] => {
+    const outcomeAt = new Date().toISOString()
+    const why = outcome === 'driver-refused' ? reason.trim() : ""
+    return stops.map((s, i) => (idxs.includes(i)
+      ? { ...stripOutcome(s), outcome, outcomeRecordedBy: recordedBy, outcomeAt, ...(target || {}), ...(why ? { outcomeReason: why } : {}) }
+      : s))
+  }
+  // ทำทั้งชุด: งานบนฐานยังตรงกับตอนเปิดหน้าต่างไหม (อัปเดตจอให้ด้วย) — ไม่ตรง/ทริปหาย = หน้าต่างเก่าแล้ว (คนเรียกปิดหน้าต่าง) · เช็กก่อนเรียก Google เสมอ
+  const transferSetFresh = async (trip: Trip, expectedStops: TripStop[], action: string) => {
+    const live = await readLiveTrip(trip, action, false)
+    if (!live) return false
+    try { assertTripStopsUnchanged(live.stops, expectedStops) } catch {
+      toast({ title: `ยังไม่ได้${action}`, description: TRANSFER_SET_CONFLICT, variant: "destructive" })
+      return false
+    }
+    return true
   }
 
   const setReassignTarget = async (trip: Trip, stopIdx: number, targetTripId: string) => {
@@ -1419,7 +1486,13 @@ export default function DailySummaryPage() {
     if (!driver || !veh) { toast({ title: "เลือกคนขับและรถก่อน", variant: "destructive" }); return }
     if (veh.licensePlate === srcTrip.vehiclePlate) { toast({ title: "เลือกรถคนละคันกับต้นทาง", variant: "destructive" }); return }
     // ด่านวันลา: คนที่เลือก ตามวันของทริปใหม่ (= วันทริปต้นทาง) · ยกเลิก = dialog ค้างไว้ ไม่สร้างทริป
-    if (!(await passLeaveGate(`reassign-new:${srcTrip.id}:${reassignNewDialog.stopIdx}:${driver.id}:${veh.id}`, [{ driverId: driver.id, date: srcTrip.tripDate }]))) return
+    const set = reassignNewDialog.set
+    if (!(await passLeaveGate(`reassign-new:${srcTrip.id}:${set ? `set:${set.idxs.join(",")}` : reassignNewDialog.stopIdx}:${driver.id}:${veh.id}`, [{ driverId: driver.id, date: srcTrip.tripDate }]))) return
+    // ทั้งชุด (มาจากหน้าต่างทำทั้งชุด): งานต้องยังตรงกับตอนเปิดหน้าต่าง — ไม่ตรง = ปิดหน้าต่าง ให้กดใหม่ที่จุดนั้น
+    if (set && !(await transferSetFresh(srcTrip, reassignNewDialog.expectedStops, set.outcome === 'driver-refused' ? "บันทึกปฏิเสธทั้งชุด" : "โยกงานทั้งชุด"))) {
+      setReassignNewDialog(null)
+      return
+    }
 
     // สร้างทริปใหม่ (วันเดียวกับทริปต้นทาง) ว่าง ๆ ไว้รับงานโยก
     const dstr = srcTrip.tripDate
@@ -1433,21 +1506,98 @@ export default function DailySummaryPage() {
       departureSiteId: "", stops: [], status: "Planned", adhocCreated: true,
     }
     // โยกงานต้นทางไปทริปใหม่ (เก็บ outcome เดิม เช่น reassigned/driver-refused ไว้)
-    const newStops = buildStops(srcTrip, reassignNewDialog.stopIdx, (s) => ({
-      ...s,
-      reassignedToTripId: tripId,
-      reassignedToVehiclePlate: veh.licensePlate,
-      reassignedToDriverName: driver.name,
-    }))
+    // ทั้งชุด: จุดยังไม่มีผล → ใส่ผล + คันใหม่ให้ทุกจุดในชุด คิดจาก stops ตอนเปิดหน้าต่าง (เขียนครั้งเดียว ไม่มีบันทึกครึ่งชุด)
+    const newStops = set
+      ? transferSetStops(reassignNewDialog.expectedStops, set.idxs, set.outcome, { reassignedToTripId: tripId, reassignedToVehiclePlate: veh.licensePlate, reassignedToDriverName: driver.name }, set.reason)
+      : buildStops(srcTrip, reassignNewDialog.stopIdx, (s) => ({
+          ...s,
+          reassignedToTripId: tripId,
+          reassignedToVehiclePlate: veh.licensePlate,
+          reassignedToDriverName: driver.name,
+        }))
     if (!await applyStops(srcTrip, newStops, true, {
       expectedStops: reassignNewDialog.expectedStops,
-      sourceIndexes: srcTrip.stops.map((_, index) => index),
+      sourceIndexes: (set ? reassignNewDialog.expectedStops : srcTrip.stops).map((_, index) => index),
       createTarget: { id: tripId, data: { ...newTrip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() } },
     })) return
     setTrips(prev => [...prev, newTrip])
-    toast({ title: "โยกงานให้คนใหม่แล้ว ✅", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
+    toast(set
+      ? {
+          title: set.outcome === 'driver-refused' ? "บันทึกคนขับปฏิเสธทั้งชุดแล้ว ✅" : "โยกงานทั้งชุดให้คนใหม่แล้ว ✅",
+          description: `${set.idxs.length} จุด (${set.idxs.map(i => transferStopName(reassignNewDialog.expectedStops[i])).join(", ")}) → ${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ`,
+        }
+      : { title: "โยกงานให้คนใหม่แล้ว ✅", description: `${driver.name} (${veh.licensePlate}) — สร้างทริปให้อัตโนมัติ` })
     setReassignNewDialog(null)
     setReassignNewForm({ driverId: "", vehicleId: "" })
+  }
+
+  // งานรับของไปส่งต่อ: เปิดหน้าต่างถาม "ทั้งชุด / เฉพาะจุดนี้" (idxs = activeTransferSet ของจุดที่กด, ≥ 2 จุด)
+  const openTransferSet = (trip: Trip, stopIdx: number, idxs: number[], action: TransferSetAction) => {
+    if (!allowOrdinaryEdit(trip)) return
+    setTransferSetForm({ targetTripId: "", reason: "" })
+    setTransferSetDialog({ tripId: trip.id, stopIdx, idxs, action, expectedStops: trip.stops })
+  }
+
+  // ทำทั้งชุด (โยก/คนขับปฏิเสธ/ยกเลิก): เขียนทริปเดียวในครั้งเดียวจาก stops ตอนเปิดหน้าต่าง — ผ่าน = ทุกจุดในชุด · ไม่ผ่าน = ไม่มีจุดไหนเปลี่ยน
+  // ทุกทางที่มีคันรับ (โยก/ปฏิเสธแล้วให้คันอื่นทำแทน) ผ่านด่านวันลา + allowOrdinaryEdit(คันนั้น) · คน/รถใหม่ ใช้หน้าต่างโยกงานให้คนใหม่ตัวเดิม
+  const applyTransferSet = async () => {
+    if (!transferSetDialog) return
+    const { tripId, stopIdx, idxs, action, expectedStops } = transferSetDialog
+    const trip = trips.find(t => t.id === tripId)
+    if (!trip) { setTransferSetDialog(null); return }
+    if (!allowOrdinaryEdit(trip)) return
+    const names = idxs.map(i => transferStopName(expectedStops[i])).join(", ")
+
+    if (action === 'cancel') {
+      const verb = "ยกเลิกงานทั้งชุด"
+      if (!await transferSetFresh(trip, expectedStops, verb)) { setTransferSetDialog(null); return }
+      const remaining = expectedStops.filter((_, i) => !idxs.includes(i))
+      // ไม่เหลืองานและไม่ถืองานโยกเข้า = ลบทริปทิ้งทั้งใบ (แบบเดียวกับยกเลิกงานสุดท้ายทีละจุด) — หน้าต่างนี้คือการยืนยันแล้ว
+      if (remaining.length === 0 && incomingStopsForTrip(trips as any, trip.id).length === 0) {
+        try { await deleteTripWithQueueGuard(db, trip.id, expectedStops, undefined, { cancelJob: true }) } catch (e: any) {
+          toast({ title: 'ลบไม่สำเร็จ', description: e.message, variant: 'destructive' }); return
+        }
+        setTrips(prev => prev.filter(t => t.id !== trip.id))
+        setRefusalDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${trip.id}:`))))
+        setStatsRefreshKey(k => k + 1)
+        setTransferSetDialog(null)
+        toast({ title: `${verb}แล้ว`, description: `${idxs.length} จุด (${names}) — ${trip.vehiclePlate} (${trip.driverName}) ไม่เหลืองาน ลบทริปทิ้ง` })
+        return
+      }
+      // กม. คิดใหม่ครั้งเดียวจากจุดที่เหลือ คิดไม่ได้ = ยังไม่ยกเลิกสักจุด · ส่ง trip เป็นชุดตอนเปิดหน้าต่าง (ด่านอ่านทริปเทียบกับชุดนี้ก่อนเรียก Google)
+      if (!await applyStopsWithDistance({ ...trip, stops: expectedStops }, remaining, verb, {
+        expectedStops,
+        sourceIndexes: expectedStops.map((_, index) => index).filter(index => !idxs.includes(index)),
+      })) return
+      setTransferSetDialog(null)
+      toast({ title: `${verb}แล้ว`, description: `เอา ${idxs.length} จุด (${names}) ออกจากใบสรุปเรียบร้อย` })
+      return
+    }
+
+    const verb = action === 'driver-refused' ? "บันทึกปฏิเสธทั้งชุด" : "โยกงานทั้งชุด"
+    const targetId = transferSetForm.targetTripId
+    if (targetId === "__new__") {
+      // คน/รถที่ยังไม่มีทริป → หน้าต่างโยกงานให้คนใหม่ตัวเดิม (ด่านวันลา/ห้ามรถคันเดิม/สร้างทริปพร้อมแก้ต้นทางในธุรกรรมเดียว)
+      setReassignNewForm({ driverId: "", vehicleId: "" })
+      setReassignNewDialog({ tripId, stopIdx, expectedStops, set: { idxs, outcome: action, reason: transferSetForm.reason } })
+      setTransferSetDialog(null)
+      return
+    }
+    const target = targetId ? trips.find(t => t.id === targetId) : undefined
+    if (targetId && !target) { toast({ title: "ไม่พบคันที่เลือกแล้ว — กดรีเฟรช 🔄", variant: "destructive" }); return }
+    if (action === 'reassigned' && !target) { toast({ title: "เลือกคันที่รับงานก่อน", variant: "destructive" }); return }
+    if (!allowOrdinaryEdit(target)) return
+    // ด่านวันลา: คนขับจริงของคันที่รับ ตามวันของทริปนั้น (ปฏิเสธแบบไม่มีคันรับ = ไม่ถาม) · ยกเลิก = หน้าต่างค้างไว้
+    if (target && !(await passLeaveGate(`set:${tripId}:${idxs.join(",")}:${action}:${target.id}`, [{ driverId: target.actualDriverId || target.driverId, date: target.tripDate }]))) return
+    if (!await transferSetFresh(trip, expectedStops, verb)) { setTransferSetDialog(null); return }
+    const newStops = transferSetStops(expectedStops, idxs, action, target
+      ? { reassignedToTripId: target.id, reassignedToVehiclePlate: target.vehiclePlate, reassignedToDriverName: tripDriverLabel(target) } // คนขับจริง (ขับแทน)
+      : null, transferSetForm.reason)
+    if (!await applyStops(trip, newStops, true, { expectedStops, sourceIndexes: expectedStops.map((_, index) => index) })) return
+    setTransferSetDialog(null)
+    toast(action === 'driver-refused'
+      ? { title: "บันทึกคนขับปฏิเสธทั้งชุดแล้ว", description: `${idxs.length} จุด (${names})${target ? ` — ${tripDriverLabel(target)} (${target.vehiclePlate}) รับไปทำแทน` : ""}` }
+      : { title: "โยกงานทั้งชุดแล้ว ✅", description: `${idxs.length} จุด (${names}) → ${tripDriverLabel(target!)} (${target!.vehiclePlate}) — กม. ลงคันนั้น` })
   }
 
   // "คันช่วย": copy งานทั้งก้อน (ไซต์/พิกัด/รายละเอียด/ผู้ขอ) ไปต่อท้ายทริปคันช่วย
@@ -1623,11 +1773,16 @@ export default function DailySummaryPage() {
     const current: StopOutcome = stop.outcome || 'delivered'
     // เลขข้อ/ป้าย = ตำแหน่งบนจอ (ตรงกับใบพิมพ์) · ปุ่มด้านล่างใช้ sIdx ที่บันทึกเหมือนเดิม
     const view = displayOf(trip)
+    // งานรับของไปส่งต่อ: จุดคู่ยังไปกับเที่ยวนี้ (≥ 2 จุด) = ปุ่มโยก/คนขับปฏิเสธ/ยกเลิก ถามก่อนว่าทั้งชุดหรือเฉพาะจุดนี้ · อื่น ๆ = ทีละจุดเหมือนเดิม
+    // (ตามแผน/เลื่อน ไม่ถาม — หน้าต่างเลื่อนมีปุ่มเลื่อนทั้งชุดเอง) · คิดครั้งเดียวต่อแถว
+    const setIdxs = activeTransferSet(trip.stops || [], sIdx)
     const inputClass = "w-full h-9 rounded-md bg-background border border-border/50 text-sm px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
     const btn = (key: StopOutcome, label: string, Icon: any, activeClass: string) => (
       <button
         type="button"
-        onClick={() => void runOrdinaryAction(() => chooseOutcome(trip, sIdx, key))}
+        onClick={() => (key === 'reassigned' || key === 'driver-refused') && setIdxs.length > 1
+          ? openTransferSet(trip, sIdx, setIdxs, key)
+          : void runOrdinaryAction(() => chooseOutcome(trip, sIdx, key))}
         disabled={ordinaryBusy}
         className={cn(
           "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
@@ -1675,7 +1830,7 @@ export default function DailySummaryPage() {
           </button>
           <button
             type="button"
-            onClick={() => void runOrdinaryAction(() => cancelStop(trip, sIdx))}
+            onClick={() => setIdxs.length > 1 ? openTransferSet(trip, sIdx, setIdxs, 'cancel') : void runOrdinaryAction(() => cancelStop(trip, sIdx))}
             disabled={ordinaryBusy}
             title={(stop as any).adhoc ? "ลบงานแทรกนี้" : "ยกเลิกงานนี้ (ลูกค้าแจ้งยกเลิก — งานหายจากใบสรุป)"}
             className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-500/40 px-1.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/15"
@@ -1753,6 +1908,8 @@ export default function DailySummaryPage() {
   // วันของทริปต้นทางใน dialog โยกงานให้คนใหม่ / คันช่วย (ทริปใหม่ใช้วันเดียวกัน) → ป้ายวันลาใน select คนขับ
   const reassignNewSrcDate = reassignNewDialog ? trips.find(t => t.id === reassignNewDialog.tripId)?.tripDate : undefined
   const assistSrcDate = assistDialog?.expectedTrip.tripDate
+  // หน้าต่างเลื่อน: จุดของกลุ่มรับ-ส่งที่เลื่อนพร้อมกันได้ (ตามข้อมูลตอนเปิดหน้าต่าง) · < 2 = เลื่อนทีละจุดแบบเดิม ไม่มีปุ่มทั้งชุด
+  const postponeSet = postponeDialog ? activeTransferSet(postponeDialog.expectedStops, postponeDialog.stopIdx) : []
 
   const shareUrl = selectedTripForShare ? driverLinks.urls[selectedTripForShare.id] || '' : '';
 
@@ -2461,7 +2618,8 @@ export default function DailySummaryPage() {
             </DialogTitle>
             <DialogDescription>
               {postponeDialog
-                ? `จุด: ${trips.find(t => t.id === postponeDialog.tripId)?.stops?.[postponeDialog.stopIdx]?.siteName || ''} — ระบบจะดึงจุดนี้ออกจากใบสรุป แล้วสร้างเป็นงานใหม่รอจัดในวันที่เลือก`
+                ? `จุด: ${trips.find(t => t.id === postponeDialog.tripId)?.stops?.[postponeDialog.stopIdx]?.siteName || ''} — ระบบจะดึงจุดนี้ออกจากใบสรุป แล้วสร้างเป็นงานใหม่รอจัดในวันที่เลือก` +
+                  (postponeSet.length > 1 ? ` · งานรับของไปส่งต่อ: เลือก "เลื่อนทั้งชุด" เพื่อเลื่อนพร้อมกัน ${postponeSet.length} จุด (รายชื่อด้านล่าง)` : '')
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -2481,30 +2639,55 @@ export default function DailySummaryPage() {
               </p>
             )}
             {(() => {
-              // งานรับของไปส่งต่อ: เลื่อนทีละจุด — บอกว่าจุดคู่ไม่เลื่อนตาม + ใบวันใหม่จะเขียนปลายทางไว้ให้
+              // งานรับของไปส่งต่อ: จุดคู่ยังไปกับเที่ยวนี้ = เลือกได้ว่าเลื่อนเฉพาะจุดนี้หรือทั้งชุด (รายชื่อเรียกด้วยชื่อ ไม่ใช้เลขข้อ)
+              // ไม่มีปุ่มทั้งชุด (จุดคู่เป็นงานโยกเข้า/สำเนาคันช่วย/มีใบเลื่อนค้าง) = เลื่อนทีละจุด บอกว่าจุดคู่ไม่เลื่อนตาม + ใบวันใหม่จะเขียนปลายทางไว้ให้
               const pTrip = postponeDialog ? trips.find(t => t.id === postponeDialog.tripId) : null
               if (!pTrip || !postponeDialog) return null
               const reminder = transferReminderFor(pTrip, postponeDialog.stopIdx)
               const note = postponedPickupNote(transferPeersOf(pTrip), postponeDialog.stopIdx)
               if (!reminder && !note) return null
+              const expected = postponeDialog.expectedStops
+              const outside = postponeSet.length > 1 ? transferSetOutside(expected, postponeDialog.stopIdx, incomingOf(pTrip.id), trips.filter(t => t.id !== pTrip.id), pTrip.vehiclePlate || "") : []
+              const setNote = postponeSet.map(i => postponedPickupNote(transferPeersOf(pTrip), i)).find(Boolean)
               return (
                 <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
-                  {reminder && <p>⚠️ งานรับของไปส่งต่อ: {reminder} — จุดนั้นไม่เลื่อนตาม ถ้าต้องเลื่อนทั้งชุด ให้กดเลื่อนจุดนั้นด้วย (หรือเขียน ✏️ หมายเหตุบอกคนขับ)</p>}
-                  {note && <p>📦 ใบของวันใหม่จะเขียนต่อท้ายรายละเอียดว่า &quot;{note}&quot;</p>}
+                  {postponeSet.length > 1 ? (
+                    <>
+                      <p>⚠️ งานรับของไปส่งต่อ: {reminder} — กด &quot;เลื่อนทั้งชุด&quot; = เลื่อนพร้อมกัน {postponeSet.length} จุด · กด &quot;เลื่อนเฉพาะจุดนี้&quot; = จุดคู่ไม่เลื่อนตาม (เขียน ✏️ หมายเหตุบอกคนขับ)</p>
+                      {postponeSet.map(i => <p key={i}>• {transferStopName(expected[i])}</p>)}
+                      {outside.length > 0 && (
+                        <>
+                          <p className="font-semibold pt-1">ไม่รวมในเลื่อนทั้งชุด (ระบบไม่แตะ):</p>
+                          {outside.map((line, k) => <p key={k}>• {line}</p>)}
+                        </>
+                      )}
+                      <p>📦 เลื่อนทั้งชุด: วันใหม่ได้ใบขอธรรมดา {postponeSet.length} ใบ ใบละจุด (ไม่มีป้ายรับ-ส่ง) — ตอนจัดเที่ยววิ่งให้ใส่ทุกใบไว้คันเดียวกัน และให้จุดรับมาก่อนจุดส่ง{setNote ? <> · ใบของจุดรับเขียนต่อท้ายว่า &quot;{setNote}&quot;</> : null}</p>
+                    </>
+                  ) : (
+                    <>
+                      {reminder && <p>⚠️ งานรับของไปส่งต่อ: {reminder} — จุดนั้นไม่เลื่อนตาม ถ้าต้องเลื่อนทั้งชุด ให้กดเลื่อนจุดนั้นด้วย (หรือเขียน ✏️ หมายเหตุบอกคนขับ)</p>}
+                      {note && <p>📦 ใบของวันใหม่จะเขียนต่อท้ายรายละเอียดว่า &quot;{note}&quot;</p>}
+                    </>
+                  )}
                 </div>
               )
             })()}
           </div>
 
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setPostponeDialog(null)} disabled={isPostponing}>ยกเลิก</Button>
+            <Button variant="ghost" onClick={() => setPostponeDialog(null)} disabled={isPostponing}>{postponeSet.length > 1 ? "ปิด" : "ยกเลิก"}</Button>
+            {postponeSet.length > 1 && (
+              <Button variant="outline" onClick={() => void runOrdinaryAction(() => handlePostpone(false))} disabled={isPostponing || ordinaryBusy || !postponeDateStr}>
+                เลื่อนเฉพาะจุดนี้
+              </Button>
+            )}
             <Button
               className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
-              onClick={() => void runOrdinaryAction(handlePostpone)}
+              onClick={() => void runOrdinaryAction(() => handlePostpone(postponeSet.length > 1))}
               disabled={isPostponing || ordinaryBusy || !postponeDateStr}
             >
               {isPostponing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CalendarClock className="mr-2 h-4 w-4" />}
-              {isPostponing ? "กำลังเลื่อน..." : "ยืนยันเลื่อน"}
+              {isPostponing ? "กำลังเลื่อน..." : postponeSet.length > 1 ? `เลื่อนทั้งชุด (${postponeSet.length} จุด)` : "ยืนยันเลื่อน"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2635,6 +2818,12 @@ export default function DailySummaryPage() {
             </DialogTitle>
             <DialogDescription>
               สำหรับคนที่ยังไม่มีทริปวันนั้น — ระบบจะสร้างทริปให้ แล้วงานจะไปโผล่ในใบสรุปเป็นคันของเขาเอง
+              {reassignNewDialog?.set && (
+                <span className="mt-1 block font-semibold text-orange-300">
+                  📦 ทั้งชุด {reassignNewDialog.set.idxs.length} จุด: {reassignNewDialog.set.idxs.map(i => transferStopName(reassignNewDialog.expectedStops[i])).join(", ")}
+                  {reassignNewDialog.set.outcome === 'driver-refused' ? ' — บันทึก "คนขับปฏิเสธ" แล้วให้คนที่เลือกรับไปทำแทน' : ' — โยกไปให้คนที่เลือก'}
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -2670,9 +2859,113 @@ export default function DailySummaryPage() {
               onClick={() => void runOrdinaryAction(createReassignTarget)}
               disabled={ordinaryBusy || !reassignNewForm.driverId || !reassignNewForm.vehicleId}
             >
-              <ArrowRightLeft className="mr-2 h-4 w-4" /> โยกงาน + สร้างทริป
+              <ArrowRightLeft className="mr-2 h-4 w-4" /> {reassignNewDialog?.set ? `${reassignNewDialog.set.outcome === 'driver-refused' ? "ปฏิเสธ" : "โยก"}ทั้งชุด + สร้างทริป` : "โยกงาน + สร้างทริป"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* งานรับของไปส่งต่อ: โยก/คนขับปฏิเสธ/ยกเลิก "ทั้งชุด" หรือ "เฉพาะจุดนี้" — ขึ้นเมื่อจุดที่กดยังมีจุดคู่ไปกับเที่ยวนี้ (ทั้งชุด = เขียนทริปเดียวครั้งเดียว ไม่มีบันทึกครึ่งชุด) */}
+      <Dialog open={!!transferSetDialog} onOpenChange={(open) => { if (!open && !ordinaryBusy) setTransferSetDialog(null) }}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              📦 งานรับของไปส่งต่อ — ทำทั้งชุดไหม?
+            </DialogTitle>
+            <DialogDescription>
+              {transferSetDialog ? `จุดที่กด: ${transferStopName(transferSetDialog.expectedStops[transferSetDialog.stopIdx])} — จุดคู่ของงานเดียวกันยังไปกับเที่ยวนี้` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {(() => {
+            // รายชื่อเรียกด้วยชื่อ (เลขข้อบนจอ ≠ index ที่บันทึก) · "ไม่รวม" = งานโยกเข้า/สำเนาคันช่วย/จุดที่ไม่ทำแล้ว ที่ทั้งชุดไม่แตะ
+            if (!transferSetDialog) return null
+            const d = transferSetDialog
+            const sTrip = trips.find(t => t.id === d.tripId)
+            const verb = d.action === 'reassigned' ? "โยก" : d.action === 'driver-refused' ? 'บันทึก "คนขับปฏิเสธ"' : "ยกเลิก"
+            const short = d.action === 'reassigned' ? "โยก" : d.action === 'driver-refused' ? "ปฏิเสธ" : "ยกเลิก"
+            const incoming = incomingOf(d.tripId)
+            const outside = transferSetOutside(d.expectedStops, d.stopIdx, incoming, trips.filter(t => t.id !== d.tripId), sTrip?.vehiclePlate || "")
+            const remaining = d.expectedStops.length - d.idxs.length
+            const isNew = transferSetForm.targetTripId === "__new__"
+            return (
+              <>
+                <div className="space-y-3 py-2">
+                  <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
+                    <p className="font-semibold">จะ{verb}พร้อมกัน {d.idxs.length} จุด:</p>
+                    {d.idxs.map(i => <p key={i}>• {transferStopName(d.expectedStops[i])}</p>)}
+                    {outside.length > 0 && (
+                      <>
+                        <p className="font-semibold pt-1">ไม่รวม (ระบบไม่แตะ):</p>
+                        {outside.map((line, k) => <p key={k}>• {line}</p>)}
+                      </>
+                    )}
+                  </div>
+                  {d.action === 'cancel' ? (
+                    <p className="text-[12px] text-red-400 rounded-md bg-red-500/10 border border-red-500/30 p-2">
+                      {remaining === 0 && incoming.length === 0
+                        ? `⚠️ ทริปนี้จะไม่เหลืองาน — ระบบจะลบทริป ${sTrip?.vehiclePlate || ""} (${sTrip?.driverName || ""}) ทิ้งทั้งใบ`
+                        : remaining === 0
+                          ? `ทริปนี้ยังรับงานที่โยกมาจากคันอื่น ${incoming.length} จุด จึงเก็บทริปไว้ (ไม่ลบ) · งานที่ยกเลิกหายจากใบสรุป`
+                          : "งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่ · ระบบคิด กม. ใหม่ (คิดไม่ได้ = ยังไม่ยกเลิกสักจุด)"}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        <label className="text-sm font-medium text-foreground">
+                          {d.action === 'reassigned' ? <>คันที่รับงานไปทำ <span className="text-red-400">*</span></> : "มีคันรับไปทำแทนไหม? (ไม่บังคับ)"}
+                        </label>
+                        <select
+                          value={transferSetForm.targetTripId}
+                          onChange={(e) => setTransferSetForm(f => ({ ...f, targetTripId: e.target.value }))}
+                          disabled={ordinaryBusy}
+                          className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent"
+                        >
+                          <option value="">{d.action === 'reassigned' ? "— เลือกคันที่รับงานไปทำ (กม. ลงคันนั้น) —" : "— ไม่มีคันรับ / ยังไม่รู้ —"}</option>
+                          {trips.filter(t => t.id !== d.tripId && !isManagedTrip(t)).map(t => (
+                            <option key={t.id} value={t.id}>{tripDriverLabel(t)} • {t.vehiclePlate}</option>
+                          ))}
+                          <option value="__new__">➕ โยกให้คน/รถอื่น (ยังไม่มีทริป — สร้างให้)</option>
+                        </select>
+                        {isNew && <p className="text-[11px] text-muted-foreground">กดปุ่มด้านล่างแล้วเลือกคนขับ/รถในหน้าถัดไป — ระบบสร้างทริปให้</p>}
+                      </div>
+                      {d.action === 'driver-refused' && (
+                        <input
+                          type="text"
+                          value={transferSetForm.reason}
+                          placeholder="เหตุผลที่ปฏิเสธ (ไม่บังคับ — ใช้กับทุกจุดในชุด)"
+                          onChange={(e) => setTransferSetForm(f => ({ ...f, reason: e.target.value }))}
+                          disabled={ordinaryBusy}
+                          className="w-full h-11 rounded-lg bg-background border border-border/50 text-sm px-3 text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+                <DialogFooter>
+                  {/* "ปิด" ไม่ใช้คำว่า "ยกเลิก" — กันสับสนกับยกเลิกงาน */}
+                  <Button variant="ghost" onClick={() => setTransferSetDialog(null)} disabled={ordinaryBusy}>ปิด</Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      // ทางทีละจุดตัวเดิม (เตือนจุดคู่ / ยกเลิกถามยืนยันอีกรอบ) — ใช้ทริปบนจอตอนกด เหมือนกดปุ่มที่แถว
+                      setTransferSetDialog(null)
+                      if (sTrip) void runOrdinaryAction(() => d.action === 'cancel' ? cancelStop(sTrip, d.stopIdx) : chooseOutcome(sTrip, d.stopIdx, d.action))
+                    }}
+                    disabled={ordinaryBusy || !sTrip}
+                  >
+                    {short}เฉพาะจุดนี้
+                  </Button>
+                  <Button
+                    className={cn("text-white font-bold", d.action === 'reassigned' ? "bg-blue-600 hover:bg-blue-700" : "bg-red-600 hover:bg-red-700")}
+                    onClick={() => void runOrdinaryAction(applyTransferSet)}
+                    disabled={ordinaryBusy || (d.action === 'reassigned' && !transferSetForm.targetTripId)}
+                  >
+                    {short}ทั้งชุด {d.idxs.length} จุด{isNew ? " — เลือกคน/รถ →" : ""}
+                  </Button>
+                </DialogFooter>
+              </>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 

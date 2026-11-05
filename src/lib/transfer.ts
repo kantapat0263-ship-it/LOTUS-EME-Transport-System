@@ -453,3 +453,86 @@ export function dropSyncNote(sync: Pick<TripDropSync<unknown>, 'updated' | 'notI
   if (assisted) warnings.push('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม — แก้ที่คันนั้นด้วย')
   return { text: [...parts, ...warnings.map(w => `⚠️ ${w}`)].map(part => ` · ${part}`).join(''), warn: warnings.length > 0 }
 }
+
+// ---------------------------------------------------------------------------
+// ทำทั้งชุด (ใบสรุป: โยก/คนขับปฏิเสธ/ยกเลิก/เลื่อน จุดของกลุ่มเดียวกันพร้อมกัน ผู้ใช้ขอ 2026-11-05)
+// เขียนข้อมูลหน้าตาเหมือนกดทีละจุด N ครั้ง (ไม่มีฟิลด์ใหม่) · แตะได้แค่จุดของเที่ยวนี้ในการเขียนครั้งเดียว
+// งานโยกเข้า (ผลเก็บที่คันต้นทาง) / สำเนาคันช่วย / จุดที่ไม่ทำแล้ว ไม่ถูกทำตาม — หน้าต่างบอกรายชื่อด้วย transferSetOutside
+// ---------------------------------------------------------------------------
+
+/** บันทึกทั้งชุดไม่ผ่านเพราะงานในทริปเปลี่ยนหลังเปิดหน้าต่าง — ปิดหน้าต่างแล้วบอกประโยคนี้ */
+export const TRANSFER_SET_CONFLICT = 'งานในทริปนี้เพิ่งถูกแก้ — ตรวจแล้วกดปุ่มที่จุดนั้นใหม่'
+
+type SetStop = TransferFields & {
+  siteName?: string
+  outcome?: string | null
+  assistForPlate?: string
+  postponedRequestId?: string
+  postponedToDate?: string
+  reassignedToVehiclePlate?: string
+}
+
+/** ชื่อจุดพร้อมบทบาท เช่น "วังโค (จุดรับ)" — ใช้ในหน้าต่าง/toast ของทำทั้งชุด (เรียกด้วยชื่อ ไม่ใช้เลขข้อ เพราะเลขบนจอ ≠ index ที่บันทึก) */
+export function transferStopName(stop: SetStop | null | undefined): string {
+  const role = stop?.transferRole === 'pickup' ? 'จุดรับ' : stop?.transferRole === 'drop' ? 'จุดส่ง' : ''
+  const name = (stop?.siteName || '').trim() || role || 'จุดงาน'
+  return role ? `${name} (${role})` : name
+}
+
+/**
+ * จุดของเที่ยวนี้ (index ที่บันทึก เรียงตาม stops) ที่อยู่กลุ่มเดียวกับจุดที่ `index` และยังไปกับเที่ยวนี้ — รวมจุดที่กดเอง
+ * [] = ใช้ปุ่มทีละจุดเหมือนเดิม: ไม่ใช่งานรับ-ส่ง / จุดที่กดไม่ทำแล้ว / จุดที่กดเป็นสำเนาคันช่วย
+ *      / จุดในชุดมี postponedRequestId ค้าง (ทางทีละจุดปลดใบวันใหม่ให้ถูก ส่วนทำทั้งชุดไม่ส่ง supersede)
+ * ไม่นับสำเนาคันช่วย (assistForPlate — งานจริงอยู่คันต้นทาง) · รับแค่ trip.stops ไม่รวมงานโยกเข้า · ได้ 1 ตัว = ไม่มีจุดคู่ (ไม่ถามทั้งชุด)
+ */
+export function activeTransferSet(stops: readonly SetStop[], index: number): number[] {
+  const stop = stops[index]
+  if (!stop || !isTransferStop(stop) || isInactiveStop(stop) || stop.assistForPlate) return []
+  const set = stops.flatMap((s, i) => (isTransferStop(s) && s.transferId === stop.transferId && !isInactiveStop(s) && !s.assistForPlate ? [i] : []))
+  return set.some(i => stops[i].postponedRequestId) ? [] : set
+}
+
+type OtherTrip = { vehiclePlate?: string; driverName?: string; actualDriverName?: string; stops?: readonly SetStop[] }
+
+/**
+ * จุดของกลุ่มเดียวกันที่ "ทำทั้งชุด" ไม่แตะ พร้อมเหตุผลภาษาคน — ไม่งั้นคนจัดรถนึกว่าทั้งงานจัดการครบแล้ว
+ * stops = จุดของเที่ยวนี้ · incoming = งานที่คันอื่นโยกเข้ามา · others = ทริปอื่นของวันเดียวกันที่โหลดไว้แล้ว (หาสำเนาคันช่วยของเที่ยวนี้ ไม่อ่านฐานเพิ่ม)
+ * plate = ทะเบียนของเที่ยวนี้ (สำเนาคันช่วยเก็บทะเบียนคันต้นทางไว้ที่ assistForPlate)
+ */
+export function transferSetOutside(
+  stops: readonly SetStop[],
+  index: number,
+  incoming: readonly (SetStop & { fromVehiclePlate?: string; fromDriverName?: string })[],
+  others: readonly OtherTrip[],
+  plate: string,
+): string[] {
+  const stop = stops[index]
+  if (!stop || !isTransferStop(stop)) return []
+  const mate = (s: SetStop) => isTransferStop(s) && s.transferId === stop.transferId
+  const inSet = new Set(activeTransferSet(stops, index))
+  const lines: string[] = []
+  stops.forEach((s, i) => {
+    if (i === index || inSet.has(i) || !mate(s)) return
+    const name = transferStopName(s)
+    if (s.assistForPlate) lines.push(`${name} — สำเนาคันช่วยจากรถ ${s.assistForPlate} ไม่ถูกทำตาม (จัดการเองที่จุดนั้น)`)
+    else if (s.outcome === 'postponed') lines.push(`${name} — เลื่อน${s.postponedToDate ? `ไปวันที่ ${dayText(s.postponedToDate)} ` : 'วัน'}แล้ว`)
+    else if (s.outcome === 'reassigned') lines.push(`${name} — โยกไป${s.reassignedToVehiclePlate ? `รถ ${s.reassignedToVehiclePlate} ` : 'คันอื่น'}แล้ว`)
+    else if (s.outcome === 'driver-refused') lines.push(`${name} — คนขับปฏิเสธแล้ว${s.reassignedToVehiclePlate ? ` (รถ ${s.reassignedToVehiclePlate} รับไปทำแทน)` : ''}`)
+    else lines.push(`${name} — ไม่ถูกทำตาม (จัดการทีละจุด)`)
+  })
+  for (const job of incoming) {
+    if (!mate(job)) continue
+    const from = [job.fromVehiclePlate, job.fromDriverName ? `(${job.fromDriverName})` : ''].filter(Boolean).join(' ')
+    lines.push(`${transferStopName(job)} — โยกมาจาก${from ? ` ${from}` : 'คันอื่น'} · ${TRANSFER_EDIT_AT_SOURCE}`)
+  }
+  if (plate) {
+    for (const other of others) {
+      for (const s of other.stops || []) {
+        if (!mate(s) || s.assistForPlate !== plate || isInactiveStop(s)) continue
+        const driver = other.actualDriverName || other.driverName || ''
+        lines.push(`${transferStopName(s)} — สำเนาคันช่วยบนรถ ${other.vehiclePlate || ''}${driver ? ` (${driver})` : ''} ไม่ถูกทำตาม — ไปแก้/ลบเองที่คันนั้น`)
+      }
+    }
+  }
+  return lines
+}
