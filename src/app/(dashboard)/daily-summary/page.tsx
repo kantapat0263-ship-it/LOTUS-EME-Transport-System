@@ -45,6 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
+import { postponedPickupNote, transferLabel, transferMateReminder, transferNoteForDriver, type TransferLabel } from "@/lib/transfer"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -66,6 +67,12 @@ import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueue
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { requestDriverLinks, useDriverLinks } from "@/lib/driverLinks"
 import { DriverLinkQr } from "@/components/DriverLinkQr"
+
+/** ป้ายงานรับของไปส่งต่อในใบสรุป (รูปเดียวกับป้ายคันช่วย — inline style ให้ติดไปกับรูปที่ส่ง LINE) */
+const transferTagStyle = (label: TransferLabel): React.CSSProperties => ({
+  fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px',
+  ...(label.role === 'pickup' ? { background: '#ffedd5', color: '#9a3412' } : { background: '#dcfce7', color: '#166534' }),
+})
 
 /** ไซต์ที่เลือกเป็นจุดแทรกงานได้ = เปิดใช้งาน + พิกัดถูกต้อง (งานที่แทรกต้องขึ้นแผนที่และนับระยะได้) */
 // พิกัดต้องอยู่ในไทย (กติกาเดียวกับตัวคิด กม.) — (0,0)/นอกไทย เลือกได้แต่คิด กม.ไม่ได้ (เดิมเช็กแค่เป็นตัวเลข)
@@ -1011,6 +1018,10 @@ export default function DailySummaryPage() {
   // ไซต์ที่เลือกไว้ ณ ตอนนี้ (ข้อมูลสด) — ถูกลบ/เอาพิกัดออกระหว่างเปิดหน้าต่าง = กลับเป็นยังไม่ได้เลือก ปุ่มกับข้อความตรงกับตัวกันใน handleInsertJob
   const insertSite = insertForm.siteId ? (sitesData || []).find(s => s.id === insertForm.siteId && isPickableSite(s)) ?? null : null
 
+  // งานรับของไปส่งต่อ: ลิสต์เดียวกับที่ป้ายใช้ (จุดของเที่ยว + งานที่โยกเข้ามา) — เตือนว่าจุดคู่ยังค้างเมื่อทำทีละจุด
+  const transferPeersOf = (trip: Trip) => [...(trip.stops || []), ...incomingStopsForTrip(trips as any, trip.id)]
+  const transferReminderFor = (trip: Trip, sIdx: number) => transferMateReminder(transferPeersOf(trip), sIdx)
+
   // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
   // ยกเลิก/ลบงานออกจากทริป (ลูกค้าแจ้งยกเลิกหลังออกคิว) — งานหายจากใบสรุป
   // ถ้าจะกลับมาให้ทำใบคิวใหม่ ; ลบจนไม่เหลืองาน = ลบทริปทิ้งทั้งใบ
@@ -1019,6 +1030,8 @@ export default function DailySummaryPage() {
     const stop = trip.stops?.[sIdx]
     if (!stop) return
     const verb = (stop as any).adhoc ? "ลบงานแทรก" : "ยกเลิกงาน"
+    const reminder = transferReminderFor(trip, sIdx)
+    const transferNote = reminder ? `\n\n⚠️ งานรับของไปส่งต่อ: ${reminder} — จุดนั้นไม่ถูกยกเลิกตาม อย่าลืมจัดการด้วย` : ""
     const remaining = (trip.stops || []).filter((_, i) => i !== sIdx)
     // งานที่เคยเลื่อนไปวันอื่น → ปลดใบวันใหม่พร้อมกัน (ใบวันใหม่ถูกจัดรถแล้ว = guard ปฏิเสธ ต้องเอางานออกจากทริปวันนั้นก่อน)
     const postponedReqId = (stop as any).postponedRequestId as string | undefined
@@ -1046,7 +1059,7 @@ export default function DailySummaryPage() {
       `${verb} "${stop.siteName}" ออกจากทริป ${trip.driverName} (${trip.vehiclePlate})?\n` +
       `งานจะหายจากใบสรุป — ถ้าลูกค้ากลับมาให้ทำใบคิวใหม่` +
       (remaining.length === 0 ? `\nทริปนี้ยังรับงานที่โยกมาจากคันอื่น ${incomingCount} จุด จึงเก็บทริปไว้ (ไม่ลบ)` : "") +
-      postponedNote
+      postponedNote + transferNote
     )) return
     // ลบงานแล้ว กม. ต้องลดตามด้วย — คิดก่อนแล้วเขียนพร้อมกัน คิดไม่ได้ = ยังไม่ลบ
     if (!await applyStopsWithDistance(trip, remaining, verb, {
@@ -1220,11 +1233,20 @@ export default function DailySummaryPage() {
       const target = keepsMoveTarget(prev?.outcome, outcome) && reassignedToTripId ? { reassignedToTripId, reassignedToVehiclePlate: reassignedToVehiclePlate || "", reassignedToDriverName: reassignedToDriverName || "" } : {}
       return { ...base, ...target, outcome, outcomeRecordedBy: recordedBy, outcomeAt: new Date().toISOString() }
     })
-    await applyStops(trip, newStops, true, prev?.postponedRequestId ? {
+    // อ่านก่อนบันทึก (ตอนจุดนี้ยังนับเป็นงานของเที่ยว) — โยก/ปฏิเสธทีละจุด จุดคู่ไม่ขยับตาม
+    const wasPlanned = !prev?.outcome || prev.outcome === 'delivered' // สลับ โยก ↔ ปฏิเสธ ไม่ต้องเตือนซ้ำ
+    const reminder = wasPlanned && (outcome === 'reassigned' || outcome === 'driver-refused') ? transferReminderFor(trip, stopIdx) : null
+    const ok = await applyStops(trip, newStops, true, prev?.postponedRequestId ? {
       expectedStops: trip.stops,
       sourceIndexes: trip.stops.map((_, index) => index),
       supersedeRequest: { id: prev.postponedRequestId, by: recordedBy || user?.email || "" },
     } : undefined)
+    if (ok && reminder) toast({
+      title: "⚠️ งานรับของไปส่งต่อ — จุดคู่ยังอยู่ในเที่ยวนี้",
+      description: outcome === 'reassigned'
+        ? `${reminder} — ถ้าจะโยกทั้งชุด ให้โยกจุดนั้นไปคันเดียวกันด้วย`
+        : `${reminder} — อย่าลืมจัดการจุดนั้นด้วย (โยกตาม / หรือเขียน ✏️ หมายเหตุบอกคนขับ)`,
+    })
   }
 
   const tomorrowStr = () => {
@@ -1255,6 +1277,9 @@ export default function DailySummaryPage() {
       toast({ title: "เลือกวันไม่ถูกต้อง", description: "ต้องเลื่อนไปวันถัดจากวันนี้เป็นต้นไป", variant: "destructive" })
       return
     }
+    // งานรับของไปส่งต่อ: ใบวันใหม่เป็นจุดปกติจุดเดียว (ไม่มีจุดส่งในใบ) — จุดรับต้องบอกในรายละเอียดว่ารับแล้วเอาไปส่งที่ไหน
+    const pickupNote = postponedPickupNote(transferPeersOf(trip), stopIdx)
+    const postponedJob = [stop.cargoDetails || "", pickupNote || ""].filter(Boolean).join("\n")
     setIsPostponing(true)
     try {
       // ตรวจเบื้องต้นก่อน และตรวจสถานะใบเก่าซ้ำใน transaction เพื่อกันการจัดรถระหว่างรอ
@@ -1311,7 +1336,7 @@ export default function DailySummaryPage() {
             customName: stop.siteId ? null : stop.siteName,
             lat: stop.lat ?? 0,
             lng: stop.lng ?? 0,
-            jobDescription: stop.cargoDetails || "",
+            jobDescription: postponedJob,
             requestTime: stop.requestTime || "08:30",
           }],
           note: stop.note || "",
@@ -1557,6 +1582,13 @@ export default function DailySummaryPage() {
 
   const outcomeStats = computeOutcomeStats(trips as any)
 
+  // งานที่โยกเข้ามาของแต่ละทริป — คิดครั้งเดียวต่อ render (ป้ายงานรับของไปส่งต่อในแผงจัดการเรียกทุกจุด)
+  const incomingCache = new Map<string, ReturnType<typeof incomingStopsForTrip>>()
+  const incomingOf = (tripId: string) => {
+    if (!incomingCache.has(tripId)) incomingCache.set(tripId, incomingStopsForTrip(trips as any, tripId))
+    return incomingCache.get(tripId)!
+  }
+
   const renderStopRow = (trip: Trip, stop: TripStop, sIdx: number) => {
     if (isManagedTrip(trip)) return <div key={`${trip.id}-${sIdx}`} className="rounded-md bg-secondary/20 p-2.5 text-sm">
       <p>{sIdx + 1}. {stop.siteName}</p>
@@ -1592,6 +1624,16 @@ export default function DailySummaryPage() {
                 ➕ แทรก{(stop as any).insertedBy ? ` · ${(stop as any).insertedBy}` : ""}
               </span>
             ) : null}
+            {(() => {
+              // งานรับของไปส่งต่อ: จับคู่กับจุดของคันนี้ + งานที่โยกเข้ามา · เตือนคนจัดรถถ้าจุดคู่อยู่คนละคัน/ลำดับส่งก่อนรับ
+              const label = transferLabel([...(trip.stops || []), ...incomingOf(trip.id)], sIdx)
+              return label && (
+                <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+                  {label.text}
+                  {label.warning && <span className="ml-1 text-red-400">⚠️ {label.warning}</span>}
+                </span>
+              )
+            })()}
             {/* จังหวะส่งคำขอ — เฉพาะหน้าจัดการฝั่งแอดมิน ไม่อยู่ในใบพิมพ์/LINE */}
             <RequestTimingBadge requestedAt={(stop as any).requestedAt} requestDate={trip.tripDate} className="mt-0.5 block" />
           </span>
@@ -1870,6 +1912,8 @@ export default function DailySummaryPage() {
                           const movedToPlates = Array.from(new Set(
                             stops.map((s) => (s as any).reassignedToVehiclePlate).filter(Boolean)
                           ));
+                          // ป้ายงานรับของไปส่งต่อ: ลำดับเดียวกับแถวในใบ (งานตัวเอง แล้วต่อด้วยงานรับโยก)
+                          const transferPeers = [...stops, ...incoming];
 
                           // คอลัมน์วันที่ (col 1, rowSpan ทั้งคัน) — render บน "แถวแรก" ของคันเช่นกัน
                           // ต้องแยกออกมาเพราะคันที่มีแต่งานรับโยก (ไม่มีงานตัวเอง) ก็ต้องมีคอลัมน์นี้ ไม่งั้นตารางเหลื่อม
@@ -1927,6 +1971,8 @@ export default function DailySummaryPage() {
                             // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
                             const movedToPlate = (stop as any).reassignedToVehiclePlate;
                             const movedToDriver = (stop as any).reassignedToDriverName;
+                            const tLabel = transferLabel(transferPeers, sIdx);
+                            const tNote = transferNoteForDriver(tLabel);
 
                             return (
                               <tr key={`${trip.id}-${sIdx}`}>
@@ -1947,12 +1993,14 @@ export default function DailySummaryPage() {
                                           🤝 คันช่วย · จาก {(stop as any).assistForPlate}
                                         </span>
                                       )}
+                                      {tLabel && <span style={transferTagStyle(tLabel)}>{tLabel.text}</span>}
                                     </div>
                                     <div className="pl-5 space-y-0.5">
                                       <div className="flex gap-2">
                                         <span className="shrink-0">-</span>
                                         <span className="italic" style={{ whiteSpace: 'pre-wrap' }}>{stop.cargoDetails || "ส่งวัสดุ/ปฏิบัติงานตามแผน"}</span>
                                       </div>
+                                      {tNote && <div style={{ fontSize: '11px', fontWeight: 700, color: '#b91c1c' }}>⚠️ {tNote}</div>}
 
                                       {stop.outcome && stop.outcome !== 'delivered' && (
                                         <div
@@ -2017,7 +2065,10 @@ export default function DailySummaryPage() {
                           // Extra rows for jobs reassigned INTO this truck (public-safe: รับงานต่อ)
                           // รายละเอียดครบเท่าแถวปกติ (เวลา/ผู้ขอ/เบอร์/หมายเหตุ) — เพราะแถวนี้อาจ
                           // "แทนที่" แถวของคันต้นทางทั้งคัน (เคสรถต้นทางไม่ได้วิ่ง ถูกซ่อนจากใบสรุป)
-                          const incomingRows = incoming.map((job, i) => (
+                          const incomingRows = incoming.map((job, i) => {
+                            const tLabel = transferLabel(transferPeers, stops.length + i);
+                            const tNote = transferNoteForDriver(tLabel);
+                            return (
                             <tr key={`${trip.id}-inc-${i}`} className="bg-blue-50">
                               {/* คันที่มีแต่งานรับโยก — คอลัมน์วันที่มาอยู่แถวรับโยกแถวแรก (กัน col เหลื่อม) */}
                               {stops.length === 0 && i === 0 && dateCell}
@@ -2035,6 +2086,7 @@ export default function DailySummaryPage() {
                                     }}>
                                       🔄 รับโยกงานต่อ
                                     </span>
+                                    {tLabel && <span style={transferTagStyle(tLabel)}>{tLabel.text}</span>}
                                   </div>
                                   <div className="pl-5 space-y-0.5">
                                     {job.cargoDetails && (
@@ -2043,6 +2095,7 @@ export default function DailySummaryPage() {
                                         <span className="italic" style={{ whiteSpace: 'pre-wrap' }}>{job.cargoDetails}</span>
                                       </div>
                                     )}
+                                    {tNote && <div style={{ fontSize: '11px', fontWeight: 700, color: '#b91c1c' }}>⚠️ {tNote}</div>}
                                     {job.requestedBy && (
                                       <div className="pl-3 text-[10px] text-gray-700">
                                         📋 ผู้ขอ: {job.requestedBy}
@@ -2068,7 +2121,8 @@ export default function DailySummaryPage() {
                               {/* คันที่มีแต่งานรับโยก (ไม่มีงานตัวเอง) — คอลัมน์คนขับมาอยู่แถวรับโยกแถวแรก */}
                               {stops.length === 0 && i === 0 && driverCell}
                             </tr>
-                          ));
+                            );
+                          });
 
                           return [...stopRows, ...incomingRows];
                         })}
@@ -2391,6 +2445,20 @@ export default function DailySummaryPage() {
                 <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {postponeWarn}
               </p>
             )}
+            {(() => {
+              // งานรับของไปส่งต่อ: เลื่อนทีละจุด — บอกว่าจุดคู่ไม่เลื่อนตาม + ใบวันใหม่จะเขียนปลายทางไว้ให้
+              const pTrip = postponeDialog ? trips.find(t => t.id === postponeDialog.tripId) : null
+              if (!pTrip || !postponeDialog) return null
+              const reminder = transferReminderFor(pTrip, postponeDialog.stopIdx)
+              const note = postponedPickupNote(transferPeersOf(pTrip), postponeDialog.stopIdx)
+              if (!reminder && !note) return null
+              return (
+                <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
+                  {reminder && <p>⚠️ งานรับของไปส่งต่อ: {reminder} — จุดนั้นไม่เลื่อนตาม ถ้าต้องเลื่อนทั้งชุด ให้กดเลื่อนจุดนั้นด้วย (หรือเขียน ✏️ หมายเหตุบอกคนขับ)</p>}
+                  {note && <p>📦 ใบของวันใหม่จะเขียนต่อท้ายรายละเอียดว่า &quot;{note}&quot;</p>}
+                </div>
+              )
+            })()}
           </div>
 
           <DialogFooter>

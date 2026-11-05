@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest'
-import { requestDestinationFingerprint, assertRequestDestinationsUnchanged } from './requestDestination'
+import { describe, expect, it } from 'vitest'
+import { requestDestinationFingerprint, assertRequestDestinationsUnchanged, dispatchedDestinationIndexes } from './requestDestination'
 import { Timestamp as WebTimestamp } from 'firebase/firestore'
 import { Timestamp as AdminTimestamp } from 'firebase-admin/firestore'
 
@@ -30,4 +30,14 @@ it('snapshot ไม่ครบ/จำนวนไม่ตรง/ลำดั�
   expect(() => assertRequestDestinationsUnchanged(value, [0], undefined)).toThrow('โหลด')
   expect(() => assertRequestDestinationsUnchanged(value, [0], [original, original])).toThrow()
   expect(() => assertRequestDestinationsUnchanged({ ...value, destinations: [...value.destinations].reverse() }, [0], [original])).toThrow()
+})
+
+describe('dispatchedDestinationIndexes (สำเนาคันคู่ที่ถอนแล้วไม่นับเป็นจุดในเที่ยว)', () => {
+  it('ตัด index ที่ withdrawn ออก · ข้อมูลขาด = ว่าง', () => {
+    const request = { destinations: [{ siteName: 'A' }, { siteName: 'A', pairedCopy: true, withdrawn: true }, { siteName: 'B' }], assignedDestinations: [1, 2] }
+    expect(dispatchedDestinationIndexes(request)).toEqual([2])
+    expect(dispatchedDestinationIndexes({ ...request, assignedDestinations: [1] })).toEqual([])
+    expect(dispatchedDestinationIndexes(undefined)).toEqual([])
+    expect(dispatchedDestinationIndexes({ destinations: [] })).toEqual([])
+  })
 })

@@ -693,7 +693,7 @@ export default function ReportPage() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <Fuel className="h-5 w-5 text-accent" /> Top 10 ไซต์งานที่มีค่าใช้จ่ายสูงสุด
               </CardTitle>
-              <CardDescription>ประมาณการค่าน้ำมันแยกตามไซต์งาน/สถานที่</CardDescription>
+              <CardDescription>ประมาณการค่าน้ำมันแยกตามไซต์งาน/สถานที่ (คิดไป-กลับ)</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>

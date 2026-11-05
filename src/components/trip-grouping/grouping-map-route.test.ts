@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { inThailand } from '@/lib/roadFlood'
+import { orderPickupsBeforeDrop } from '@/lib/transfer'
 
 // ดึง calculateRoute ตัวจริงจาก GroupingMap มารันกับ Google ปลอม
 const source = ts.createSourceFile('GroupingMap.tsx', readFileSync(new URL('./GroupingMap.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -29,7 +30,7 @@ function mapUi(dests: object[], status = 'OK') {
     mode: 'auto', manualOrder: [], selectedIds: new Set(dests.map((d: any) => d.id)), destinations: dests,
     setRouteStats: vi.fn(), setMissingCoordCount: vi.fn(), setIsCalculating: vi.fn(), lastRouteKeyRef: { current: null }, routeSeqRef: { current: 0 },
     window: { google: { maps: { LatLng: vi.fn((lat: number, lng: number) => ({ lat, lng })), TravelMode: { DRIVING: 'DRIVING' } } } },
-    settings: {}, selectedVehicleRate: 10, onOptimizedOrderChange: vi.fn(), toast: vi.fn(), inThailand,
+    settings: {}, selectedVehicleRate: 10, onOptimizedOrderChange: vi.fn(), toast: vi.fn(), inThailand, orderPickupsBeforeDrop,
     HEAD_OFFICE_DEFAULT: { lat: 14.0815, lng: 100.7129 },
   }
   const calculateRoute = new Function(...Object.keys(deps), `${compiled}return work`)(...Object.values(deps))
@@ -91,4 +92,32 @@ it('งานที่เลือกอยู่นอกตัวกรอง�
   expect(ui.route).not.toHaveBeenCalled()
   expect(ui.setRouteStats).toHaveBeenLastCalledWith(null)
   expect(ui.setMissingCoordCount).toHaveBeenLastCalledWith(0)
+})
+
+it('งานรับของไปส่งต่อ: Google จัดจุดส่งไว้ก่อนจุดรับ → ขอเส้นทางใหม่ตามลำดับรับก่อนส่ง (ไม่จัดซ้ำ) และส่งลำดับนั้นให้หน้าจัดกลุ่ม', async () => {
+  const PICK = { id: 'P', siteName: 'ดูโฮม', lat: 14.0, lng: 100.6, transferRole: 'pickup', transferId: 'tf_1' }
+  const DROP = { id: 'D', siteName: 'ดอนเมือง', lat: 13.9, lng: 100.6, transferRole: 'drop', transferId: 'tf_1' }
+  const ui = mapUi([DROP, PICK])
+  const legs = (km: number) => [0, 1, 2].map(() => ({ distance: { value: km * 1000 }, duration: { value: 600 } }))
+  ui.route
+    .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 1], legs: legs(10) }] }, 'OK')) // Google: ส่งก่อนรับ
+    .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 1], legs: legs(20) }] }, 'OK'))
+  await ui.calculateRoute(true)
+  expect(ui.route).toHaveBeenCalledTimes(2)
+  const second = ui.route.mock.calls[1][0]
+  expect(second.optimizeWaypoints).toBe(false)
+  expect(second.waypoints.map((w: any) => w.location)).toEqual([{ lat: 14.0, lng: 100.6 }, { lat: 13.9, lng: 100.6 }])
+  expect(ui.onOptimizedOrderChange).toHaveBeenCalledWith(['P', 'D'])
+  // ตัวเลขบนแผนที่มาจากเส้นทางที่ซ่อมแล้ว ไม่ใช่ของ Google รอบแรก
+  expect(ui.setRouteStats.mock.calls.at(-1)?.[0]).toMatchObject({ totalDistance: '60.0 กม.' })
+})
+
+it('งานรับของไปส่งต่อ: Google จัดรับก่อนส่งอยู่แล้ว → เรียก Google ครั้งเดียวเหมือนเดิม', async () => {
+  const PICK = { id: 'P', siteName: 'ดูโฮม', lat: 14.0, lng: 100.6, transferRole: 'pickup', transferId: 'tf_1' }
+  const DROP = { id: 'D', siteName: 'ดอนเมือง', lat: 13.9, lng: 100.6, transferRole: 'drop', transferId: 'tf_1' }
+  const ui = mapUi([PICK, DROP])
+  ui.route.mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 1], legs: [0, 1, 2].map(() => ({ distance: { value: 5000 }, duration: { value: 60 } })) }] }, 'OK'))
+  await ui.calculateRoute(true)
+  expect(ui.route).toHaveBeenCalledTimes(1)
+  expect(ui.onOptimizedOrderChange).toHaveBeenCalledWith(['P', 'D'])
 })

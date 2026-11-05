@@ -30,9 +30,11 @@ interface DestinationCardProps {
   onMoveDate?: () => void;
   /** ยกเลิกใบขอนี้ (ปฏิเสธ) — เอาออกจากกอง ผู้ขอเห็นสถานะพร้อมเหตุผล */
   onCancel?: () => void;
+  /** ป้ายงานรับของไปส่งต่อ (lib/transfer) + คำเตือน เช่น เลือกไม่ครบกลุ่ม */
+  transferBadge?: { text: string; warning?: string } | null;
 }
 
-export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover, onDuplicate, onRemoveDup, onMoveDate, onCancel }: DestinationCardProps) {
+export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHover, onDuplicate, onRemoveDup, onMoveDate, onCancel, transferBadge }: DestinationCardProps) {
   return (
     <TooltipProvider delayDuration={150}>
       <Tooltip>
@@ -80,6 +82,12 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
               <p className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5 text-accent shrink-0" /> {dest.siteName}
               </p>
+              {transferBadge && (
+                <p className={cn("text-[11px] font-semibold", dest.transferRole === "pickup" ? "text-amber-300" : "text-emerald-300")}>
+                  {transferBadge.text}
+                  {transferBadge.warning && <span className="ml-1.5 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-400">⚠️ {transferBadge.warning}</span>}
+                </p>
+              )}
             </div>
             <div className="text-right shrink-0 bg-background/40 px-2 py-1 rounded border border-border/50">
               <p className="text-[10px] font-bold text-muted-foreground uppercase flex items-center justify-end gap-1">
@@ -145,16 +153,18 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
                   onClick={onRemoveDup}
                   className="rounded-md border border-red-500/40 px-2 py-0.5 text-[10px] font-medium text-red-400 hover:bg-red-500/15"
                 >
-                  ✕ ถอนคันคู่
+                  {dest.transferRole ? "✕ ถอนคันคู่ทั้งชุด" : "✕ ถอนคันคู่"}
                 </button>
               ) : onDuplicate ? (
                 <button
                   type="button"
                   onClick={onDuplicate}
-                  title="งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาจุดนี้ให้อีกคันหยิบไปจัด"
+                  title={dest.transferRole
+                    ? "งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาทั้งชุด (จุดรับทุกจุด + จุดส่ง) ให้อีกคันหยิบไปจัด"
+                    : "งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาจุดนี้ให้อีกคันหยิบไปจัด"}
                   className="rounded-md border border-blue-500/40 px-2 py-0.5 text-[10px] font-medium text-blue-400 hover:bg-blue-500/15"
                 >
-                  🚛+ เพิ่มคันคู่
+                  {dest.transferRole ? "🚛+ คันคู่ทั้งชุด" : "🚛+ เพิ่มคันคู่"}
                 </button>
               ) : null}
             </div>

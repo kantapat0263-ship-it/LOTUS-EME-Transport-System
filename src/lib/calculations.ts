@@ -8,6 +8,7 @@
 
 import { haversineMeters, OFFICE_LOCATION } from './tracking'
 import { inThailand } from './roadFlood'
+import { transferStopFields, type TransferRole } from './transfer'
 
 /** Default kilometres travelled per litre of diesel. */
 export const DEFAULT_FUEL_RATE = 10
@@ -469,6 +470,9 @@ export interface IncomingStopLike extends OutcomeStopLike {
   address?: string | null
   dispatcherNote?: string | null
   dispatcherName?: string | null
+  transferRole?: TransferRole
+  transferId?: string
+  transferDropName?: string
 }
 
 export interface IncomingTripLike {
@@ -498,6 +502,10 @@ export interface IncomingJob {
   /** True if the source stop was a refusal someone picked up — kept for internal
    *  logic only; the destination UI must stay public-safe and never show "ปฏิเสธ". */
   wasRefused: boolean
+  /** งานรับของไปส่งต่อ (lib/transfer) — ติดมากับงานที่โยกเข้ามา ให้ป้ายจับคู่กับจุดในคันปลายทางได้ */
+  transferRole?: TransferRole
+  transferId?: string
+  transferDropName?: string
 }
 
 /**
@@ -530,6 +538,7 @@ export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: strin
           dispatcherNote: t.stopNotes?.[`stop_${sIdx}`] || s.dispatcherNote || '',
           dispatcherName: t.stopNoteAuthors?.[`stop_${sIdx}`] || s.dispatcherName || '',
           wasRefused: s.outcome === 'driver-refused',
+          ...transferStopFields(s),
         })
       }
     }

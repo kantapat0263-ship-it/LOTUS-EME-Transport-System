@@ -11,6 +11,7 @@ import { Loader2, Route, Zap, RefreshCcw, Fuel, MousePointer2, Wand2, AlertTrian
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { inThailand } from "@/lib/roadFlood"
+import { orderPickupsBeforeDrop } from "@/lib/transfer"
 
 interface GroupingMapProps {
   destinations: any[];
@@ -137,6 +138,17 @@ export function GroupingMap({
       stopover: true
     }))
 
+    const routeFailed = () => {
+      // Allow the same inputs to be retried after a failure.
+      lastRouteKeyRef.current = null
+      setRouteStats(null) // ไม่ค้างตัวเลขของการเลือกชุดก่อน
+      toast({
+        title: "การคำนวณล้มเหลว",
+        description: "ไม่สามารถคำนวณเส้นทางถนนจริงได้ กรุณาลองใหม่",
+        variant: "destructive"
+      })
+    }
+
     directionsServiceRef.current.route({
       origin: origin,
       destination: origin, // Return to office for round trip optimization
@@ -146,19 +158,46 @@ export function GroupingMap({
       region: 'TH'
     }, (result, status) => {
       if (seq !== routeSeqRef.current) return
+      if (status !== 'OK' || !result) {
+        setIsCalculating(false)
+        routeFailed()
+        return
+      }
+
+      // Handle Optimized Order callback
+      if (mode === 'auto' && optimize) {
+        const optimizedIndices = result.routes[0].waypoint_order; // [2, 0, 1] means go to waypoints[2] first
+        const optimized = optimizedIndices.map(idx => routedDests[idx]);
+        // งานรับของไปส่งต่อ: Google ไม่รู้ว่าต้องรับก่อนส่ง — ลำดับที่ส่งก่อนรับ ให้ย้ายจุดส่งไปหลังจุดรับ
+        // แล้วขอเส้นทางใหม่ตามลำดับนั้น (ไม่จัดลำดับซ้ำ) ให้เส้นบนแผนที่และตัวเลขตรงกับลำดับที่จะบันทึก
+        const fixed = orderPickupsBeforeDrop(optimized)
+        if (fixed.some((d, i) => d !== optimized[i])) {
+          directionsServiceRef.current?.route({
+            origin, destination: origin,
+            waypoints: fixed.map((d: any) => ({ location: new google.maps.LatLng(d.lat, d.lng), stopover: true })),
+            optimizeWaypoints: false,
+            travelMode: google.maps.TravelMode.DRIVING,
+            region: 'TH'
+          }, (fixedResult, fixedStatus) => {
+            if (seq !== routeSeqRef.current) return
+            setIsCalculating(false)
+            onOptimizedOrderChange?.(fixed.map((d: any) => d.id))
+            if (fixedStatus === 'OK' && fixedResult) showRoute(fixedResult)
+            else routeFailed()
+          })
+          return
+        }
+        onOptimizedOrderChange?.(optimized.map((d: any) => d.id));
+      }
       setIsCalculating(false)
-      if (status === 'OK' && result) {
+      showRoute(result)
+    })
+
+    function showRoute(result: google.maps.DirectionsResult) {
         lastRouteKeyRef.current = routeKey
         directionsRendererRef.current?.setDirections(result)
 
         const route = result.routes[0]
-        
-        // Handle Optimized Order callback
-        if (mode === 'auto' && optimize && onOptimizedOrderChange) {
-          const optimizedIndices = route.waypoint_order; // [2, 0, 1] means go to waypoints[2] first
-          const optimizedIds = optimizedIndices.map(idx => routedDests[idx].id);
-          onOptimizedOrderChange(optimizedIds);
-        }
 
         let totalDist = 0
         let totalTime = 0
@@ -186,17 +225,7 @@ export function GroupingMap({
           fuelCost: fuelCost.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " บาท"
         })
         // ตัวเลขนี้แสดงบนแผนที่อย่างเดียว — ตอนกดสร้างทริป หน้าจัดกลุ่มคิด กม. ใหม่จากงานชุดที่บันทึกจริง (ตัวคิดกลาง planDistance)
-      } else {
-        // Allow the same inputs to be retried after a failure.
-        lastRouteKeyRef.current = null
-        setRouteStats(null) // ไม่ค้างตัวเลขของการเลือกชุดก่อน
-        toast({
-          title: "การคำนวณล้มเหลว",
-          description: "ไม่สามารถคำนวณเส้นทางถนนจริงได้ กรุณาลองใหม่",
-          variant: "destructive"
-        })
-      }
-    })
+    }
   }, [destinations, selectedIds, settings, selectedVehicleRate, mode, manualOrder, onOptimizedOrderChange, toast])
 
   React.useEffect(() => {

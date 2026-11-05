@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { normalizeRequestTime } from '@/lib/requestTime'
 import { destinationCoordinateProblem, parseThaiCoordinates } from '@/lib/requestCoordinates'
+import { transferShapeProblem } from '@/lib/transfer'
 
 /** ตรวจข้อมูลใบขอรถที่ส่งมาจากฟอร์ม — ฝั่ง server ไม่เชื่อ client (ความยาว/รูปแบบ/ประเภท) */
 const text = (max: number) => z.string().max(max)
@@ -22,6 +23,8 @@ const destination = z.object({
   allowSeparateSite: z.boolean().optional(),
   locationType: text(60),
   requestTime: time,
+  /** งานรับของไปส่งต่อ (lib/transfer) — ไม่มี = ใบปกติ */
+  transferRole: z.enum(['pickup', 'drop']).optional(),
 }).strict().refine(d => d.category === 'custom' ? d.customName.trim() !== '' : d.siteId !== '')
   // ทุกจุดต้องมีพิกัดในไทย (ผู้ใช้กำหนด 2026-10-19) — กันหน้าฟอร์มรุ่นเก่าที่เปิดค้างส่งจุดไม่มีพิกัดมา
   .refine(d => parseThaiCoordinates(d.coordinates) !== null, { path: ['coordinates'] })
@@ -33,7 +36,14 @@ const command = z.object({
   requestTime: time,
   requestedBy: text(120),
   note: text(2000),
-  destinations: z.array(destination).min(1).max(30),
+  destinations: z.array(destination).min(1).max(30).superRefine((list, ctx) => {
+    // ใบรับของไปส่งต่อ: จุดรับ ≥ 1 + จุดส่ง 1 จุดท้ายใบ · จุดรับต้องบอกว่ารับอะไร (จุดส่งเขียนรายการให้จากตรงนี้)
+    const problem = transferShapeProblem(list.map(d => d.transferRole))
+    if (problem) { ctx.addIssue({ code: 'custom', message: problem }); return }
+    list.forEach((d, i) => {
+      if (d.transferRole === 'pickup' && !d.jobDescription.trim()) ctx.addIssue({ code: 'custom', path: [i, 'jobDescription'], message: 'pickup-items' })
+    })
+  }),
 }).strict()
 
 export type VehicleRequestCommand = z.infer<typeof command>
@@ -72,12 +82,15 @@ function issueMessage(issue: z.ZodIssue, input: any): string {
     if (field === 'coordinates' && issue.code === 'custom') {
       return destinationCoordinateProblem({ category: String(raw?.category ?? ''), coordinates: String(raw?.coordinates ?? '') }, `${where}${name}`) ?? RELOAD
     }
+    if (field === 'jobDescription' && issue.code === 'custom') return `${where}${name}: ยังไม่ได้ระบุของที่จะรับ`
     if (field === 'requestTime') return `${where}${name}: เวลา "${shownTime(raw?.requestTime)}" ไม่ถูกต้อง — ใช้รูปแบบ 08:30`
     if (issue.code === 'too_big' && typeof field === 'string' && LABELS[field]) {
       return `${where}${name}: ${LABELS[field]}ยาวเกิน ${Number(issue.maximum).toLocaleString('en-US')} ตัวอักษร`
     }
     return RELOAD
   }
+  // ข้อความจากตัวตรวจรูปใบรับของไปส่งต่อ (เขียนเป็นภาษาผู้ใช้แล้ว)
+  if (head === 'destinations' && issue.code === 'custom') return issue.message
   if (head === 'destinations') return issue.code === 'too_small' ? 'ต้องมีจุดหมายอย่างน้อย 1 จุด' : issue.code === 'too_big' ? 'จุดหมายเกิน 30 จุด — แยกเป็นหลายใบ' : RELOAD
   if (head === 'requestDate') return 'วันที่ขอรถไม่ถูกต้อง — เลือกวันใหม่'
   if (head === 'requestTime') return `เวลา "${shownTime(input?.requestTime)}" ไม่ถูกต้อง — ใช้รูปแบบ 08:30`

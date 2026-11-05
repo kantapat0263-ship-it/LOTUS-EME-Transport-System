@@ -23,3 +23,14 @@ export function assertRequestDestinationsUnchanged(request: Record<string, any>,
   if (!Array.isArray(expected) || expected.length !== indexes.length || expected.some(value => typeof value !== 'string' || !value)) throw new Error('ข้อมูลจุดหมายต้นฉบับไม่ครบ กรุณาโหลดหน้าใหม่และเลือกงานใหม่')
   if (indexes.some((index, position) => requestDestinationFingerprint(request, index) !== expected[position])) throw new Error('จุดหมายหรือรายละเอียดใบขอเปลี่ยนระหว่างจัดรถ กรุณาโหลดหน้าใหม่และเลือกงานใหม่')
 }
+
+/**
+ * index ของจุดที่อยู่ในเที่ยวจริง — ไม่นับสำเนาคันคู่ที่คนจัดรถ "ถอน" (withdrawn)
+ * สำเนาที่ถอนถูกเก็บใน assignedDestinations ให้ตัวนับสถานะใบขอนับเป็นจุดที่จบแล้ว (ลบออกจากใบไม่ได้เพราะ index ที่จัดแล้วจะเลื่อน)
+ * แต่ไม่ได้อยู่ในเที่ยวไหน — ด่าน "ใบนี้จัดรถแล้ว ห้ามยกเลิก/ย้ายวัน" และการนับว่ายังมีจุดในเที่ยวไหม ต้องใช้ตัวนี้
+ */
+export function dispatchedDestinationIndexes(request: { assignedDestinations?: unknown; destinations?: unknown } | null | undefined): number[] {
+  const assigned: unknown[] = Array.isArray(request?.assignedDestinations) ? request.assignedDestinations : []
+  const destinations: unknown[] = Array.isArray(request?.destinations) ? request.destinations : []
+  return assigned.filter((index): index is number => typeof index === 'number' && !(destinations[index] as { withdrawn?: unknown } | undefined)?.withdrawn)
+}

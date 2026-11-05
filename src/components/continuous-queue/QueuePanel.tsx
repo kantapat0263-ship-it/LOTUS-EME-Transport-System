@@ -87,6 +87,8 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
   contextRef.current = `${date}|${JSON.stringify(action)}|${newDate}|${reason}|${compensationRequired}`
   React.useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const normalTrips = trips.filter(t => t.status === 'Planned' && t.gpsEndAt == null && !isManagedTrip(t))
+  // งานรับของไปส่งต่อเป็นงานครั้งเดียว — ทริปที่มีงานนี้กำหนดเป็นคิวต่อเนื่องไม่ได้ (server กันซ้ำอีกชั้น)
+  const extendableTrips = normalTrips.filter(t => !(t.stops || []).some(s => s.transferRole))
   const [extendTripId, setExtendTripId] = React.useState('')
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10)
   const booking = action && 'bookingId' in action ? queues.bookings.find(b => b.id === action.bookingId) : undefined
@@ -194,13 +196,13 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
           </details>}
         </div>
       })}
-      {normalTrips.length > 0 && date >= today && <div className="space-y-2 border-t border-border pt-3">
+      {extendableTrips.length > 0 && date >= today && <div className="space-y-2 border-t border-border pt-3">
         <p className="text-sm">กำหนดช่วงวันที่ให้ใบคิวที่สร้างไว้แล้ว</p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <select aria-label="เลือกใบคิวที่จะกำหนดช่วงวันที่" value={extendTripId} onChange={e => setExtendTripId(e.target.value)} disabled={busy} className="min-w-0 flex-1 rounded-md border border-border bg-background p-2 text-sm">
-            <option value="">เลือกใบคิว</option>{normalTrips.map(t => <option value={t.id} key={t.id}>{t.driverName} · {t.vehiclePlate} · {t.stops.map(s => s.siteName).join(', ')}</option>)}
+            <option value="">เลือกใบคิว</option>{extendableTrips.map(t => <option value={t.id} key={t.id}>{t.driverName} · {t.vehiclePlate} · {t.stops.map(s => s.siteName).join(', ')}</option>)}
           </select>
-          <Button variant="outline" disabled={busy || !normalTrips.some(t => t.id === extendTripId) || queues.status !== 'ready'} onClick={() => open({ action: 'extend', tripId: extendTripId })}>กำหนดคิวต่อเนื่อง</Button>
+          <Button variant="outline" disabled={busy || !extendableTrips.some(t => t.id === extendTripId) || queues.status !== 'ready'} onClick={() => open({ action: 'extend', tripId: extendTripId })}>กำหนดคิวต่อเนื่อง</Button>
         </div>
       </div>}
       <Dialog open={!!action} onOpenChange={next => { if (!next && !commandFlightRef.current.isPending()) setAction(null) }}>

@@ -34,8 +34,9 @@ import { queueDateLabel } from "@/components/continuous-queue/QueueNoticeCard"
 import type { QueueTripInput } from "@/types/continuous-queue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { computeTripPlanDistance } from "@/lib/planDistance"
-import { assertRequestDestinationsUnchanged, requestDestinationFingerprint } from "@/lib/requestDestination"
+import { assertRequestDestinationsUnchanged, dispatchedDestinationIndexes, requestDestinationFingerprint } from "@/lib/requestDestination"
 import { inThailand } from "@/lib/roadFlood"
+import { isTransferStop, orderPickupsBeforeDrop, TRANSFER_WARNING, transferLabel, transferShapeProblem, transferStopFields } from "@/lib/transfer"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -198,12 +199,43 @@ export default function TripGroupingPage() {
     const ids = mode === 'manual' ? manualOrder : currentOrderedIds;
     const items = ids.map(id => availableDestinations.find(d => d.id === id)).filter(matchesSelection);
     
+    // งานรับของไปส่งต่อ: จุดส่งต้องตามหลังจุดรับของกลุ่มเดียวกันเสมอ (แผนที่จัดให้แล้ว — ตรงนี้กันอีกชั้นก่อนบันทึก)
     if (mode === 'auto') {
       const remaining = availableDestinations.filter(d => selectedIds.has(d.id) && !ids.includes(d.id) && matchesSelection(d));
-      return [...items, ...remaining];
+      return orderPickupsBeforeDrop([...items, ...remaining]);
     }
-    return items;
+    return orderPickupsBeforeDrop(items);
   }, [availableDestinations, selectedIds, manualOrder, currentOrderedIds, mode])
+
+  // งานรับของไปส่งต่อที่เลือกไม่ครบกลุ่ม (ตั้งใจแยกคัน / เผลอถอดออก) — เตือนบนการ์ดและก่อนสร้างเที่ยว
+  const transferGroupMates = React.useCallback((d: any) => availableDestinations.filter(o =>
+    o.vrDocId === d.vrDocId && isTransferStop(o) && o.transferId === d.transferId), [availableDestinations])
+  const isPicked = React.useCallback((id: string) => mode === 'manual' ? manualOrder.includes(id) : selectedIds.has(id), [mode, manualOrder, selectedIds])
+  const splitTransferNames = React.useMemo(() => {
+    const names = new Set<string>()
+    selectedDestinations.forEach(d => {
+      if (!isTransferStop(d)) return
+      transferGroupMates(d).filter(o => !isPicked(o.id)).forEach(o => names.add(`${o.siteName || o.customName} (${o.vrId})`))
+    })
+    return [...names]
+  }, [selectedDestinations, transferGroupMates, isPicked])
+  /** ป้ายบนการ์ด: การ์ดที่เลือกแล้วคิดจากลำดับในเที่ยว · เตือนเมื่อกลุ่มถูกแยก (จุดคู่ยังค้างในกอง / จัดไปเที่ยวอื่นแล้ว) */
+  const transferBadgeFor = (d: any) => {
+    if (!isTransferStop(d)) return null
+    const mates = transferGroupMates(d)
+    const index = selectedDestinations.findIndex(s => s.id === d.id)
+    if (index >= 0) {
+      const label = transferLabel(selectedDestinations, index)
+      if (!label) return null
+      const left = mates.filter(o => !isPicked(o.id))
+      if (left.length > 0) return { text: label.text, warning: `เลือกไม่ครบกลุ่ม — ยังเหลือ ${left.map(o => o.siteName || o.customName).join(', ')} ในกอง` }
+      const missingMate = label.warning === TRANSFER_WARNING.dropMissing || label.warning === TRANSFER_WARNING.pickupMissing
+      return { text: label.text, warning: missingMate ? 'จุดคู่จัดไปเที่ยวอื่นแล้ว' : label.warning }
+    }
+    const label = transferLabel(mates, mates.findIndex(s => s.id === d.id))
+    if (!label) return null
+    return mates.some(o => isPicked(o.id)) ? { text: label.text, warning: 'ยังไม่ได้เลือก — จุดอื่นของกลุ่มเลือกไปแล้ว' } : { text: label.text }
+  }
 
   const selectedVehicle = React.useMemo(() => 
     vehicles?.find(v => v.id === vehicleId), 
@@ -246,24 +278,37 @@ export default function TripGroupingPage() {
     const destination = availableDestinations.find(d => d.id === id)
     if (!destination) return
     const isSelected = mode === 'manual' ? manualOrder.includes(id) : selectedIds.has(id)
+    // งานรับของไปส่งต่อ: เลือกจุดไหนก็ได้ทั้งกลุ่ม (จุดรับ + จุดส่งของใบเดียวกัน) · ถอดออกทีละจุด = ตั้งใจแยกคัน (มีเตือน)
+    const picked = (i: string) => mode === 'manual' ? manualOrder.includes(i) : selectedIds.has(i)
+    const added = isSelected ? [] : isTransferStop(destination)
+      ? availableDestinations.filter(d => d.id === id || (d.vrDocId === destination.vrDocId && isTransferStop(d) && d.transferId === destination.transferId && !picked(d.id)))
+      : [destination]
     if (isSelected) selectionFingerprintsRef.current.delete(id)
-    else selectionFingerprintsRef.current.set(id, destination.sourceFingerprint)
+    else added.forEach(d => selectionFingerprintsRef.current.set(d.id, d.sourceFingerprint))
+    // บอกคนจัดรถว่าการ์ดอื่นถูกติ๊กตามมาด้วย (ไม่งั้นงงว่าทำไมติ๊กเพิ่มเอง)
+    if (added.length > 1) toast({
+      title: `📦 เลือกทั้งชุด ${added.length} จุด`,
+      description: `งานรับของไปส่งต่อ ${destination.vrId || ""} — จุดรับกับจุดส่งไปคันเดียวกัน (ถ้าจะแยกคัน ถอดออกทีละจุดได้)`,
+    })
     if (mode === 'manual') {
       setManualOrder(prev => {
         if (prev.includes(id)) {
           return prev.filter(i => i !== id)
         }
-        return [...prev, id]
+        // โหมดจัดเอง: เรียงตามลำดับที่กด แต่จุดส่งต้องอยู่หลังจุดรับของกลุ่มเดียวกัน
+        const next = [...prev, ...added.map(d => d.id).filter(i => !prev.includes(i))]
+        const byId = new Map(availableDestinations.map(d => [d.id, d]))
+        return orderPickupsBeforeDrop(next.map(i => byId.get(i) ?? { id: i })).map(d => d.id)
       })
     } else {
       setSelectedIds(prev => {
         const newSet = new Set(prev)
         if (newSet.has(id)) newSet.delete(id)
-        else newSet.add(id)
+        else added.forEach(d => newSet.add(d.id))
         return newSet
       })
     }
-  }, [mode, availableDestinations, manualOrder, selectedIds])
+  }, [mode, availableDestinations, manualOrder, selectedIds, toast])
 
   // งานที่ต้องใช้รถมากกว่า 1 คัน: เพิ่ม "คันคู่" = ต่อท้ายสำเนา destination ในใบขอเดิม
   // (เก็บลงใบขอจริง → refresh ไม่หาย, มี index ของตัวเอง → ไม่แตะกลไก assignment เลย)
@@ -286,7 +331,7 @@ export default function TripGroupingPage() {
       await runTransaction(db, async tx => {
         const fresh = (await tx.get(ref)).data()
         if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
-        if ((fresh.assignedDestinations || []).length > 0) throw new Error("ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน")
+        if (dispatchedDestinationIndexes(fresh).length > 0) throw new Error("ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน")
         if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
         if (fresh.requestDate !== moveDialog.currentDate) throw new Error("วันที่ของใบขอเปลี่ยนแล้ว กรุณาเปิดรายการใหม่")
         tx.update(ref, {
@@ -321,7 +366,7 @@ export default function TripGroupingPage() {
       await runTransaction(db, async tx => {
         const fresh = (await tx.get(ref)).data()
         if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
-        if ((fresh.assignedDestinations || []).length > 0) throw new Error("ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน")
+        if (dispatchedDestinationIndexes(fresh).length > 0) throw new Error("ใบขอนี้มีจุดที่ถูกจัดเข้าทริปแล้ว — ต้องจัดการที่ทริปแทน")
         if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
         tx.update(ref, {
           status: "rejected",
@@ -352,59 +397,110 @@ export default function TripGroupingPage() {
         const orig = fresh.destinations?.[dest.destIndex]
         if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !orig || orig.pairedCopy) throw new Error("ไม่พบจุดต้นฉบับ หรือจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
         assertRequestDestinationsUnchanged(fresh, [dest.destIndex], [dest.sourceFingerprint])
-        const copy: Record<string, any> = Object.fromEntries(
-          Object.entries(orig).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
-        )
-        copy.pairedCopy = true
-        copy.pairedFromIndex = dest.destIndex
+        // งานรับของไปส่งต่อ: คันคู่ = สำเนา "ทั้งชุด" (จุดรับทุกจุด + จุดส่ง) รหัสกลุ่มใหม่ — คันที่ 2 ได้ชุดของตัวเองครบ ไม่ปนกับชุดเดิม
+        // (สำเนาจุดเดียวจะได้จุดรับที่ไม่มีจุดส่ง หรือจุดส่งที่ไม่มีของ)
+        const sourceIndexes: number[] = isTransferStop(orig)
+          ? fresh.destinations.flatMap((d: any, i: number) => !d?.pairedCopy && isTransferStop(d) && d.transferId === orig.transferId ? [i] : [])
+          : [dest.destIndex]
+        if (isTransferStop(orig) && transferShapeProblem(sourceIndexes.map(i => fresh.destinations[i].transferRole))) throw new Error("ชุดรับ-ส่งของใบนี้ไม่ครบ กรุณาโหลดข้อมูลใหม่")
+        const copyTransferId = isTransferStop(orig) ? `tf_${crypto.randomUUID()}` : null
+        const copies = sourceIndexes.map(i => {
+          const copy: Record<string, any> = Object.fromEntries(
+            Object.entries(fresh.destinations[i]).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
+          )
+          if (copyTransferId) copy.transferId = copyTransferId
+          copy.pairedCopy = true
+          copy.pairedFromIndex = i
+          return copy
+        })
         tx.update(ref, {
-          destinations: [...fresh.destinations, copy],
+          destinations: [...fresh.destinations, ...copies],
           updatedAt: serverTimestamp(),
         })
       })
-      toast({ title: "เพิ่มคันคู่แล้ว 🚛🚛", description: `"${dest.siteName}" มีสำเนาในกองอีก 1 ใบ — หยิบไปจัดให้อีกคันได้เลย` })
+      toast(isTransferStop(dest)
+        ? { title: "เพิ่มคันคู่ทั้งชุดแล้ว 🚛🚛", description: `ใบ ${dest.vrId || ""} มีสำเนาจุดรับ + จุดส่งอีก 1 ชุดในกอง — หยิบทั้งชุดไปจัดให้อีกคันได้เลย` }
+        : { title: "เพิ่มคันคู่แล้ว 🚛🚛", description: `"${dest.siteName}" มีสำเนาในกองอีก 1 ใบ — หยิบไปจัดให้อีกคันได้เลย` })
     } catch (e: any) {
       console.error(e)
       toast({ title: "เพิ่มคันคู่ไม่สำเร็จ", description: e?.message || "ไม่สามารถเพิ่มคันคู่ได้", variant: "destructive" })
     }
   }
 
-  // ถอนสำเนาคันคู่ — เฉพาะยังไม่ถูกจัด และต้องไม่มีจุดที่ "ถูกจัดแล้ว" อยู่หลังตำแหน่งนี้
-  // (ลบ element กลาง array จะทำให้ index ของ assignedDestinations ที่ตามมาเพี้ยน)
+  // ถอนสำเนาคันคู่ — ปกติลบออกจากใบ (ต้องยังไม่ถูกจัด และไม่มีจุดที่ "ถูกจัดแล้ว" อยู่หลังตำแหน่งนี้
+  // เพราะลบ element กลาง array จะทำให้ index ของ assignedDestinations ที่ตามมาเพี้ยน)
+  // ลบไม่ได้ (สำเนาบางจุดของชุดถูกจัดไปแล้ว / มีจุดจัดแล้วอยู่ถัดไป) = "ปิด" จุดที่ยังค้างแทน: นับรวมใน assignedDestinations
+  // (ตัวนับสถานะใบขอทุกตัวนับจาก array นี้ → ใบปิดได้ ไม่ค้าง partial) + ติด withdrawn ให้หน้าคำขอแสดงว่า "ถอนแล้ว" ไม่ใช่ "จัดแล้ว"
   const removeDuplicate = async (dest: any) => {
     const req = requests?.find(r => r.id === dest.vrDocId)
     if (!req?.destinations?.[dest.destIndex]?.pairedCopy) return
-    if (!window.confirm(`ถอนคันคู่ "${dest.siteName}" ออกจากกอง?`)) return
+    // งานรับของไปส่งต่อ: สำเนาเป็นชุด (รหัสกลุ่มเดียวกัน) — ถอนทั้งชุดพร้อมกัน ไม่ให้เหลือจุดรับที่ไม่มีจุดส่งค้างในกอง
+    const isSet = isTransferStop(dest)
+    const onTrip = dispatchedDestinationIndexes(req) // ไม่นับสำเนาที่ถอนไปแล้ว
+    const partlyUsed = isSet && (req.destinations || []).some((d: any, i: number) =>
+      d?.pairedCopy && d.transferId === dest.transferId && onTrip.includes(i))
+    if (!window.confirm(partlyUsed
+      ? `สำเนาคันคู่ชุดนี้ของใบ ${dest.vrId || ""} จัดเข้าเที่ยวไปแล้วบางจุด — ถอนเฉพาะจุดที่ยังค้างในกอง?\n(จุดที่จัดไปแล้วยังอยู่ในเที่ยวเดิม ไม่ถูกแตะ)`
+      : isSet ? `ถอนคันคู่ทั้งชุด (จุดรับ + จุดส่งที่เป็นสำเนา) ของใบ ${dest.vrId || ""} ออกจากกอง?` : `ถอนคันคู่ "${dest.siteName}" ออกจากกอง?`)) return
+    let closedOnly = 0
+    let setOnTrip = false
     try {
       const ref = doc(db, "vehicleRequests", dest.vrDocId)
       await runTransaction(db, async tx => {
+        closedOnly = 0 // transaction รันซ้ำได้ — นับใหม่ทุกรอบ
+        setOnTrip = false
         const fresh = (await tx.get(ref)).data()
         if (!fresh) throw new Error("ไม่พบใบขอรถแล้ว กรุณาโหลดข้อมูลใหม่")
         if (!["pending", "in_progress", "partial", "rescheduled"].includes(fresh.status)) throw new Error("ใบขอถูกยกเลิกหรือเปลี่ยนสถานะแล้ว กรุณาโหลดข้อมูลใหม่")
         const paired = fresh.destinations?.[dest.destIndex]
         if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !paired?.pairedCopy || paired.pairedFromIndex !== dest.pairedFromIndex) throw new Error("สำเนาหรือลำดับจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
         assertRequestDestinationsUnchanged(fresh, [dest.destIndex], [dest.sourceFingerprint])
+        const removed: number[] = isTransferStop(paired)
+          ? fresh.destinations.flatMap((d: any, i: number) => d?.pairedCopy && isTransferStop(d) && d.transferId === paired.transferId ? [i] : [])
+          : [dest.destIndex]
+        const first = Math.min(...removed)
         const assigned: number[] = fresh.assignedDestinations || []
-        if (assigned.includes(dest.destIndex)) throw new Error("สำเนานี้ถูกจัดเข้าทริปแล้ว")
-        if (assigned.some(i => i > dest.destIndex)) throw new Error("มีจุดที่ถูกจัดแล้วอยู่ถัดจากสำเนานี้ — ลบแล้วลำดับจะเพี้ยน")
-        const destinations = fresh.destinations.filter((_: any, i: number) => i !== dest.destIndex).map((d: any) => {
-          if (d.pairedFromIndex === dest.destIndex) throw new Error("มีสำเนาที่อ้างถึงจุดนี้อยู่ กรุณาตรวจข้อมูลก่อนถอน")
-          return Number.isSafeInteger(d.pairedFromIndex) && d.pairedFromIndex > dest.destIndex
-            ? { ...d, pairedFromIndex: d.pairedFromIndex - 1 } : d
+        const leftover = removed.filter(i => !assigned.includes(i))
+        if (leftover.length === 0) throw new Error(removed.length > 1 ? "สำเนาชุดนี้ถูกจัดเข้าทริปครบแล้ว" : "สำเนานี้ถูกจัดเข้าทริปแล้ว")
+        if (leftover.length < removed.length || assigned.some(i => i > first)) {
+          const closed = [...new Set([...assigned, ...leftover])]
+          const complete = closed.length === fresh.destinations.length
+          const tripIds: string[] = Array.isArray(fresh.tripIds) ? fresh.tripIds : fresh.tripId ? [fresh.tripId] : []
+          tx.update(ref, {
+            destinations: fresh.destinations.map((d: any, i: number) => leftover.includes(i) ? { ...d, withdrawn: true } : d),
+            assignedDestinations: closed,
+            ...(complete ? { status: "approved", tripId: fresh.tripId || tripIds[0] || null } : {}),
+            updatedAt: serverTimestamp(),
+          })
+          closedOnly = leftover.length
+          setOnTrip = removed.some(i => dispatchedDestinationIndexes(fresh).includes(i))
+          return
+        }
+        // ลบแล้ว index ที่ตามมาเลื่อนลงเท่าจำนวนจุดที่ลบไปก่อนหน้ามัน
+        const shift = (index: number) => index - removed.filter(r => r < index).length
+        const destinations = fresh.destinations.filter((_: any, i: number) => !removed.includes(i)).map((d: any) => {
+          if (removed.includes(d.pairedFromIndex)) throw new Error("มีสำเนาที่อ้างถึงจุดนี้อยู่ กรุณาตรวจข้อมูลก่อนถอน")
+          return Number.isSafeInteger(d.pairedFromIndex) && shift(d.pairedFromIndex) !== d.pairedFromIndex
+            ? { ...d, pairedFromIndex: shift(d.pairedFromIndex) } : d
         })
         const remapNotes = (notes: Record<string, any> = {}) => Object.fromEntries(
           Object.entries(notes).flatMap(([key, value]) => {
             const match = /^stop_(\d+)$/.exec(key)
             if (!match) return [[key, value]]
             const index = Number(match[1])
-            if (index === dest.destIndex) return []
-            return [[`stop_${index > dest.destIndex ? index - 1 : index}`, value]]
+            if (removed.includes(index)) return []
+            return [[`stop_${shift(index)}`, value]]
           })
         )
+        // ถอนสำเนาที่เหลือจุดเดียวที่ยังไม่จัด → จุดที่เหลือในใบจัดครบแล้ว = ปิดใบ (เดิมค้าง "จัดบางส่วน" ตลอดไป)
+        // จุดที่จัดแล้วอยู่ก่อน first ทั้งหมด (เงื่อนไขด้านบน) → index ไม่เลื่อน นับตรง ๆ ได้
+        const complete = assigned.length > 0 && assigned.length === destinations.length
+        const tripIds: string[] = Array.isArray(fresh.tripIds) ? fresh.tripIds : fresh.tripId ? [fresh.tripId] : []
         tx.update(ref, {
           destinations,
           stopNotes: remapNotes(fresh.stopNotes),
           stopNoteAuthors: remapNotes(fresh.stopNoteAuthors),
+          ...(complete ? { status: "approved", tripId: fresh.tripId || tripIds[0] || null } : {}),
           updatedAt: serverTimestamp(),
         })
       })
@@ -415,7 +511,9 @@ export default function TripGroupingPage() {
       setSelectedIds(prev => new Set([...prev].filter(id => !belongsToRequest(id))))
       setManualOrder(prev => prev.filter(id => !belongsToRequest(id)))
       setOptimizedOrder(prev => prev.filter(id => !belongsToRequest(id)))
-      toast({ title: "ถอนคันคู่แล้ว", description: `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
+      toast({ title: "ถอนคันคู่แล้ว", description: closedOnly
+        ? `ถอนสำเนาที่ยังค้าง ${closedOnly} จุดของใบ ${dest.vrId || ""} ออกจากกองแล้ว${setOnTrip ? " — จุดที่จัดไปแล้วยังอยู่ในเที่ยวเดิม" : ""}`
+        : isSet ? `เอาสำเนาชุดรับ-ส่งของใบ ${dest.vrId || ""} ออกจากกองเรียบร้อย` : `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
     } catch (e: any) {
       console.error(e)
       toast({ title: "ถอนไม่สำเร็จ", description: e?.message || "ไม่สามารถถอนคันคู่ได้", variant: "destructive" })
@@ -446,6 +544,10 @@ export default function TripGroupingPage() {
     if (pairConflict && !window.confirm(
       "มีจุด 'คันคู่' (ต้นฉบับ + สำเนา) ถูกเลือกเข้าคันเดียวกัน — ปกติควรแยกคนละคัน\nยืนยันจัดเข้าคันเดียวกัน?"
     )) return
+    // งานรับของไปส่งต่อ: จุดคู่ยังค้างในกอง = จุดรับกับจุดส่งจะอยู่คนละคัน (ทำได้ แต่ต้องตั้งใจ)
+    if (splitTransferNames.length > 0 && !window.confirm(
+      `งานรับของไปส่งต่อยังเลือกไม่ครบกลุ่ม — จุดต่อไปนี้ยังค้างในกอง:\n${splitTransferNames.map(n => `• ${n}`).join('\n')}\n\nจุดรับกับจุดส่งจะอยู่คนละคัน ยืนยันแยก?`
+    )) return
 
     const uniqueDates = Array.from(new Set(selectedDestinations.map(d => d.requestDate).filter(Boolean)))
     if (uniqueDates.length > 1) {
@@ -468,6 +570,11 @@ export default function TripGroupingPage() {
     }
     if (queueConflicts.length > 0) {
       setBorrowOpen(true)
+      return
+    }
+    if (continuousEndDate && continuousEndDate > badgeDate && selectedDestinations.some(isTransferStop)) {
+      // คิวต่อเนื่องคัดลอกจุดเดิมไปทุกวัน — งานรับของครั้งเดียวจะถูกรับซ้ำทุกวัน
+      toast({ title: 'จัดเป็นคิวต่อเนื่องไม่ได้', description: 'งานรับของไปส่งต่อเป็นงานครั้งเดียว — ล้างวันสิ้นสุดคิวต่อเนื่อง แล้วจัดเป็นเที่ยววันเดียว', variant: 'destructive' })
       return
     }
     if (continuousEndDate && continuousEndDate > badgeDate) {
@@ -510,7 +617,7 @@ export default function TripGroupingPage() {
     } catch (e: any) {
       toast({ title: 'ตรวจคิวไม่สำเร็จ', description: e.message, variant: 'destructive' })
     } finally { lookupBusyRef.current = false }
-  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, selectedDestinations, db, continuousQueues, queueConflicts, continuousEndDate, badgeDate])
+  }, [selectedIds.size, manualOrder.length, vehicleId, driverId, mode, toast, selectedDestinations, db, continuousQueues, queueConflicts, continuousEndDate, badgeDate, splitTransferNames])
 
   const confirmCreateTrip = async (borrowChoice?: BorrowChoice) => {
     if (!user) return
@@ -606,6 +713,7 @@ export default function TripGroupingPage() {
             requestTime: fresh.requestTime || req.requestTime || '08:30', address: fresh.address || '',
             note: req.note || req.notes || '', dispatcherNote: req.stopNotes?.[`stop_${d.destIndex}`] || '',
             dispatcherName: req.stopNoteAuthors?.[`stop_${d.destIndex}`] || req.stopNotesUpdatedBy || '',
+            ...transferStopFields(fresh),
           }
         })
         // คิวต่อเนื่องหลายวันใช้งานชุดเดียวกันทุกวัน — คิดครั้งเดียว
@@ -658,7 +766,8 @@ export default function TripGroupingPage() {
         address: d.address || '',
         note: d.note || "",
         dispatcherNote: d.dispatcherNote || "",
-        dispatcherName: d.dispatcherName || ""
+        dispatcherName: d.dispatcherName || "",
+        ...transferStopFields(d),
       }))
       // คิดก่อนนับเลขทริปของวัน — ไม่ให้ช่วงรอ Google ไปถ่างช่องระหว่างนับเลขกับบันทึก
       const distance = await planFields(warehousePos, stops)
@@ -794,6 +903,15 @@ export default function TripGroupingPage() {
         ? Math.max(...currentStops.map((s: any) => s.order || 0))
         : 0
 
+      // งานรับของไปส่งต่อ: จุดใหม่ต่อท้ายเสมอ — ถ้าจุดส่งของกลุ่มเดียวกันอยู่ในเที่ยวนี้แล้ว ลำดับจะเป็นส่งก่อนรับ
+      // (ไม่เรียงจุดเดิมใหม่ เพราะหมายเหตุคนจัดรถผูกกับลำดับจุด stop_N) → ถามก่อน ให้คนจัดรถตั้งใจและแจ้งคนขับ
+      const pickupsAfterDrop = validNewStops.filter((d: any) => d.transferRole === 'pickup' &&
+        currentStops.some((s: any) => s.transferRole === 'drop' && s.transferId === d.transferId && !(s.outcome && s.outcome !== 'delivered')))
+      if (pickupsAfterDrop.length > 0 && !window.confirm(
+        `จุดรับของต่อไปนี้จะอยู่หลังจุดส่งที่มีในเที่ยวนี้แล้ว (ลำดับเป็นส่งก่อนรับ):\n${pickupsAfterDrop.map((d: any) => `• ${d.siteName || d.customName}`).join('\n')}\n\nต้องแจ้งคนขับให้ไปรับก่อน ยืนยันรวม?`
+      )) return
+      if (cancelled()) return
+
       const addedStops = validNewStops.map((d, index) => ({
         order: lastOrder + index + 1,
         siteId: d.siteId || null,
@@ -806,7 +924,8 @@ export default function TripGroupingPage() {
         ...(d.requestedAt != null ? { requestedAt: d.requestedAt } : {}),
         requestTime: d.requestTime || '',
         address: d.address || '',
-        note: d.note || ""
+        note: d.note || "",
+        ...transferStopFields(d),
       }))
 
       const mergedStops = [...currentStops, ...addedStops]
@@ -927,14 +1046,14 @@ export default function TripGroupingPage() {
               {manualOrder.length > 0 ? (
                 <div className="space-y-3 animate-in fade-in duration-300">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
+                    <DestinationCard key={dest.id} dest={dest} transferBadge={transferBadgeFor(dest)} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={idx + 1} onHover={setHoveredDestId} />
                   ))}
                   {filteredDestinations.length > manualOrder.length && (
                     <div className="pt-4 pb-2 border-t border-border/30">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase px-2 mb-3">ยังไม่ได้เลือก</p>
                       <div className="space-y-3 opacity-60 grayscale-[0.5]">
                         {filteredDestinations.filter(d => !manualOrder.includes(d.id)).map(dest => (
-                          <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
+                          <DestinationCard key={dest.id} dest={dest} transferBadge={transferBadgeFor(dest)} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId} />
                         ))}
                       </div>
                     </div>
@@ -948,7 +1067,7 @@ export default function TripGroupingPage() {
                   </div>
                   <div className="space-y-3 opacity-80">
                     {filteredDestinations.map(dest => (
-                      <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                      <DestinationCard key={dest.id} dest={dest} transferBadge={transferBadgeFor(dest)} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
                         onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                         onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                     ))}
@@ -981,13 +1100,13 @@ export default function TripGroupingPage() {
               {filteredDestinations.length > 0 ? (
                 <div className="space-y-3 pb-2">
                   {selectedDestinations.map((dest, idx) => (
-                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
+                    <DestinationCard key={dest.id} dest={dest} transferBadge={transferBadgeFor(dest)} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={true} onToggle={() => handleToggleSelect(dest.id)} manualIndex={selectedIds.size > 1 ? idx + 1 : undefined} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                       onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}
                   {filteredDestinations.length > selectedIds.size && selectedIds.size > 0 && <div className="pt-4 border-t border-border/20" />}
                   {filteredDestinations.filter(d => !selectedIds.has(d.id)).map(dest => (
-                    <DestinationCard key={dest.id} dest={dest} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
+                    <DestinationCard key={dest.id} dest={dest} transferBadge={transferBadgeFor(dest)} onMoveDate={!dest.pairedCopy ? () => openMoveDialog(dest) : undefined} onCancel={!dest.pairedCopy ? () => openCancelDialog(dest) : undefined} isSelected={false} onToggle={() => handleToggleSelect(dest.id)} onHover={setHoveredDestId}
                       onDuplicate={!dest.pairedCopy ? () => duplicateDestination(dest) : undefined}
                       onRemoveDup={dest.pairedCopy ? () => removeDuplicate(dest) : undefined} />
                   ))}

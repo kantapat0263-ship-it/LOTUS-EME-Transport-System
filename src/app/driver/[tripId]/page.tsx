@@ -23,6 +23,20 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
+import { transferLabel, transferNoteForDriver, type TransferFields, type TransferLabel } from "@/lib/transfer"
+
+/** ป้ายงานรับของไปส่งต่อบนใบงานคนขับ — บอกว่าจุดนี้รับของไปส่งที่ไหน / ส่งของที่รับมาจากไหน */
+function TransferTag({ label }: { label: TransferLabel }) {
+  const note = transferNoteForDriver(label)
+  return (
+    <div className="mt-1">
+      <span className={`inline-block text-[12px] font-bold px-2 py-0.5 rounded-full ${label.role === "pickup" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
+        {label.text}
+      </span>
+      {note && <p className="text-[11px] font-semibold text-red-600 mt-0.5">⚠️ {note}</p>}
+    </div>
+  )
+}
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -46,7 +60,7 @@ export default function DriverTripPage() {
   const [boardSize, setBoardSize] = React.useState(0)
   const [topKm, setTopKm] = React.useState(0)
   // Jobs other trucks handed to this driver today (public-safe: shown as "รับงานต่อ")
-  const [incoming, setIncoming] = React.useState<Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName">[]>([])
+  const [incoming, setIncoming] = React.useState<(Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName"> & TransferFields)[]>([])
   // Actual km for this trip after work moved in/out (null = fall back to planned)
   const [actualKm, setActualKm] = React.useState<number | null>(null)
 
@@ -167,6 +181,8 @@ export default function DriverTripPage() {
   const monthLabel = trip.tripDate
     ? new Date(trip.tripDate + "T00:00:00").toLocaleDateString("th-TH", { month: "long" })
     : ""
+  // ป้ายงานรับ-ส่งจับคู่จากจุดของคันนี้ + งานที่โยกมาเพิ่ม (เลขลำดับเดียวกับที่แสดง: งานโยกต่อท้าย)
+  const transferPeers: (TransferFields & { siteName?: string })[] = [...(trip.stops || []), ...incoming]
 
   return (
     <div className="min-h-screen bg-gray-50 flex justify-center font-sans antialiased">
@@ -274,6 +290,10 @@ export default function DriverTripPage() {
               <div className="p-3 space-y-2">
                 {incoming.map((job, i) => (
                   <div key={i} className="bg-white rounded-xl border border-blue-200 p-3">
+                    {(() => {
+                      const label = transferLabel(transferPeers, (trip.stops?.length || 0) + i)
+                      return label && <TransferTag label={label} />
+                    })()}
                     <div className="flex items-start gap-2">
                       <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
                         {(trip.stops?.length || 0) + i + 1}
@@ -328,6 +348,9 @@ export default function DriverTripPage() {
               const movedToDriver = (stop as any).reassignedToDriverName
               // ฝั่งต้นทาง: งานที่คันนี้ "โยกไปให้" คันอื่น (gate เดียวกับ badge ในใบสรุป)
               const movedAway = movedToPlate && (stop as any).outcome && (stop as any).outcome !== 'delivered'
+              // จุดที่คนจัดรถเลื่อนวัน / ถอนออก แต่ไม่ได้โยกให้คันไหน → วันนี้ไม่ต้องไป (เดิมยังขึ้นปุ่มนำทางเหมือนงานปกติ)
+              const skippedToday = !movedAway && !!(stop as any).outcome && (stop as any).outcome !== 'delivered'
+              const postponed = skippedToday && (stop as any).outcome === 'postponed'
               // หมายเหตุจัดรถ: อ่านจากแหล่ง canonical (trip.stopNotes) เหมือนใบสรุป + ชื่อคนจัดรถ
               const dispatcherNote = (trip as any)?.stopNotes?.[`stop_${index}`] || (stop as any).dispatcherNote
               const dispatcherBy = (trip as any)?.stopNoteAuthors?.[`stop_${index}`] || (stop as any).dispatcherName
@@ -336,7 +359,7 @@ export default function DriverTripPage() {
                 key={index}
                 className="relative bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all active:scale-[0.98]"
               >
-                <div className={`absolute left-0 top-0 bottom-0 w-2 ${movedAway ? 'bg-amber-400' : 'bg-blue-600'}`} />
+                <div className={`absolute left-0 top-0 bottom-0 w-2 ${movedAway ? 'bg-amber-400' : skippedToday ? 'bg-gray-400' : 'bg-blue-600'}`} />
                 
                 <div className="p-5">
                   <div className="flex justify-between items-start mb-4">
@@ -359,11 +382,23 @@ export default function DriverTripPage() {
                             🔄 โยกไปให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate})
                           </span>
                         )}
+                        {skippedToday && (
+                          <span className="inline-block mt-1 text-[11px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">
+                            {postponed ? '⏭️ เลื่อนไปวันอื่น' : '⏭️ วันนี้ไม่ต้องไป'}
+                          </span>
+                        )}
                         {(stop as any).assistForPlate && (
                           <span className="inline-block mt-1 text-[11px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">
                             🤝 ไปช่วยขนงานของ {(stop as any).assistForDriver ? `${(stop as any).assistForDriver} ` : ""}({(stop as any).assistForPlate})
                           </span>
                         )}
+                        {(() => {
+                          // จุดที่ไม่ต้องทำวันนี้ (โยกไปคันอื่น/เลื่อน/ปฏิเสธ — ใบงานส่งมาเป็น postponed / not-delivered) ไม่ขึ้นป้ายรับ-ส่ง
+                          // ไม่งั้นป้าย "รับของ → ไปส่งต่อ" จะขัดกับคำเตือนของจุดคู่ที่บอกว่าจุดนี้ไม่อยู่ในใบงาน
+                          if ((stop as any).outcome && (stop as any).outcome !== 'delivered') return null
+                          const label = transferLabel(transferPeers, index)
+                          return label && <TransferTag label={label} />
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -411,6 +446,12 @@ export default function DriverTripPage() {
                   {movedAway ? (
                     <div className="w-full min-h-[52px] bg-amber-50 text-amber-800 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-amber-200 px-3 py-2 text-center">
                       ✋ งานนี้โยกให้ {movedToDriver ? `${movedToDriver} ` : ''}({movedToPlate}) แล้ว — ไม่ต้องวิ่งจุดนี้
+                    </div>
+                  ) : skippedToday ? (
+                    <div className="w-full min-h-[52px] bg-gray-100 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2 border-2 border-gray-300 px-3 py-2 text-center">
+                      {postponed
+                        ? '⏭️ เลื่อนไปวันอื่นแล้ว — วันนี้ไม่ต้องไปจุดนี้'
+                        : '⏭️ วันนี้ไม่ต้องไปจุดนี้ — คนจัดรถเอาออกจากเที่ยวนี้แล้ว'}
                     </div>
                   ) : (
                   <a

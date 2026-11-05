@@ -47,6 +47,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
 import { URGENT_DETAIL_LIMITS, urgentDetailsError, urgentPrefill, type UrgentDetails } from "@/lib/urgentRequest"
+import { buildDropDescription, type TransferRole } from "@/lib/transfer"
 
 interface DestinationRequest {
   id: string;
@@ -61,7 +62,17 @@ interface DestinationRequest {
   allowSeparateSite?: boolean;
   locationType: string;
   requestTime: string;
+  /** งานรับของไปส่งต่อ: จุดรับ (หลายจุดได้) + จุดส่ง 1 จุดท้ายใบ · ไม่มี = งานปกติ */
+  transferRole?: TransferRole;
 }
+
+/** การ์ดจุดหมายเปล่า (โหมดรับของไปส่งต่อ) */
+const blankDestination = (transferRole?: TransferRole): DestinationRequest => ({
+  id: crypto.randomUUID(), category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "",
+  jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30", ...(transferRole ? { transferRole } : {}),
+})
+const placeChosen = (d: DestinationRequest) => (d.category !== "custom" && !!d.siteId) || (d.category === "custom" && !!d.customName.trim())
+const placeName = (d: DestinationRequest) => (d.category === "custom" ? d.customName : d.siteName).trim()
 
 const CATEGORIES = [
   { id: 'all', label: 'ทั้งหมด', icon: Search, types: [] },
@@ -273,6 +284,38 @@ export function RequestForm() {
     return site.latitude != null && site.longitude != null ? `${site.latitude}, ${site.longitude}` : ""
   }
 
+  // ---- งานรับของไปส่งต่อ: ใบเดียว รับหลายจุด → ส่งจุดเดียว (เดิมต้องทำใบรับ + ใบส่งแยก 2 ใบ) ----
+  const isTransfer = destinations.some(d => d.transferRole)
+  const transferPickups = destinations.filter(d => d.transferRole === "pickup")
+  /** ชื่อเรียกการ์ดในข้อความเตือน — โหมดรับ-ส่งบอกเป็น "จุดรับของที่ N / จุดส่งของ" ให้ผู้ขอหาเจอ */
+  const pointLabel = (d: DestinationRequest) => d.transferRole === "pickup" ? `จุดรับของที่ ${transferPickups.indexOf(d) + 1}`
+    : d.transferRole === "drop" ? "จุดส่งของ" : `จุดที่ ${destinations.indexOf(d) + 1}`
+  const dropDescription = (extra: string) => buildDropDescription(transferPickups.map(p => ({ name: placeName(p), items: p.jobDescription })), extra)
+  const hasContent = (d: DestinationRequest) => placeChosen(d) || !!d.jobDescription.trim() || !!d.coordinates.trim()
+
+  const switchToTransfer = () => {
+    if (isTransfer) return
+    // การ์ดที่กรอกไว้ = จุดรับของจุดแรก แล้วเพิ่มการ์ดจุดส่งของต่อท้าย
+    setDestinations(prev => [{ ...prev[0], transferRole: "pickup" }, blankDestination("drop")])
+  }
+  const switchToNormal = () => {
+    if (!isTransfer) return
+    if (destinations.slice(1).some(hasContent) && !window.confirm("เปลี่ยนเป็นงานปกติ — จะเหลือเฉพาะจุดแรก ข้อมูลจุดอื่นจะหายไป ยืนยัน?")) return
+    setDestinations(prev => {
+      const { transferRole: _role, ...first } = prev[0]
+      return [first]
+    })
+  }
+  const addPickup = () => setDestinations(prev => {
+    const drop = prev.filter(d => d.transferRole === "drop")
+    return [...prev.filter(d => d.transferRole !== "drop"), blankDestination("pickup"), ...drop]
+  })
+  const removePickup = (id: string) => {
+    const target = destinations.find(d => d.id === id)
+    if (target && hasContent(target) && !window.confirm(`ลบ${pointLabel(target)}${placeName(target) ? ` (${placeName(target)})` : ""}?`)) return
+    setDestinations(prev => prev.filter(d => d.id !== id))
+  }
+
 const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedDate || !user) {
@@ -345,6 +388,26 @@ const handleSubmit = async (e: React.FormEvent) => {
       return
     }
 
+    if (isTransfer) {
+      // โหมดรับ-ส่ง: ทุกการ์ดต้องเลือกสถานที่ (ไม่ตัดการ์ดว่างทิ้งเงียบ ๆ — จุดรับหายไปจุดเดียวของจะไม่ถูกรับ)
+      const noPlace = destinations.find(d => !placeChosen(d))
+      if (noPlace) {
+        const removable = noPlace.transferRole === "pickup" && transferPickups.length > 1
+        toast({ title: "ข้อมูลไม่ครบ", description: `${pointLabel(noPlace)}: ${noPlace.category === "custom" ? "ยังไม่ได้ใส่ชื่อสถานที่" : "ยังไม่ได้เลือกสถานที่"}${removable ? " (ไม่ใช้จุดนี้ให้กด \"ลบจุดนี้\")" : ""}`, variant: "destructive" })
+        return
+      }
+      const noItems = transferPickups.find(d => !d.jobDescription.trim())
+      if (noItems) {
+        const name = placeName(noItems)
+        toast({ title: "ข้อมูลไม่ครบ", description: `${pointLabel(noItems)}${name && name.length <= 80 ? ` (${name})` : ""}: ระบุของที่จะรับ`, variant: "destructive" })
+        return
+      }
+      if (dropDescription(destinations.find(d => d.transferRole === "drop")?.jobDescription ?? "").length > 4000) {
+        toast({ title: "รายละเอียดยาวเกิน", description: "รายการของรวมกันยาวเกิน 4,000 ตัวอักษร — ย่อรายการหรือแยกเป็นหลายใบ", variant: "destructive" })
+        return
+      }
+    }
+
     const validDestinations = destinations.filter(d => 
       (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName.trim())
     )
@@ -358,7 +421,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     const noCoords = validDestinations.find(d => !parseThaiCoordinates(liveCoordinates(d)))
     if (noCoords) {
       const name = (noCoords.category === "custom" ? noCoords.customName : noCoords.siteName).trim()
-      const where = `จุดที่ ${destinations.indexOf(noCoords) + 1}${name && name.length <= 80 ? ` (${name})` : ""}`
+      const where = `${pointLabel(noCoords)}${name && name.length <= 80 ? ` (${name})` : ""}`
       toast({ title: "ยังไม่มีพิกัด", description: destinationCoordinateProblem({ category: noCoords.category, coordinates: liveCoordinates(noCoords) }, where) ?? "", variant: "destructive" })
       return
     }
@@ -371,7 +434,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       const shown = badTime.requestTime.length > 20 ? `${badTime.requestTime.slice(0, 20)}…` : badTime.requestTime
       toast({
         title: "เวลาไม่ถูกต้อง",
-        description: `จุดที่ ${destinations.indexOf(badTime) + 1}${name && name.length <= 80 ? ` (${name})` : ""}: เวลา "${shown}" ไม่ถูกต้อง — ใช้รูปแบบ 08:30`,
+        description: `${pointLabel(badTime)}${name && name.length <= 80 ? ` (${name})` : ""}: เวลา "${shown}" ไม่ถูกต้อง — ใช้รูปแบบ 08:30`,
         variant: "destructive",
       })
       return
@@ -385,9 +448,13 @@ const handleSubmit = async (e: React.FormEvent) => {
       note,
       destinations: validDestinations.map(d => ({
         category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
-        coordinates: liveCoordinates(d), jobDescription: d.jobDescription, saveAsSite: d.saveAsSite,
+        coordinates: liveCoordinates(d),
+        // จุดส่งของ: เขียนรายการจากของที่รับแต่ละจุดให้เอง + งานอื่นที่ผู้ขอพิมพ์เพิ่ม
+        jobDescription: d.transferRole === "drop" ? dropDescription(d.jobDescription) : d.jobDescription,
+        saveAsSite: d.saveAsSite,
         ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
         locationType: d.locationType, requestTime: timeOf(d),
+        ...(d.transferRole ? { transferRole: d.transferRole } : {}),
       })),
     }
     const payloadKey = JSON.stringify(payload)
@@ -609,6 +676,21 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div className="flex items-center justify-between">
                 <Label className="text-base font-bold">จุดหมายปลายทาง</Label>
               </div>
+              {/* ประเภทงาน: ปกติ / รับของไปส่งต่อ (ใบเดียวแทนการทำใบรับ + ใบส่งแยก) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="ประเภทงาน">
+                <button type="button" role="radio" aria-checked={!isTransfer} onClick={switchToNormal}
+                  className={cn("rounded-lg border-2 p-3 text-left transition-colors",
+                    !isTransfer ? "border-accent bg-accent/10" : "border-border/50 bg-background/30 hover:bg-secondary/40")}>
+                  <span className="block text-sm font-bold">🚚 งานปกติ</span>
+                  <span className="block text-[11px] text-muted-foreground">ส่งของ / ไปทำงานที่สถานที่เดียว</span>
+                </button>
+                <button type="button" role="radio" aria-checked={isTransfer} onClick={switchToTransfer}
+                  className={cn("rounded-lg border-2 p-3 text-left transition-colors",
+                    isTransfer ? "border-amber-500 bg-amber-500/10" : "border-border/50 bg-background/30 hover:bg-secondary/40")}>
+                  <span className="block text-sm font-bold">📦 รับของไปส่งต่อ</span>
+                  <span className="block text-[11px] text-muted-foreground">รับของจากร้าน/ไซต์ (หลายที่ได้) แล้วนำไปส่งอีกที่ — ทำใบเดียวพอ</span>
+                </button>
+              </div>
 
               <div className="space-y-0">
                 {destinations.map((dest, index) => {
@@ -623,10 +705,31 @@ const handleSubmit = async (e: React.FormEvent) => {
                     return matchesType && matchesSearch;
                   }) || [];
 
+                  const isPickup = dest.transferRole === "pickup"
+                  const isDrop = dest.transferRole === "drop"
                   return (
-                    <Card key={dest.id} className="bg-secondary/20 border-accent/60 relative overflow-hidden mb-4 border-2 shadow-sm">
-                      <div className="absolute top-0 left-0 w-1 h-full bg-accent" />
+                    <React.Fragment key={dest.id}>
+                    {isDrop && (
+                      <Button type="button" variant="outline" className="w-full h-11 mb-4 border-dashed border-amber-500/60 text-amber-300 hover:bg-amber-500/10" onClick={addPickup}>
+                        <Plus className="h-4 w-4 mr-1" /> เพิ่มจุดรับของ (รับหลายร้านไปส่งที่เดียวกัน)
+                      </Button>
+                    )}
+                    <Card className={cn("bg-secondary/20 relative overflow-hidden mb-4 border-2 shadow-sm",
+                      isPickup ? "border-amber-500/60" : isDrop ? "border-emerald-500/60" : "border-accent/60")}>
+                      <div className={cn("absolute top-0 left-0 w-1 h-full", isPickup ? "bg-amber-500" : isDrop ? "bg-emerald-500" : "bg-accent")} />
                       <CardContent className="p-4 md:p-6 space-y-4">
+                        {(isPickup || isDrop) && (
+                          <div className="flex items-center justify-between gap-2">
+                            <p className={cn("text-sm font-bold", isPickup ? "text-amber-300" : "text-emerald-300")}>
+                              {isPickup ? `📦 ${pointLabel(dest)}` : "🏁 จุดส่งของ (นำของที่รับทั้งหมดมาส่งที่นี่)"}
+                            </p>
+                            {isPickup && transferPickups.length > 1 && (
+                              <Button type="button" variant="ghost" size="sm" className="h-8 text-xs text-red-400 hover:text-red-300" onClick={() => removePickup(dest.id)}>
+                                <Trash2 className="h-3.5 w-3.5 mr-1" /> ลบจุดนี้
+                              </Button>
+                            )}
+                          </div>
+                        )}
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                           <div className="flex flex-wrap gap-1.5 p-1 bg-background/50 rounded-lg">
                             {CATEGORIES.map(cat => (
@@ -909,12 +1012,23 @@ const handleSubmit = async (e: React.FormEvent) => {
                           </div>
                         )}
 
+                        {isDrop && (
+                          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 space-y-1" role="status">
+                            <p className="text-[11px] font-bold text-emerald-300">ใบงานคนขับที่จุดนี้จะเขียนให้อัตโนมัติ:</p>
+                            <p className="text-xs whitespace-pre-line text-foreground/90">
+                              {transferPickups.some(p => placeName(p) || p.jobDescription.trim())
+                                ? dropDescription("")
+                                : "— กรอกจุดรับของและรายการของด้านบนก่อน —"}
+                            </p>
+                          </div>
+                        )}
+
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <Label>ลักษณะงานที่ต้องทำ</Label>
+                            <Label>{isPickup ? <>รับอะไร (รายการของ) <span className="text-red-400">*</span></> : isDrop ? "งานอื่นที่จุดส่ง (ถ้ามี)" : "ลักษณะงานที่ต้องทำ"}</Label>
 </div>
                           <Textarea 
-                            placeholder="รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ" 
+                            placeholder={isPickup ? "เช่น ปูนสกิม 10 ถุง, ท่อ PVC 4 นิ้ว 20 เส้น" : isDrop ? "ไม่ต้องพิมพ์รายการของซ้ำ — ใส่เฉพาะงานอื่น เช่น ส่งท่อ EMT จากออฟฟิศไปด้วย" : "รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ"}
                             className="min-h-[80px] bg-background/30"
                             style={{ resize: 'vertical' }}
                             value={dest.jobDescription}
@@ -923,7 +1037,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                         </div>
 
                         <div className="space-y-2">
-                          <Label>เวลาที่ต้องการ (จุดนี้)</Label>
+                          <Label>{isPickup ? "เวลานัดรับของ" : isDrop ? "เวลาที่ต้องการให้ถึงจุดส่ง" : "เวลาที่ต้องการ (จุดนี้)"}</Label>
                           <div className="relative w-40">
                             <Input
                               placeholder="08:30"
@@ -944,6 +1058,7 @@ const handleSubmit = async (e: React.FormEvent) => {
 
                       </CardContent>
                     </Card>
+                    </React.Fragment>
                   );
                 })}
               </div>

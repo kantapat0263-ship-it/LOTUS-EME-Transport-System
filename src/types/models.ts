@@ -190,6 +190,11 @@ export interface TripStop {
    *  เก็บทะเบียน/คนขับต้นทางไว้โชว์ป้าย "🤝 คันช่วย · จาก ..." */
   assistForPlate?: string;
   assistForDriver?: string;
+  /** งานรับของไปส่งต่อ (lib/transfer.ts) — จุดรับ/จุดส่งของใบเดียวกันมี transferId เดียวกัน · ป้ายคิดตอนแสดงผล */
+  transferRole?: 'pickup' | 'drop';
+  transferId?: string;
+  /** ชื่อจุดส่ง (เก็บที่จุดรับ) — ทำป้ายเมื่อจุดส่งอยู่คันอื่น */
+  transferDropName?: string;
 }
 
 export interface Trip {

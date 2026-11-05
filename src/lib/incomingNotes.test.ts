@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { incomingStopsForTrip, type IncomingJob } from './calculations'
+import { transferLabel, transferNoteForDriver } from './transfer'
 
 // Render the actual receiving rows without booting Firebase or querying live trips.
 function receivingRow(surface: 'summary' | 'driver') {
@@ -19,8 +20,8 @@ function receivingRow(surface: 'summary' | 'driver') {
   if (!row) throw new Error(`Receiving row not found: ${surface}`)
   const compiled = ts.transpileModule(`const renderRow = ${row.getText(source)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
   const icon = () => React.createElement('span')
-  return new Function('React', 'trip', 'stops', 'dateCell', 'driverCell', 'Navigation', 'FileText', `${compiled}; return renderRow`)(
-    React, { id: 'receiver', stops: [] }, [], null, null, icon, icon,
+  return new Function('React', 'trip', 'stops', 'dateCell', 'driverCell', 'Navigation', 'FileText', 'transferLabel', 'transferNoteForDriver', 'transferPeers', 'transferTagStyle', 'TransferTag', `${compiled}; return renderRow`)(
+    React, { id: 'receiver', stops: [] }, [], null, null, icon, icon, transferLabel, transferNoteForDriver, [], () => ({}), () => null,
   ) as (job: IncomingJob, index: number) => React.ReactElement
 }
 

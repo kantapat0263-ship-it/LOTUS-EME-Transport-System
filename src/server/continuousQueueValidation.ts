@@ -11,6 +11,8 @@ const stop = z.object({
   siteId: z.string().nullable().optional(), siteName: text, order: z.number().int().min(1), cargoDetails: text,
   lat: z.number().finite().min(-90).max(90).optional(), lng: z.number().finite().min(-180).max(180).optional(),
   requestedBy: text.optional(), requestedByPhone: text.optional(), requestedByUserId: text.optional(), requestedAt: z.number().finite().optional(), requestTime: text.optional(), address: text.optional(), note: text.optional(), dispatcherNote: text.optional(), dispatcherName: text.optional(),
+  // งานรับของไปส่งต่อ (lib/transfer) — รับเฉพาะการยืมคิววันเดียว · สร้างคิวหลายวันถูกปฏิเสธใน service
+  transferRole: z.enum(['pickup', 'drop']).optional(), transferId: text.optional(), transferDropName: text.optional(),
 }).strict()
 const trip = z.object({
   tripDate: date, driverId: id, driverName: text, vehicleId: id, vehiclePlate: text, stops: z.array(stop).min(1).max(150),

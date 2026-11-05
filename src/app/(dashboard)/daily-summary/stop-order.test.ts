@@ -3,6 +3,7 @@ import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
 import { isManagedTrip } from '@/lib/continuousQueue'
+import { transferMateReminder } from '@/lib/transfer'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
@@ -16,7 +17,7 @@ function body(name: string) {
   return ts.transpileModule(`const ${name} = ${value.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
 }
 type Plan = { km: number; minutes: number; fuelCost: number } | 'no-coords' | 'failed'
-function arrange(reject = false, opts: { stops?: any[]; incoming?: number; plan?: Plan; live?: (trip: any) => any } = {}) {
+function arrange(reject = false, opts: { stops?: any[]; incoming?: number; plan?: Plan; live?: (trip: any) => any; confirm?: (message: string) => boolean } = {}) {
   const trip = { id: 'T1', driverName: 'ทดสอบ', vehiclePlate: 'ทดสอบ', stops: opts.stops ?? [
     { order: 1, siteName: 'A' }, { order: 2, siteName: 'B' }, { order: 3, siteName: 'C' },
   ], stopNotes: { stop_0: 'A', stop_1: 'B', stop_2: 'C' }, stopNoteAuthors: { stop_1: 'ข' } }
@@ -31,12 +32,12 @@ function arrange(reject = false, opts: { stops?: any[]; incoming?: number; plan?
   const remove = vi.fn().mockResolvedValue(undefined)
   const incoming = vi.fn(() => Array.from({ length: opts.incoming ?? 0 }, () => ({ fromTripId: 'SRC' })))
   const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'setRefusalDrafts', 'incomingStopsForTrip', 'recordedBy', 'user',
-    'computePlanDistance', 'nextDistGen', 'isLatestDistGen', 'setStatsRefreshKey', 'getDoc', 'assertTripStopsUnchanged', 'doc', 'isManagedTrip',
-    `${body('persistTripPatch')}${body('applyStops')}${body('readLiveTrip')}${body('planDistanceFields')}${body('applyStopsWithDistance')}${body('cancelStop')}return cancelStop`)(
-    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: () => true }, remove, vi.fn(), incoming, 'คนจัดรถ', null,
+    'computePlanDistance', 'nextDistGen', 'isLatestDistGen', 'setStatsRefreshKey', 'getDoc', 'assertTripStopsUnchanged', 'doc', 'isManagedTrip', 'transferMateReminder',
+    `${body('transferPeersOf')}${body('transferReminderFor')}${body('persistTripPatch')}${body('applyStops')}${body('readLiveTrip')}${body('planDistanceFields')}${body('applyStopsWithDistance')}${body('cancelStop')}return cancelStop`)(
+    {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: opts.confirm ?? (() => true) }, remove, vi.fn(), incoming, 'คนจัดรถ', null,
     compute, (id: string) => (gens[id] = (gens[id] ?? 0) + 1), (id: string, gen: number) => gens[id] === gen, statsRefresh,
     // ทริปบนฐาน (ค่าเริ่มต้น = ตรงกับบนจอ)
-    async () => ({ exists: () => true, data: () => structuredClone(opts.live ? opts.live(trip) : trip) }), assertTripStopsUnchanged, () => 'trip-ref', isManagedTrip,
+    async () => ({ exists: () => true, data: () => structuredClone(opts.live ? opts.live(trip) : trip) }), assertTripStopsUnchanged, () => 'trip-ref', isManagedTrip, transferMateReminder,
   ) as (trip: unknown, index: number) => Promise<void>
   return { trip, handler, update, toast, compute, statsRefresh, saved, remove, state: () => state }
 }
@@ -131,4 +132,18 @@ it('ลบงาน: งานบนฐานถูกแก้จากหน�
   expect(test.toast.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'ยังไม่ได้ยกเลิกงาน', variant: 'destructive' })
   expect(test.toast.mock.calls.at(-1)?.[0].description).toContain('ตรวจแล้วกดอีกครั้ง')
   expect(test.state()[0].stops).toHaveLength(4) // ข้อมูลล่าสุดขึ้นจอให้ (กดซ้ำได้ทันที)
+})
+
+it('ยกเลิกจุดรับของงานรับ-ส่ง → หน้าต่างยืนยันบอกว่าจุดส่งยังอยู่ในเที่ยว (ไม่ถูกยกเลิกตาม)', async () => {
+  const confirm = vi.fn((_message: string) => false)
+  const test = arrange(false, { confirm, stops: [
+    { order: 1, siteName: 'วังโค', transferRole: 'pickup', transferId: 'g1' }, { order: 2, siteName: 'ไปรษณีย์' }, { order: 3, siteName: 'ดอนเมือง', transferRole: 'drop', transferId: 'g1' },
+  ] })
+  await test.handler(test.trip, 0)
+  expect(confirm.mock.calls[0][0]).toContain('ยังมีจุดส่ง ดอนเมือง ของงานเดียวกันอยู่ในเที่ยวนี้')
+  expect(test.update).not.toHaveBeenCalled()
+  const plain = vi.fn((_message: string) => false)
+  const normal = arrange(false, { confirm: plain })
+  await normal.handler(normal.trip, 0)
+  expect(plain.mock.calls[0][0]).not.toContain('งานรับของไปส่งต่อ')
 })

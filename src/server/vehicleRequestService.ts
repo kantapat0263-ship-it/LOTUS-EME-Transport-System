@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { FieldValue, type DocumentData, type Firestore } from 'firebase-admin/firestore'
 import { parseThaiCoordinates } from '@/lib/requestCoordinates'
 import type { ActiveTokenUser } from '@/firebase/admin'
@@ -94,9 +95,17 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
     unsavedNames: [...new Set(sitePlan.unsavedNames)],
   }
 
+  // ใบรับของไปส่งต่อ (ตัวตรวจรับรองรูปใบแล้ว: จุดรับ ≥ 1 + จุดส่งท้ายใบ) — ผูกทุกจุดด้วยรหัสกลุ่มเดียว
+  // จุดรับเก็บชื่อจุดส่งไว้ทำป้าย "ไปส่งต่อที่ ..." เมื่อจุดส่งไปอยู่คันอื่น
+  const placeName = (d: { category: string; customName: string; siteName: string }) => d.category === 'custom' ? d.customName : d.siteName
+  const dropDraft = sitePlan.destinations.find(d => d.transferRole === 'drop')
+  const transferId = dropDraft ? `tf_${randomUUID()}` : ''
   const destinations = sitePlan.destinations.map(d => {
     // ตัวแปลงเดียวกับตัวตรวจ (ผ่านตัวตรวจแล้วทุกจุด) — ไม่แปลงซ้ำด้วยวิธีอื่นจนได้ค่าคนละตัว
     const { lat, lng } = parseThaiCoordinates(d.coordinates) ?? { lat: NaN, lng: NaN }
+    const transfer = transferId && d.transferRole
+      ? { transferRole: d.transferRole, transferId, ...(d.transferRole === 'pickup' ? { transferDropName: placeName(dropDraft!) } : {}) }
+      : {}
     return {
       type: d.category === 'custom' ? 'other' : 'site',
       siteId: d.siteId || null,
@@ -106,6 +115,7 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
       lng: isNaN(lng) ? 0 : lng,
       jobDescription: d.jobDescription,
       requestTime: d.requestTime || '08:30',
+      ...transfer,
     }
   })
 

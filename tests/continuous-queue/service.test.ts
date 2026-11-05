@@ -163,6 +163,21 @@ describe('continuous queue service on an isolated Firestore project', () => {
     expect(await trip('HOLDER')).not.toHaveProperty('queueLink')
   })
 
+  it('งานรับของไปส่งต่อ: สร้าง/ขยายเป็นคิวต่อเนื่องไม่ได้ (จุดรับจะถูกคัดลอกไปรับซ้ำทุกวัน) แต่ยืมคิววันเดียวได้', async () => {
+    const transferStops = [
+      { siteId: 'SITE-A', siteName: 'ร้าน A', order: 1, cargoDetails: 'ปูน', lat: 13.7, lng: 100.5, transferRole: 'pickup' as const, transferId: 'tf_1', transferDropName: 'ไซต์ B' },
+      { siteId: 'SITE-B', siteName: 'ไซต์ B', order: 2, cargoDetails: 'ส่งปูน', lat: 13.8, lng: 100.6, transferRole: 'drop' as const, transferId: 'tf_1' },
+    ]
+    await expect(create({ trip: { ...tripInput(), stops: transferStops } })).rejects.toThrow('งานรับของไปส่งต่อ')
+    await db.collection('trips').doc('TRANSFER').set({ ...tripInput(), id: 'TRANSFER', tripId: 'TRANSFER', status: 'Planned', stops: transferStops })
+    await expect(executeQueueCommand(db, { operationId: operationId(), action: 'extend', tripId: 'TRANSFER', endDate: '2026-10-06' }, actor, NOW)).rejects.toThrow('งานรับของไปส่งต่อ')
+    expect((await db.collection('continuousBookings').get()).empty).toBe(true)
+    await db.collection('trips').doc('TRANSFER').delete() // คืนคนขับ/รถวันนั้น ให้สร้างคิวปกติไว้ทดสอบการยืมได้
+    const original = await create()
+    const result = await borrow(original.bookingId, { trip: { ...tripInput('2026-10-05', 'ไซต์ B'), vehicleId: 'V2', stops: [{ ...transferStops[1], order: 1 }] } })
+    expect((await trip(result.tripIds[0])).stops[0]).toMatchObject({ transferRole: 'drop', transferId: 'tf_1' })
+  })
+
   it('does not extend an ordinary planned trip after vehicle use has been ended', async () => {
     await db.collection('trips').doc('ENDED').set({ ...tripInput(), id: 'ENDED', tripId: 'ENDED', status: 'Planned', gpsEndAt: NOW.getTime() })
     await expect(executeQueueCommand(db, { operationId: operationId(), action: 'extend', tripId: 'ENDED', endDate: '2026-10-06' }, actor, NOW)).rejects.toThrow('ยังไม่เริ่มงาน')
@@ -193,6 +208,19 @@ describe('continuous queue service on an isolated Firestore project', () => {
     await db.collection('trips').doc(result.tripIds[0]).update({ gpsEndAt: NOW.getTime() })
     await expect(executeQueueCommand(db, { operationId: operationId(), action: 'cancel-compensation', bookingId: original.bookingId, originalDate: '2026-10-05' }, actor, NOW)).rejects.toThrow('ก่อนเริ่มงาน')
     expect((await booking(original.bookingId)).overrides['2026-10-05'].compensation).toBe('scheduled')
+  })
+
+  it('คืนคิวยืมแล้วเหลือแต่สำเนาคันคู่ที่ถอนไว้ → ใบกลับเป็นรอจัด (ไม่ค้าง partial ที่ยกเลิก/ย้ายวันไม่ได้)', async () => {
+    // ใบ B มีสำเนาคันคู่ที่คนจัดรถถอนแล้ว (withdrawn เก็บใน assignedDestinations ให้ใบปิดได้)
+    await db.collection('vehicleRequests').doc('REQ-B').update({
+      destinations: [{ siteId: 'SITE-B', siteName: 'ไซต์ B' }, { siteId: 'SITE-B', siteName: 'ไซต์ B', pairedCopy: true, pairedFromIndex: 0, withdrawn: true }],
+      assignedDestinations: [1], status: 'partial',
+    })
+    const original = await create()
+    await borrow(original.bookingId)
+    expect((await db.collection('vehicleRequests').doc('REQ-B').get()).data()).toMatchObject({ status: 'approved', assignedDestinations: [1, 0] })
+    await executeQueueCommand(db, { operationId: operationId(), action: 'return', bookingId: original.bookingId, date: '2026-10-05', reason: 'ยกเลิกงานไซต์ B' }, actor, NOW)
+    expect((await db.collection('vehicleRequests').doc('REQ-B').get()).data()).toMatchObject({ status: 'in_progress', assignedDestinations: [1], tripIds: [] })
   })
 
   it('returns an unstarted loan, restores the original trip and atomically releases the target request and extra resource', async () => {

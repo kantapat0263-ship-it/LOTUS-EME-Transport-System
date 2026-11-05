@@ -91,3 +91,28 @@ describe('parseVehicleRequestCommand: ทุกจุดต้องมีพิ
     expect(messageOf(body({}, [dest(), dest({ customName: 'โกดังลูกค้า', coordinates: '' })]))).toContain('จุดที่ 2 (โกดังลูกค้า): ยังไม่มีพิกัด')
   })
 })
+
+describe('parseVehicleRequestCommand: ใบรับของไปส่งต่อ (2026-11-05)', () => {
+  const pickup = (o: Record<string, unknown> = {}) => dest({ customName: 'ดูโฮม รังสิต', jobDescription: 'ปูนสกิม 10 ถุง', transferRole: 'pickup', ...o })
+  const drop = (o: Record<string, unknown> = {}) => dest({ customName: 'ไซต์ดอนเมือง', jobDescription: 'ส่งของที่รับจาก ดูโฮม รังสิต: ปูนสกิม 10 ถุง', transferRole: 'drop', ...o })
+  it('รับ 1–หลายจุด ส่ง 1 จุดท้ายใบ → ผ่าน และเก็บ role ไว้', () => {
+    const parsed = parseVehicleRequestCommand(body({}, [pickup(), pickup({ customName: 'วานิช' }), drop()]))
+    expect(parsed.destinations.map(d => d.transferRole)).toEqual(['pickup', 'pickup', 'drop'])
+  })
+  it('ใบปกติ (ไม่มี role) ยังผ่านเหมือนเดิม', () => {
+    expect(parseVehicleRequestCommand(body()).destinations[0].transferRole).toBeUndefined()
+  })
+  it('ไม่มีจุดส่ง / จุดส่ง 2 จุด / ปนจุดปกติ → บอกเหตุผล', () => {
+    expect(messageOf(body({}, [pickup()]))).toBe('ยังไม่ได้ระบุจุดส่งของ')
+    expect(messageOf(body({}, [pickup(), drop(), drop()]))).toContain('มีจุดส่งได้ 1 จุด')
+    expect(messageOf(body({}, [drop(), pickup()]))).toContain('มีจุดส่งได้ 1 จุด')
+    expect(messageOf(body({}, [drop()]))).toBe('ต้องมีจุดรับของอย่างน้อย 1 จุด')
+    expect(messageOf(body({}, [pickup(), dest(), drop()]))).toContain('โหลดหน้าใหม่')
+  })
+  it('จุดรับไม่บอกว่ารับอะไร → ชี้จุดที่', () => {
+    expect(messageOf(body({}, [pickup(), pickup({ customName: 'วานิช', jobDescription: '  ' }), drop()]))).toBe('จุดที่ 2 (วานิช): ยังไม่ได้ระบุของที่จะรับ')
+  })
+  it('role แปลก → ให้โหลดหน้าใหม่', () => {
+    expect(messageOf(body({}, [pickup({ transferRole: 'other' }), drop()]))).toContain('โหลดหน้าใหม่')
+  })
+})

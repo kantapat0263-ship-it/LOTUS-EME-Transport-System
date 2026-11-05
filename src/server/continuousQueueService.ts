@@ -3,7 +3,7 @@ import { FieldValue, type DocumentData, type Firestore, type Transaction } from 
 import { expandQueueDates, isActiveOverride, MAX_QUEUE_DAYS, queueNotice, resourceGuardKeys } from '@/lib/continuousQueue'
 import type { ContinuousBooking, QueueAuditEvent, QueueCommand, QueueCommandResult, QueueResourceGuard, QueueSnapshot, QueueSourceAssignment, QueueTripInput } from '@/types/continuous-queue'
 import type { Trip } from '@/types/models'
-import { assertRequestDestinationsUnchanged } from '@/lib/requestDestination'
+import { assertRequestDestinationsUnchanged, dispatchedDestinationIndexes } from '@/lib/requestDestination'
 import { incomingStopsForTrip } from '@/lib/calculations'
 
 const MAX_SNAPSHOT_BOOKINGS = 500
@@ -39,7 +39,7 @@ function hasRecordedWork(stops: Trip['stops']): boolean {
 }
 
 function planningStops(stops: Trip['stops']): Trip['stops'] {
-  const fields = ['siteId', 'siteName', 'cargoDetails', 'lat', 'lng', 'requestedBy', 'requestedByPhone', 'requestedByUserId', 'requestedAt', 'requestTime', 'address', 'note', 'dispatcherNote', 'dispatcherName'] as const
+  const fields = ['siteId', 'siteName', 'cargoDetails', 'lat', 'lng', 'requestedBy', 'requestedByPhone', 'requestedByUserId', 'requestedAt', 'requestTime', 'address', 'note', 'dispatcherNote', 'dispatcherName', 'transferRole', 'transferId', 'transferDropName'] as const
   return stops.map((stop, index) => ({ ...Object.fromEntries(fields.filter(key => stop[key] !== undefined).map(key => [key, stop[key]])), order: index + 1 }) as Trip['stops'][number])
 }
 
@@ -213,7 +213,9 @@ class QueueTransaction {
       if (!request) continue
       const assigned = (request.assignedDestinations || []).filter((index: number) => !assignment.destinationIndexes.includes(index))
       const tripIds = (Array.isArray(request.tripIds) ? request.tripIds : request.tripId ? [request.tripId] : []).filter((id: string) => id !== tripId)
-      const status = request.status === 'cancelled' || request.status === 'rejected' ? request.status : assigned.length === 0 ? 'in_progress' : assigned.length === request.destinations.length ? 'approved' : 'partial'
+      // สำเนาคันคู่ที่ถอนแล้ว (withdrawn) อยู่ใน assigned แต่ไม่ได้อยู่ในเที่ยวไหน — เหลือแต่ตัวนั้น = ใบกลับเป็นรอจัด
+      const dispatched = dispatchedDestinationIndexes({ assignedDestinations: assigned, destinations: request.destinations })
+      const status = request.status === 'cancelled' || request.status === 'rejected' ? request.status : dispatched.length === 0 ? 'in_progress' : assigned.length === request.destinations.length ? 'approved' : 'partial'
       this.writes.push({ collection: 'vehicleRequests', id: assignment.requestId, merge: true, data: { assignedDestinations: assigned, tripIds, tripId: request.tripId === tripId ? tripIds[0] || null : request.tripId || null, status, updatedAt: FieldValue.serverTimestamp() } })
     }
   }
@@ -228,6 +230,8 @@ class QueueTransaction {
   async create(command: Extract<QueueCommand, { action: 'create' }>): Promise<{ booking: ContinuousBooking; result: QueueCommandResult }> {
     const dates = rangeDates(command.trip.tripDate, command.endDate)
     requireValue(dates[0] >= this.today, 'สร้างคิวต่อเนื่องย้อนหลังไม่ได้')
+    // คิวหลายวันคัดลอกจุดเดิมไปทุกวัน — งานรับของไปส่งต่อเป็นงานครั้งเดียว (ยืมคิววันเดียวยังทำได้)
+    requireValue(!command.trip.stops.some(stop => stop.transferRole), 'งานรับของไปส่งต่อจัดเป็นคิวต่อเนื่องไม่ได้ — จัดเป็นเที่ยววันเดียว', 400)
     const input = await this.resources(command.trip)
     const id = `BQ-${command.operationId}`
     requireValue(!(await this.read('continuousBookings', id)), 'รหัสคิวต่อเนื่องถูกใช้แล้ว')
@@ -252,6 +256,8 @@ class QueueTransaction {
     // ทริปที่ยังถืองานที่คันอื่นโยกเข้ามา ห้ามกลายเป็นคิวต่อเนื่อง — ยืม/คืนคิวจะยกเลิกทริปนี้โดยไม่รู้จักงานโยก งานจะหายเงียบ
     const incoming = incomingStopsForTrip((await this.trips(original.tripDate)).filter(trip => trip.status !== 'Cancelled'), original.id)
     requireValue(incoming.length === 0, `ทริปนี้ยังรับงานที่โยกมาจากคันอื่น ${incoming.length} จุด — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อนขยายเป็นคิวต่อเนื่อง`)
+    // งานรับของไปส่งต่อเป็นงานครั้งเดียว — ขยายเป็นหลายวันจะคัดลอกจุดรับไปรับซ้ำทุกวัน (กติกาเดียวกับ create)
+    requireValue(!(original.stops || []).some(stop => stop.transferRole), 'ทริปนี้มีงานรับของไปส่งต่อ — กำหนดเป็นคิวต่อเนื่องไม่ได้', 400)
     const dates = rangeDates(original.tripDate, command.endDate)
     requireValue(dates[0] >= this.today && dates.length > 1, 'ระบุวันสิ้นสุดหลังวันเริ่ม และห้ามขยายคิวย้อนหลัง')
     const input = await this.resources({ ...original, stops: planningStops(original.stops) })

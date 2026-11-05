@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { isTransferStop } from "@/lib/transfer"
+import { dispatchedDestinationIndexes } from "@/lib/requestDestination"
 import { RequestForm } from "@/components/requests/RequestForm"
 import { SubmissionLogTab } from "@/components/requests/SubmissionLogTab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -196,7 +198,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
   // ใบที่ถูกจัดเข้าเที่ยววิ่งแล้ว (บางส่วน/ทั้งหมด) — ห้ามยกเลิก/เลื่อนที่ขั้น "ใบขอรถ"
   // เพราะจะเหลือ "จุดผี" ค้างในทริป (การยกเลิกต้องทำก่อนจัดคิว; งานที่จัดแล้วให้ใช้ เลื่อน/โยก ในใบสรุป)
-  const isReqGrouped = ((selectedReq?.assignedDestinations?.length ?? 0) > 0) || !!selectedReq?.tripId
+  // สำเนาคันคู่ที่ถอนแล้ว (withdrawn) ไม่นับเป็นจุดที่อยู่ในเที่ยว
+  const isReqGrouped = dispatchedDestinationIndexes(selectedReq).length > 0 || !!selectedReq?.tripId
 
   // Look up related trip and driver info
   const relatedTripRef = useMemoFirebase(() => (db && selectedReq?.tripId) ? doc(db, "trips", selectedReq.tripId) : null, [db, selectedReq?.tripId])
@@ -753,10 +756,21 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 
                 <div className="flex gap-2 items-center text-xs">
                   <MapPin className="h-3 w-3 text-accent shrink-0" />
-                  <span className="truncate flex-1">{req.destinations[0]?.siteName}</span>
-                  {req.destinations.length > 1 && (
-                    <span className="text-muted-foreground text-[10px] shrink-0">(และอีก {req.destinations.length - 1} จุด)</span>
-                  )}
+                  {(() => {
+                    // ใบรับของไปส่งต่อ: หัวการ์ดบอกปลายทางจริง (จุดส่ง) + จำนวนจุดรับ แทนชื่อจุดแรก (ซึ่งเป็นร้าน)
+                    const drop = req.destinations.find((d: any) => isTransferStop(d) && d.transferRole === "drop")
+                    // นับเฉพาะจุดรับของต้นฉบับ (คนจัดรถเพิ่ม "คันคู่ทั้งชุด" แล้วมีสำเนาต่อท้ายใบ)
+                    const pickups = req.destinations.filter((d: any) => isTransferStop(d) && d.transferRole === "pickup" && !d.pairedCopy).length
+                    if (drop) return <span className="truncate flex-1">📦 รับของ {pickups} จุด → 🏁 {drop.siteName}</span>
+                    return (
+                      <>
+                        <span className="truncate flex-1">{req.destinations[0]?.siteName}</span>
+                        {req.destinations.length > 1 && (
+                          <span className="text-muted-foreground text-[10px] shrink-0">(และอีก {req.destinations.length - 1} จุด)</span>
+                        )}
+                      </>
+                    )
+                  })()}
                 </div>
 
                 <div className="flex justify-end pt-2 border-t border-border/20">
@@ -864,6 +878,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                 <div className="space-y-3">
                   {selectedReq.destinations.map((dest: any, idx: number) => {
                     const isAssigned = (selectedReq.assignedDestinations || []).includes(idx);
+                    // สำเนาคันคู่ที่ถอนแล้ว: อยู่ใน assignedDestinations (ล็อกไว้) แต่ไม่ได้อยู่ในเที่ยวไหน
+                    const isWithdrawn = isAssigned && !!dest?.withdrawn;
                     const isSelected = selectedDestIndexes.has(idx);
 
                     return (
@@ -881,7 +897,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                             checked={isSelected || isAssigned}
                             disabled={isAssigned || selectedReq.status === 'cancelled'}
                             onCheckedChange={() => toggleDest(idx)}
-                            className={cn(isAssigned && "data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500")}
+                            className={cn(isAssigned && !isWithdrawn && "data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500")}
                           />
                         </div>
                         <div className="flex-1 min-w-0">
@@ -895,6 +911,7 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   {idx + 1}
                                 </span>
                                 <span className={cn(isSelected && "text-accent")}>{dest.siteName}</span>
+                                <TransferRoleBadge dest={dest} />
                                 
                                 {isStaff ? (
                                   <div className="flex items-center gap-1 ml-auto">
@@ -924,11 +941,14 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                   )
                                 )}
 
-                                {isAssigned && (
+                                {isAssigned && (dest.withdrawn ? (
+                                  // สำเนาคันคู่ที่คนจัดรถถอนออก (ลบออกจากใบไม่ได้เพราะจุดอื่นของชุดจัดไปแล้ว) — ไม่ได้อยู่ในเที่ยวไหน
+                                  <Badge className="bg-muted/30 text-muted-foreground border-border/40 text-[10px] h-5">✕ ถอนแล้ว (สำเนาคันคู่)</Badge>
+                                ) : (
                                   <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-[10px] h-5">
                                     <Check className="h-3 w-3 mr-1" /> จัดแล้ว
                                   </Badge>
-                                )}
+                                ))}
                               </div>
                               <div className="mt-2 bg-secondary/20 p-2 rounded text-xs text-muted-foreground border border-dashed">
                                 <span className="font-bold text-foreground text-[10px] block mb-1">รายละเอียดงาน:</span>
@@ -1022,7 +1042,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                     />
                                     {isAssigned && (
                                       <span className="text-[10px] text-amber-400">
-                                        🔒 จุดนี้จัดเข้าทริปแล้ว — แก้หมายเหตุที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)
+                                        {isWithdrawn
+                                          ? "🔒 สำเนาคันคู่นี้ถอนแล้ว — ไม่ได้อยู่ในเที่ยวไหน"
+                                          : "🔒 จุดนี้จัดเข้าทริปแล้ว — แก้หมายเหตุที่หน้าสรุปคิวรถ (แผงปิดผลงาน → ✏️ หมายเหตุ)"}
                                       </span>
                                     )}
                                     <div className="text-[10px] flex items-center gap-1 h-4">
@@ -1203,6 +1225,19 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   )
 }
 
+
+/** ป้ายบทบาทของจุดในใบรับของไปส่งต่อ (lib/transfer) — ใบปกติไม่แสดงอะไร */
+function TransferRoleBadge({ dest }: { dest: any }) {
+  if (!isTransferStop(dest)) return null
+  return dest.transferRole === "pickup" ? (
+    <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300">
+      📦 รับของ{dest.transferDropName ? ` → ส่งต่อ ${dest.transferDropName}` : ""}
+    </span>
+  ) : (
+    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">🏁 จุดส่งของ</span>
+  )
+}
+
 export default function RequestsPage() {
   const { user } = useUser()
   const db = useFirestore()
@@ -1259,6 +1294,12 @@ export default function RequestsPage() {
 
   const handleCancelRequest = async () => {
     if (!reqToCancel) return
+    // อ่านค่าสดจากรายการ (ระหว่างเปิดหน้าต่างยืนยันค้าง คนจัดรถอาจเพิ่งจัดจุดเข้าเที่ยว)
+    const live = myRequests?.find((r: any) => r.id === reqToCancel.id) ?? reqToCancel
+    if (dispatchedDestinationIndexes(live).length > 0) {
+      toast({ title: "ยกเลิกเองไม่ได้", description: "ใบนี้มีจุดที่จัดรถแล้ว — แจ้งคนจัดรถให้ยกเลิกในเที่ยววิ่ง", variant: "destructive" })
+      return
+    }
     try {
       await updateDoc(doc(db, "vehicleRequests", reqToCancel.id), {
         status: "cancelled",
@@ -1359,7 +1400,7 @@ export default function RequestsPage() {
                                 <Clock className="h-3.5 w-3.5" /> {req.requestTime} น.
                               </div>
                               <div className="flex items-center gap-1.5 text-foreground font-medium">
-                                <MapPin className="h-3.5 w-3.5 text-accent" /> {req.destinations?.length || 0} จุดหมาย
+                                <MapPin className="h-3.5 w-3.5 text-accent" /> {(req.destinations || []).filter((d: any) => !d?.withdrawn).length} จุดหมาย
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <UserIcon className="h-3.5 w-3.5" /> {req.requestedBy}
@@ -1368,8 +1409,12 @@ export default function RequestsPage() {
                           </div>
                           
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress" || req.status === "rescheduled") && req.userId === user?.uid && (
-                              <Button 
+                            {/* มีจุดที่จัดเข้าเที่ยวแล้ว = ผู้ขอยกเลิกเองไม่ได้ (จุดในเที่ยวจะค้าง คนขับยังไป) — ให้แจ้งคนจัดรถ */}
+                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress" || req.status === "rescheduled") && req.userId === user?.uid && dispatchedDestinationIndexes(req).length > 0 && (
+                              <span className="text-[10px] text-muted-foreground">จัดรถแล้วบางจุด — ยกเลิกให้แจ้งคนจัดรถ</span>
+                            )}
+                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress" || req.status === "rescheduled") && req.userId === user?.uid && dispatchedDestinationIndexes(req).length === 0 && (
+                              <Button
                                 variant="outline" 
                                 size="sm" 
                                 className="h-8 text-xs border-red-500/30 text-red-500/70 hover:bg-red-500/10 hover:text-red-500"
@@ -1425,6 +1470,9 @@ export default function RequestsPage() {
 
                         <div className="grid grid-cols-1 gap-3">
                           {req.destinations?.map((dest: any, idx: number) => {
+                            // สำเนาคันคู่ที่คนจัดรถถอนแล้ว — ไม่ได้ไปจริง ผู้ขอไม่ต้องเห็น (ติ๊กเขียวจะดูเหมือนมีรถไปสองคัน)
+                            if (dest?.withdrawn) return null
+                            const shownNo = req.destinations.slice(0, idx).filter((d: any) => !d?.withdrawn).length + 1
                             const isAssigned = (req.assignedDestinations || []).includes(idx);
                             const stopDispatcherNote = req.stopNotes?.[`stop_${idx}`];
                             
@@ -1432,11 +1480,12 @@ export default function RequestsPage() {
                               <div key={idx} className={cn("flex flex-col gap-1 text-sm", isAssigned && "opacity-50")}>
                                 <div className="flex gap-3">
                                   <div className={cn("font-bold min-w-[20px]", isAssigned ? "text-green-500" : "text-accent")}>
-                                    {isAssigned ? <Check className="h-4 w-4" /> : `${idx + 1}.`}
+                                    {isAssigned ? <Check className="h-4 w-4" /> : `${shownNo}.`}
                                   </div>
                                   <div className="space-y-0.5">
                                     <div className="flex items-center gap-2">
                                       <p className="font-semibold text-foreground">{dest.siteName}</p>
+                                      <TransferRoleBadge dest={dest} />
                                       {dest.requestTime && (
                                         <Badge variant="outline" className="text-[10px] h-4 py-0 bg-accent/5 text-accent border-accent/20">
                                           🕗 {dest.requestTime} น.
@@ -1591,10 +1640,12 @@ export default function RequestsPage() {
 
               <div className="space-y-3">
                 <p className="text-sm font-bold flex items-center gap-2 text-white">
-                  <MapPin className="h-4 w-4 text-accent" /> จุดหมายและเวลาที่ระบุ ({viewingUserReq.destinations.length})
+                  <MapPin className="h-4 w-4 text-accent" /> จุดหมายและเวลาที่ระบุ ({viewingUserReq.destinations.filter((d: any) => !d?.withdrawn).length})
                 </p>
                 <div className="space-y-3">
                   {viewingUserReq.destinations.map((dest: any, idx: number) => {
+                    if (dest?.withdrawn) return null // สำเนาคันคู่ที่คนจัดรถถอนแล้ว — ไม่ได้ไปจริง ผู้ขอไม่ต้องเห็น
+                    const shownNo = viewingUserReq.destinations.slice(0, idx).filter((d: any) => !d?.withdrawn).length + 1
                     const isAssigned = (viewingUserReq.assignedDestinations || []).includes(idx);
                     
                     return (
@@ -1606,11 +1657,14 @@ export default function RequestsPage() {
                           "w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0",
                           isAssigned ? "bg-green-500 text-white" : "bg-accent/20 text-accent"
                         )}>
-                          {isAssigned ? <Check className="h-4 w-4" /> : idx + 1}
+                          {isAssigned ? <Check className="h-4 w-4" /> : shownNo}
                         </div>
                         <div className="flex-1 space-y-2 min-w-0">
                           <div className="flex justify-between items-start gap-4">
-                            <p className="font-bold text-white truncate">{dest.siteName}</p>
+                            <div className="min-w-0">
+                              <p className="font-bold text-white truncate">{dest.siteName}</p>
+                              <TransferRoleBadge dest={dest} />
+                            </div>
                             <Badge className="bg-accent/10 text-accent border-accent/20 shrink-0">
                               🕗 {dest.requestTime || "08:30"} น.
                             </Badge>

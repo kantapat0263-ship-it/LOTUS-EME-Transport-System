@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { isSameOutcome, keepsMoveTarget, renameMoveTarget } from '../../../lib/reassign'
+import { transferMateReminder } from '../../../lib/transfer'
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
   let value: ts.Expression | undefined
@@ -119,14 +120,28 @@ it('เปลี่ยนคนขับแทน D2→D3: ทริปที่
   expect(apply.mock.calls[0][1]).toEqual([{ siteName: 'x', order: 1 }, moved('คนสาม', 'driver-refused')])
   expect(apply.mock.calls[1][1].map((s: any) => s.reassignedToDriverName)).toEqual(['คนสาม', 'คนสาม'])
 })
-function outcomeUI(stop: any) {
+function outcomeUI(stop: any, others: any[] = []) {
   const apply = vi.fn().mockResolvedValue(true)
-  const t = { id: 'T1', stops: [stop] }
+  const toast = vi.fn()
+  const t = { id: 'T1', stops: [stop, ...others] }
   const strip = ({ outcome: _o, outcomeReason: _r, reassignedToTripId: _t, reassignedToVehiclePlate: _p, reassignedToDriverName: _n, ...rest }: any) => rest
-  const deps = { allowOrdinaryEdit: () => true, openPostponeDialog: vi.fn(), isSameOutcome, keepsMoveTarget, buildStops: (original: any, index: number, fn: any) => original.stops.map((s: any, i: number) => i === index ? fn(s) : s), stripOutcome: strip, recordedBy: 'ผู้จัด', applyStops: apply, user: null }
+  const deps = { allowOrdinaryEdit: () => true, openPostponeDialog: vi.fn(), isSameOutcome, keepsMoveTarget, buildStops: (original: any, index: number, fn: any) => original.stops.map((s: any, i: number) => i === index ? fn(s) : s), stripOutcome: strip, recordedBy: 'ผู้จัด', applyStops: apply, user: null, toast, transferReminderFor: (trip: any, index: number) => transferMateReminder(trip.stops, index) }
   const handler = new Function(...Object.keys(deps), `${body('chooseOutcome')}return work`)(...Object.values(deps))
-  return { handler, apply, t }
+  return { handler, apply, t, toast }
 }
+it('โยกจุดรับของงานรับ-ส่ง → เตือนว่าจุดส่งยังอยู่ในเที่ยว ให้โยกตามถ้าจะไปทั้งชุด · สลับโยก→ปฏิเสธไม่เตือนซ้ำ', async () => {
+  const drop = { siteName: 'ดอนเมือง', order: 2, transferRole: 'drop', transferId: 'g1' }
+  const ui = outcomeUI({ siteName: 'วังโค', order: 1, transferRole: 'pickup', transferId: 'g1' }, [drop])
+  await ui.handler(ui.t, 0, 'reassigned')
+  expect(ui.toast.mock.calls[0][0].description).toContain('ยังมีจุดส่ง ดอนเมือง')
+  expect(ui.toast.mock.calls[0][0].description).toContain('โยกจุดนั้นไปคันเดียวกัน')
+  const again = outcomeUI({ siteName: 'วังโค', order: 1, transferRole: 'pickup', transferId: 'g1', outcome: 'reassigned' }, [drop])
+  await again.handler(again.t, 0, 'driver-refused')
+  expect(again.toast).not.toHaveBeenCalled()
+  const plain = outcomeUI({ siteName: 'A', order: 1 })
+  await plain.handler(plain.t, 0, 'reassigned')
+  expect(plain.toast).not.toHaveBeenCalled()
+})
 it('สลับ โยกงาน → คนขับปฏิเสธ คงคันที่รับงานไว้ (เดิมล้างทิ้ง แถวรับโยกของคันนั้นหายเงียบ)', async () => {
   const ui = outcomeUI({ siteName: 'A', order: 1, outcome: 'reassigned', reassignedToTripId: 'T2', reassignedToVehiclePlate: 'รถสอง', reassignedToDriverName: 'คนสอง' })
   await ui.handler(ui.t, 0, 'driver-refused')
