@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { incomingStopsForTrip } from '@/lib/calculations'
-import { isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from '@/lib/transfer'
+import { isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_EDIT_AT_SOURCE, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMissingWarning, transferStopName, transferTagStyle } from '@/lib/transfer'
 import { cn } from '@/lib/utils'
 
 // ป้ายรับ-ส่งในหน้าประวัติ — คอมไพล์โค้ดจริงของหน้า (ไม่บูต Firebase) แล้วเรนเดอร์เป็น HTML
@@ -69,10 +69,21 @@ function editRows(editingTrip: { id: string; stops: Stop[] }, stops: Stop[], tri
   const editView = new Function('isEditOpen', 'editingTrip', 'editFormData', 'transferViewFor', `${declaration(listSource, 'editView')}return work`)(true, editingTrip, editFormData, viewFor)
   const editDropSync = new Function('isEditOpen', 'editingTrip', 'editFormData', 'syncDropsInTripEdit', `${declaration(listSource, 'editDropSync')}return work`)(true, editingTrip, editFormData, syncDropsInTripEdit)
   const stub = (tag: string) => ({ children }: { children?: React.ReactNode }) => React.createElement(tag, null, children)
-  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editDropSync', 'transferLabel', 'isInactiveStop', 'TRANSFER_WARNING', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
-    React, editFormData, vi.fn(), editView, editDropSync, transferLabel, isInactiveStop, TRANSFER_WARNING, cn, stub('textarea'), stub('button'), stub('i'),
+  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editDropSync', 'transferLabel', 'transferMissingWarning', 'isInactiveStop', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
+    React, editFormData, vi.fn(), editView, editDropSync, transferLabel, transferMissingWarning, isInactiveStop, cn, stub('textarea'), stub('button'), stub('i'),
   ) as (stop: Stop, idx: number) => React.ReactElement
   return stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
+}
+
+/** บรรทัดเตือนใต้รายการจุดในหน้าต่างแก้ไข สำหรับงานที่คันอื่นโยกเข้ามา (ไม่มีแถวของตัวเองในหน้าต่างนี้) */
+function editIncoming(editingTrip: { id: string; stops: Stop[] }, stops: Stop[], trips: unknown[] = [editingTrip]) {
+  const { viewFor } = listViewFor(trips)
+  const editFormData = { stops, originalStopIndexes: stops.map(() => null), vehicleId: '', driverId: '', note: '' }
+  const editView = new Function('isEditOpen', 'editingTrip', 'editFormData', 'transferViewFor', `${declaration(listSource, 'editView')}return work`)(true, editingTrip, editFormData, viewFor) as { incomingPos: number[] }
+  const render = new Function('React', 'editView', 'transferMissingWarning', 'transferStopName', 'TRANSFER_EDIT_AT_SOURCE', `${jsxCallback(listSource, 'editView?.incomingPos.map', 'TRANSFER_EDIT_AT_SOURCE')}; return render`)(
+    React, editView, transferMissingWarning, transferStopName, TRANSFER_EDIT_AT_SOURCE,
+  ) as (pos: number, i: number) => React.ReactElement | null
+  return editView.incomingPos.map(render).filter((el): el is React.ReactElement => !!el).map(el => renderToStaticMarkup(el))
 }
 
 describe('หน้าประวัติ — ตัวคิดลิสต์ป้าย (transferViewFor)', () => {
@@ -188,6 +199,43 @@ describe('หน้าประวัติ — หน้าต่างแก�
     expect(p2).toContain('📦')
     expect(d).toContain('🏁')
     expect(d).not.toContain('⚠️')
+  })
+
+  it('จุดคู่ยังอยู่ในลิสต์แต่เลื่อน/โยกออกแล้ว (รับร้านเดียว) → ไม่เตือน "ไม่อยู่ในเที่ยวนี้" · ลบจุดนั้นออกจากฟอร์มแล้วค่อยเตือน', () => {
+    // หน้าต่างนี้ไม่มีป้ายเลื่อน/โยกบอกเหตุผล — เห็นชื่อร้านในลิสต์แต่ระบบบอกว่าไม่อยู่ คนจัดรถจะนึกว่าข้อมูลค้างแล้วลบทิ้ง
+    const postponed = [pickup('วังโค', { outcome: 'postponed' }), drop()]
+    const [p, d] = editRows(trip('T-1', postponed), postponed)
+    expect(p).not.toContain('📦')
+    expect(d).toContain('🏁 ส่งของที่รับจาก วังโค')
+    expect(d).not.toContain('⚠️')
+    const movedDrop = [drop({ outcome: 'reassigned' }), pickup('วังโค')]
+    const [d2, p2] = editRows(trip('T-2', movedDrop), movedDrop)
+    expect(d2).not.toContain('🏁')
+    expect(p2).toContain('📦 รับของ → ไปส่งต่อที่ ดอนเมือง')
+    expect(p2).not.toContain('⚠️')
+    // ลบจุดที่เลื่อน/โยกแล้วออกจากฟอร์ม = จุดคู่หายจากเที่ยวจริง → เตือน
+    expect(editRows(trip('T-1', postponed), [drop()], undefined, [1])[0]).toContain(`⚠️ ${TRANSFER_WARNING.pickupMissing}`)
+    expect(editRows(trip('T-2', movedDrop), [pickup('วังโค')], undefined, [1])[0]).toContain(`⚠️ ${TRANSFER_WARNING.dropMissing}`)
+  })
+
+  it('ลบจุดส่งที่มีจุดรับโยกเข้ามาจากคันอื่น → ใต้รายการขึ้นเตือนงานโยกเข้า + บอกให้แก้ที่คันต้นทาง', () => {
+    const receiver = trip('T-B', [normal('ไซต์ A'), drop()])
+    const trips = [receiver, trip('T-A', [pickup('ดูโฮม', { outcome: 'reassigned', reassignedToTripId: 'T-B' })])]
+    // ตอนเปิดหน้าต่าง ครบคู่ = ไม่มีบรรทัดเตือน
+    expect(editIncoming(receiver, receiver.stops, trips)).toEqual([])
+    const [line, ...rest] = editIncoming(receiver, [normal('ไซต์ A')], trips)
+    expect(rest).toEqual([])
+    expect(line).toContain(`⚠️ งานที่โยกเข้ามา ดูโฮม (จุดรับ): ${TRANSFER_WARNING.dropMissing} · ${TRANSFER_EDIT_AT_SOURCE}`)
+    // แถวที่เหลือในฟอร์ม (งานปกติ) ไม่มีป้าย
+    expect(editRows(receiver, [normal('ไซต์ A')], trips, [0])[0]).not.toContain('🏁')
+  })
+
+  it('งานโยกเข้าที่ไม่ใช่งานรับ-ส่ง / ทริปที่ไม่มีงานรับ-ส่งเลย → ไม่มีบรรทัดเตือน', () => {
+    const receiver = trip('T-B', [normal('ไซต์ A'), drop()])
+    const plainJob = { ...normal('ไซต์ X'), outcome: 'reassigned', reassignedToTripId: 'T-B' }
+    expect(editIncoming(receiver, [normal('ไซต์ A')], [receiver, trip('T-A', [plainJob])])).toEqual([])
+    const plain = trip('T-C', [normal('ไซต์ A')])
+    expect(editIncoming(plain, plain.stops, [plain, trip('T-A', [pickup('ดูโฮม', { outcome: 'reassigned', reassignedToTripId: 'T-C' })])])).toEqual([])
   })
 
   it('จุดปกติไม่มีป้าย', () => {

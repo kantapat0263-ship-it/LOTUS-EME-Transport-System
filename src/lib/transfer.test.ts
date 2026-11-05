@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { activeTransferSet, applyPickupItemsEdit, buildDropDescription, dropLine, dropSyncNote, isInactiveStop, orderPickupsBeforeDrop, pickupEditMessage, postponedPickupNote, syncDropsInTripEdit, syncDropText, TRANSFER_EDIT_AT_SOURCE, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferShapeProblem, transferStopFields, transferStopName, transferTagStyle, type TransferFields } from './transfer'
+import { activeTransferSet, applyPickupItemsEdit, buildDropDescription, dropLine, dropSyncNote, isInactiveStop, orderPickupsBeforeDrop, pickupEditMessage, postponedPickupNote, syncDropsInTripEdit, syncDropText, TRANSFER_EDIT_AT_SOURCE, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferMissingWarning, transferNoteForDriver, transferSetOutside, transferShapeProblem, transferStopFields, transferStopName, transferTagStyle, type TransferFields } from './transfer'
 
 type S = TransferFields & { id: string; siteName: string }
 const P = (id: string, group = 'g1', siteName = id): S => ({ id, transferRole: 'pickup', transferId: group, siteName, transferDropName: 'ดอนเมือง' })
@@ -298,6 +298,25 @@ describe('isInactiveStop (ตัวเช็กเดียวของจุด
     const pickup = { ...P('วังโค'), outcome: 'postponed' }
     expect(isInactiveStop(pickup)).toBe(true)
     expect(transferLabel([pickup, D('ดอนเมือง')], 1)?.warning).toBe(TRANSFER_WARNING.pickupMissing)
+  })
+})
+
+describe('transferMissingWarning (หน้าต่างแก้ไขเที่ยววิ่ง — ผลตรวจ history-labels)', () => {
+  it('จุดคู่ไม่อยู่ในลิสต์เลย → เตือนแบบเดียวกับป้าย', () => {
+    expect(transferMissingWarning([D('ดอนเมือง')], 0)).toBe(TRANSFER_WARNING.pickupMissing)
+    expect(transferMissingWarning([P('วังโค')], 0)).toBe(TRANSFER_WARNING.dropMissing)
+  })
+  it('จุดคู่ยังอยู่ในลิสต์แต่เลื่อน/โยกออกแล้ว → ไม่เตือน (ป้ายยังเตือนเหมือนเดิม)', () => {
+    const peers = [{ ...P('วังโค'), outcome: 'postponed' }, D('ดอนเมือง')]
+    expect(transferLabel(peers, 1)?.warning).toBe(TRANSFER_WARNING.pickupMissing)
+    expect(transferMissingWarning(peers, 1)).toBeNull()
+    expect(transferMissingWarning([{ ...D('ดอนเมือง'), outcome: 'reassigned' }, P('วังโค')], 1)).toBeNull()
+  })
+  it('จุดคู่ของกลุ่มอื่นไม่นับ · ลำดับผิด/ครบคู่/จุดปกติ = ไม่เตือน', () => {
+    expect(transferMissingWarning([{ ...P('วังโค', 'g2'), outcome: 'postponed' }, D('ดอนเมือง')], 1)).toBe(TRANSFER_WARNING.pickupMissing)
+    expect(transferMissingWarning([D('ดอนเมือง'), P('วังโค')], 0)).toBeNull()
+    expect(transferMissingWarning([P('วังโค'), D('ดอนเมือง')], 1)).toBeNull()
+    expect(transferMissingWarning([N('ไซต์ A')], 0)).toBeNull()
   })
 })
 

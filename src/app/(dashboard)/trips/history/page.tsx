@@ -50,7 +50,7 @@ import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQu
 import { inThailand } from "@/lib/roadFlood"
 import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
 import { calculateFuelCost, incomingStopsForTrip } from "@/lib/calculations"
-import { dropSyncNote, isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from "@/lib/transfer"
+import { dropSyncNote, isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferMissingWarning, transferStopName, transferTagStyle } from "@/lib/transfer"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -485,12 +485,13 @@ export default function TripHistoryPage() {
 
   // ป้ายงานรับของไปส่งต่อ: จับคู่กับจุดของเที่ยว + งานที่คันอื่นโยกเข้ามา เรียงแบบเดียวกับใบสรุป (transferDisplayOrder) — ไม่นับทริปที่ยกเลิก (ใบสรุปก็ไม่นับ)
   // ทริปที่ไม่มีงานรับ-ส่ง = ไม่ต้องไล่หางานโยกเข้า · คิดเฉพาะตอนหน้าต่างเปิด (trips = ทุกทริปทุกวัน ไม่ต้องคิดซ้ำทุกครั้งที่พิมพ์ค้นหา)
-  const transferViewFor = (tripId: string, stops: TripStop[]) => {
-    const incoming = stops.some(isTransferStop) ? incomingStopsForTrip((trips || []).filter(t => t.status !== 'Cancelled'), tripId) : []
+  // openedStops = จุดตอนเปิดหน้าต่างแก้ไข — ลบจุดรับ-ส่งตัวสุดท้ายออกจากฟอร์มแล้ว ยังต้องไล่หางานโยกเข้า ไม่งั้นงานที่โยกเข้ามาเสียจุดคู่ไปเงียบ ๆ
+  const transferViewFor = (tripId: string, stops: TripStop[], openedStops: TripStop[] = stops) => {
+    const incoming = stops.some(isTransferStop) || openedStops.some(isTransferStop) ? incomingStopsForTrip((trips || []).filter(t => t.status !== 'Cancelled'), tripId) : []
     return transferDisplayOrder(stops, incoming)
   }
   const worksheetView = isWorksheetOpen && selectedTrip ? transferViewFor(selectedTrip.id, selectedTrip.stops || []) : null
-  const editView = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editFormData.stops) : null
+  const editView = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editFormData.stops, editingTrip.stops) : null
   // จุดรับที่ของเปลี่ยนแล้วจุดส่งในเที่ยวนี้จะถูกแก้ตอนกดบันทึก (ป้ายเปลี่ยนทันที แต่ช่องจุดส่งยังเป็นข้อความเดิมจนกว่าจะบันทึก)
   const editDropSync = isEditOpen && editingTrip ? syncDropsInTripEdit(editingTrip.stops, editFormData.stops, editFormData.originalStopIndexes) : null
 
@@ -876,10 +877,10 @@ export default function TripHistoryPage() {
                     <div className="flex-1 space-y-2">
                       <p className="font-bold text-sm text-accent">{stop.siteName}</p>
                       {(() => {
-                        // งานรับของไปส่งต่อ: ป้าย + เตือนเฉพาะ "จุดคู่ไม่อยู่ในเที่ยวนี้" ซึ่งการลบจุดในหน้าต่างนี้ทำให้เกิดได้
+                        // งานรับของไปส่งต่อ: ป้าย + เตือนเฉพาะ "จุดคู่ไม่อยู่ในเที่ยวนี้" ซึ่งการลบจุดในหน้าต่างนี้ทำให้เกิดได้ (transferMissingWarning)
                         // ไม่เตือนเรื่องลำดับ (หน้าต่างนี้สลับลำดับไม่ได้) · จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย (หน้านี้ไม่มีป้ายโยก/เลื่อนกำกับ)
                         const label = editView && !isInactiveStop(stop) ? transferLabel(editView.peers, editView.ownPos[idx]) : null
-                        const warning = label?.warning === TRANSFER_WARNING.pickupMissing || label?.warning === TRANSFER_WARNING.dropMissing ? label.warning : null
+                        const warning = label && editView ? transferMissingWarning(editView.peers, editView.ownPos[idx]) : null
                         return label && (
                           <span className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
                             {label.text}
@@ -914,6 +915,15 @@ export default function TripHistoryPage() {
                     </Button>
                   </div>
                 ))}
+                {editView?.incomingPos.map((pos, i) => {
+                  // งานรับ-ส่งที่คันอื่นโยกเข้ามา — ไม่มีแถวในหน้าต่างนี้ (ผลเก็บที่คันต้นทาง) แต่ลบจุดคู่ของมันในฟอร์มได้ → ต้องเห็นคำเตือนแบบเดียวกับจุดของเที่ยว
+                  const warning = transferMissingWarning(editView.peers, pos)
+                  return warning && (
+                    <p key={`incoming-${i}`} className="text-[10px] text-red-400">
+                      ⚠️ งานที่โยกเข้ามา {transferStopName(editView.peers[pos])}: {warning} · {TRANSFER_EDIT_AT_SOURCE}
+                    </p>
+                  )
+                })}
               </div>
             </div>
 

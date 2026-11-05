@@ -172,6 +172,19 @@ export function transferLabel(peers: readonly Peer[], index: number): TransferLa
   return { role: 'drop', text }
 }
 
+/**
+ * คำเตือนของหน้าต่างแก้ไขเที่ยววิ่ง (หน้าประวัติ) — เฉพาะ "จุดรับ/จุดส่งไม่อยู่ในเที่ยวนี้" ที่การลบจุดในหน้าต่างนั้นทำให้เกิดได้ (ไม่เตือนลำดับ/ของบางร้าน)
+ * จุดคู่ยังอยู่ในลิสต์แต่เลื่อน/โยกออก/ไม่ได้ทำแล้ว = ไม่เตือน: หน้าต่างนั้นไม่มีป้ายเลื่อน/โยกบอกเหตุผล
+ * คนจัดรถจะเห็นชื่อร้านอยู่ในลิสต์แต่ระบบบอกว่าไม่อยู่ แล้วลบทิ้ง (ประวัติผลเลื่อน/โยกหายจากทริป) · ลบจุดคู่ออกจากฟอร์มแล้วค่อยเตือน
+ */
+export function transferMissingWarning(peers: readonly Peer[], index: number): string | null {
+  const warning = transferLabel(peers, index)?.warning
+  if (warning !== TRANSFER_WARNING.pickupMissing && warning !== TRANSFER_WARNING.dropMissing) return null
+  const stop = peers[index]
+  const listed = peers.some((peer, i) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && peer.transferRole !== stop.transferRole)
+  return listed ? null : warning
+}
+
 /** บรรทัดใต้งานโยกเข้าที่แสดงอย่างเดียว (แผงปิดผลงาน) — ผลของงานโยกเก็บที่คันต้นทาง · ใช้ประโยคนี้ทุกที่ที่บอกให้ไปแก้ที่คันต้นทาง */
 export const TRANSFER_EDIT_AT_SOURCE = 'แก้ผล/โยก/เลื่อนงานนี้ที่การ์ดของคันต้นทาง'
 
