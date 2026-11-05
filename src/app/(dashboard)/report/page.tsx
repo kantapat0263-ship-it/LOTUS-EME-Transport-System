@@ -35,7 +35,7 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Trip, CompanySetting, UserProfile } from "@/types/models"
-import { computeOutcomeStats, computeDriverReliability, stopSharesKm, stopSharesCost } from "@/lib/calculations"
+import { computeOutcomeStats, computeDriverReliability, computeSiteCostRows, siteCostPickupNote } from "@/lib/calculations"
 import { detectStops, cutTrailAt, computeRecurringStops, haversineMeters, OFFICE_LOCATION, OFFICE_RADIUS_M, ARRIVAL_RADIUS_M, type RecurringSpot, type StopEvent } from "@/lib/tracking"
 import { cn } from "@/lib/utils"
 import { startOfMonth, format } from "date-fns"
@@ -282,31 +282,14 @@ export default function ReportPage() {
       .slice(0, 10)
   }, [trips])
 
-  const siteCostStats = React.useMemo(() => {
-    const data: Record<string, any> = {}
-    const tripIds = new Set(trips.map((t: any) => t.id).filter(Boolean))
-
-    trips.forEach(t => {
-      // ส่วนแบ่งต่อจุดแบบเดียวกับตารางรายคัน/รายคนขับ (ถ่วงตามระยะห่างจากออฟฟิศ) — ตัวเลขทั้งหน้าตรงกัน
-      const distShares = stopSharesKm(t)
-      const costShares = stopSharesCost({ ...t, fuelCost: tripFuelCost(t) })
-      t.stops?.forEach((s: any, i: number) => {
-        // นับเฉพาะจุดที่ "มีคนวิ่งจริง": ตามแผน หรือถูกรับต่อ — เลื่อน/ปฏิเสธไม่มีคนรับ = ไม่นับ
-        const delivered = !s.outcome || s.outcome === 'delivered'
-        const pickedUp = s.reassignedToTripId && tripIds.has(s.reassignedToTripId)
-        if (!delivered && !pickedUp) return
-        const name = s.siteName || "ไม่ระบุ"
-        if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0 }
-        data[name].count += 1
-        data[name].distance += distShares[i]
-        data[name].cost += costShares[i]
-      })
-    })
-
-    return Object.values(data)
+  // ส่วนแบ่งต่อจุดแบบเดียวกับตารางรายคัน/รายคนขับ (ถ่วงตามระยะห่างจากออฟฟิศ) — ตัวเลขทั้งหน้าตรงกัน
+  // ค่าไปรับของ (งานรับของไปส่งต่อ) รวมอยู่ในแถวไซต์ที่ของไปส่ง — ดู computeSiteCostRows
+  const siteCostStats = React.useMemo(
+    () => computeSiteCostRows(trips.map((t) => ({ ...t, fuelCost: tripFuelCost(t) })))
       .sort((a, b) => b.cost - a.cost)
-      .slice(0, 10)
-  }, [trips, settings])
+      .slice(0, 10),
+    [trips, settings]
+  )
 
   const employeeStats = React.useMemo(() => {
     const data: Record<string, any> = {}
@@ -693,7 +676,7 @@ export default function ReportPage() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <Fuel className="h-5 w-5 text-accent" /> Top 10 ไซต์งานที่มีค่าใช้จ่ายสูงสุด
               </CardTitle>
-              <CardDescription>ประมาณการค่าน้ำมันแยกตามไซต์งาน/สถานที่ (คิดไป-กลับ)</CardDescription>
+              <CardDescription>ประมาณการค่าน้ำมันแยกตามไซต์งาน/สถานที่ (คิดไป-กลับ · ค่าไปรับของรวมอยู่ในไซต์ที่ของไปส่ง)</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -710,8 +693,13 @@ export default function ReportPage() {
                   {siteCostStats.map((s, i) => (
                     <TableRow key={i} className="border-border/20">
                       <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
-                      <TableCell className="font-medium text-white">{s.name}</TableCell>
-                      <TableCell className="text-right">{s.count} ครั้ง</TableCell>
+                      <TableCell className="font-medium text-white">
+                        {s.name}
+                        {/* จุดรับของที่ย้ายค่ามารวมในแถวนี้ — อยู่ใน #report-content จึงติดไปในรูปที่บันทึกด้วย */}
+                        {s.pickupCount > 0 && <p className="text-[11px] font-normal text-muted-foreground">{siteCostPickupNote(s)}</p>}
+                      </TableCell>
+                      {/* จำนวนครั้ง = ไปไซต์นี้เอง · 0 = มีแต่ค่าไปรับของให้ (เช่น จุดส่งถูกเลื่อน) */}
+                      <TableCell className="text-right">{s.count > 0 ? `${s.count} ครั้ง` : '—'}</TableCell>
                       <TableCell className="text-right">{s.distance.toFixed(1)} กม.</TableCell>
                       <TableCell className="text-right text-accent font-bold">
                         ฿{s.cost.toLocaleString(undefined, { maximumFractionDigits: 0 })}

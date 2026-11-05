@@ -18,6 +18,8 @@ import {
   computeDriverLeaderboard,
   computeDriverReliability,
   incomingStopsForTrip,
+  computeSiteCostRows,
+  siteCostPickupNote,
   type TripLike,
   type OutcomeTripLike,
   type LeaderboardTripLike,
@@ -512,5 +514,201 @@ describe('computeDriverLeaderboard: ทริปเปล่าไม่ได�
     const board = computeDriverLeaderboard([src, holder, empty] as LeaderboardTripLike[])
     expect(board.find((d) => d.driverId === 'dB')).toMatchObject({ workingDays: 1, actualKm: 40 })
     expect(board.find((d) => d.driverId === 'dC')?.workingDays ?? 0).toBe(0)
+  })
+})
+
+describe('computeSiteCostRows — ค่าน้ำมันรายไซต์ (การ์ด Top 10 ไซต์ที่มีค่าใช้จ่ายสูงสุด หน้ารายงาน)', () => {
+  // สำเนาโค้ดเดิมจาก report/page.tsx (ที่ 0d93df3 ก่อนย้ายมาเป็น computeSiteCostRows) — ทริปปกติต้องได้ผลเหมือนเดิมทุกตัว
+  const legacySiteCost = (trips: any[]) => {
+    const data: Record<string, any> = {}
+    const tripIds = new Set(trips.map((t: any) => t.id).filter(Boolean))
+    trips.forEach(t => {
+      const distShares = stopSharesKm(t)
+      const costShares = stopSharesCost(t)
+      t.stops?.forEach((s: any, i: number) => {
+        const delivered = !s.outcome || s.outcome === 'delivered'
+        const pickedUp = s.reassignedToTripId && tripIds.has(s.reassignedToTripId)
+        if (!delivered && !pickedUp) return
+        const name = s.siteName || "ไม่ระบุ"
+        if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0 }
+        data[name].count += 1
+        data[name].distance += distShares[i]
+        data[name].cost += costShares[i]
+      })
+    })
+    return Object.values(data)
+  }
+  const SHOP = { lat: 13.9, lng: 100.6 }
+  const SHOP2 = { lat: 13.75, lng: 100.5 }
+  const rowOf = (rows: ReturnType<typeof computeSiteCostRows>, name: string) => rows.find(r => r.name === name)
+  const pickup = (siteName: string, transferId: string, extra: Record<string, unknown> = {}) =>
+    ({ siteName, ...SHOP, transferRole: 'pickup' as const, transferId, transferDropName: 'ไซต์ X', ...extra })
+  const drop = (transferId: string, extra: Record<string, unknown> = {}) =>
+    ({ siteName: 'ไซต์ X', ...RAYONG, transferRole: 'drop' as const, transferId, ...extra })
+
+  const normalTrips = () => [
+    { id: 'T1', totalDistanceKm: 120, fuelCost: 400, stops: [
+      { siteName: 'ไซต์ ก', ...SHOP },
+      { siteName: 'ไซต์ ข', ...SHOP2, outcome: 'delivered' },
+      { siteName: 'ไซต์ ค', ...RAYONG, outcome: 'reassigned', reassignedToTripId: 'T2' }, // โยกไปคันที่โหลดมา
+      { siteName: 'ไซต์ ง', ...SHOP2, outcome: 'reassigned', reassignedToTripId: 'ไม่ได้โหลด' },
+      { siteName: 'ไซต์ ก', ...SHOP, outcome: 'postponed' },
+      { siteName: 'ไซต์ จ', ...NEAR, outcome: 'driver-refused' }, // ปฏิเสธ ไม่มีใครรับ
+    ] },
+    { id: 'T2', totalDistanceKm: 60, fuelCost: 210, stops: [
+      { siteName: 'ไซต์ ก', ...SHOP },
+      { siteName: 'ไซต์ ฉ' }, // ไม่มีพิกัด → ทริปนี้หารเท่า
+      { siteName: '', ...NEAR }, // ไม่มีชื่อ → "ไม่ระบุ"
+      { siteName: 'ไซต์ ข', ...SHOP2, outcome: 'driver-refused', reassignedToTripId: 'T1' }, // ปฏิเสธแล้วมีคนรับต่อ
+    ] },
+  ]
+
+  it('ทริปปกติ (ไม่มีงานรับ-ส่ง) ได้แถวเหมือนโค้ดเดิมทุกตัว ลำดับเดิม · ไม่มีจุดรับย้ายมา', () => {
+    const expected = legacySiteCost(normalTrips()).map(r => ({ ...r, pickupCount: 0, pickupNames: [] }))
+    expect(expected.length).toBeGreaterThan(4)
+    expect(computeSiteCostRows(normalTrips())).toEqual(expected)
+  })
+
+  it('จุดรับกับจุดส่งอยู่ทริปเดียวกัน: ค่าไปรับของย้ายไปแถวไซต์ปลายทาง ไม่มีแถวร้าน', () => {
+    const t = { id: 'T1', totalDistanceKm: 100, fuelCost: 350, stops: [pickup('ร้าน A', 'tf_1'), drop('tf_1')] }
+    const km = stopSharesKm(t), cost = stopSharesCost(t)
+    const rows = computeSiteCostRows([t])
+    expect(rows.map(r => r.name)).toEqual(['ไซต์ X'])
+    expect(rows[0]).toMatchObject({ count: 1, pickupCount: 1, pickupNames: ['ร้าน A'] })
+    expect(rows[0].distance).toBeCloseTo(km[0] + km[1], 9)
+    expect(rows[0].cost).toBeCloseTo(cost[0] + cost[1], 9)
+  })
+
+  it('รับหลายจุดไปส่งที่เดียว: นับจุดรับทุกจุด ชื่อตามลำดับที่เจอ', () => {
+    const t = { id: 'T1', totalDistanceKm: 100, fuelCost: 350, stops: [pickup('ร้าน A', 'tf_1'), pickup('ร้าน B', 'tf_1', SHOP2), drop('tf_1')] }
+    const rows = computeSiteCostRows([t])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ name: 'ไซต์ X', count: 1, pickupCount: 2, pickupNames: ['ร้าน A', 'ร้าน B'] })
+    expect(rows[0].cost).toBeCloseTo(350, 9)
+  })
+
+  it('จุดรับอยู่ทริป 1 จุดส่งอยู่ทริป 2: ใช้ชื่อจุดส่งในทริปก่อนชื่อที่จุดรับจดไว้', () => {
+    // จุดรับไม่ได้จดชื่อจุดส่งไว้ / จดชื่อเก่าไว้ (แก้ชื่อจุดส่งในทริปทีหลัง) → ยังเข้าแถวเดียวกับจุดส่ง
+    for (const extra of [{ transferDropName: undefined }, { transferDropName: 'ไซต์ X (ชื่อเก่า)' }]) {
+      const t1 = { id: 'T1', totalDistanceKm: 80, fuelCost: 300, stops: [pickup('ร้าน A', 'tf_1', extra), { siteName: 'ไซต์ ก', ...SHOP2 }] }
+      const t2 = { id: 'T2', totalDistanceKm: 200, fuelCost: 700, stops: [drop('tf_1')] }
+      const rows = computeSiteCostRows([t1, t2])
+      expect(rows.map(r => r.name).sort()).toEqual(['ไซต์ X', 'ไซต์ ก'].sort())
+      expect(rowOf(rows, 'ไซต์ X')).toMatchObject({ count: 1, pickupCount: 1, pickupNames: ['ร้าน A'] })
+      expect(rowOf(rows, 'ไซต์ X')!.cost).toBeCloseTo(stopSharesCost(t1)[0] + 700, 9)
+    }
+  })
+
+  it('จุดส่งถูกเลื่อน แต่ไปรับของมาแล้ว: แถวไซต์ได้ค่าไปรับของอย่างเดียว count=0', () => {
+    const t = { id: 'T1', totalDistanceKm: 100, fuelCost: 350, stops: [pickup('ร้าน A', 'tf_1'), drop('tf_1', { outcome: 'postponed' })] }
+    const rows = computeSiteCostRows([t])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ name: 'ไซต์ X', count: 0, pickupCount: 1, pickupNames: ['ร้าน A'] })
+    expect(rows[0].cost).toBeCloseTo(stopSharesCost(t)[0], 9)
+  })
+
+  it('หาจุดส่งไม่เจอในข้อมูลที่โหลด: ใช้ชื่อที่จุดรับจดไว้ · ไม่มีชื่อเลย = อยู่แถวร้านเหมือนเดิม', () => {
+    const named = { id: 'T1', totalDistanceKm: 50, fuelCost: 180, stops: [pickup('ร้าน A', 'tf_1')] }
+    const [toSite] = computeSiteCostRows([named])
+    expect(computeSiteCostRows([named])).toHaveLength(1)
+    expect(toSite).toMatchObject({ name: 'ไซต์ X', count: 0, pickupCount: 1, pickupNames: ['ร้าน A'] })
+    expect(toSite.distance).toBeCloseTo(50, 9)
+    expect(toSite.cost).toBeCloseTo(180, 9)
+    const unnamed = { id: 'T1', totalDistanceKm: 50, fuelCost: 180, stops: [pickup('ร้าน A', 'tf_1', { transferDropName: '' })] }
+    const [stays] = computeSiteCostRows([unnamed])
+    expect(computeSiteCostRows([unnamed])).toHaveLength(1)
+    expect(stays).toMatchObject({ name: 'ร้าน A', count: 1, pickupCount: 0, pickupNames: [] })
+    expect(stays.cost).toBeCloseTo(180, 9)
+  })
+
+  it('จุดรับที่เลื่อน หรือปฏิเสธแล้วไม่มีใครรับ: ไม่มีส่วนแบ่ง ไม่สร้างแถวไซต์เพิ่ม', () => {
+    const t = { id: 'T1', totalDistanceKm: 100, fuelCost: 350, stops: [
+      pickup('ร้าน A', 'tf_1', { outcome: 'postponed' }),
+      pickup('ร้าน B', 'tf_1', { outcome: 'driver-refused' }),
+      { siteName: 'ไซต์ ก', ...SHOP2 },
+    ] }
+    const rows = computeSiteCostRows([t])
+    expect(rows.map(r => r.name)).toEqual(['ไซต์ ก'])
+    expect(rows[0].pickupCount).toBe(0)
+  })
+
+  it('จุดรับที่โยกไปคันที่โหลดมา: นับด้วยส่วนแบ่งของทริปต้นทาง แล้วย้ายไปแถวไซต์', () => {
+    const t1 = { id: 'T1', totalDistanceKm: 80, fuelCost: 300, stops: [pickup('ร้าน A', 'tf_1', { outcome: 'reassigned', reassignedToTripId: 'T2' }), { siteName: 'ไซต์ ก', ...SHOP2 }] }
+    const t2 = { id: 'T2', totalDistanceKm: 200, fuelCost: 700, stops: [drop('tf_1')] }
+    const rows = computeSiteCostRows([t1, t2])
+    expect(rowOf(rows, 'ร้าน A')).toBeUndefined()
+    expect(rowOf(rows, 'ไซต์ X')).toMatchObject({ count: 1, pickupCount: 1, pickupNames: ['ร้าน A'] })
+    expect(rowOf(rows, 'ไซต์ X')!.cost).toBeCloseTo(stopSharesCost(t1)[0] + 700, 9)
+  })
+
+  it('งานสลับของจริง (รับที่ Best ไปส่งดอนเมือง + งานปกติที่ Best): แถว Best เหลือแค่งานปกติ', () => {
+    const t = { id: 'T1', totalDistanceKm: 150, fuelCost: 500, stops: [
+      { siteName: 'Best', ...SHOP, transferRole: 'pickup' as const, transferId: 'tf_1', transferDropName: 'ดอนเมือง' },
+      { siteName: 'Best', ...SHOP },
+      { siteName: 'ดอนเมือง', ...RAYONG, transferRole: 'drop' as const, transferId: 'tf_1' },
+    ] }
+    const cost = stopSharesCost(t)
+    const rows = computeSiteCostRows([t])
+    expect(rowOf(rows, 'Best')).toMatchObject({ count: 1, pickupCount: 0, pickupNames: [] })
+    expect(rowOf(rows, 'Best')!.cost).toBeCloseTo(cost[1], 9)
+    expect(rowOf(rows, 'ดอนเมือง')).toMatchObject({ count: 1, pickupCount: 1, pickupNames: ['Best'] })
+    expect(rowOf(rows, 'ดอนเมือง')!.cost).toBeCloseTo(cost[0] + cost[2], 9)
+  })
+
+  it('กันพลาด: รับที่ Best ส่งที่ Best = ไม่ย้ายแถว · มี transferRole แต่ไม่มี transferId = จุดปกติ', () => {
+    const same = { id: 'T1', totalDistanceKm: 40, fuelCost: 150, stops: [
+      { siteName: 'Best', ...SHOP, transferRole: 'pickup' as const, transferId: 'tf_1', transferDropName: 'Best' },
+      { siteName: 'Best', ...SHOP, transferRole: 'drop' as const, transferId: 'tf_1' },
+    ] }
+    expect(computeSiteCostRows([same])).toEqual([{ name: 'Best', count: 2, distance: 40, cost: 150, pickupCount: 0, pickupNames: [] }])
+    const broken = { id: 'T1', totalDistanceKm: 40, fuelCost: 150, stops: [
+      { siteName: 'ร้าน A', ...SHOP, transferRole: 'pickup' as const, transferDropName: 'ไซต์ X' },
+      { siteName: 'ไซต์ X', ...SHOP, transferRole: 'drop' as const, transferId: '' },
+    ] }
+    expect(computeSiteCostRows([broken]).map(r => [r.name, r.count, r.pickupCount])).toEqual([['ร้าน A', 1, 0], ['ไซต์ X', 1, 0]])
+  })
+
+  it('คันคู่ทั้งชุด (คนละ transferId ชื่อเหมือนกัน): จุดรับทั้งสองคันเข้าแถวไซต์เดียวกัน', () => {
+    const t1 = { id: 'T1', totalDistanceKm: 100, fuelCost: 350, stops: [pickup('ร้าน A', 'tf_1'), drop('tf_1')] }
+    const t2 = { id: 'T2', totalDistanceKm: 100, fuelCost: 350, stops: [pickup('ร้าน A', 'tf_2'), drop('tf_2')] }
+    expect(computeSiteCostRows([t1, t2])).toEqual([expect.objectContaining({ name: 'ไซต์ X', count: 2, pickupCount: 2, pickupNames: ['ร้าน A'] })])
+  })
+
+  it('สำเนาคันช่วยของจุดรับ: นับเป็นอีกจุดในแถวไซต์ปลายทาง ชื่อร้านไม่ซ้ำ', () => {
+    const t1 = { id: 'T1', totalDistanceKm: 100, fuelCost: 350, stops: [pickup('ร้าน A', 'tf_1'), drop('tf_1')] }
+    const helper = { id: 'T2', totalDistanceKm: 30, fuelCost: 100, stops: [pickup('ร้าน A', 'tf_1', { assistForPlate: '1กข-1234', assistForDriver: 'สมชาย' })] }
+    const rows = computeSiteCostRows([t1, helper])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ name: 'ไซต์ X', count: 1, pickupCount: 2, pickupNames: ['ร้าน A'] })
+    expect(rows[0].cost).toBeCloseTo(450, 9)
+    expect(siteCostPickupNote(rows[0])).toBe('📦 รวมค่าไปรับของ 2 จุด จาก ร้าน A')
+  })
+
+  it('ยอดรวมทั้งตารางไม่เปลี่ยน: เท่า KPI ค่าน้ำมัน/กม. และเท่าโค้ดเดิม · จำนวนครั้ง+จุดรับ = จำนวนครั้งเดิม', () => {
+    const trips = [
+      ...normalTrips(),
+      { id: 'T3', totalDistanceKm: 90, fuelCost: 320, stops: [pickup('ร้าน A', 'tf_1'), pickup('ร้าน B', 'tf_1', { outcome: 'reassigned', reassignedToTripId: 'T4' }), { siteName: 'ไซต์ ก', ...SHOP2 }] },
+      { id: 'T4', totalDistanceKm: 140, fuelCost: 480, stops: [drop('tf_1'), pickup('ร้าน C', 'tf_9', { transferDropName: 'ไซต์ Y' }), pickup('ร้าน D', 'tf_8', { outcome: 'postponed' })] },
+    ]
+    const rows = computeSiteCostRows(trips)
+    const legacy = legacySiteCost(trips)
+    const outcome = computeOutcomeStats(trips as OutcomeTripLike[])
+    const total = (xs: any[], key: string) => xs.reduce((a, r) => a + r[key], 0)
+    expect(total(rows, 'cost')).toBeCloseTo(outcome.totalActualCost, 6)
+    expect(total(rows, 'cost')).toBeCloseTo(total(legacy, 'cost'), 6)
+    expect(total(rows, 'distance')).toBeCloseTo(outcome.totalActualKm, 6)
+    expect(total(rows, 'count') + total(rows, 'pickupCount')).toBe(total(legacy, 'count'))
+    expect(rowOf(rows, 'ร้าน A')).toBeUndefined()
+    expect(rowOf(rows, 'ไซต์ Y')).toMatchObject({ count: 0, pickupCount: 1, pickupNames: ['ร้าน C'] })
+  })
+})
+
+describe('siteCostPickupNote — บรรทัด 📦 ใต้ชื่อไซต์', () => {
+  it('ไม่มีจุดรับย้ายมา = ไม่มีบรรทัด', () => {
+    expect(siteCostPickupNote({ pickupCount: 0, pickupNames: [] })).toBeNull()
+  })
+  it('นับเป็น "จุด" แสดงชื่อไม่เกิน 3 ชื่อ เกินนั้นบอกจำนวนที่เหลือ', () => {
+    expect(siteCostPickupNote({ pickupCount: 2, pickupNames: ['Best', 'HomePro'] })).toBe('📦 รวมค่าไปรับของ 2 จุด จาก Best, HomePro')
+    expect(siteCostPickupNote({ pickupCount: 5, pickupNames: ['A', 'B', 'C', 'D', 'E'] })).toBe('📦 รวมค่าไปรับของ 5 จุด จาก A, B, C และอีก 2 ที่')
   })
 })

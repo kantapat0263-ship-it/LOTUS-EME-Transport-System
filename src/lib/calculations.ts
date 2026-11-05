@@ -8,7 +8,7 @@
 
 import { haversineMeters, OFFICE_LOCATION } from './tracking'
 import { inThailand } from './roadFlood'
-import { transferStopFields, type TransferRole } from './transfer'
+import { isTransferStop, transferStopFields, type TransferFields, type TransferRole } from './transfer'
 
 /** Default kilometres travelled per litre of diesel. */
 export const DEFAULT_FUEL_RATE = 10
@@ -244,6 +244,91 @@ export function computeOutcomeStats(trips: OutcomeTripLike[]): OutcomeStats {
     totalPlannedCost: sum(plannedCostByTrip),
     totalActualCost: sum(actualCostByTrip),
   }
+}
+
+// ---------------------------------------------------------------------------
+// ค่าน้ำมันรายไซต์ (การ์ด "Top 10 ไซต์งานที่มีค่าใช้จ่ายสูงสุด" หน้ารายงาน)
+// ---------------------------------------------------------------------------
+
+export interface SiteCostStopLike extends OutcomeStopLike, TransferFields {
+  siteName?: string | null
+}
+
+export interface SiteCostTripLike extends OutcomeTripLike {
+  stops?: SiteCostStopLike[] | null
+}
+
+export interface SiteCostRow {
+  name: string
+  /** จำนวนครั้งที่ไปไซต์นี้เอง — ไม่รวมจุดรับของที่ย้ายค่ามารวมในแถวนี้ */
+  count: number
+  distance: number
+  cost: number
+  /** จุดรับของ (งานรับของไปส่งต่อ) ที่ย้ายค่ามารวมในแถวนี้ */
+  pickupCount: number
+  /** ชื่อจุดรับของที่ย้ายมา ไม่ซ้ำ ตามลำดับที่เจอ */
+  pickupNames: string[]
+}
+
+/**
+ * แถวค่าน้ำมันรายไซต์ (ยังไม่เรียง/ไม่ตัด 10 อันดับ) — ย้ายมาจาก report/page.tsx ให้เทสต์ได้
+ * ส่วนแบ่งต่อจุดแบบเดียวกับตารางรายคัน/รายคนขับ (stopSharesKm/stopSharesCost) และนับจุดตามเงื่อนไขเดียวกับ computeOutcomeStats
+ * → ผลรวมทุกแถว = ยอด KPI ค่าน้ำมัน/กม. เสมอ · trip.fuelCost ต้องเป็นค่าที่ resolve แล้ว
+ * งานรับของไปส่งต่อ (ผู้ใช้ขอ 2026-11-05): ค่าวิ่งไปจุดรับของย้ายไปรวมที่แถวไซต์ที่ของไปส่ง (ของนี้มาให้ไซต์นั้น)
+ *   ไม่เพิ่ม count ของไซต์นั้น นับเป็น pickupCount แทน · ส่งไปออฟฟิศก็รวมที่แถวออฟฟิศเหมือนกัน (ไม่มีกรณีพิเศษ)
+ *   หาไซต์ปลายทางไม่ได้ (ทริปเก่า/ข้อมูลกลุ่มหาย เช่น เลื่อนจุดรับไปวันอื่นแล้ว) หรือส่งที่เดียวกับที่รับ = อยู่แถวเดิมแบบเดิม
+ */
+export function computeSiteCostRows(trips: SiteCostTripLike[]): SiteCostRow[] {
+  const data: Record<string, SiteCostRow> = {}
+  const tripIds = new Set(trips.map((t) => t.id).filter(Boolean) as string[])
+  // ชื่อจุดส่งของแต่ละกลุ่ม จากทุกจุดของทุกทริปที่โหลดมา (คันไหน/สถานะอะไรก็ได้) — ใช้ก่อนชื่อที่จุดรับจดไว้ ให้เข้าแถวเดียวกับจุดส่งพอดี
+  const dropNameOf = new Map<string, string>()
+  for (const t of trips) {
+    for (const s of t.stops || []) {
+      if (isTransferStop(s) && s.transferRole === 'drop' && s.siteName) dropNameOf.set(s.transferId as string, s.siteName)
+    }
+  }
+  const rowOf = (name: string) => {
+    if (!data[name]) data[name] = { name, count: 0, distance: 0, cost: 0, pickupCount: 0, pickupNames: [] }
+    return data[name]
+  }
+
+  for (const t of trips) {
+    const distShares = stopSharesKm(t)
+    const costShares = stopSharesCost(t)
+    for (const [i, s] of (t.stops || []).entries()) {
+      // นับเฉพาะจุดที่ "มีคนวิ่งจริง": ตามแผน หรือถูกโยกให้คันที่อยู่ในข้อมูลชุดนี้รับต่อ — เลื่อน/ปฏิเสธไม่มีคนรับ = ไม่นับ
+      // (takenOver = มีคันอื่นรับงานต่อ คนละเรื่องกับ "จุดรับของ" ของงานรับ-ส่ง)
+      const delivered = isDeliveredOutcome(s.outcome)
+      const takenOver = !!s.reassignedToTripId && tripIds.has(s.reassignedToTripId)
+      if (!delivered && !takenOver) continue
+      const name = s.siteName || 'ไม่ระบุ'
+      const dropName = isTransferStop(s) && s.transferRole === 'pickup'
+        ? dropNameOf.get(s.transferId as string) || s.transferDropName || ''
+        : ''
+      if (dropName && dropName !== name) {
+        const row = rowOf(dropName)
+        row.pickupCount += 1
+        if (!row.pickupNames.includes(name)) row.pickupNames.push(name)
+        row.distance += distShares[i]
+        row.cost += costShares[i]
+        continue
+      }
+      const row = rowOf(name)
+      row.count += 1
+      row.distance += distShares[i]
+      row.cost += costShares[i]
+    }
+  }
+
+  return Object.values(data)
+}
+
+/** บรรทัดเล็กใต้ชื่อไซต์ในการ์ดค่าใช้จ่าย — นับเป็น "จุด" (ร้านเดียวรับ 2 รายการ = 2 จุด แบบเดียวกับช่องจำนวนครั้ง) · ไม่มีจุดรับย้ายมา = null */
+export function siteCostPickupNote(row: Pick<SiteCostRow, 'pickupCount' | 'pickupNames'>): string | null {
+  if (row.pickupCount <= 0) return null
+  const more = row.pickupNames.length - 3
+  return `📦 รวมค่าไปรับของ ${row.pickupCount} จุด จาก ${row.pickupNames.slice(0, 3).join(', ')}${more > 0 ? ` และอีก ${more} ที่` : ''}`
 }
 
 // ---------------------------------------------------------------------------
