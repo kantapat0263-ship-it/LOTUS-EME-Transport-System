@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
+import { COORDINATE_EXAMPLE, parseThaiCoordinates } from '@/lib/requestCoordinates'
 import { applyPickupItemsEdit, buildDropDescription, isTransferStop, pickupEditMessage } from '@/lib/transfer'
 
 // หน้าคำขอ: แก้ของที่จุดรับ แล้วจุดส่งในใบเดียวกันแก้ตาม — คอมไพล์โค้ดจริงของหน้า (ไม่บูต Firebase) แล้วส่งของปลอมเข้าไป
@@ -96,39 +97,117 @@ describe('หน้าคำขอ — savePickupItems (แก้ของที
   })
 })
 
+const normalRequest = () => ({
+  id: 'VR-2', requestId: 'VR-2', status: 'in_progress', assignedDestinations: [] as number[],
+  destinations: [{ siteName: 'ไซต์ A', jobDescription: 'งาน A', requestTime: '08:30' }, { siteName: 'ไซต์ B', jobDescription: 'งาน B', requestTime: '08:30' }],
+})
+const isTransferReqOf = (req: any) => new Function('selectedReq', 'isTransferStop', `${declaration('isTransferReq')}return work`)(req, isTransferStop) as boolean
+
+/** saveTransferDestination ตัวจริง (ใบรับ-ส่ง: ช่องอื่นอ่านใบสดแล้วแก้เฉพาะจุดนั้น) · fresh = ใบในฐานตอนธุรกรรมอ่าน */
+function saveTransferDestination(selectedReq: any, fresh: any) {
+  const tx = { get: vi.fn(async () => ({ exists: () => !!fresh, data: () => fresh })), update: vi.fn() }
+  const toast = vi.fn()
+  const runTransaction = vi.fn(async (_db: unknown, fn: (t: typeof tx) => unknown) => fn(tx))
+  const work = new Function('selectedReq', 'doc', 'db', 'runTransaction', 'serverTimestamp', 'toast', `${declaration('saveTransferDestination')}return work`)(
+    selectedReq, (_db: unknown, ...path: string[]) => path.join('/'), {}, runTransaction, () => 'ts', toast,
+  ) as (index: number, patch: Record<string, unknown>, before: Record<string, unknown>, doneTitle?: string) => Promise<boolean>
+  return { work, tx, toast }
+}
+
+/** จอยังเป็นของก่อนแก้จุดรับ แต่ในฐานธุรกรรมของจุดรับบันทึกแล้ว (จุดรับ 15 ถุง + บรรทัดจุดส่งซิงก์แล้ว) — runTransaction ไม่ขึ้นจอทันที */
+const afterPickupSave = () => {
+  const fresh = request()
+  fresh.destinations[0] = { ...fresh.destinations[0], jobDescription: 'ปูน 15 ถุง' }
+  fresh.destinations[2] = { ...fresh.destinations[2], jobDescription: dropText.replace('ปูน 10 ถุง', 'ปูน 15 ถุง') }
+  return fresh
+}
+
+describe('หน้าคำขอ — saveTransferDestination (ช่องอื่นของใบรับ-ส่ง)', () => {
+  it('อ่านใบสดแล้วแก้เฉพาะจุดนั้น → ผลของจุดรับที่เพิ่งบันทึก (จอยังไม่อัปเดต) ไม่ถูกทับ', async () => {
+    const { work, tx, toast } = saveTransferDestination(request(), afterPickupSave())
+    expect(await work(2, { requestTime: '09:00' }, { siteName: 'ดอนเมือง' }, 'อัปเดตเวลาสำเร็จ')).toBe(true)
+    const [ref, patch] = tx.update.mock.calls[0] as unknown as [string, any]
+    expect(ref).toBe('vehicleRequests/VR-1')
+    expect(patch.updatedAt).toBe('ts')
+    expect(patch.destinations).toEqual(afterPickupSave().destinations.map((d: any, i: number) => (i === 2 ? { ...d, requestTime: '09:00' } : d)))
+    expect(toast).toHaveBeenCalledWith({ title: 'อัปเดตเวลาสำเร็จ' })
+  })
+
+  it('ข้อความบนจอไม่ตรงกับในใบแล้ว (จุดส่งเพิ่งซิงก์) / จุดที่ index นั้นไม่ใช่จุดเดิม → ไม่เขียน toast สีแดง คืน false', async () => {
+    const screen = request()
+    const stale = saveTransferDestination(screen, afterPickupSave())
+    expect(await stale.work(2, { jobDescription: `${dropText}\nเพิ่ม` }, { siteName: 'ดอนเมือง', jobDescription: screen.destinations[2].jobDescription }, 'บันทึกรายละเอียดงานแล้ว')).toBe(false)
+    expect(stale.tx.update).not.toHaveBeenCalled()
+    expect(stale.toast).toHaveBeenCalledWith({ title: 'บันทึกไม่สำเร็จ', description: 'จุดนี้เพิ่งถูกแก้ (เช่น จุดส่งเพิ่งแก้ตามจุดรับ) — รอให้ช่องแสดงข้อมูลล่าสุด แล้วแก้อีกครั้ง', variant: 'destructive' })
+    const moved = saveTransferDestination(screen, request())
+    expect(await moved.work(1, { requestTime: '09:00' }, { siteName: 'ดูโฮม' })).toBe(false)
+    expect(moved.tx.update).not.toHaveBeenCalled()
+  })
+
+  it('isTransferReq = ใบที่มีจุดรับ-ส่งอย่างน้อย 1 จุด (รวมจุดปกติในใบเดียวกัน) · ใบปกติ = false', () => {
+    expect(isTransferReqOf(request())).toBe(true)
+    expect(isTransferReqOf(normalRequest())).toBe(false)
+    expect(isTransferReqOf(null)).toBe(false)
+  })
+})
+
 describe('หน้าคำขอ — ช่อง "รายละเอียดงาน" (onBlur / key)', () => {
   const onBlur = jsxAttribute('onBlur', 'savePickupItems(idx')
-  function blur(dest: any, value: string) {
+  /** idx ตรงกับ dest ใน req จริง (เดิม indexOf ข้าม object คนละตัว → ได้ 0 ทุกเคส) */
+  function blur(req: any, idx: number, value: string, saveTransfer: (...args: any[]) => Promise<boolean> = vi.fn(async () => true)) {
     const updateDoc = vi.fn(async () => {})
     const toast = vi.fn()
     const save = vi.fn(async () => {})
-    const req = request()
-    const work = new Function('selectedReq', 'updateDoc', 'doc', 'db', 'serverTimestamp', 'toast', 'idx', 'dest', 'isTransferStop', 'savePickupItems', `${onBlur}return work`)(
-      req, updateDoc, (_db: unknown, ...path: string[]) => path.join('/'), {}, () => 'ts', toast, req.destinations.indexOf(dest) === -1 ? 0 : req.destinations.indexOf(dest), dest, isTransferStop, save,
+    const dest = req.destinations[idx]
+    const work = new Function('selectedReq', 'updateDoc', 'doc', 'db', 'serverTimestamp', 'toast', 'idx', 'dest', 'isTransferStop', 'savePickupItems', 'isTransferReq', 'saveTransferDestination', `${onBlur}return work`)(
+      req, updateDoc, (_db: unknown, ...path: string[]) => path.join('/'), {}, () => 'ts', toast, idx, dest, isTransferStop, save, isTransferReqOf(req), saveTransfer,
     ) as (e: { target: { value: string } }) => Promise<void>
-    return { run: () => work({ target: { value } }), updateDoc, save, toast }
+    return { run: () => work({ target: { value } }), updateDoc, save, saveTransfer, toast, dest }
   }
 
-  it('จุดรับของใบรับ-ส่ง → ไปทาง savePickupItems (ไม่ใช้ updateDoc จากข้อมูลบนจอ)', async () => {
-    const dest = request().destinations[0]
-    const h = blur(dest, 'ปูน 15 ถุง')
-    await h.run()
-    expect(h.save).toHaveBeenCalledWith(0, dest, 'ปูน 15 ถุง')
-    expect(h.updateDoc).not.toHaveBeenCalled()
+  it('จุดรับของใบรับ-ส่ง → ไปทาง savePickupItems ด้วย index ของจุดนั้น (ไม่ใช้ updateDoc จากข้อมูลบนจอ)', async () => {
+    for (const idx of [0, 1]) {
+      const h = blur(request(), idx, 'ของใหม่')
+      await h.run()
+      expect(h.save).toHaveBeenCalledWith(idx, h.dest, 'ของใหม่')
+      expect(h.updateDoc).not.toHaveBeenCalled()
+      expect(h.saveTransfer).not.toHaveBeenCalled()
+    }
   })
 
-  it('จุดส่ง / ใบปกติ → ทางเดิม (updateDoc + toast เดิม) · ข้อความไม่เปลี่ยน = ไม่ทำอะไร', async () => {
-    for (const dest of [request().destinations[2], { siteName: 'ไซต์ A', jobDescription: 'งาน A' }]) {
-      const h = blur(dest, 'ข้อความใหม่')
-      await h.run()
-      expect(h.save).not.toHaveBeenCalled()
-      expect(h.updateDoc).toHaveBeenCalledOnce()
-      expect(h.toast).toHaveBeenCalledWith({ title: 'บันทึกรายละเอียดงานแล้ว' })
-    }
-    const same = blur(request().destinations[0], 'ปูน 10 ถุง')
+  it('จุดส่งของใบรับ-ส่ง → อ่านใบสดแล้วแก้เฉพาะจุดนี้ (เทียบข้อความบนจอ) ไม่ใช้ updateDoc ทั้งก้อน', async () => {
+    const h = blur(request(), 2, 'ข้อความใหม่')
+    await h.run()
+    expect(h.saveTransfer).toHaveBeenCalledWith(2, { jobDescription: 'ข้อความใหม่' }, { siteName: 'ดอนเมือง', jobDescription: dropText }, 'บันทึกรายละเอียดงานแล้ว')
+    expect(h.updateDoc).not.toHaveBeenCalled()
+    expect(h.save).not.toHaveBeenCalled()
+  })
+
+  it('แก้จุดส่งก่อน snapshot ของจุดรับจะมาถึง → ไม่เขียนข้อความเก่าทับบรรทัดที่เพิ่งซิงก์ (ผลตรวจ drop-sync ข้อ 2)', async () => {
+    const screen = request()
+    const real = saveTransferDestination(screen, afterPickupSave())
+    const h = blur(screen, 2, `${dropText}\nโทรก่อนถึง`, real.work)
+    await h.run()
+    expect(h.updateDoc).not.toHaveBeenCalled()
+    expect(real.tx.update).not.toHaveBeenCalled()
+    expect(real.toast.mock.calls[0][0].variant).toBe('destructive')
+  })
+
+  it('ใบปกติ → ทางเดิม (updateDoc เขียนจุดที่ idx + toast เดิม) · ข้อความไม่เปลี่ยน = ไม่ทำอะไร', async () => {
+    const h = blur(normalRequest(), 1, 'ข้อความใหม่')
+    await h.run()
+    expect(h.save).not.toHaveBeenCalled()
+    expect(h.saveTransfer).not.toHaveBeenCalled()
+    expect(h.updateDoc).toHaveBeenCalledOnce()
+    const [ref, patch] = h.updateDoc.mock.calls[0] as unknown as [string, any]
+    expect(ref).toBe('vehicleRequests/VR-2')
+    expect(patch).toEqual({ destinations: [normalRequest().destinations[0], { ...normalRequest().destinations[1], jobDescription: 'ข้อความใหม่' }], updatedAt: 'ts' })
+    expect(h.toast).toHaveBeenCalledWith({ title: 'บันทึกรายละเอียดงานแล้ว' })
+    const same = blur(request(), 0, 'ปูน 10 ถุง')
     await same.run()
     expect(same.save).not.toHaveBeenCalled()
     expect(same.updateDoc).not.toHaveBeenCalled()
+    expect(same.saveTransfer).not.toHaveBeenCalled()
   })
 
   it('key ของช่อง: ใบรับ-ส่งเปลี่ยนตามข้อความ (ช่องจุดส่งโหลดข้อความที่ซิงก์ใหม่) · ใบปกติไม่มี key เหมือนเดิม', () => {
@@ -137,5 +216,69 @@ describe('หน้าคำขอ — ช่อง "รายละเอีย
     expect(key(drop, 2)).toBe(`jd-2-${dropText}`)
     expect(key({ ...drop, jobDescription: 'ใหม่' }, 2)).not.toBe(key(drop, 2))
     expect(key({ siteName: 'ไซต์ A', jobDescription: 'งาน A' }, 0)).toBeUndefined()
+  })
+})
+
+describe('หน้าคำขอ — ช่องเวลา / บันทึกพิกัด ของใบรับ-ส่ง (ผลตรวจ drop-sync ข้อ 2)', () => {
+  const timeBlur = jsxAttribute('onBlur', 'requestTime: newTime')
+  function blurTime(req: any, idx: number, value: string, saveTransfer: (...args: any[]) => Promise<boolean> = vi.fn(async () => true)) {
+    const updateDoc = vi.fn(async () => {})
+    const toast = vi.fn()
+    const work = new Function('selectedReq', 'updateDoc', 'doc', 'db', 'serverTimestamp', 'toast', 'idx', 'dest', 'isTransferReq', 'saveTransferDestination', `${timeBlur}return work`)(
+      req, updateDoc, (_db: unknown, ...path: string[]) => path.join('/'), {}, () => 'ts', toast, idx, req.destinations[idx], isTransferReqOf(req), saveTransfer,
+    ) as (e: { target: { value: string } }) => Promise<void>
+    return { run: () => work({ target: { value } }), updateDoc, saveTransfer, toast }
+  }
+
+  it('แก้เวลาจุดส่งก่อน snapshot ของจุดรับจะมาถึง → เขียนเฉพาะเวลาบนใบสด จุดรับ/บรรทัดจุดส่งที่ซิงก์แล้วยังอยู่', async () => {
+    const screen = request()
+    const real = saveTransferDestination(screen, afterPickupSave())
+    const h = blurTime(screen, 2, '09:00', real.work)
+    await h.run()
+    expect(h.updateDoc).not.toHaveBeenCalled()
+    const patch = real.tx.update.mock.calls[0][1] as any
+    expect(patch.destinations.map((d: any) => d.jobDescription)).toEqual(afterPickupSave().destinations.map((d: any) => d.jobDescription))
+    expect(patch.destinations[2].requestTime).toBe('09:00')
+    expect(real.toast).toHaveBeenCalledWith({ title: 'อัปเดตเวลาสำเร็จ' })
+  })
+
+  it('ใบปกติ → ทางเดิม (updateDoc ทั้งก้อน + toast เดิม) · เวลาไม่เปลี่ยน = ไม่ทำอะไร', async () => {
+    const h = blurTime(normalRequest(), 1, '09:00')
+    await h.run()
+    expect(h.saveTransfer).not.toHaveBeenCalled()
+    expect(h.updateDoc).toHaveBeenCalledWith('vehicleRequests/VR-2', { destinations: [normalRequest().destinations[0], { ...normalRequest().destinations[1], requestTime: '09:00' }], updatedAt: 'ts' })
+    expect(h.toast).toHaveBeenCalledWith({ title: 'อัปเดตเวลาสำเร็จ' })
+    const timed: any = request()
+    timed.destinations[2] = { ...timed.destinations[2], requestTime: '08:30' }
+    const same = blurTime(timed, 2, '08:30')
+    await same.run()
+    expect(same.saveTransfer).not.toHaveBeenCalled()
+    expect(same.updateDoc).not.toHaveBeenCalled()
+  })
+
+  function saveCoords(req: any, saveTransfer: (...args: any[]) => Promise<boolean>) {
+    const updateDoc = vi.fn(async () => {})
+    const toast = vi.fn()
+    const setEditingCoords = vi.fn()
+    const work = new Function('selectedReq', 'editingCoords', 'toast', 'parseThaiCoordinates', 'COORDINATE_EXAMPLE', 'isTransferReq', 'saveTransferDestination', 'updateDoc', 'doc', 'db', 'serverTimestamp', 'getDocs', 'query', 'collection', 'where', 'setDoc', 'setEditingCoords', `${declaration('handleSaveCoordinates')}return work`)(
+      req, { 2: '13.9, 100.6' }, toast, parseThaiCoordinates, COORDINATE_EXAMPLE, isTransferReqOf(req), saveTransfer, updateDoc, (_db: unknown, ...path: string[]) => path.join('/'), {}, () => 'ts',
+      vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), setEditingCoords,
+    ) as (destIndex: number) => Promise<void>
+    return { work, updateDoc, toast, setEditingCoords }
+  }
+
+  it('บันทึกพิกัดใบรับ-ส่ง → อ่านใบสดแล้วแก้เฉพาะพิกัดจุดนี้ · ไม่ผ่าน = ไม่ขึ้น "บันทึกพิกัดสำเร็จ" และช่องพิกัดยังอยู่', async () => {
+    const ok = vi.fn(async () => true)
+    const saved = saveCoords(request(), ok)
+    await saved.work(2)
+    expect(ok).toHaveBeenCalledWith(2, { lat: 13.9, lng: 100.6 }, { siteName: 'ดอนเมือง' })
+    expect(saved.updateDoc).not.toHaveBeenCalled()
+    expect(saved.toast).toHaveBeenCalledWith({ title: 'บันทึกพิกัดสำเร็จ', description: 'อัพเดทพิกัดจุดที่ 3 แล้ว' })
+    expect(saved.setEditingCoords).toHaveBeenCalledOnce()
+    const refused = saveCoords(request(), vi.fn(async () => false))
+    await refused.work(2)
+    expect(refused.updateDoc).not.toHaveBeenCalled()
+    expect(refused.toast).not.toHaveBeenCalled()
+    expect(refused.setEditingCoords).not.toHaveBeenCalled()
   })
 })

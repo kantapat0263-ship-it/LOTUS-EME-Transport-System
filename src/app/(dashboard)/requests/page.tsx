@@ -430,6 +430,34 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     }
   }
 
+  // ใบรับ-ส่ง: จุดรับบันทึกผ่านธุรกรรม ซึ่งไม่ขึ้นจอทันทีแบบ updateDoc (จอเก่าอยู่จนกว่าข้อมูลจาก server จะมาถึง)
+  // ช่องอื่นของใบนี้ (เวลา / รายละเอียดจุดอื่น / พิกัด) จึงอ่านใบสดแล้วแก้เฉพาะจุดนั้น — ไม่เขียน destinations ทั้งก้อนจากจอที่อาจยังเก่า
+  // (จะทับของที่จุดรับ/บรรทัดจุดส่งที่เพิ่งซิงก์เงียบ ๆ) · ใบปกติยังใช้ updateDoc ทางเดิม
+  // before = ค่าบนจอของจุดนั้นตอนเริ่มแก้ — ในใบไม่ตรงแล้ว = ไม่เขียน · คืน true = บันทึกแล้ว (toast doneTitle ถ้ามี) / false = ไม่ได้บันทึก (toast สีแดงแล้ว)
+  const isTransferReq = !!selectedReq?.destinations?.some((d: any) => isTransferStop(d))
+  const saveTransferDestination = async (index: number, patch: Record<string, unknown>, before: Record<string, unknown>, doneTitle?: string) => {
+    if (!selectedReq) return false
+    const vrRef = doc(db, "vehicleRequests", selectedReq.id)
+    try {
+      await runTransaction(db, async (tx) => {
+        const fresh = await tx.get(vrRef)
+        if (!fresh.exists()) throw new Error('ไม่พบใบขอแล้ว')
+        const destinations = [...((fresh.data() as any)?.destinations || [])]
+        const current = destinations[index]
+        if (!current || Object.keys(before).some(key => (current[key] ?? '') !== (before[key] ?? ''))) {
+          throw new Error('จุดนี้เพิ่งถูกแก้ (เช่น จุดส่งเพิ่งแก้ตามจุดรับ) — รอให้ช่องแสดงข้อมูลล่าสุด แล้วแก้อีกครั้ง')
+        }
+        destinations[index] = { ...current, ...patch }
+        tx.update(vrRef, { destinations, updatedAt: serverTimestamp() })
+      })
+      if (doneTitle) toast({ title: doneTitle })
+      return true
+    } catch (e: any) {
+      toast({ title: "บันทึกไม่สำเร็จ", description: e?.message || 'กรุณาลองอีกครั้ง', variant: "destructive" })
+      return false
+    }
+  }
+
   const handleSaveCoordinates = async (destIndex: number) => {
     if (!selectedReq) return
     const coordStr = editingCoords[destIndex] || ""
@@ -454,10 +482,15 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
         lng 
       }
       
-      await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
-        destinations: newDestinations,
-        updatedAt: serverTimestamp()
-      })
+      if (isTransferReq) {
+        // ใบรับ-ส่ง: อ่านใบสดแล้วแก้เฉพาะพิกัดจุดนี้ (ดู saveTransferDestination)
+        if (!(await saveTransferDestination(destIndex, { lat, lng }, { siteName: selectedReq.destinations[destIndex]?.siteName }))) return
+      } else {
+        await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
+          destinations: newDestinations,
+          updatedAt: serverTimestamp()
+        })
+      }
 
       // บันทึกลง /sites อัตโนมัติถ้าเป็น custom type — ข้ามถ้ามีชื่อนี้อยู่แล้ว (กันซ้ำ)
       if (newDestinations[destIndex].type === 'other') {
@@ -948,6 +981,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                       onBlur={async (e) => {
                                         const newTime = e.target.value;
                                         if (newTime === dest.requestTime) return;
+                                        // ใบรับ-ส่ง: อ่านใบสดแล้วแก้เฉพาะเวลาจุดนี้ (ดู saveTransferDestination)
+                                        if (isTransferReq) return saveTransferDestination(idx, { requestTime: newTime }, { siteName: dest.siteName }, "อัปเดตเวลาสำเร็จ");
                                         const newDestinations = [...selectedReq.destinations];
                                         newDestinations[idx] = { ...newDestinations[idx], requestTime: newTime };
                                         await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {
@@ -987,6 +1022,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                                       const newValue = e.target.value;
                                       if (newValue === dest.jobDescription) return;
                                       if (isTransferStop(dest) && dest.transferRole === "pickup") return savePickupItems(idx, dest, newValue);
+                                      // จุดอื่นของใบรับ-ส่ง (จุดส่ง/จุดปกติ): อ่านใบสดแล้วแก้เฉพาะจุดนี้ · ข้อความในใบเปลี่ยนไปแล้ว (เช่น เพิ่งซิงก์) = ไม่เขียนทับ
+                                      if (isTransferReq) return saveTransferDestination(idx, { jobDescription: newValue }, { siteName: dest.siteName, jobDescription: dest.jobDescription }, "บันทึกรายละเอียดงานแล้ว");
                                       const newDestinations = [...selectedReq.destinations];
                                       newDestinations[idx] = { ...newDestinations[idx], jobDescription: newValue };
                                       await updateDoc(doc(db, "vehicleRequests", selectedReq.id), {

@@ -517,11 +517,11 @@ describe('syncDropsInTripEdit (หน้าต่างแก้ไขเที�
     const postponedDrop = [pk('ดูโฮม', 'ปูน 10 ถุง'), dr('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง', { outcome: 'postponed', postponedToDate: '2026-11-06', postponedRequestId: 'VR-20261106-003' })]
     const a = syncDropsInTripEdit(postponedDrop, editRow(postponedDrop, 0, 'ปูน 15 ถุง'), [0, 1])
     expect(a.stops[1].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')
-    expect(a.check).toEqual(['จุดส่ง ดอนเมือง เลื่อนไปวันที่ 06/11/2026 แล้ว — แก้รายละเอียดที่ใบ VR-20261106-003 ในหน้าคำขอ'])
+    expect(a.check).toEqual(['จุดส่ง ดอนเมือง เลื่อนไปวันที่ 06/11/2026 แล้ว — ถ้ายังไม่จัดรถ แก้รายละเอียดที่ใบ VR-20261106-003 ในหน้าคำขอ · ถ้าจัดรถแล้ว แก้ที่เที่ยววันที่ 06/11/2026 (เมนู ประวัติการส่ง → ปุ่มดินสอ · ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง)'])
     const postponedPickup = [pk('ดูโฮม', 'ปูน 10 ถุง', { outcome: 'postponed', postponedToDate: '2026-11-07', postponedRequestId: 'VR-20261107-001' }), dr('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')]
     const b = syncDropsInTripEdit(postponedPickup, editRow(postponedPickup, 0, 'ปูน 15 ถุง'), [0, 1])
     expect(b.stops[1].cargoDetails).toBe('ส่งของที่รับจาก ดูโฮม: ปูน 10 ถุง')
-    expect(b.check).toEqual(['จุดรับ ดูโฮม เลื่อนไปวันที่ 07/11/2026 แล้ว — แก้รายละเอียดที่ใบ VR-20261107-001 ในหน้าคำขอ (จุดส่งไม่ถูกแก้ตาม)'])
+    expect(b.check).toEqual(['จุดรับ ดูโฮม เลื่อนไปวันที่ 07/11/2026 แล้ว — ถ้ายังไม่จัดรถ แก้รายละเอียดที่ใบ VR-20261107-001 ในหน้าคำขอ · ถ้าจัดรถแล้ว แก้ที่เที่ยววันที่ 07/11/2026 (เมนู ประวัติการส่ง → ปุ่มดินสอ · ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง) (จุดส่งไม่ถูกแก้ตาม)'])
     expect(b.updated).toEqual([])
   })
   it('จุดรับที่โยกไปคันอื่นยังซิงก์ (คันที่รับงานอ่านรายละเอียดจากจุดต้นทาง) · แถวที่เพิ่มใหม่ (sourceIndex null) ไม่สน', () => {
@@ -558,25 +558,47 @@ describe('dropSyncNote (ข้อความต่อท้าย toast หน�
     expect(dropSyncNote(empty, [])).toEqual({ text: '', warn: false })
   })
   it('แก้จุดส่งให้แล้ว → บอกให้คนขับเปิดลิงก์ใหม่ (ใบงานไม่โหลดเอง)', () => {
-    const n = dropSyncNote({ ...empty, updated: ['ดอนเมือง'], changed: [{ transferId: 'tf_1', assistForPlate: '' }] }, [])
+    const n = dropSyncNote({ ...empty, updated: ['ดอนเมือง'], changed: [{ transferId: 'tf_1', assistForPlate: '', siteName: 'A', items: 'ปูน 2 ถุง' }] }, [])
     expect(n).toEqual({ text: ' · อัปเดตรายการของที่จุดส่ง ดอนเมือง ให้ตามแล้ว · ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่', warn: false })
   })
-  it('จุดส่งไม่อยู่ในเที่ยว → ใช้คำเดียวกับป้าย + ทางคิวต่อเนื่อง · ต้องตรวจเอง → แดง', () => {
+  it('จุดส่งไม่อยู่ในเที่ยว → ใช้คำเดียวกับป้าย + ทางคิวต่อเนื่อง + ทางจุดส่งที่ยังไม่จัด (แก้ที่หน้าคำขอ) · ต้องตรวจเอง → แดง', () => {
     const n = dropSyncNote({ ...empty, notInTrip: ['ดอนเมือง'], check: ['ตรวจเอง'] }, [])
     expect(n.warn).toBe(true)
     expect(n.text).toContain(`⚠️ ${TRANSFER_WARNING.dropMissing} (ดอนเมือง) — ถ้าจัดไปเที่ยวอื่นแล้ว`)
     expect(n.text).toContain('ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง')
+    // จุดส่งยังค้างในใบขอ: หน้าประวัติไม่เขียนใบขอ → ต้องบอกทางที่ทำได้จริง (ผลตรวจ drop-sync ข้อ 1)
+    expect(n.text).toContain('ถ้ายังไม่ได้จัด ให้แก้ของที่จุดรับเดียวกันในหน้าคำขอด้วย (จุดส่งในใบจะแก้ตามให้)')
     expect(n.text).toContain('⚠️ ตรวจเอง')
   })
   it('มีสำเนาคันช่วยบนคันอื่น (หรือแก้ที่สำเนา) → บอกว่าคันนั้นไม่ถูกแก้ตาม · จุดส่งจริงที่อยู่คันอื่นไม่นับเป็นคันช่วย', () => {
-    const changed = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: '' }] }
-    const copy = { siteName: 'A', transferRole: 'pickup' as const, transferId: 'tf_1', assistForPlate: 'T1' }
+    const changed = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: '', siteName: 'A', items: 'ปูน 2 ถุง' }] }
+    const copy = { siteName: 'A', cargoDetails: 'ปูน', transferRole: 'pickup' as const, transferId: 'tf_1', assistForPlate: 'T1' }
     expect(dropSyncNote(changed, [copy]).text).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
     expect(dropSyncNote(changed, [{ ...copy, transferId: 'tf_2' }]).text).toBe('')
-    const realDrop = { siteName: 'ดอนเมือง', transferRole: 'drop' as const, transferId: 'tf_1' }
+    const realDrop = { siteName: 'ดอนเมือง', cargoDetails: 'ส่งของที่รับจาก A: ปูน', transferRole: 'drop' as const, transferId: 'tf_1' }
     expect(dropSyncNote(changed, [realDrop])).toEqual({ text: '', warn: false })
-    const fromCopy = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: 'T1' }] }
+    const fromCopy = { ...empty, changed: [{ transferId: 'tf_1', assistForPlate: 'T1', siteName: 'A', items: 'ปูน 2 ถุง' }] }
     expect(dropSyncNote(fromCopy, [realDrop]).text).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
+    // จุดรับร้านอื่นของงานเดียวกันบนคันช่วย ไม่ใช่สำเนาของจุดที่แก้ → ไม่นับ
+    expect(dropSyncNote(changed, [{ ...copy, siteName: 'B' }]).text).toBe('')
+  })
+  it('กดคันช่วย 2 ครั้ง แล้วแก้ครบทั้ง 2 คัน → คันที่ 2 ไม่เตือนให้กลับไปแก้คันแรกซ้ำ (ผลตรวจ drop-sync ข้อ 4)', () => {
+    type Stop = TransferFields & { siteName: string; cargoDetails: string; assistForPlate?: string }
+    const stop = (siteName: string, cargoDetails: string, transferRole: 'pickup' | 'drop', assistForPlate?: string): Stop => ({ siteName, cargoDetails, transferRole, transferId: 'tf_1', ...(assistForPlate ? { assistForPlate } : {}) })
+    // T1 = [A จริง, Y จริง] · T2 = [A' สำเนา, Y' สำเนา] (assistForPlate = ทะเบียน T1)
+    const t1 = [stop('A', 'ปูน 10 ถุง', 'pickup'), stop('ดอนเมือง', 'ส่งของที่รับจาก A: ปูน 10 ถุง', 'drop')]
+    const t2 = t1.map(s => ({ ...s, assistForPlate: 'ทะเบียน T1' }))
+    // ขั้นแรก: แก้ A บน T1 → สำเนาบน T2 ยังเป็นของเดิม = เตือน
+    const first = syncDropsInTripEdit(t1, t1.map((s, i) => (i === 0 ? { ...s, cargoDetails: 'ปูน 15 ถุง' } : s)), [0, 1])
+    expect(first.stops[1].cargoDetails).toBe('ส่งของที่รับจาก A: ปูน 15 ถุง')
+    expect(dropSyncNote(first, t2).text).toContain('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม')
+    // ขั้นที่สอง: แก้ A' บน T2 (T1 แก้ไปแล้ว) → ไม่เตือน
+    const second = syncDropsInTripEdit(t2, t2.map((s, i) => (i === 0 ? { ...s, cargoDetails: 'ปูน 15 ถุง' } : s)), [0, 1])
+    expect(second.stops[1].cargoDetails).toBe('ส่งของที่รับจาก A: ปูน 15 ถุง')
+    expect(dropSyncNote(second, first.stops)).toEqual({ text: ' · อัปเดตรายการของที่จุดส่ง ดอนเมือง ให้ตามแล้ว · ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่', warn: false })
+    // แก้ T1 ไปแค่จุดรับ (จุดส่งยังเป็นบรรทัดเดิม) → ยังเตือน
+    const halfDone = [first.stops[0], t1[1]]
+    expect(dropSyncNote(second, halfDone).warn).toBe(true)
   })
 })
 

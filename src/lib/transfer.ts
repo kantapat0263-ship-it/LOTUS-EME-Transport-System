@@ -393,14 +393,17 @@ export interface TripDropSync<T> {
   notInTrip: string[]
   /** ต้องตรวจเอง: หาบรรทัดเดิมไม่เจอ / จุดส่งหรือจุดรับเลื่อนวันแล้ว */
   check: string[]
-  /** จุดรับที่ของเปลี่ยน — ใช้เช็กสำเนาคันช่วยบนคันอื่น */
-  changed: { transferId: string; assistForPlate: string }[]
+  /** จุดรับที่ของเปลี่ยน (ชื่อจุดรับ + ของใหม่) — ใช้เช็กว่าสำเนาคันช่วย/งานต้นทางบนคันอื่นยังไม่ได้แก้ */
+  changed: { transferId: string; assistForPlate: string; siteName: string; items: string }[]
 }
 
 /** YYYY-MM-DD → DD/MM/YYYY แบบเดียวกับหน้าประวัติ */
 const dayText = (iso?: string) => (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split('-').reverse().join('/') : iso || '')
-const postponedText = (stop: TripStopLike) =>
-  `เลื่อน${stop.postponedToDate ? `ไปวันที่ ${dayText(stop.postponedToDate)} ` : 'วัน'}แล้ว — แก้รายละเอียดที่ใบ${stop.postponedRequestId ? ` ${stop.postponedRequestId}` : 'วันใหม่'} ในหน้าคำขอ`
+// ใบวันใหม่มีจุดเดียว — พอจัดรถแล้วสถานะเป็น approved ไม่ขึ้นในหน้าคำขอ งานจริงอยู่ในเที่ยวของวันใหม่ จึงบอกทั้ง 2 ทาง
+const postponedText = (stop: TripStopLike) => {
+  const day = stop.postponedToDate ? `วันที่ ${dayText(stop.postponedToDate)}` : 'วันใหม่'
+  return `เลื่อน${stop.postponedToDate ? `ไป${day} ` : 'วัน'}แล้ว — ถ้ายังไม่จัดรถ แก้รายละเอียดที่ใบ${stop.postponedRequestId ? ` ${stop.postponedRequestId}` : 'วันใหม่'} ในหน้าคำขอ · ถ้าจัดรถแล้ว แก้ที่เที่ยว${day} (${EDIT_IN_TRIP})`
+}
 
 /**
  * หน้าต่าง "แก้ไขเที่ยววิ่ง": จุดรับที่ของเปลี่ยน (เทียบกับตอนเปิดหน้าต่าง) → แทนบรรทัดของในจุดส่งของกลุ่มเดียวกัน "ในฟอร์มตอนนี้"
@@ -423,7 +426,7 @@ export function syncDropsInTripEdit<T extends TripStopLike>(
     const oldItems = originalStops[source]?.cargoDetails || ''
     const newItems = row.cargoDetails || ''
     if (oldItems === newItems) return
-    sync.changed.push({ transferId: row.transferId!, assistForPlate: assistOf(row) })
+    sync.changed.push({ transferId: row.transferId!, assistForPlate: assistOf(row), siteName: row.siteName || '', items: newItems })
     const pickupName = (row.siteName || '').trim() || 'จุดรับ'
     if (row.outcome === 'postponed') { addOnce(sync.check, `จุดรับ ${pickupName} ${postponedText(row)} (จุดส่งไม่ถูกแก้ตาม)`); return }
     const isMate = (stop: TripStopLike) => isTransferStop(stop) && stop.transferRole === 'drop' && stop.transferId === row.transferId && assistOf(stop) === assistOf(row)
@@ -452,17 +455,23 @@ export function syncDropsInTripEdit<T extends TripStopLike>(
 
 /**
  * ข้อความต่อท้าย toast "แก้ไขสำเร็จ" ของหน้าประวัติ (ขึ้นต้นด้วย " · " / ว่าง = ไม่มีอะไรต้องบอก) · warn = มีเรื่องต้องไปแก้ต่อ (toast สีแดง)
- * otherStops = จุดของทริปอื่นที่ยังไม่ยกเลิก — มีสำเนาคันช่วยของงานนี้ (หรือแก้ที่คันช่วย แล้วงานต้นทางอยู่คันอื่น) = บอกว่าคันนั้นไม่ถูกแก้ตาม
+ * otherStops = จุดของทริปอื่นที่ยังไม่ยกเลิก — มีสำเนาคันช่วยของงานนี้ (หรือแก้ที่คันช่วย แล้วงานต้นทางอยู่คันอื่น) ที่ยังไม่เป็นของใหม่ = บอกว่าคันนั้นไม่ถูกแก้ตาม
+ * (จุดรับชื่อเดียวกันที่ของยังไม่ตรงของใหม่ / จุดส่งที่ยังไม่มีบรรทัดของใหม่ · แก้ครบทั้ง 2 คันแล้ว = ไม่เตือน)
  * ใบงานคนขับไม่โหลดข้อมูลใหม่เอง (ดึงครั้งเดียวตอนเปิดลิงก์) จึงต้องบอกให้คนขับเปิดลิงก์ใหม่ — ไม่ใช้การดึงซ้ำเป็นระยะ (โควตา Vercel)
  */
 export function dropSyncNote(sync: Pick<TripDropSync<unknown>, 'updated' | 'notInTrip' | 'check' | 'changed'>, otherStops: readonly TripStopLike[]): { text: string; warn: boolean } {
   const parts: string[] = []
   if (sync.updated.length) parts.push(`อัปเดตรายการของที่จุดส่ง ${sync.updated.join(', ')} ให้ตามแล้ว · ถ้าคนขับเปิดใบงานไว้แล้ว ให้บอกคนขับปิดแล้วเปิดลิงก์ใหม่`)
   const warnings = [
-    ...sync.notInTrip.map(name => `${TRANSFER_WARNING.dropMissing}${name ? ` (${name})` : ''} — ถ้าจัดไปเที่ยวอื่นแล้ว ให้แก้รายการที่จุดส่งในเที่ยวนั้นด้วย (ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง)`),
+    // จุดส่งที่ยังไม่จัด (ค้างในใบขอ) หน้านี้ไม่ได้แก้ให้ — แก้จุดรับเดียวกันในหน้าคำขอ แล้ว applyPickupItemsEdit ซิงก์จุดส่งในใบให้ (ตอนจัดทีหลังจะได้ของใหม่)
+    ...sync.notInTrip.map(name => `${TRANSFER_WARNING.dropMissing}${name ? ` (${name})` : ''} — ถ้าจัดไปเที่ยวอื่นแล้ว ให้แก้รายการที่จุดส่งในเที่ยวนั้นด้วย (ถ้าเป็นคิวต่อเนื่อง ให้แจ้งคนขับเอง) · ถ้ายังไม่ได้จัด ให้แก้ของที่จุดรับเดียวกันในหน้าคำขอด้วย (จุดส่งในใบจะแก้ตามให้)`),
     ...sync.check,
   ]
-  const assisted = sync.changed.some(p => otherStops.some(stop => isTransferStop(stop) && stop.transferId === p.transferId && !!(p.assistForPlate || stop.assistForPlate)))
+  const notUpdated = (p: TripDropSync<unknown>['changed'][number], stop: TripStopLike) =>
+    stop.transferRole === 'drop'
+      ? wholeLineAt(stop.cargoDetails || '', dropLine(p.siteName, p.items)).length === 0
+      : (stop.siteName || '').trim() === p.siteName.trim() && (stop.cargoDetails || '').trim() !== p.items.trim()
+  const assisted = sync.changed.some(p => otherStops.some(stop => isTransferStop(stop) && stop.transferId === p.transferId && !!(p.assistForPlate || stop.assistForPlate) && notUpdated(p, stop)))
   if (assisted) warnings.push('สำเนาคันช่วย/งานต้นทางบนคันอื่นไม่ถูกแก้ตาม — แก้ที่คันนั้นด้วย')
   return { text: [...parts, ...warnings.map(w => `⚠️ ${w}`)].map(part => ` · ${part}`).join(''), warn: warnings.length > 0 }
 }
