@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
+import { transferLabel, transferMateReminder, transferStopFields, TRANSFER_WARNING } from '@/lib/transfer'
+import { incomingStopsForTrip } from '@/lib/calculations'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
@@ -14,8 +16,8 @@ function body(name: string) {
   return ts.transpileModule(`const work = ${value.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
 }
 type Dist = Record<string, number> | null
-function arrange(options: { newTarget?: boolean; save?: boolean; targetDate?: string; leave?: boolean; dist?: Dist } = {}) {
-  const original = { id: 'T1', tripDate: '2026-10-07', vehicleId: 'V1', vehiclePlate: 'รถเดิม', driverId: 'D1', driverName: 'คนเดิม', status: 'Planned', stops: [{ siteId: 'S1', siteName: 'งานที่เปิดไว้', cargoDetails: 'ส่งอุปกรณ์', order: 1 }] }
+function arrange(options: { newTarget?: boolean; save?: boolean; targetDate?: string; leave?: boolean; dist?: Dist; stop?: Record<string, unknown> } = {}) {
+  const original = { id: 'T1', tripDate: '2026-10-07', vehicleId: 'V1', vehiclePlate: 'รถเดิม', driverId: 'D1', driverName: 'คนเดิม', status: 'Planned', stops: [{ siteId: 'S1', siteName: 'งานที่เปิดไว้', cargoDetails: 'ส่งอุปกรณ์', order: 1, ...options.stop }] }
   const current = { ...original, vehiclePlate: 'รถเปลี่ยนแล้ว', driverName: 'คนเปลี่ยนแล้ว', stops: [{ ...original.stops[0], siteName: 'งานใหม่ที่สลับมา' }] }
   const target = { id: 'T2', tripDate: options.targetDate || original.tripDate, vehicleId: 'V2', vehiclePlate: 'รถช่วย', driverId: 'D2', driverName: 'คนช่วย', status: 'Planned', stops: [{ siteName: 'งานเดิมของคันช่วย', order: 1 }] }
   const applyStops = vi.fn().mockResolvedValue(options.save !== false)
@@ -23,7 +25,7 @@ function arrange(options: { newTarget?: boolean; save?: boolean; targetDate?: st
   const setTrips = vi.fn(), setDialog = vi.fn(), setForm = vi.fn(), toast = vi.fn(), statsRefresh = vi.fn()
   const planDistanceFields = vi.fn(async (..._args: unknown[]) => options.dist === undefined ? { totalDistanceKm: 88, totalEstimatedTimeMinutes: 75, fuelCost: 440 } : options.dist)
   const dialog = { tripId: original.id, stopIdx: 0, expectedTrip: original }
-  const deps = { assistDialog: dialog, trips: [current, target], setAssistDialog: setDialog, allowOrdinaryEdit: () => true, recordedBy: 'ผู้จัด', assistForm: { targetTripId: options.newTarget ? '__new__' : target.id, driverId: 'D2', vehicleId: 'V2' }, toast, passLeaveGate: vi.fn().mockResolvedValue(options.leave !== false), applyStopsWithDistance: applyStops, planDistanceFields, setStatsRefreshKey: statsRefresh, companySettings: { dieselPrice: 30 }, driversData: [{ id: 'D2', name: 'คนช่วย' }], vehiclesData: [{ id: 'V2', licensePlate: 'รถช่วย', fuelRate: 7 }], createTripWithQueueGuard: create, db: {}, serverTimestamp: () => 'time', setTrips, setAssistForm: setForm }
+  const deps = { assistDialog: dialog, trips: [current, target], setAssistDialog: setDialog, allowOrdinaryEdit: () => true, recordedBy: 'ผู้จัด', assistForm: { targetTripId: options.newTarget ? '__new__' : target.id, driverId: 'D2', vehicleId: 'V2' }, toast, passLeaveGate: vi.fn().mockResolvedValue(options.leave !== false), applyStopsWithDistance: applyStops, planDistanceFields, setStatsRefreshKey: statsRefresh, companySettings: { dieselPrice: 30 }, driversData: [{ id: 'D2', name: 'คนช่วย' }], vehiclesData: [{ id: 'V2', licensePlate: 'รถช่วย', fuelRate: 7 }], createTripWithQueueGuard: create, db: {}, serverTimestamp: () => 'time', setTrips, setAssistForm: setForm, transferStopFields }
   const handler = new Function(...Object.keys(deps), `${body('addAssistStop')}return work`)(...Object.values(deps))
   return { handler, original, target, applyStops, planDistanceFields, statsRefresh, create, setTrips, setDialog, setForm, toast, passLeaveGate: deps.passLeaveGate }
 }
@@ -112,4 +114,80 @@ it('สร้างทริปคันช่วยใหม่: คิดร�
   expect(ui.create).not.toHaveBeenCalled()
   expect(ui.setTrips).not.toHaveBeenCalled()
   expect(ui.setDialog).not.toHaveBeenCalled()
+})
+
+// งานรับของไปส่งต่อ: สำเนาคันช่วยติดรหัสกลุ่มเดิม ป้าย 📦/🏁 บนคันช่วยจึงจับคู่/เตือนได้เอง
+it('คันช่วยของจุดรับ (ทริปที่มีอยู่): สำเนาติด transferRole/transferId เดิม + ชื่อจุดส่งที่จำไว้', async () => {
+  const ui = arrange({ stop: { transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง' } })
+  await ui.handler()
+  expect(ui.applyStops.mock.calls[0][1][1]).toMatchObject({ siteName: 'งานที่เปิดไว้', assistForPlate: 'รถเดิม', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง' })
+})
+
+it('คันช่วยของจุดส่ง (สร้างทริปใหม่): สำเนามี role/id ของกลุ่ม แต่ไม่มี transferDropName', async () => {
+  const ui = arrange({ newTarget: true, stop: { transferRole: 'drop', transferId: 'tf_1', transferDropName: 'ไม่ควรติดไป' } })
+  await ui.handler()
+  const copy = ui.create.mock.calls[0][2].stops[0]
+  expect(copy).toMatchObject({ assistForPlate: 'รถเดิม', transferRole: 'drop', transferId: 'tf_1' })
+  expect(copy).not.toHaveProperty('transferDropName')
+})
+
+it.each([false, true])('คันช่วยของงานปกติ: สำเนาไม่มี key transfer* และไม่มีค่า undefined (เหมือนเดิมทุกตัวอักษร) newTarget=%s', async newTarget => {
+  const ui = arrange({ newTarget })
+  await ui.handler()
+  const copy = newTarget ? ui.create.mock.calls[0][2].stops[0] : ui.applyStops.mock.calls[0][1][1]
+  expect(Object.keys(copy).filter(key => key.startsWith('transfer'))).toEqual([])
+  expect(Object.values(copy).includes(undefined)).toBe(false)
+})
+
+// กล่องสีส้มในหน้าต่างคันช่วย — คอมไพล์ IIFE ตัวจริงจาก JSX (React.createElement ปลอม) + transferPeersOf/transferReminderFor ตัวจริง
+function assistBox(dialog: unknown, trips: unknown[] = []) {
+  let box: ts.ArrowFunction | undefined
+  const find = (node: ts.Node) => {
+    if (ts.isArrowFunction(node) && node.body.getText(source).includes('transferLabel(transferPeersOf(src), assistDialog.stopIdx)')) box = node
+    ts.forEachChild(node, find)
+  }
+  find(source)
+  if (!box) throw new Error('Actual assist transfer box missing')
+  const code = ts.transpileModule(`const work = ${box.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
+  const React = { createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }) }
+  const helpers = { trips, incomingStopsForTrip, transferMateReminder }
+  const transferPeersOf = new Function(...Object.keys(helpers), `${body('transferPeersOf')}return work`)(...Object.values(helpers))
+  const transferReminderFor = new Function(...Object.keys(helpers), 'transferPeersOf', `${body('transferReminderFor')}return work`)(...Object.values(helpers), transferPeersOf)
+  const deps = { React, assistDialog: dialog, transferLabel, transferPeersOf, transferReminderFor }
+  const out = new Function(...Object.keys(deps), `${code}return work()`)(...Object.values(deps))
+  const text = (node: any): string => node == null || node === false ? '' : typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : text(node.children)
+  return out === null ? null : text(out)
+}
+const transferTrip = (stops: Record<string, unknown>[]) => ({ id: 'T1', tripDate: '2026-10-07', vehiclePlate: 'รถเดิม', driverName: 'คนเดิม', status: 'Planned', stops })
+const shopA = { siteName: 'ร้าน A', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ไซต์ Y' }
+const siteY = { siteName: 'ไซต์ Y', transferRole: 'drop', transferId: 'tf_1' }
+
+it('กล่องรับ-ส่งในหน้าต่างคันช่วย: ปิดหน้าต่าง/งานปกติ = ไม่แสดงอะไร', () => {
+  expect(assistBox(null)).toBeNull()
+  expect(assistBox({ tripId: 'T1', stopIdx: 0, expectedTrip: transferTrip([{ siteName: 'งานปกติ' }]) })).toBeNull()
+})
+
+it('กล่องรับ-ส่ง: จุดรับที่จุดส่งอยู่ในเที่ยวเดียวกัน → บอกให้กดคันช่วยที่จุดส่งต่อ', () => {
+  const box = assistBox({ tripId: 'T1', stopIdx: 0, expectedTrip: transferTrip([shopA, siteY]) })
+  expect(box).toContain('📦 รับของ → ไปส่งต่อที่ ไซต์ Y')
+  expect(box).toContain('คันช่วยจะได้เฉพาะจุดรับนี้')
+  expect(box).toContain('ยังมีจุดส่ง ไซต์ Y ของงานเดียวกันอยู่ในเที่ยวนี้')
+  expect(box).toContain('เลือกคันเดียวกันอีกครั้ง')
+})
+
+it('กล่องรับ-ส่ง: จุดส่ง → บอกให้กดจุดรับก่อน (ต่อท้ายตามลำดับที่กด)', () => {
+  const box = assistBox({ tripId: 'T1', stopIdx: 1, expectedTrip: transferTrip([shopA, siteY]) })
+  expect(box).toContain('🏁 ส่งของที่รับจาก ร้าน A')
+  expect(box).toContain('คันช่วยจะได้เฉพาะจุดส่งนี้')
+  expect(box).toContain('ยังมีจุดรับ ร้าน A ของงานเดียวกันอยู่ในเที่ยวนี้')
+  expect(box).toContain('กด 🚛+ คันช่วย ที่จุดรับให้คันเดียวกันก่อน')
+})
+
+it('กล่องรับ-ส่ง: จุดคู่ไม่อยู่ในเที่ยวต้นทาง → ไม่บอกให้กดซ้ำ และไม่แสดงคำเตือนของคันต้นทาง', () => {
+  const box = assistBox({ tripId: 'T1', stopIdx: 0, expectedTrip: transferTrip([shopA]) })
+  expect(box).toContain('📦 รับของ → ไปส่งต่อที่ ไซต์ Y')
+  expect(box).toContain('คันช่วยจะได้เฉพาะจุดรับนี้')
+  expect(box).not.toContain('ยังมีจุดส่ง')
+  expect(box).not.toContain('อีกครั้ง')
+  expect(box).not.toContain(TRANSFER_WARNING.dropMissing)
 })

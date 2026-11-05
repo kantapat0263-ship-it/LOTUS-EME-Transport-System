@@ -45,7 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat } from "@/lib/calculations"
-import { postponedPickupNote, transferLabel, transferMateReminder, transferNoteForDriver, type TransferLabel } from "@/lib/transfer"
+import { postponedPickupNote, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, type TransferLabel } from "@/lib/transfer"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -1458,6 +1458,7 @@ export default function DailySummaryPage() {
 
   // "คันช่วย": copy งานทั้งก้อน (ไซต์/พิกัด/รายละเอียด/ผู้ขอ) ไปต่อท้ายทริปคันช่วย
   // งานต้นทางไม่ถูกแตะ ; งานฝั่งคันช่วยเป็น adhoc (ลบได้ด้วยปุ่มถังขยะ) + ป้าย "คันช่วย · จาก ..."
+  // งานรับของไปส่งต่อ: สำเนาติดรหัสกลุ่มเดิม (transferId เดิม ไม่สร้างใหม่) ป้ายบนคันช่วยคิดจากจุดของคันช่วยเอง
   const addAssistStop = async () => {
     if (!assistDialog) return
     const src = assistDialog.expectedTrip
@@ -1478,6 +1479,8 @@ export default function DailySummaryPage() {
         insertedAt: new Date().toISOString(),
         assistForPlate: src.vehiclePlate,
         assistForDriver: (src as any).actualDriverName || src.driverName,
+        // จุดปกติ = {} (ไม่มี key transfer* และไม่มี undefined) — สำเนาคันช่วยของงานปกติเหมือนเดิมทุกตัวอักษร
+        ...transferStopFields(stop),
       }
       if (stop.lat != null && stop.lng != null) { c.lat = stop.lat; c.lng = stop.lng }
       if (stop.requestedBy) c.requestedBy = stop.requestedBy
@@ -2658,6 +2661,24 @@ export default function DailySummaryPage() {
           </DialogHeader>
 
           <div className="space-y-3 py-2">
+            {(() => {
+              // งานรับของไปส่งต่อ: คันช่วยได้แค่จุดที่กด (สำเนาติดป้ายรับ-ส่งไปด้วย) — ถ้าต้องไปทั้งรับและส่ง กด 2 ครั้ง จุดรับก่อน
+              // บอกให้กดอีกครั้งเฉพาะเมื่อจุดคู่ยังอยู่ในเที่ยวต้นทาง · แสดงแค่ label.text ไม่แสดง label.warning (เป็นคำเตือนของคันต้นทาง ไม่ใช่ของคันช่วย)
+              if (!assistDialog) return null
+              const src = assistDialog.expectedTrip
+              const label = transferLabel(transferPeersOf(src), assistDialog.stopIdx)
+              if (!label) return null
+              const reminder = transferReminderFor(src, assistDialog.stopIdx)
+              return (
+                <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
+                  <p className="font-semibold">{label.text}</p>
+                  <p>คันช่วยจะได้เฉพาะ{label.role === 'pickup' ? 'จุดรับ' : 'จุดส่ง'}นี้ (มีป้ายรับ-ส่งติดไปด้วย)</p>
+                  {reminder && (label.role === 'pickup'
+                    ? <p>👉 {reminder} — ถ้าคันช่วยต้องเอาของไปส่งด้วย ให้กด 🚛+ คันช่วย ที่จุดส่งนั้นต่อ แล้วเลือกคันเดียวกันอีกครั้ง</p>
+                    : <p>👉 {reminder} — ถ้าคันช่วยต้องไปรับของด้วย ต้องกด 🚛+ คันช่วย ที่จุดรับให้คันเดียวกันก่อน แล้วค่อยกดจุดส่งนี้ (ระบบต่อจุดท้ายทริปตามลำดับที่กด) — ถ้ายังไม่ได้กด ให้ปิดหน้านี้ไปกดที่จุดรับก่อน</p>)}
+                </div>
+              )
+            })()}
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">คันที่ไปช่วย <span className="text-red-400">*</span></label>
               <select
