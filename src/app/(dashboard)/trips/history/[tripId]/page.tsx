@@ -54,6 +54,7 @@ import { TripCoordinateSyncDialog } from "@/components/TripCoordinateSyncDialog"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
 import { requestDriverLinks, useDriverLinks } from "@/lib/driverLinks"
 import { DriverLinkQr } from "@/components/DriverLinkQr"
+import { isInactiveStop, transferLabel, transferTagStyle } from "@/lib/transfer"
 
 // Production URL for public access
 
@@ -450,6 +451,16 @@ export default function TripDetailPage() {
                             </Badge>
                           )}
                         </div>
+                        {(() => {
+                          // งานรับของไปส่งต่อ: ข้อความป้ายอย่างเดียว คิดจากจุดของทริปนี้ (ไม่อ่านทริปอื่นเพิ่ม — จุดคู่ที่โยกเข้ามาจากคันอื่นไม่รู้ จึงไม่เตือน ดูคำเตือนที่ใบสรุปประจำวัน)
+                          // จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย (หน้านี้ไม่มีป้ายโยก/เลื่อนกำกับ)
+                          const label = isInactiveStop(stop) ? null : transferLabel(trip.stops || [], index)
+                          return label && (
+                            <span className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+                              {label.text}
+                            </span>
+                          )
+                        })()}
                         
                         <div className="bg-background/50 p-3 rounded-lg border border-dashed border-border/50">
                           <p className="text-[10px] font-bold text-muted-foreground mb-1 uppercase tracking-wider">📦 รายการสินค้า / รายละเอียดงาน:</p>
@@ -609,6 +620,11 @@ export default function TripDetailPage() {
                       <span>{index + 1}. {stop.siteName}</span>
                       {stop.requestTime && <span style={{ fontWeight: 'normal', fontSize: '11px' }}>⏰ นัดหมาย: {stop.requestTime} น.</span>}
                     </div>
+                    {(() => {
+                      // งานรับของไปส่งต่อ: ข้อความป้ายอย่างเดียว ไม่พิมพ์คำอธิบายคนขับ (ใบนี้ไม่พิมพ์งานโยกเข้า/ป้ายโยก-เลื่อน) · จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย
+                      const tLabel = isInactiveStop(stop) ? null : transferLabel(trip.stops || [], index)
+                      return tLabel && <div style={{ marginLeft: '16px', marginTop: '2px' }}><span style={transferTagStyle(tLabel)}>{tLabel.text}</span></div>
+                    })()}
                     {stop.cargoDetails && (
                       <div style={{ marginLeft: '16px', fontSize: '12px', whiteSpace: 'pre-line', marginTop: '4px', backgroundColor: '#f9f9f9', padding: '4px' }}>
                         <strong>งาน:</strong> {stop.cargoDetails}

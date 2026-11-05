@@ -6,6 +6,9 @@
  * ห้ามตั้งชื่อฟิลด์ว่า `pickup` เฉย ๆ — หน้าติดตามรถใช้ `pickup` คนละความหมาย (ทริปกลับอย่างเดียว)
  * ใบเก่า/ใบปกติไม่มีฟิลด์เหล่านี้ = ทำงานเหมือนเดิมทุกอย่าง
  */
+// import แบบ type อย่างเดียว (ถูกตัดทิ้งตอน build) — ไฟล์นี้ถูก import ฝั่ง server ด้วย (driverTicket, vehicleRequestValidation)
+import type { CSSProperties } from 'react'
+
 export type TransferRole = 'pickup' | 'drop'
 
 export interface TransferFields {
@@ -95,6 +98,15 @@ export interface TransferLabel {
   missingFrom?: string[]
 }
 
+/**
+ * ป้ายงานรับของไปส่งต่อบนกระดาษขาว (ใบสรุป/ใบพิมพ์จากหน้าประวัติ) — รูปเดียวกับป้ายคันช่วย
+ * inline style ให้ติดไปกับรูปที่ส่ง LINE (ย้ายมาจากใบสรุปแบบเดิมทุกตัวอักษร) · ป้ายบนพื้นมืดใช้ class Tailwind ในไฟล์หน้าเอง (Tailwind ไม่สแกน src/lib)
+ */
+export const transferTagStyle = (label: Pick<TransferLabel, 'role'>): CSSProperties => ({
+  fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px',
+  ...(label.role === 'pickup' ? { background: '#ffedd5', color: '#9a3412' } : { background: '#dcfce7', color: '#166534' }),
+})
+
 /** คำเตือนของป้าย — ใช้ค่าคงที่นี้เทียบเสมอ (ห้ามเทียบข้อความตรง ๆ ที่อื่น) */
 export const TRANSFER_WARNING = {
   dropMissing: 'จุดส่งไม่อยู่ในเที่ยวนี้',
@@ -105,8 +117,11 @@ export const TRANSFER_WARNING = {
 
 type Peer = TransferFields & { siteName?: string; outcome?: string }
 
-/** จุดที่โยกไปคันอื่น / เลื่อนวัน / ไม่ได้ทำ (outcome อื่นที่ไม่ใช่ส่งแล้ว) — ยังอยู่ในลิสต์ของทริปเดิม แต่ของไม่ได้ไปกับคันนี้ */
-const inactive = (p: Peer) => !!p.outcome && p.outcome !== 'delivered'
+/**
+ * จุดที่โยกไปคันอื่น / เลื่อนวัน / ไม่ได้ทำ (outcome อื่นที่ไม่ใช่ส่งแล้ว) — ยังอยู่ในลิสต์ของทริปเดิม แต่ของไม่ได้ไปกับคันนี้
+ * ตัวเช็กเดียวที่ทุกหน้าใช้ — หน้าที่ไม่มีป้ายโยก/เลื่อนกำกับ (หน้าประวัติ) ไม่ขึ้นป้ายรับ-ส่งของจุดพวกนี้ กันคนขับไปรับของที่ไม่ต้องไปแล้ว
+ */
+export const isInactiveStop = (p: { outcome?: string | null }) => !!p.outcome && p.outcome !== 'delivered'
 
 /**
  * ป้ายของจุดที่ `index` คิดจากจุดอื่นใน "ลิสต์เดียวกับที่แสดง" (จุดของเที่ยว + งานที่โยกเข้ามา ตามลำดับบนจอ)
@@ -118,8 +133,8 @@ export function transferLabel(peers: readonly Peer[], index: number): TransferLa
   if (!stop || !isTransferStop(stop)) return null
   const mates = peers
     .map((peer, i) => ({ peer, i }))
-    .filter(({ peer, i }) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && !inactive(peer))
-  const quiet = inactive(stop)
+    .filter(({ peer, i }) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && !isInactiveStop(peer))
+  const quiet = isInactiveStop(stop)
 
   if (stop.transferRole === 'pickup') {
     const drop = mates.find(m => m.peer.transferRole === 'drop')
@@ -139,7 +154,7 @@ export function transferLabel(peers: readonly Peer[], index: number): TransferLa
   // ตัดสินทีละจุด (ไม่ใช่ทีละชื่อ): ร้านเดียวกันสองรายการแล้วไม่ได้ไปรายการหนึ่ง ยังต้องเตือน · ไม่มีชื่อ = "จุดรับ"
   const labelOf = (p: Peer) => nameOf(p) || 'จุดรับ'
   const activeNames = new Set(pickups.map(m => labelOf(m.peer)))
-  const awayNames = [...new Set(groupPickups.filter(inactive).map(p => {
+  const awayNames = [...new Set(groupPickups.filter(isInactiveStop).map(p => {
     const name = labelOf(p)
     return activeNames.has(name) ? `${name} (บางรายการ)` : name
   }))]
@@ -187,7 +202,7 @@ export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readon
   incoming.forEach((job, index) => {
     if (!isTransferStop(job) || job.transferRole !== 'pickup') return
     const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
-    const drop = slots.findIndex(s => isTransferStop(s.stop) && s.stop.transferRole === 'drop' && s.stop.transferId === job.transferId && !inactive(s.stop))
+    const drop = slots.findIndex(s => isTransferStop(s.stop) && s.stop.transferRole === 'drop' && s.stop.transferId === job.transferId && !isInactiveStop(s.stop))
     if (drop === -1 || drop > at) return
     const [slot] = slots.splice(at, 1)
     slots.splice(drop, 0, slot) // drop อยู่ก่อน at → ตัด at ออกแล้วตำแหน่ง drop ไม่เลื่อน = วางหน้าจุดส่งพอดี
@@ -234,7 +249,7 @@ export function transferMateReminder(peers: readonly Peer[], index: number): str
   const want: TransferRole = stop.transferRole === 'pickup' ? 'drop' : 'pickup'
   const kind = want === 'drop' ? 'จุดส่ง' : 'จุดรับ'
   const names = [...new Set(peers
-    .filter((peer, i) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && peer.transferRole === want && !inactive(peer))
+    .filter((peer, i) => i !== index && isTransferStop(peer) && peer.transferId === stop.transferId && peer.transferRole === want && !isInactiveStop(peer))
     .map(peer => (peer.siteName || '').trim() || kind))]
   return names.length ? `ยังมี${kind} ${names.join(', ')} ของงานเดียวกันอยู่ในเที่ยวนี้` : null
 }

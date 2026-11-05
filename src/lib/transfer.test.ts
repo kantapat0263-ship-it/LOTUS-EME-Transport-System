@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDropDescription, orderPickupsBeforeDrop, postponedPickupNote, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, type TransferFields } from './transfer'
+import { buildDropDescription, isInactiveStop, orderPickupsBeforeDrop, postponedPickupNote, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferShapeProblem, transferStopFields, transferTagStyle, type TransferFields } from './transfer'
 
 type S = TransferFields & { id: string; siteName: string }
 const P = (id: string, group = 'g1', siteName = id): S => ({ id, transferRole: 'pickup', transferId: group, siteName, transferDropName: 'ดอนเมือง' })
@@ -280,5 +280,30 @@ describe('transferStopFields', () => {
   it('จุดรับเก็บชื่อจุดส่ง · จุดส่งไม่เก็บ', () => {
     expect(transferStopFields({ transferRole: 'pickup', transferId: 'g', transferDropName: 'X' })).toEqual({ transferRole: 'pickup', transferId: 'g', transferDropName: 'X' })
     expect(transferStopFields({ transferRole: 'drop', transferId: 'g', transferDropName: 'X' })).toEqual({ transferRole: 'drop', transferId: 'g' })
+  })
+})
+
+describe('isInactiveStop (ตัวเช็กเดียวของจุดที่ไม่ทำแล้ว — หน้าประวัติใช้ซ่อนป้าย)', () => {
+  it('ยังไม่มีผล / ส่งแล้ว = ยังไปกับเที่ยวนี้', () => {
+    expect(isInactiveStop({})).toBe(false)
+    expect(isInactiveStop({ outcome: undefined })).toBe(false)
+    expect(isInactiveStop({ outcome: null })).toBe(false)
+    expect(isInactiveStop({ outcome: '' })).toBe(false)
+    expect(isInactiveStop({ outcome: 'delivered' })).toBe(false)
+  })
+  it('โยก / เลื่อน / ปฏิเสธ / ไม่ได้ส่ง = ไม่ทำแล้ว', () => {
+    for (const outcome of ['reassigned', 'postponed', 'driver-refused', 'not-delivered']) expect(isInactiveStop({ outcome })).toBe(true)
+  })
+  it('ตรงกับที่ป้ายใช้: จุดรับที่เลื่อนไม่นับเป็นคู่ของจุดส่ง', () => {
+    const pickup = { ...P('วังโค'), outcome: 'postponed' }
+    expect(isInactiveStop(pickup)).toBe(true)
+    expect(transferLabel([pickup, D('ดอนเมือง')], 1)?.warning).toBe(TRANSFER_WARNING.pickupMissing)
+  })
+})
+
+describe('transferTagStyle (ย้ายมาจากใบสรุป — สีต้องเหมือนเดิม)', () => {
+  it('จุดรับ = ส้ม · จุดส่ง = เขียว · ขนาดเดิม', () => {
+    expect(transferTagStyle({ role: 'pickup' })).toEqual({ fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: '#ffedd5', color: '#9a3412' })
+    expect(transferTagStyle({ role: 'drop' })).toEqual({ fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: '#dcfce7', color: '#166534' })
   })
 })

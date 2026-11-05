@@ -45,7 +45,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat, type IncomingJob } from "@/lib/calculations"
-import { postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, type TransferDisplay, type TransferLabel } from "@/lib/transfer"
+import { postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -67,12 +67,6 @@ import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueue
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { requestDriverLinks, useDriverLinks } from "@/lib/driverLinks"
 import { DriverLinkQr } from "@/components/DriverLinkQr"
-
-/** ป้ายงานรับของไปส่งต่อในใบสรุป (รูปเดียวกับป้ายคันช่วย — inline style ให้ติดไปกับรูปที่ส่ง LINE) */
-const transferTagStyle = (label: TransferLabel): React.CSSProperties => ({
-  fontSize: '11px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px',
-  ...(label.role === 'pickup' ? { background: '#ffedd5', color: '#9a3412' } : { background: '#dcfce7', color: '#166534' }),
-})
 
 /** ไซต์ที่เลือกเป็นจุดแทรกงานได้ = เปิดใช้งาน + พิกัดถูกต้อง (งานที่แทรกต้องขึ้นแผนที่และนับระยะได้) */
 // พิกัดต้องอยู่ในไทย (กติกาเดียวกับตัวคิด กม.) — (0,0)/นอกไทย เลือกได้แต่คิด กม.ไม่ได้ (เดิมเช็กแค่เป็นตัวเลข)

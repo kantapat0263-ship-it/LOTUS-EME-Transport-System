@@ -49,7 +49,8 @@ import { isManagedTrip } from "@/lib/continuousQueue"
 import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQueueGuard"
 import { inThailand } from "@/lib/roadFlood"
 import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
-import { calculateFuelCost } from "@/lib/calculations"
+import { calculateFuelCost, incomingStopsForTrip } from "@/lib/calculations"
+import { isInactiveStop, isTransferStop, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferTagStyle } from "@/lib/transfer"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -476,6 +477,15 @@ export default function TripHistoryPage() {
     return driver?.phoneNumber || "ไม่มีข้อมูลเบอร์ติดต่อ";
   }
 
+  // ป้ายงานรับของไปส่งต่อ: จับคู่กับจุดของเที่ยว + งานที่คันอื่นโยกเข้ามา เรียงแบบเดียวกับใบสรุป (transferDisplayOrder) — ไม่นับทริปที่ยกเลิก (ใบสรุปก็ไม่นับ)
+  // ทริปที่ไม่มีงานรับ-ส่ง = ไม่ต้องไล่หางานโยกเข้า · คิดเฉพาะตอนหน้าต่างเปิด (trips = ทุกทริปทุกวัน ไม่ต้องคิดซ้ำทุกครั้งที่พิมพ์ค้นหา)
+  const transferViewFor = (tripId: string, stops: TripStop[]) => {
+    const incoming = stops.some(isTransferStop) ? incomingStopsForTrip((trips || []).filter(t => t.status !== 'Cancelled'), tripId) : []
+    return transferDisplayOrder(stops, incoming)
+  }
+  const worksheetView = isWorksheetOpen && selectedTrip ? transferViewFor(selectedTrip.id, selectedTrip.stops || []) : null
+  const editView = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editFormData.stops) : null
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -857,6 +867,18 @@ export default function TripHistoryPage() {
                     </div>
                     <div className="flex-1 space-y-2">
                       <p className="font-bold text-sm text-accent">{stop.siteName}</p>
+                      {(() => {
+                        // งานรับของไปส่งต่อ: ป้าย + เตือนเฉพาะ "จุดคู่ไม่อยู่ในเที่ยวนี้" ซึ่งการลบจุดในหน้าต่างนี้ทำให้เกิดได้
+                        // ไม่เตือนเรื่องลำดับ (หน้าต่างนี้สลับลำดับไม่ได้) · จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย (หน้านี้ไม่มีป้ายโยก/เลื่อนกำกับ)
+                        const label = editView && !isInactiveStop(stop) ? transferLabel(editView.peers, editView.ownPos[idx]) : null
+                        const warning = label?.warning === TRANSFER_WARNING.pickupMissing || label?.warning === TRANSFER_WARNING.dropMissing ? label.warning : null
+                        return label && (
+                          <span className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+                            {label.text}
+                            {warning && <span className="ml-1 text-red-400">⚠️ {warning}</span>}
+                          </span>
+                        )
+                      })()}
                       <Textarea 
                         placeholder="รายละเอียดสินค้า..." 
                         className="text-xs min-h-[60px]"
@@ -981,6 +1003,12 @@ export default function TripHistoryPage() {
                     </div>
                     <div className="flex-1">
                       <p className="font-bold text-base md:text-lg">{stop.siteName}</p>
+                      {(() => {
+                        // งานรับของไปส่งต่อ: ข้อความป้ายอย่างเดียว — ใบนี้ไม่พิมพ์งานโยกเข้า/ป้ายโยก-เลื่อน จึงไม่พิมพ์คำเตือนหรือคำอธิบายคนขับ
+                        // จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย กันคนขับไปรับของที่จุดซึ่งไม่ต้องไปแล้ว (กติกาเดียวกับใบงานคนขับ)
+                        const tLabel = worksheetView && !isInactiveStop(stop) ? transferLabel(worksheetView.peers, worksheetView.ownPos[idx]) : null
+                        return tLabel && <div className="mt-1"><span style={transferTagStyle(tLabel)}>{tLabel.text}</span></div>
+                      })()}
                       <p className="text-xs md:text-sm mt-1 whitespace-pre-wrap">{stop.cargoDetails}</p>
                       {/* จังหวะส่งคำขอ — ดูบนจอเท่านั้น ไม่ติดไปในใบงานที่พิมพ์ให้คนขับ */}
                       <RequestTimingBadge requestedAt={stop.requestedAt} requestDate={selectedTrip?.tripDate} className="mt-1 print:hidden" />
