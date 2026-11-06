@@ -55,7 +55,8 @@ function Calendar({
         day_button: cn(buttonVariants({ variant: "ghost" }), "h-9 w-9 p-0 font-normal"),
         range_end: "day-range-end",
         selected: "bg-primary text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground",
-        today: "bg-accent text-accent-foreground",
+        // วันนี้: เลือกได้ = พื้นสีส้มแบบเดิม · เลือกไม่ได้ (ผู้ขอจองได้ตั้งแต่พรุ่งนี้) = แค่กรอบบาง ไม่ให้ดูเหมือนวันที่เลือกไว้
+        today: "[&:not([data-disabled]):not([data-selected])]:bg-accent [&:not([data-disabled]):not([data-selected])]:text-accent-foreground data-[disabled]:ring-1 data-[disabled]:ring-inset data-[disabled]:ring-accent/50",
         outside: "day-outside text-muted-foreground",
         // ปุ่มวันที่กดไม่ได้จางอยู่แล้ว (disabled:opacity-50 ของปุ่ม) — ไม่จางซ้ำที่ช่อง
         disabled: "text-muted-foreground",
