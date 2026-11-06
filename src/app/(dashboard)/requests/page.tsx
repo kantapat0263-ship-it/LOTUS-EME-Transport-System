@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { applyPickupItemsEdit, isTransferStop, pickupEditMessage } from "@/lib/transfer"
+import { isOneOffJobStop, isSequenceStop } from "@/lib/sequence"
 import { dispatchedDestinationIndexes } from "@/lib/requestDestination"
 import { RequestForm } from "@/components/requests/RequestForm"
 import { SubmissionLogTab } from "@/components/requests/SubmissionLogTab"
@@ -434,7 +435,8 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
   // ช่องอื่นของใบนี้ (เวลา / รายละเอียดจุดอื่น / พิกัด) จึงอ่านใบสดแล้วแก้เฉพาะจุดนั้น — ไม่เขียน destinations ทั้งก้อนจากจอที่อาจยังเก่า
   // (จะทับของที่จุดรับ/บรรทัดจุดส่งที่เพิ่งซิงก์เงียบ ๆ) · ใบปกติยังใช้ updateDoc ทางเดิม
   // before = ค่าบนจอของจุดนั้นตอนเริ่มแก้ — ในใบไม่ตรงแล้ว = ไม่เขียน · คืน true = บันทึกแล้ว (toast doneTitle ถ้ามี) / false = ไม่ได้บันทึก (toast สีแดงแล้ว)
-  const isTransferReq = !!selectedReq?.destinations?.some((d: any) => isTransferStop(d))
+  // ใบไปหลายจุดตามลำดับก็แก้แบบนี้ (จุดเยอะ คนจัดรถแก้หลายจุดติดกัน — ไม่เขียนทั้งก้อนจากจอที่อาจยังเก่า)
+  const isTransferReq = !!selectedReq?.destinations?.some((d: any) => isOneOffJobStop(d))
   const saveTransferDestination = async (index: number, patch: Record<string, unknown>, before: Record<string, unknown>, doneTitle?: string) => {
     if (!selectedReq) return false
     const vrRef = doc(db, "vehicleRequests", selectedReq.id)
@@ -821,6 +823,9 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                     // นับเฉพาะจุดรับของต้นฉบับ (คนจัดรถเพิ่ม "คันคู่ทั้งชุด" แล้วมีสำเนาต่อท้ายใบ)
                     const pickups = req.destinations.filter((d: any) => isTransferStop(d) && d.transferRole === "pickup" && !d.pairedCopy).length
                     if (drop) return <span className="truncate flex-1">📦 รับของ {pickups} จุด → 🏁 {drop.siteName}</span>
+                    // ใบไปหลายจุดตามลำดับ: หัวการ์ดบอกเส้นทางตามลำดับ (เฉพาะจุดต้นฉบับ ไม่นับสำเนาคันคู่)
+                    const steps = req.destinations.filter((d: any) => isSequenceStop(d) && !d.pairedCopy).sort((a: any, b: any) => a.sequenceIndex - b.sequenceIndex)
+                    if (steps.length > 0) return <span className="truncate flex-1">🔁 {steps.map((d: any) => d.siteName).join(" → ")}</span>
                     return (
                       <>
                         <span className="truncate flex-1">{req.destinations[0]?.siteName}</span>
@@ -1292,8 +1297,13 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
 }
 
 
-/** ป้ายบทบาทของจุดในใบรับของไปส่งต่อ (lib/transfer) — ใบปกติไม่แสดงอะไร */
+/** ป้ายบทบาทของจุดในใบรับของไปส่งต่อ (lib/transfer) / ลำดับของจุดในใบไปหลายจุดตามลำดับ (lib/sequence) — ใบปกติไม่แสดงอะไร */
 function TransferRoleBadge({ dest }: { dest: any }) {
+  if (isSequenceStop(dest)) return (
+    <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">
+      🔁 จุดที่ {dest.sequenceIndex + 1}{dest.sequenceSize ? `/${dest.sequenceSize}` : ""}
+    </span>
+  )
   if (!isTransferStop(dest)) return null
   return dest.transferRole === "pickup" ? (
     <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300">

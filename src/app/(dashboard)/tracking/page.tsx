@@ -314,7 +314,7 @@ export default function TrackingPage() {
       !!s.reassignedToVehiclePlate && (s.outcome === "reassigned" || s.outcome === "driver-refused")
     const incomingByTripId: Record<
       string,
-      { siteName: string; lat?: number; lng?: number; fromPlate: string; refused: boolean }[]
+      { siteName: string; lat?: number; lng?: number; fromPlate: string; refused: boolean; sequenceId?: string; sequenceIndex?: number }[]
     > = {}
     activeTrips.forEach((src) => {
       ;(src.stops ?? []).forEach((s: any) => {
@@ -325,6 +325,8 @@ export default function TrackingPage() {
             lng: s.lng,
             fromPlate: src.vehiclePlate,
             refused: s.outcome === "driver-refused",
+            // งานต่อเนื่องที่โยกเข้า — ให้ตัวนับ "ถึง" รู้ว่าเป็นการกลับมาที่เดิมรอบหลัง (lib/tracking repeatOccurrences)
+            ...(typeof s.sequenceId === "string" && Number.isInteger(s.sequenceIndex) ? { sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex } : {}),
           })
         }
       })
@@ -350,12 +352,14 @@ export default function TrackingPage() {
       const isPostponed = (s: any) => s.outcome === "postponed"
       const activeOwn = ownSorted.filter((s) => !wasMovedAway(s) && !isPostponed(s))
       const routeStops = [
-        ...activeOwn.map((s) => ({ order: s.order, siteName: s.siteName, lat: s.lat, lng: s.lng })),
+        ...activeOwn.map((s) => ({ order: s.order, siteName: s.siteName, lat: s.lat, lng: s.lng, sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex })),
         ...incoming.map((inc, i) => ({
           order: maxOrder + i + 1,
           siteName: inc.siteName,
           lat: inc.lat,
           lng: inc.lng,
+          sequenceId: inc.sequenceId,
+          sequenceIndex: inc.sequenceIndex,
         })),
       ]
 

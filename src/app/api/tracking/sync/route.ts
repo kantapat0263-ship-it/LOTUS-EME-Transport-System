@@ -129,6 +129,10 @@ export async function GET(req: NextRequest) {
         siteName: s.siteName ?? '',
         lat: s.lat,
         lng: s.lng,
+        // งานไปหลายจุดตามลำดับที่กลับมาที่เดิม — นับ "ถึง" รอบหลัง (lib/tracking repeatOccurrences) · ใส่เฉพาะเมื่อมี
+        ...(typeof s.sequenceId === 'string' && Number.isInteger(s.sequenceIndex)
+          ? { sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex, ...(typeof s.outcome === 'string' ? { outcome: s.outcome } : {}) }
+          : {}),
       }))
       // gpsEndAt = staff กด "จบการใช้รถ" (รถถูกคนอื่นใช้ต่อวันเดียวกัน) → GPS หลังเวลานี้ไม่นับเป็นของทริป
       const gpsEndAt = typeof t.gpsEndAt === 'number' ? t.gpsEndAt : null
