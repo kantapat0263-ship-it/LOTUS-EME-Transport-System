@@ -46,3 +46,11 @@ describe('sortVehiclesByType', () => {
     expect(ids(vehicles)).toEqual(['cab', 'pu'])
   })
 })
+
+describe('ชื่อประเภทรถที่ใช้จริงในระบบ (หน้าฟลีท 2026-11-06)', () => {
+  it('PICKUP → รถกระบะคอก → รถกระบะแคป → ประเภทอื่น (คงลำดับเดิมในกลุ่ม)', () => {
+    const real = ['รถ 6 ล้อ', 'รถกระบะแคป', 'PICKUP', 'รถโดยสาร', 'รถกระบะคอก', 'รถตู้', 'HONDA JAZZ', 'Pickup', 'รถเก๋ง', 'รถขุด', 'รถกระบะคอก']
+    const sorted = sortVehiclesByType(real.map((type, i) => ({ id: `${i}`, type }))).map(v => v.type)
+    expect(sorted).toEqual(['PICKUP', 'Pickup', 'รถกระบะคอก', 'รถกระบะคอก', 'รถกระบะแคป', 'รถ 6 ล้อ', 'รถโดยสาร', 'รถตู้', 'HONDA JAZZ', 'รถเก๋ง', 'รถขุด'])
+  })
+})
