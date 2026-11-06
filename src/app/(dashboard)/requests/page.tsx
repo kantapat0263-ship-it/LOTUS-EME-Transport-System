@@ -1394,7 +1394,15 @@ export default function RequestsPage() {
     const live = myRequests?.find((r: any) => r.id === reqToCancel.id) ?? reqToCancel
     // เงื่อนไขเดียวกับ firestore.rules — ใบที่จัดรถแล้ว (หรือเปลี่ยนสถานะไประหว่างเปิดหน้าต่าง) ยกเลิกเองไม่ได้
     if (!ownerCanCancelRequest(live)) {
-      toast({ title: "ยกเลิกเองไม่ได้", description: "ใบนี้มีจุดที่จัดรถแล้ว — แจ้งคนจัดรถให้ยกเลิกในเที่ยววิ่ง", variant: "destructive" })
+      toast({
+        title: "ยกเลิกเองไม่ได้",
+        description: !isOpenRequestStatus(live.status)
+          ? "ใบนี้เปลี่ยนสถานะไปแล้ว — โหลดหน้าใหม่เพื่อดูสถานะล่าสุด"
+          : dispatchedDestinationIndexes(live).length > 0
+            ? "ใบนี้มีจุดที่จัดรถแล้ว — แจ้งคนจัดรถให้ยกเลิกในเที่ยววิ่ง"
+            : "คนจัดรถเคยจัดจุดของใบนี้ไว้ — แจ้งคนจัดรถให้ยกเลิกให้",
+        variant: "destructive",
+      })
       return
     }
     try {
@@ -1508,7 +1516,9 @@ export default function RequestsPage() {
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             {/* มีจุดที่จัดเข้าเที่ยวแล้ว = ผู้ขอยกเลิกเองไม่ได้ (จุดในเที่ยวจะค้าง คนขับยังไป) — ให้แจ้งคนจัดรถ */}
                             {isOpenRequestStatus(req.status) && req.userId === user?.uid && !ownerCanCancelRequest(req) && (
-                              <span className="text-[10px] text-muted-foreground">จัดรถแล้วบางจุด — ยกเลิกให้แจ้งคนจัดรถ</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {dispatchedDestinationIndexes(req).length > 0 ? "จัดรถแล้วบางจุด — ยกเลิกให้แจ้งคนจัดรถ" : "ยกเลิกให้แจ้งคนจัดรถ"}
+                              </span>
                             )}
                             {req.userId === user?.uid && ownerCanCancelRequest(req) && (
                               <Button
