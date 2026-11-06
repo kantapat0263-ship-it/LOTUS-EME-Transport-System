@@ -230,6 +230,8 @@ export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readon
   // งานไปหลายจุดตามลำดับ (lib/sequence): งานโยกเข้าไปต่อท้ายจุดลำดับก่อนหน้าที่ใกล้ที่สุดของชุดที่ยังไปกับเที่ยวนี้
   // ไม่มีจุดก่อนหน้า = ไปอยู่หน้าจุดลำดับถัดไปที่ใกล้ที่สุด · ทำทีละจุดตามลำดับที่ผู้ขอกรอก (โยกเข้าหลายจุดก็ติดกัน)
   // ไม่ให้งานอื่นคั่นกลางชุด — ผู้ใช้ตัดสิน 2026-11-06 · จุดของเที่ยวเองไม่ขยับ
+  // จุดอ้างอิงนับเฉพาะจุดของเที่ยวเอง + งานโยกเข้าที่จัดที่แล้ว (งานโยกเข้าที่ยังไม่จัดยังค้างท้ายลิสต์ ใช้อ้างอิงไม่ได้)
+  const placedIncoming = new Set<number>()
   incoming
     .map((job, index) => ({ job, index }))
     .filter(({ job }) => stopSetKey(job)?.startsWith('sq:'))
@@ -239,7 +241,8 @@ export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readon
       const mine = job.sequenceIndex as number
       const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
       const [slot] = slots.splice(at, 1)
-      const active = (s: Slot) => stopSetKey(s.stop) === key && !isInactiveStop(s.stop)
+      placedIncoming.add(index)
+      const active = (s: Slot) => stopSetKey(s.stop) === key && !isInactiveStop(s.stop) && (s.kind === 'own' || placedIncoming.has(s.index))
       let lower = -1, lowerIndex = -1, higher = -1, higherIndex = Number.POSITIVE_INFINITY
       slots.forEach((s, i) => {
         if (!active(s)) return

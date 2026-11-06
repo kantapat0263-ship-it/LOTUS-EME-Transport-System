@@ -87,16 +87,15 @@ type SequenceStopLike = { lat?: number; lng?: number; sequenceId?: string; seque
 export type SequenceContext = readonly { sequenceId?: string; sequenceIndex?: number }[]
 
 /**
- * anchor = จุดก่อนหน้าของชุด อยู่คนละที่ → ต้องถึงหลังรถถึงจุดนั้น
+ * since + between = กลับมาที่เดิมหลังไปจุดอื่น: since = จุดรอบก่อนที่ที่นี้ · between = จุดคั่นกลาง (คนละที่) ที่ยังไปกับเที่ยวนี้
+ *   → จุดคั่นกลางแต่ละจุดต้องถึงหลังรอบก่อน (ลำดับระหว่างกันเองไม่บังคับ — คนขับสลับได้) แล้วจุดนี้ต้องถึงหลังจุดคั่นกลางที่ถึงช้าสุด
  * after = จุดก่อนหน้าที่อยู่ที่เดียวกัน คั่นด้วยจุดที่ไม่อยู่ในเที่ยวนี้ (อยู่คันอื่น) → ต้องออกไปจริงแล้วกลับเข้ามารอบใหม่
  * same = อยู่ช่วงเดียวกับจุดก่อนหน้า (ที่เดียวกันต่อเนื่อง เช่น จุดกลางเลื่อนไปแล้ว) → ใช้รอบเดียวกับจุดนั้น
  */
-export type ReturnPlan = { anchor: number } | { after: number } | { same: number }
+export type ReturnPlan = { since: number; between: number[] } | { after: number } | { same: number }
 
 function sequencePlan(stops: readonly SequenceStopLike[], radius: number, context: SequenceContext = []) {
   const plans: (ReturnPlan | null)[] = stops.map(() => null)
-  /** จุดก่อนหน้าในชุด (ลำดับที่ผู้ขอกรอก) ที่ยังไปกับเที่ยวนี้ — ใช้ต่อสายการถึง · -1 = ไม่มี */
-  const prevOf: number[] = stops.map(() => -1)
   const onTrip = new Map<string, Set<number>>() // ลำดับของทุกจุดในชุดที่อยู่ในเที่ยวนี้ (รวมจุดที่ไม่ไปแล้ว)
   const note = (id: unknown, index: unknown) => {
     if (typeof id !== 'string' || !id || !Number.isInteger(index)) return
@@ -121,21 +120,27 @@ function sequencePlan(stops: readonly SequenceStopLike[], radius: number, contex
       return false
     }
     const runStarts: number[] = [] // จุดแรกของแต่ละช่วงที่รถอยู่ที่เดียวกันต่อเนื่อง
+    const runOf = new Map<number, number>() // จุด → ลำดับช่วง
     sorted.forEach((i, k) => {
       const prev = k > 0 ? sorted[k - 1] : -1
-      prevOf[i] = prev
       const sameAsPrev = prev >= 0 && near(stops[i], stops[prev])
       if (prev < 0 || !sameAsPrev || absentBetween(prev, i)) {
-        const visitedBefore = runStarts.some((r) => near(stops[r], stops[i]))
-        plans[i] = !visitedBefore ? null : !sameAsPrev ? { anchor: prev } : { after: prev }
+        // รอบล่าสุดก่อนหน้าที่ที่เดียวกัน
+        let earlier = -1
+        runStarts.forEach((r, n) => { if (near(stops[r], stops[i])) earlier = n })
+        if (earlier < 0) plans[i] = null
+        else if (sameAsPrev) plans[i] = { after: prev }
+        else plans[i] = { since: runStarts[earlier], between: sorted.slice(0, k).filter((m) => runOf.get(m)! > earlier) }
         runStarts.push(i)
+        runOf.set(i, runStarts.length - 1)
       } else {
+        runOf.set(i, runStarts.length - 1)
         const runStart = runStarts[runStarts.length - 1]
         plans[i] = plans[runStart] ? { same: runStart } : null
       }
     })
   }
-  return { plans, prevOf }
+  return { plans }
 }
 
 /**
@@ -149,12 +154,12 @@ export function returnVisitPlans(stops: readonly SequenceStopLike[], radius = AR
 }
 
 /**
- * รอบที่นับว่า "ถึง" ของจุดที่มีแผน (คืน null ให้จุดที่ไม่มีแผน — ใช้กติกาเดิม) · คิดแบบต่อสายตามลำดับในชุด:
- * จุดก่อนหน้า (แม้ไม่มีแผน) ต้องถึงหลังจุดก่อนหน้าของมันอีกที — รถขับผ่าน สนง. ก่อนไปไซต์ / ไป สนง. ก่อนไซต์ ไม่ทำให้จุดกลับมาที่ไซต์ถึงเร็ว
+ * รอบที่นับว่า "ถึง" ของจุดที่มีแผน (คืน null ให้จุดที่ไม่มีแผน — ใช้กติกาเดิม)
+ * จุดคั่นกลางต้องถึงหลังรอบก่อนที่ที่นี้ — รถขับผ่าน สนง. ก่อนไปไซต์ / ไป สนง. ก่อนไซต์ ไม่ทำให้จุดกลับมาที่ไซต์ถึงเร็ว
  * visitsOf(i) = ช่วงที่อยู่ในรัศมีของจุด i (เรียงตามเวลา) · needOf(i) = นาทีจอดขั้นต่ำ
  */
 function resolveArrivals(
-  plan: { plans: readonly (ReturnPlan | null)[]; prevOf: readonly number[] },
+  plan: { plans: readonly (ReturnPlan | null)[] },
   visitsOf: (i: number) => Visit[],
   needOf: (i: number) => number,
 ): (Visit | null)[] {
@@ -170,14 +175,17 @@ function resolveArrivals(
     else if (p && 'after' in p) {
       const e = chain(p.after)
       found = e ? visits.find((v) => v.start > e.end && ok(v) && !!v.away && v.away.ms >= RETURN_AWAY_MIN * 60_000 && v.away.farM >= RETURN_AWAY_M) ?? null : null
-    } else {
-      const before = p && 'anchor' in p ? p.anchor : plan.prevOf[i]
-      if (before < 0) found = visits.find(ok) ?? null
-      else {
-        const a = chain(before)
-        found = a ? visits.find((v) => ok(v) && v.start > a.start) ?? null : null
+    } else if (p) {
+      const since = chain(p.since)
+      let after = since ? since.start : null
+      for (const m of p.between) {
+        if (after == null || !since) break
+        const okM = (v: Visit) => v.end - v.start >= needOf(m) * 60_000
+        const v = visitsOf(m).find((x) => okM(x) && x.start > since.start)
+        after = v ? Math.max(after, v.start) : null
       }
-    }
+      found = after != null ? visits.find((v) => ok(v) && v.start > after!) ?? null : null
+    } else found = visits.find(ok) ?? null
     memo.set(i, found)
     return found
   }

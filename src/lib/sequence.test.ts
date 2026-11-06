@@ -202,6 +202,11 @@ describe('transferDisplayOrder: งานต่อเนื่องที่โ
     expect(transferDisplayOrder([a1, N('y')], [doc, a2]).peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
     expect(transferDisplayOrder([a1, N('y')], [a2, doc]).peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
   })
+  it('จุดของเที่ยวเองเป็นจุดท้ายชุด โยกเข้าจุดต้นชุดหลายจุด → ขึ้นก่อนจุดของเที่ยวตามลำดับ', () => {
+    const s1 = Q('s1', 0, 'A', 'sq_9', 4), s2 = Q('s2', 1, 'B', 'sq_9', 4), s3 = Q('s3', 2, 'C', 'sq_9', 4), s4 = Q('s4', 3, 'D', 'sq_9', 4)
+    expect(transferDisplayOrder([s3, N('y')], [s1, s2]).peers.map(p => p.id)).toEqual(['s1', 's2', 's3', 'y'])
+    expect(transferDisplayOrder([s4, N('y')], [s1, s2, s3]).peers.map(p => p.id)).toEqual(['s1', 's2', 's3', 's4', 'y'])
+  })
   it('มีจุดลำดับถัดไปในเที่ยวนี้ → ขึ้นก่อนจุดนั้น', () => {
     const [a1, doc, a2] = trip()
     expect(transferDisplayOrder([a1, a2, N('y')], [doc]).peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])

@@ -16,7 +16,7 @@ const stops = [seq(1, SITE, 0, 'ไซต์'), seq(2, DOC, 1, 'สนง.เอ
 
 describe('returnVisitPlans', () => {
   it('ไซต์ → สนง. → ไซต์: จุดที่ 3 ต้องถึงหลังจุดที่ 2 (anchor)', () => {
-    expect(returnVisitPlans(stops)).toEqual([null, null, { anchor: 1 }])
+    expect(returnVisitPlans(stops)).toEqual([null, null, { since: 0, between: [1] }])
   })
   it('จุดที่ไม่ใช่งานต่อเนื่อง / ไม่ซ้ำ = ไม่มีแผน (กติกาเดิม)', () => {
     expect(returnVisitPlans([{ ...SITE }, { ...DOC }, { ...SITE }])).toEqual([null, null, null])
@@ -29,11 +29,11 @@ describe('returnVisitPlans', () => {
     expect(returnVisitPlans([stops[0], stops[2]])).toEqual([null, { after: 0 }])
   })
   it('ลำดับในทริปสลับกับลำดับที่ผู้ขอกรอก ยังอ้างจุดก่อนหน้าตามลำดับที่ผู้ขอกรอก', () => {
-    expect(returnVisitPlans([stops[2], stops[0], stops[1]])).toEqual([{ anchor: 2 }, null, null])
+    expect(returnVisitPlans([stops[2], stops[0], stops[1]])).toEqual([{ since: 1, between: [2] }, null, null])
   })
   it('สองชุดคนละใบที่ไซต์เดียวกัน ไม่นับต่อกัน', () => {
     const other = [{ ...seq(4, SITE, 0, 'ไซต์'), sequenceId: 'sq_2' }, { ...seq(5, DOC, 1, 'สนง.'), sequenceId: 'sq_2' }]
-    expect(returnVisitPlans([...stops, ...other])).toEqual([null, null, { anchor: 1 }, null, null])
+    expect(returnVisitPlans([...stops, ...other])).toEqual([null, null, { since: 0, between: [1] }, null, null])
   })
 })
 
@@ -83,6 +83,17 @@ describe('computeStopStatuses: กลับมาที่เดิม', () => {
   it('ไป สนง. ก่อนแล้วไปไซต์ครั้งเดียว — จุดที่ 3 ไม่ถึง', () => {
     const docFirst = [at(OFFICE, 0), ...stay(DOC, 30, 60), ...stay(SITE, 120, 140)]
     expect(computeStopStatuses(stops, docFirst, { office: OFFICE })[2].arrived).toBe(false)
+  })
+  it('4 จุด ไซต์ → B → C → ไซต์ คนขับสลับไป C ก่อน B — จุดกลับไซต์ยังถึงได้ (หลังจุดคั่นกลางที่ถึงช้าสุด)', () => {
+    const B = { lat: 13.90, lng: 100.60 }, C = { lat: 13.95, lng: 100.65 }
+    const four = [seq(1, SITE, 0, 'ไซต์'), seq(2, B, 1, 'B'), seq(3, C, 2, 'C'), seq(4, SITE, 3, 'ไซต์')]
+    const swapped = [at(OFFICE, 0), ...stay(SITE, 60, 70), ...stay(C, 120, 130), ...stay(B, 180, 190), ...stay(SITE, 240, 250)]
+    const st = computeStopStatuses(four, swapped, { office: OFFICE })
+    expect(st.map(s => s.arrived)).toEqual([true, true, true, true])
+    expect(st[3].arrivedAt).toBe(T0 + 240 * MIN)
+    // ยังไม่ไป B → จุดกลับไซต์ยังไม่ถึง แม้ผ่านไซต์อีกรอบ
+    const missingB = [at(OFFICE, 0), ...stay(SITE, 60, 70), ...stay(C, 120, 130), ...stay(SITE, 240, 250)]
+    expect(computeStopStatuses(four, missingB, { office: OFFICE })[3].arrived).toBe(false)
   })
   it('งานปกติที่ไปที่เดิมสองจุด ยังนับถึงพร้อมกันเหมือนเดิม', () => {
     const plain = stops.map(({ sequenceId: _s, sequenceIndex: _i, ...rest }) => rest)
