@@ -177,3 +177,24 @@ describe('กติกาเวลารับคำขอของผู้ข�
     await expect(createVehicleRequest(db, viewer(), command('2030-01-07'), at(10))).rejects.toThrow('ล่วงหน้าอย่างน้อย 1 วัน')
   })
 })
+
+it('ใบไปหลายจุดตามลำดับ (ไซต์ → สนง. → ไซต์): ทุกจุดได้รหัสชุดเดียวกัน (sq_) + ลำดับ + จำนวนจุด · จุดติดกันที่เดียวกันถูกปฏิเสธ', async () => {
+  await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
+  const day = workday(6)
+  const doc = { siteId: 'site-doc', siteName: 'สนง.เอกสาร', coordinates: '13.85, 100.56' }
+  const response = await post(body(day, [
+    siteDest({ sequenceIndex: 0, jobDescription: 'รับคนงาน 3 คน' }),
+    siteDest({ ...doc, sequenceIndex: 1, jobDescription: 'ส่งทำเอกสาร รอรับ' }),
+    siteDest({ sequenceIndex: 2, jobDescription: 'ส่งคนงานกลับ' }),
+  ]))
+  expect(response.status).toBe(200)
+  const saved = (await getAdminDb().doc(`vehicleRequests/${(await response.json()).requestId}`).get()).data()!
+  const ids = new Set(saved.destinations.map((d: any) => d.sequenceId))
+  expect(ids.size).toBe(1)
+  expect([...ids][0]).toMatch(/^sq_[0-9a-f-]{36}$/)
+  expect(saved.destinations.map((d: any) => [d.sequenceIndex, d.sequenceSize])).toEqual([[0, 3], [1, 3], [2, 3]])
+  expect(saved.destinations.some((d: any) => 'transferRole' in d)).toBe(false)
+  const bad = await post(body(day, [siteDest({ sequenceIndex: 0 }), siteDest({ sequenceIndex: 1 })]))
+  expect(bad.status).toBe(400)
+  expect((await bad.json()).error).toContain('จุดที่ 2 เป็นที่เดียวกับจุดที่ 1')
+})
