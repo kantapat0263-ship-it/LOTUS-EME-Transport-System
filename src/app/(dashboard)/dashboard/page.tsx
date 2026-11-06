@@ -36,6 +36,7 @@ import { collection, query, where, orderBy, doc } from "firebase/firestore"
 import { Trip, Site, UserProfile } from "@/types/models"
 import { startOfWeek, endOfWeek, format, isWithinInterval, startOfMonth, endOfMonth, subDays } from "date-fns"
 import { th } from "date-fns/locale"
+import { isRequesterTrip } from "@/lib/requesterTrips"
 
 export default function DashboardPage() {
   const db = useFirestore()
@@ -59,22 +60,9 @@ export default function DashboardPage() {
     const isStaff = profile.role === 'admin' || profile.role === 'dispatcher'
     if (isStaff) return activeTrips
 
-    const userEmail = user?.email
-    const userName = profile.name
-
-    return activeTrips.filter(trip => {
-      const isOwner = 
-        trip.requestedBy === userEmail || 
-        (trip as any).requestedByEmail === userEmail ||
-        (trip as any).requesterEmail === userEmail ||
-        (trip as any).requestedBy === userName ||
-        (trip as any).userId === user?.uid ||
-        trip.stops?.some((s: any) => 
-          s.requestedBy === userEmail || 
-          s.requestedBy === userName
-        );
-      return isOwner
-    })
+    // จุดที่มีรหัสบัญชีผู้ขอเทียบด้วยรหัส (ชื่อซ้ำ/พิมพ์ชื่อไม่ตรงไม่ปน) · จุดเก่าเทียบชื่อ/อีเมลแบบเดิม
+    const me = { uid: user?.uid, email: user?.email, name: profile.name }
+    return activeTrips.filter(trip => isRequesterTrip(trip as any, me))
   }, [allTrips, profile, user])
 
   const stats = React.useMemo(() => {

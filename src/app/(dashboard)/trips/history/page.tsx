@@ -52,6 +52,7 @@ import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
 import { calculateFuelCost, incomingStopsForTrip } from "@/lib/calculations"
 import { dropSyncNote, isInactiveStop, syncDropsInTripEdit, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferStopName } from "@/lib/transfer"
 import { isOneOffJobStop, jobSetLabel, jobSetMissingWarning, jobSetTagStyle } from "@/lib/sequence"
+import { isRequesterTrip } from "@/lib/requesterTrips"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -163,21 +164,8 @@ export default function TripHistoryPage() {
     return (trips || []).filter(trip => {
       // 1. Role-based Visibility Filter
       if (isViewer) {
-        const userEmail = user?.email;
-        const userName = profile?.name;
-        
-        const isOwner = 
-          trip.requestedBy === userEmail || 
-          (trip as any).requestedByEmail === userEmail ||
-          (trip as any).requesterEmail === userEmail ||
-          (trip as any).requestedBy === userName ||
-          (trip as any).userId === user?.uid ||
-          trip.stops?.some((s: any) => 
-            s.requestedBy === userEmail || 
-            s.requestedBy === userName
-          );
-          
-        if (!isOwner) return false;
+        // จุดที่มีรหัสบัญชีผู้ขอเทียบด้วยรหัส (ชื่อซ้ำ/พิมพ์ชื่อไม่ตรงไม่ปน) · จุดเก่าเทียบชื่อ/อีเมลแบบเดิม
+        if (!isRequesterTrip(trip as any, { uid: user?.uid, email: user?.email, name: profile?.name })) return false;
       }
 
       // 2. Search, Status, and Date Range Filters
