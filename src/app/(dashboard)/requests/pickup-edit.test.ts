@@ -3,6 +3,7 @@ import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { COORDINATE_EXAMPLE, parseThaiCoordinates } from '@/lib/requestCoordinates'
 import { applyPickupItemsEdit, buildDropDescription, isTransferStop, pickupEditMessage } from '@/lib/transfer'
+import { isOneOffJobStop } from '@/lib/sequence'
 
 // หน้าคำขอ: แก้ของที่จุดรับ แล้วจุดส่งในใบเดียวกันแก้ตาม — คอมไพล์โค้ดจริงของหน้า (ไม่บูต Firebase) แล้วส่งของปลอมเข้าไป
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -101,7 +102,7 @@ const normalRequest = () => ({
   id: 'VR-2', requestId: 'VR-2', status: 'in_progress', assignedDestinations: [] as number[],
   destinations: [{ siteName: 'ไซต์ A', jobDescription: 'งาน A', requestTime: '08:30' }, { siteName: 'ไซต์ B', jobDescription: 'งาน B', requestTime: '08:30' }],
 })
-const isTransferReqOf = (req: any) => new Function('selectedReq', 'isTransferStop', `${declaration('isTransferReq')}return work`)(req, isTransferStop) as boolean
+const isTransferReqOf = (req: any) => new Function('selectedReq', 'isOneOffJobStop', `${declaration('isTransferReq')}return work`)(req, isOneOffJobStop) as boolean
 
 /** saveTransferDestination ตัวจริง (ใบรับ-ส่ง: ช่องอื่นอ่านใบสดแล้วแก้เฉพาะจุดนั้น) · fresh = ใบในฐานตอนธุรกรรมอ่าน */
 function saveTransferDestination(selectedReq: any, fresh: any) {
@@ -280,5 +281,11 @@ describe('หน้าคำขอ — ช่องเวลา / บันท�
     expect(refused.updateDoc).not.toHaveBeenCalled()
     expect(refused.toast).not.toHaveBeenCalled()
     expect(refused.setEditingCoords).not.toHaveBeenCalled()
+  })
+})
+
+describe('หน้าคำขอ — ใบไปหลายจุดตามลำดับ (2026-11-06)', () => {
+  it('isTransferReq = true ด้วย (แก้ทีละจุดแบบอ่านใบสด ไม่เขียนทั้งก้อน)', () => {
+    expect(isTransferReqOf({ destinations: [{ siteName: 'ไซต์', sequenceId: 'sq_1', sequenceIndex: 0 }, { siteName: 'สนง.', sequenceId: 'sq_1', sequenceIndex: 1 }] })).toBe(true)
   })
 })
