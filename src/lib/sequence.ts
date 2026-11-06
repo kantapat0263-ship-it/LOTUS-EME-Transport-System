@@ -11,7 +11,7 @@
  */
 // import แบบ type อย่างเดียวสำหรับ react — ไฟล์นี้ถูก import ฝั่ง server ด้วย (driverTicket, vehicleRequestValidation)
 import type { CSSProperties } from 'react'
-import { isInactiveStop, isTransferStop, orderPickupsBeforeDrop, postponedPickupNote, samePlace, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, transferTagStyle, type Place, type TransferFields, type TransferLabel } from './transfer'
+import { isInactiveStop, isTransferStop, orderPickupsBeforeDrop, postponedPickupNote, samePlace, transferLabel, transferMateReminder, transferMissingWarning, transferNoteForDriver, transferStopFields, transferTagStyle, type Place, type TransferFields, type TransferLabel } from './transfer'
 
 export interface SequenceFields {
   sequenceId?: string
@@ -219,4 +219,24 @@ export function jobSetNoteForDriver(label: JobSetLabel | null): string | null {
 /** ข้อความต่อท้ายใบวันใหม่เมื่อเลื่อนจุดของชุดงาน (จุดรับของ / จุดของงานต่อเนื่อง) · อื่น ๆ = null */
 export function jobSetPostponeNote(peers: readonly (Peer & TransferFields)[], index: number): string | null {
   return postponedPickupNote(peers, index) ?? postponedSequenceNote(peers, index)
+}
+
+/**
+ * คำเตือนของหน้าต่างแก้ไขเที่ยววิ่ง (หน้าประวัติ) — เฉพาะจุดของงานต่อเนื่องที่ "เพิ่งลบในหน้าต่างนี้" (แบบเดียวกับ transferMissingWarning)
+ * จุดที่ขาดมาตั้งแต่เปิดหน้าต่าง (ถอดไปคันอื่น/เลื่อน) ไม่เตือน · opened = ลิสต์ตอนเปิดหน้าต่าง (รูปเดียวกับ peers)
+ */
+export function sequenceMissingWarning(peers: readonly Peer[], index: number, opened: readonly Peer[] = peers): string | null {
+  const stop = peers[index]
+  const missing = sequenceLabel(peers, index)?.missing
+  if (!stop || !missing?.length) return null
+  const openedHere = new Set(opened
+    .filter(peer => isSequenceStop(peer) && peer.sequenceId === stop.sequenceId && !isInactiveStop(peer))
+    .map(peer => numberOf(peer)))
+  const removedHere = missing.filter(n => openedHere.has(n))
+  return removedHere.length ? `จุดที่ ${removedHere.join(', ')} ของงานต่อเนื่องถูกลบออกจากเที่ยวนี้` : null
+}
+
+/** คำเตือนหน้าต่างแก้ไขเที่ยววิ่ง ของทั้งสองแบบ */
+export function jobSetMissingWarning(peers: readonly (Peer & TransferFields)[], index: number, opened: readonly (Peer & TransferFields)[] = peers): string | null {
+  return transferMissingWarning(peers, index, opened) ?? sequenceMissingWarning(peers, index, opened)
 }

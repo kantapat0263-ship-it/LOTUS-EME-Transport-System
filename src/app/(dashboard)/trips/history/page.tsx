@@ -50,7 +50,8 @@ import { updateTripWithQueueGuard, deleteTripWithQueueGuard } from "@/lib/tripQu
 import { inThailand } from "@/lib/roadFlood"
 import { computeTripPlanDistance, routeStopsKey } from "@/lib/planDistance"
 import { calculateFuelCost, incomingStopsForTrip } from "@/lib/calculations"
-import { dropSyncNote, isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferMissingWarning, transferStopName, transferTagStyle } from "@/lib/transfer"
+import { dropSyncNote, isInactiveStop, syncDropsInTripEdit, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferStopName } from "@/lib/transfer"
+import { isOneOffJobStop, jobSetLabel, jobSetMissingWarning, jobSetTagStyle } from "@/lib/sequence"
 
 // Helper to format date YYYY-MM-DD to DD/MM/YYYY
 function formatDateDisplay(dateStr: string) {
@@ -294,9 +295,12 @@ export default function TripHistoryPage() {
 
       const oldStops = editingTrip.stops.map(s => s.siteName)
       const nStops = editFormData.stops.map(s => s.siteName)
-      
-      const added = nStops.filter(s => !oldStops.includes(s))
-      const removed = oldStops.filter(s => !nStops.includes(s))
+      // นับจำนวนต่อชื่อ — งานไป-กลับมีชื่อสถานที่ซ้ำในเที่ยวเดียว (ลบ 1 ใน 2 จุดชื่อเดียวกันต้องบันทึกด้วย)
+      const countOf = (names: string[]) => names.reduce((m, n) => m.set(n, (m.get(n) || 0) + 1), new Map<string, number>())
+      const oldCount = countOf(oldStops)
+      const newCount = countOf(nStops)
+      const added = [...newCount].flatMap(([n, c]) => Array<string>(Math.max(0, c - (oldCount.get(n) || 0))).fill(n))
+      const removed = [...oldCount].flatMap(([n, c]) => Array<string>(Math.max(0, c - (newCount.get(n) || 0))).fill(n))
       
       if (added.length > 0) changes.stopsAdded = added
       if (removed.length > 0) changes.stopsRemoved = removed
@@ -487,7 +491,7 @@ export default function TripHistoryPage() {
   // ทริปที่ไม่มีงานรับ-ส่ง = ไม่ต้องไล่หางานโยกเข้า · คิดเฉพาะตอนหน้าต่างเปิด (trips = ทุกทริปทุกวัน ไม่ต้องคิดซ้ำทุกครั้งที่พิมพ์ค้นหา)
   // openedStops = จุดตอนเปิดหน้าต่างแก้ไข — ลบจุดรับ-ส่งตัวสุดท้ายออกจากฟอร์มแล้ว ยังต้องไล่หางานโยกเข้า ไม่งั้นงานที่โยกเข้ามาเสียจุดคู่ไปเงียบ ๆ
   const transferViewFor = (tripId: string, stops: TripStop[], openedStops: TripStop[] = stops) => {
-    const incoming = stops.some(isTransferStop) || openedStops.some(isTransferStop) ? incomingStopsForTrip((trips || []).filter(t => t.status !== 'Cancelled'), tripId) : []
+    const incoming = stops.some(isOneOffJobStop) || openedStops.some(isOneOffJobStop) ? incomingStopsForTrip((trips || []).filter(t => t.status !== 'Cancelled'), tripId) : []
     return transferDisplayOrder(stops, incoming)
   }
   const editView = isEditOpen && editingTrip ? transferViewFor(editingTrip.id, editFormData.stops, editingTrip.stops) : null
@@ -880,10 +884,10 @@ export default function TripHistoryPage() {
                       {(() => {
                         // งานรับของไปส่งต่อ: ป้าย + เตือนเฉพาะ "จุดคู่ไม่อยู่ในเที่ยวนี้" ซึ่งการลบจุดในหน้าต่างนี้ทำให้เกิดได้ (transferMissingWarning)
                         // ไม่เตือนเรื่องลำดับ (หน้าต่างนี้สลับลำดับไม่ได้) · จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย (หน้านี้ไม่มีป้ายโยก/เลื่อนกำกับ)
-                        const label = editView && !isInactiveStop(stop) ? transferLabel(editView.peers, editView.ownPos[idx]) : null
-                        const warning = label && editView ? transferMissingWarning(editView.peers, editView.ownPos[idx], editOpenedPeers) : null
+                        const label = editView && !isInactiveStop(stop) ? jobSetLabel(editView.peers, editView.ownPos[idx]) : null
+                        const warning = label && editView ? jobSetMissingWarning(editView.peers, editView.ownPos[idx], editOpenedPeers) : null
                         return label && (
-                          <span className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+                          <span className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : label.role === 'sequence' ? "bg-indigo-500/15 text-indigo-300" : "bg-emerald-500/15 text-emerald-300")}>
                             {label.text}
                             {warning && <span className="ml-1 text-red-400">⚠️ {warning}</span>}
                           </span>
@@ -918,7 +922,7 @@ export default function TripHistoryPage() {
                 ))}
                 {editView?.incomingPos.map((pos, i) => {
                   // งานรับ-ส่งที่คันอื่นโยกเข้ามา — ไม่มีแถวในหน้าต่างนี้ (ผลเก็บที่คันต้นทาง) แต่ลบจุดคู่ของมันในฟอร์มได้ → ต้องเห็นคำเตือนแบบเดียวกับจุดของเที่ยว
-                  const warning = transferMissingWarning(editView.peers, pos, editOpenedPeers)
+                  const warning = jobSetMissingWarning(editView.peers, pos, editOpenedPeers)
                   return warning && (
                     <p key={`incoming-${i}`} className="text-[10px] text-red-400">
                       ⚠️ งานที่โยกเข้ามา {transferStopName(editView.peers[pos])}: {warning} · {TRANSFER_EDIT_AT_SOURCE}
@@ -1029,8 +1033,8 @@ export default function TripHistoryPage() {
                         // งานรับของไปส่งต่อ: ข้อความป้ายอย่างเดียว — ใบนี้ไม่พิมพ์งานโยกเข้า/ป้ายโยก-เลื่อน จึงไม่พิมพ์คำเตือนหรือคำอธิบายคนขับ
                         // จุดที่โยกออก/เลื่อนแล้วไม่ขึ้นป้าย กันคนขับไปรับของที่จุดซึ่งไม่ต้องไปแล้ว (กติกาเดียวกับใบงานคนขับ)
                         // คิดจากจุดของทริปนี้เท่านั้น เหมือนหน้ารายละเอียดทริป — นับงานโยกเข้าแล้วป้ายจุดส่งเอ่ยชื่อร้านที่ไม่มีแถวในใบนี้
-                        const tLabel = isInactiveStop(stop) ? null : transferLabel(selectedTrip?.stops || [], idx)
-                        return tLabel && <div className="mt-1"><span style={transferTagStyle(tLabel)}>{tLabel.text}</span></div>
+                        const tLabel = isInactiveStop(stop) ? null : jobSetLabel(selectedTrip?.stops || [], idx)
+                        return tLabel && <div className="mt-1"><span style={jobSetTagStyle(tLabel)}>{tLabel.text}</span></div>
                       })()}
                       <p className="text-xs md:text-sm mt-1 whitespace-pre-wrap">{stop.cargoDetails}</p>
                       {/* จังหวะส่งคำขอ — ดูบนจอเท่านั้น ไม่ติดไปในใบงานที่พิมพ์ให้คนขับ */}

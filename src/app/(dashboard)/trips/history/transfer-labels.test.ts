@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { incomingStopsForTrip } from '@/lib/calculations'
 import { isInactiveStop, isTransferStop, syncDropsInTripEdit, TRANSFER_EDIT_AT_SOURCE, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMissingWarning, transferStopName, transferTagStyle } from '@/lib/transfer'
 import { cn } from '@/lib/utils'
+import { isOneOffJobStop, jobSetLabel, jobSetMissingWarning, jobSetTagStyle } from '@/lib/sequence'
 
 // ป้ายรับ-ส่งในหน้าประวัติ — คอมไพล์โค้ดจริงของหน้า (ไม่บูต Firebase) แล้วเรนเดอร์เป็น HTML
 const read = (file: string) => ts.createSourceFile('page.tsx', readFileSync(new URL(file, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -46,8 +47,8 @@ const trip = (id: string, stops: Stop[], extra: Stop = {}) => ({ id, tripId: id,
 /** transferViewFor ตัวจริงของหน้า — trips = ทริปที่หน้าโหลดมา (ทุกวัน ทุกสถานะ) */
 function listViewFor(trips: unknown[]) {
   const incoming = vi.fn(incomingStopsForTrip)
-  const work = new Function('trips', 'isTransferStop', 'incomingStopsForTrip', 'transferDisplayOrder', `${declaration(listSource, 'transferViewFor')}return work`)(
-    trips, isTransferStop, incoming, transferDisplayOrder,
+  const work = new Function('trips', 'isOneOffJobStop', 'incomingStopsForTrip', 'transferDisplayOrder', `${declaration(listSource, 'transferViewFor')}return work`)(
+    trips, isOneOffJobStop, incoming, transferDisplayOrder,
   ) as (tripId: string, stops: Stop[]) => { peers: Stop[]; ownPos: number[] }
   return { viewFor: work, incoming }
 }
@@ -55,8 +56,8 @@ function listViewFor(trips: unknown[]) {
 /** การ์ดจุดในหน้าต่าง "ใบงาน" (พิมพ์ให้คนขับ) — ป้ายคิดจากจุดของทริปที่เลือกเท่านั้น · ส่ง trips/transferViewFor ของหน้าไปด้วย ถ้าโค้ดกลับไปนับงานโยกเข้า เทสต์จะเห็น */
 function worksheet(selectedTrip: { id: string; stops: Stop[] }, trips: unknown[] = [selectedTrip]) {
   const { viewFor } = listViewFor(trips)
-  const render = new Function('React', 'selectedTrip', 'trips', 'transferViewFor', 'transferLabel', 'transferTagStyle', 'isInactiveStop', 'RequestTimingBadge', `${jsxCallback(listSource, 'selectedTrip?.stops?.map', 'RequestTimingBadge')}; return render`)(
-    React, selectedTrip, trips, viewFor, transferLabel, transferTagStyle, isInactiveStop, () => null,
+  const render = new Function('React', 'selectedTrip', 'trips', 'transferViewFor', 'jobSetLabel', 'jobSetTagStyle', 'isInactiveStop', 'RequestTimingBadge', `${jsxCallback(listSource, 'selectedTrip?.stops?.map', 'RequestTimingBadge')}; return render`)(
+    React, selectedTrip, trips, viewFor, jobSetLabel, jobSetTagStyle, isInactiveStop, () => null,
   ) as (stop: Stop, idx: number) => React.ReactElement
   return selectedTrip.stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
 }
@@ -73,8 +74,8 @@ function editRows(editingTrip: { id: string; stops: Stop[] }, stops: Stop[], tri
   const editOpenedPeers = openedPeersFor(editingTrip, viewFor)
   const editDropSync = new Function('isEditOpen', 'editingTrip', 'editFormData', 'syncDropsInTripEdit', `${declaration(listSource, 'editDropSync')}return work`)(true, editingTrip, editFormData, syncDropsInTripEdit)
   const stub = (tag: string) => ({ children }: { children?: React.ReactNode }) => React.createElement(tag, null, children)
-  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editOpenedPeers', 'editDropSync', 'transferLabel', 'transferMissingWarning', 'isInactiveStop', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
-    React, editFormData, vi.fn(), editView, editOpenedPeers, editDropSync, transferLabel, transferMissingWarning, isInactiveStop, cn, stub('textarea'), stub('button'), stub('i'),
+  const render = new Function('React', 'editFormData', 'setEditFormData', 'editView', 'editOpenedPeers', 'editDropSync', 'jobSetLabel', 'jobSetMissingWarning', 'isInactiveStop', 'cn', 'Textarea', 'Button', 'Trash2', `${jsxCallback(listSource, 'editFormData.stops.map', 'Textarea')}; return render`)(
+    React, editFormData, vi.fn(), editView, editOpenedPeers, editDropSync, jobSetLabel, jobSetMissingWarning, isInactiveStop, cn, stub('textarea'), stub('button'), stub('i'),
   ) as (stop: Stop, idx: number) => React.ReactElement
   return stops.map((stop, idx) => renderToStaticMarkup(render(stop, idx)))
 }
@@ -84,8 +85,8 @@ function editIncoming(editingTrip: { id: string; stops: Stop[] }, stops: Stop[],
   const { viewFor } = listViewFor(trips)
   const editFormData = { stops, originalStopIndexes: stops.map(() => null), vehicleId: '', driverId: '', note: '' }
   const editView = new Function('isEditOpen', 'editingTrip', 'editFormData', 'transferViewFor', `${declaration(listSource, 'editView')}return work`)(true, editingTrip, editFormData, viewFor) as { incomingPos: number[] }
-  const render = new Function('React', 'editView', 'editOpenedPeers', 'transferMissingWarning', 'transferStopName', 'TRANSFER_EDIT_AT_SOURCE', `${jsxCallback(listSource, 'editView?.incomingPos.map', 'TRANSFER_EDIT_AT_SOURCE')}; return render`)(
-    React, editView, openedPeersFor(editingTrip, viewFor), transferMissingWarning, transferStopName, TRANSFER_EDIT_AT_SOURCE,
+  const render = new Function('React', 'editView', 'editOpenedPeers', 'jobSetMissingWarning', 'transferStopName', 'TRANSFER_EDIT_AT_SOURCE', `${jsxCallback(listSource, 'editView?.incomingPos.map', 'TRANSFER_EDIT_AT_SOURCE')}; return render`)(
+    React, editView, openedPeersFor(editingTrip, viewFor), jobSetMissingWarning, transferStopName, TRANSFER_EDIT_AT_SOURCE,
   ) as (pos: number, i: number) => React.ReactElement | null
   return editView.incomingPos.map(render).filter((el): el is React.ReactElement => !!el).map(el => renderToStaticMarkup(el))
 }
@@ -290,14 +291,14 @@ describe('หน้าประวัติ — หน้าต่างแก�
 function detailScreen(t: { stops: Stop[] }) {
   const icon = () => React.createElement('span')
   const Badge = ({ children }: { children?: React.ReactNode }) => React.createElement('span', null, children)
-  const render = new Function('React', 'trip', 'Badge', 'User', 'Phone', 'Info', 'cn', 'transferLabel', 'isInactiveStop', `${jsxCallback(detailSource, '(trip.stops || []).map', 'รายการสินค้า')}; return render`)(
-    React, t, Badge, icon, icon, icon, cn, transferLabel, isInactiveStop,
+  const render = new Function('React', 'trip', 'Badge', 'User', 'Phone', 'Info', 'cn', 'jobSetLabel', 'isInactiveStop', `${jsxCallback(detailSource, '(trip.stops || []).map', 'รายการสินค้า')}; return render`)(
+    React, t, Badge, icon, icon, icon, cn, jobSetLabel, isInactiveStop,
   ) as (stop: Stop, index: number) => React.ReactElement
   return t.stops.map((stop, index) => renderToStaticMarkup(render(stop, index)))
 }
 function detailPrint(t: { stops: Stop[] }) {
-  const render = new Function('React', 'trip', 'getStopLocation', 'transferLabel', 'isInactiveStop', 'transferTagStyle', `${jsxCallback(detailSource, '(trip.stops || []).map', 'getStopLocation')}; return render`)(
-    React, t, () => 'ที่อยู่', transferLabel, isInactiveStop, transferTagStyle,
+  const render = new Function('React', 'trip', 'getStopLocation', 'jobSetLabel', 'isInactiveStop', 'jobSetTagStyle', `${jsxCallback(detailSource, '(trip.stops || []).map', 'getStopLocation')}; return render`)(
+    React, t, () => 'ที่อยู่', jobSetLabel, isInactiveStop, jobSetTagStyle,
   ) as (stop: Stop, index: number) => React.ReactElement
   return t.stops.map((stop, index) => renderToStaticMarkup(render(stop, index)))
 }
