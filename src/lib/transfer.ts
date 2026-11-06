@@ -227,27 +227,28 @@ export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readon
     const [slot] = slots.splice(at, 1)
     slots.splice(drop, 0, slot) // drop อยู่ก่อน at → ตัด at ออกแล้วตำแหน่ง drop ไม่เลื่อน = วางหน้าจุดส่งพอดี
   })
-  // งานไปหลายจุดตามลำดับ (lib/sequence): งานโยกเข้าไปอยู่หน้าจุดลำดับถัดไปของชุดเดียวกันที่ยังไปกับเที่ยวนี้ (ถ้าจุดนั้นมาก่อน)
-  // ไม่มีจุดลำดับถัดไป = ต่อท้ายจุดลำดับก่อนหน้าของชุด (ไม่ให้งานอื่นคั่นกลางชุด — ผู้ใช้ตัดสิน 2026-11-06)
-  incoming.forEach((job, index) => {
-    const key = stopSetKey(job)
-    if (!key?.startsWith('sq:')) return
-    const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
-    const mine = job.sequenceIndex as number
-    const active = (s: Slot) => s !== slots[at] && stopSetKey(s.stop) === key && !isInactiveStop(s.stop)
-    const later = slots.findIndex(s => active(s) && (s.stop.sequenceIndex as number) > mine)
-    if (later !== -1) {
-      if (later > at) return
+  // งานไปหลายจุดตามลำดับ (lib/sequence): งานโยกเข้าไปต่อท้ายจุดลำดับก่อนหน้าที่ใกล้ที่สุดของชุดที่ยังไปกับเที่ยวนี้
+  // ไม่มีจุดก่อนหน้า = ไปอยู่หน้าจุดลำดับถัดไปที่ใกล้ที่สุด · ทำทีละจุดตามลำดับที่ผู้ขอกรอก (โยกเข้าหลายจุดก็ติดกัน)
+  // ไม่ให้งานอื่นคั่นกลางชุด — ผู้ใช้ตัดสิน 2026-11-06 · จุดของเที่ยวเองไม่ขยับ
+  incoming
+    .map((job, index) => ({ job, index }))
+    .filter(({ job }) => stopSetKey(job)?.startsWith('sq:'))
+    .sort((a, b) => (a.job.sequenceIndex as number) - (b.job.sequenceIndex as number))
+    .forEach(({ job, index }) => {
+      const key = stopSetKey(job)
+      const mine = job.sequenceIndex as number
+      const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
       const [slot] = slots.splice(at, 1)
-      slots.splice(later, 0, slot)
-      return
-    }
-    let earlier = -1
-    slots.forEach((s, i) => { if (active(s) && (s.stop.sequenceIndex as number) < mine) earlier = i })
-    if (earlier === -1 || earlier + 1 === at) return
-    const [slot] = slots.splice(at, 1)
-    slots.splice(earlier < at ? earlier + 1 : earlier, 0, slot)
-  })
+      const active = (s: Slot) => stopSetKey(s.stop) === key && !isInactiveStop(s.stop)
+      let lower = -1, lowerIndex = -1, higher = -1, higherIndex = Number.POSITIVE_INFINITY
+      slots.forEach((s, i) => {
+        if (!active(s)) return
+        const n = s.stop.sequenceIndex as number
+        if (n < mine && n > lowerIndex) { lower = i; lowerIndex = n }
+        if (n > mine && n < higherIndex) { higher = i; higherIndex = n }
+      })
+      slots.splice(lower >= 0 ? lower + 1 : higher >= 0 ? higher : at, 0, slot)
+    })
   const ownPos: number[] = new Array(own.length)
   const incomingPos: number[] = new Array(incoming.length)
   const order: TransferDisplayEntry[] = new Array(slots.length)

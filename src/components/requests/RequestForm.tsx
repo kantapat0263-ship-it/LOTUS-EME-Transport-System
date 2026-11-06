@@ -457,6 +457,16 @@ const handleSubmit = async (e: React.FormEvent) => {
         toast({ title: "ลำดับจุดไม่ถูกต้อง", description: problem, variant: "destructive" })
         return
       }
+      // สถานที่ใหม่ (กำหนดเอง) ที่ใช้ซ้ำในใบ: ชื่อตรงกันแต่พิกัดไม่ตรง (หรือกลับกัน) — มักเกิดจากแก้จุดต้นทางหลังกด "ใช้สถานที่เดียวกับ..."
+      const custom = destinations.map((d, i) => ({ d, i })).filter(({ d }) => d.category === "custom" && d.customName.trim())
+      const sameName = (a: DestinationRequest, b: DestinationRequest) => a.customName.trim().replace(/\s+/g, " ").toLowerCase() === b.customName.trim().replace(/\s+/g, " ").toLowerCase()
+      for (let x = 0; x < custom.length; x++) for (let y = x + 1; y < custom.length; y++) {
+        const a = custom[x], b = custom[y]
+        if (sameName(a.d, b.d) !== samePlace(placeOf(a.d), placeOf(b.d))) {
+          toast({ title: "สถานที่ไม่ตรงกัน", description: `จุดที่ ${a.i + 1} กับจุดที่ ${b.i + 1} ชื่อหรือพิกัดไม่ตรงกัน — ถ้าเป็นที่เดียวกัน กด "ใช้สถานที่เดียวกับจุดที่ ${a.i + 1}" ที่จุดที่ ${b.i + 1} อีกครั้ง`, variant: "destructive" })
+          return
+        }
+      }
     }
 
     const validDestinations = destinations.filter(d => 

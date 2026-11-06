@@ -59,10 +59,30 @@ describe('computeStopStatuses: กลับมาที่เดิม', () => {
     const helper = [stops[0], stops[2]]
     const bounce = [at(OFFICE, 0), ...stay(SITE, 60, 62), at(NEAR_SITE_OUT, 180), ...stay(SITE, 181, 185)]
     expect(computeStopStatuses(helper, bounce, { office: OFFICE }).map(s => s.arrived)).toEqual([true, false])
-    const away = [at(OFFICE, 0), ...stay(SITE, 60, 75), at(DOC, 90), ...stay(SITE, 200, 210)]
+    const away = [at(OFFICE, 0), ...stay(SITE, 60, 75), ...stay(DOC, 90, 150), ...stay(SITE, 200, 210)]
     const st = computeStopStatuses(helper, away, { office: OFFICE })
     expect(st.map(s => s.arrived)).toEqual([true, true])
     expect(st[1].arrivedAt).toBe(T0 + 200 * MIN)
+  })
+  it('คันช่วย: GPS เด้งออกจุดเดียวแล้วเงียบนาน (จอดนิ่ง) ไม่นับว่าออกไป', () => {
+    const helper = [stops[0], stops[2]]
+    const driftThenSilence = [at(OFFICE, 0), ...stay(SITE, 60, 62), at(NEAR_SITE_OUT, 63), ...stay(SITE, 180, 185)]
+    expect(computeStopStatuses(helper, driftThenSilence, { office: OFFICE }).map(s => s.arrived)).toEqual([true, false])
+  })
+  it('หน้าติดตามตัดจุดกลางที่เลื่อนออก แต่ส่ง context ว่าจุดนั้นอยู่ในเที่ยว → ไซต์สองจุดเป็นรอบเดียวกัน (ถึงพร้อมกัน)', () => {
+    const route = [stops[0], stops[2]]
+    const context = [{ sequenceId: 'sq_1', sequenceIndex: 0 }, { sequenceId: 'sq_1', sequenceIndex: 1 }, { sequenceId: 'sq_1', sequenceIndex: 2 }]
+    const once = [at(OFFICE, 0), ...stay(SITE, 60, 75), ...stay(OFFICE, 120, 130)]
+    expect(computeStopStatuses(route, once, { office: OFFICE, sequenceContext: context }).map(s => s.arrived)).toEqual([true, true])
+    expect(returnVisitPlans(route, undefined, context)).toEqual([null, null])
+  })
+  it('รถขับผ่าน สนง. ก่อนไปไซต์ (เข้ารัศมี) — จุดที่ 3 ไม่ถึงตอนเช้า (สนง.ต้องถึงหลังไซต์ก่อน)', () => {
+    const driveBy = [at(OFFICE, 0), at(DOC, 30), ...stay(SITE, 60, 75)]
+    expect(computeStopStatuses(stops, driveBy, { office: OFFICE })[2].arrived).toBe(false)
+  })
+  it('ไป สนง. ก่อนแล้วไปไซต์ครั้งเดียว — จุดที่ 3 ไม่ถึง', () => {
+    const docFirst = [at(OFFICE, 0), ...stay(DOC, 30, 60), ...stay(SITE, 120, 140)]
+    expect(computeStopStatuses(stops, docFirst, { office: OFFICE })[2].arrived).toBe(false)
   })
   it('งานปกติที่ไปที่เดิมสองจุด ยังนับถึงพร้อมกันเหมือนเดิม', () => {
     const plain = stops.map(({ sequenceId: _s, sequenceIndex: _i, ...rest }) => rest)

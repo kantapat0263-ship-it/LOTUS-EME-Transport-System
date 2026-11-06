@@ -144,9 +144,9 @@ describe('reminders / notes', () => {
     expect(postponedSequenceNote(trip(), 0, [0, 1, 2])).toContain('· ใบนี้ = จุดที่ 1 · เลื่อนมาทั้งชุด)')
     // สนง.อยู่คันอื่น (ไม่อยู่ในลิสต์) แล้วเลื่อนทั้งชุดที่เหลือ → บอกว่าจุดที่ 2 อยู่คันอื่น และเลื่อนมาแค่ 1, 3
     const split = [Q('a1', 0, 'ไซต์A'), Q('a2', 2, 'ไซต์A')]
-    expect(postponedSequenceNote(split, 1, [0, 1])).toBe('(งานต่อเนื่อง 1.ไซต์A → 2.(คันอื่น) → 3.ไซต์A · ใบนี้ = จุดที่ 3 · เลื่อนมาพร้อมกัน: จุดที่ 1, 3)')
+    expect(postponedSequenceNote(split, 1, [0, 1])).toBe('(งานต่อเนื่อง 1.ไซต์A → 2.(ไม่อยู่ในเที่ยวนี้) → 3.ไซต์A · ใบนี้ = จุดที่ 3 · เลื่อนมาพร้อมกัน: จุดที่ 1, 3)')
     expect(postponedSequenceNote([N('x')], 0)).toBeNull()
-    expect(sequenceRouteText([Q('b', 1, ''), Q('a', 0, 'A')], 'sq_1', 3)).toBe('1.A → 2.ไม่ระบุสถานที่ → 3.(คันอื่น)')
+    expect(sequenceRouteText([Q('b', 1, ''), Q('a', 0, 'A')], 'sq_1', 3)).toBe('1.A → 2.ไม่ระบุสถานที่ → 3.(ไม่อยู่ในเที่ยวนี้)')
   })
   it('"ต่อจาก" ใช้จุดก่อนหน้าที่ยังไปกับเที่ยวนี้ (สนง.เลื่อนแล้ว = ต่อจากไซต์ ไม่ใช่สนง.)', () => {
     const [a1, doc, a2] = trip()
@@ -196,6 +196,11 @@ describe('transferDisplayOrder: งานต่อเนื่องที่โ
     const [a1, doc, a2] = trip()
     const view = transferDisplayOrder([a1, doc, N('y')], [a2])
     expect(view.peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
+  })
+  it('โยกเข้าหลายจุด (จุดที่ 2, 3) ต่อจากจุดที่ 1 ของเที่ยวนี้ ไม่มีงานอื่นคั่น', () => {
+    const [a1, doc, a2] = trip()
+    expect(transferDisplayOrder([a1, N('y')], [doc, a2]).peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
+    expect(transferDisplayOrder([a1, N('y')], [a2, doc]).peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
   })
   it('มีจุดลำดับถัดไปในเที่ยวนี้ → ขึ้นก่อนจุดนั้น', () => {
     const [a1, doc, a2] = trip()

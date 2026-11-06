@@ -176,7 +176,7 @@ export function jobSetMateReminder(peers: readonly (Peer & TransferFields)[], in
 }
 
 /**
- * เส้นทางเต็มของชุด มีเลขจุด "1.ไซต์A → 2.สนง.เอกสาร → 3.ไซต์A" — จุดที่ไม่อยู่ในลิสต์ (อยู่คันอื่น) = "2.(คันอื่น)"
+ * เส้นทางเต็มของชุด มีเลขจุด "1.ไซต์A → 2.สนง.เอกสาร → 3.ไซต์A" — จุดที่ไม่อยู่ในลิสต์ (คันอื่น/ยกเลิก/ยังไม่จัด) = "2.(ไม่อยู่ในเที่ยวนี้)"
  * size = จำนวนจุดของชุด (ไม่ส่ง = เลขสูงสุดที่เห็น)
  */
 export function sequenceRouteText(peers: readonly Peer[], sequenceId: string, size?: number): string {
@@ -184,7 +184,7 @@ export function sequenceRouteText(peers: readonly Peer[], sequenceId: string, si
   const total = Math.max(size || 0, ...members.map(numberOf))
   return Array.from({ length: total }, (_, k) => {
     const m = members.find(peer => peer.sequenceIndex === k)
-    return `${k + 1}.${m ? nameOf(m) || 'ไม่ระบุสถานที่' : '(คันอื่น)'}`
+    return `${k + 1}.${m ? nameOf(m) || 'ไม่ระบุสถานที่' : '(ไม่อยู่ในเที่ยวนี้)'}`
   }).join(' → ')
 }
 

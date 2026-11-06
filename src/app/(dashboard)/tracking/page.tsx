@@ -325,7 +325,7 @@ export default function TrackingPage() {
             lng: s.lng,
             fromPlate: src.vehiclePlate,
             refused: s.outcome === "driver-refused",
-            // งานต่อเนื่องที่โยกเข้า — ให้ตัวนับ "ถึง" รู้ว่าเป็นการกลับมาที่เดิมรอบหลัง (lib/tracking repeatOccurrences)
+            // งานต่อเนื่องที่โยกเข้า — ให้ตัวนับ "ถึง" รู้ว่าเป็นการกลับมาที่เดิมรอบหลัง (lib/tracking returnVisitPlans)
             ...(typeof s.sequenceId === "string" && Number.isInteger(s.sequenceIndex) ? { sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex } : {}),
           })
         }
@@ -363,6 +363,9 @@ export default function TrackingPage() {
           outcome: undefined as string | undefined,
         })),
       ]
+
+      // จุดของงานต่อเนื่องทั้งหมดในเที่ยว (รวมที่เลื่อน/โยกออกซึ่งไม่อยู่ใน routeStops) — จุดกลางที่ไม่ไปแล้ว = รถไม่ได้ออกไป ไม่ใช่ "อยู่คันอื่น"
+      const sequenceContext = [...ownSorted, ...incoming].map((s) => ({ sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex }))
 
       // ต้นทาง = ออฟฟิศเสมอ (ตั้งใน settings ได้ ไม่งั้นใช้พิกัดออฟฟิศคงที่)
       const origin =
@@ -402,7 +405,7 @@ export default function TrackingPage() {
         // งานต่อเนื่อง: ส่งรหัสชุด/ลำดับ/ผล ให้จุดที่กลับมาที่เดิมนับ "ถึง" หลังจุดก่อนหน้า (ไม่ใช่ตั้งแต่รอบแรก)
         routeStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng, sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex, outcome: s.outcome })),
         trail,
-        { office: origin }
+        { office: origin, sequenceContext }
       )
       // กลับอย่างเดียว: ไซต์รับรถ = จุดเริ่ม — เคยอยู่ในพื้นที่ไซต์ = รับรถแล้ว
       // (เกณฑ์ 300 ม. ของจุดงานใช้ไม่ได้ ลานจอดจริงอาจห่างหมุด · ออกจากไซต์ตั้งแต่เมื่อวาน = วันนี้ไม่มีจุดที่ไซต์เลย)
@@ -477,7 +480,7 @@ export default function TrackingPage() {
       // เวลาออก/กลับออฟฟิศ + กม. คงค่าที่เก็บไว้ของวันนั้น (ไม่ให้พิกัดออฟฟิศ/งานที่เปลี่ยนภายหลังไปแก้ประวัติ)
       // ยกเว้นเวลากลับที่แสดง/ป้าย: คิดจาก trail ด้วย tripOfficeReturn ก่อน (ค่าที่เก็บไว้เป็นตัวสำรอง) — เปลี่ยนพิกัดออฟฟิศแล้วย้อนหลังขยับตาม
       if (!isToday && deviceId && stored && trail.length >= 2) {
-        dailyDoc = { ...stored, stops: computeDailySummary(trail, routeStops, origin).stops }
+        dailyDoc = { ...stored, stops: computeDailySummary(trail, routeStops, origin, { sequenceContext }).stops }
       }
       // จบการใช้รถแล้ว = ค่าที่เก็บไว้อาจรวม GPS ของคนที่ใช้รถต่อ (กดตัดทีหลังวันนั้น) → คิดใหม่จาก trail ที่ตัดแล้วทั้งชุด
       // ส่วน stored ที่ sync เคยตัดไว้ (gpsEndAtApplied) แต่ตอนนี้ยกเลิกการตัดแล้ว → คิดใหม่จาก trail เต็มให้ค่ากลับมาครบ
@@ -486,7 +489,7 @@ export default function TrackingPage() {
       // + ต่อ GPS เมื่อวานเข้ามา (ขากลับข้ามคืน) → สรุปที่ server เก็บ (เฉพาะวันนี้) ไม่ครบ ต้องคิดใหม่จาก trail ที่ต่อแล้ว
       const returnNoStored = isReturnMode && !stored && trail.length >= 2
       if (deviceId && (isToday || endAt != null || storedCut != null || returnNoStored || !!ret?.prepended)) {
-        const sum = computeDailySummary(trail, routeStops, origin)
+        const sum = computeDailySummary(trail, routeStops, origin, { sequenceContext })
         dailyDoc = {
           id: "",
           date: selectedDate,

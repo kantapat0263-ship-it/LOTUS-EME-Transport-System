@@ -933,7 +933,9 @@ export default function TripGroupingPage() {
       )) return
       // งานต่อเนื่อง: ชุดเดียวกันมีจุดในเที่ยวนี้แล้ว และมีงานอื่น (ที่ยังไป) อยู่หลังจุดสุดท้ายของชุด → จุดใหม่ต่อท้ายจะมีงานอื่นคั่นกลางชุด
       const isLive = (s: any) => !(s.outcome && s.outcome !== 'delivered')
-      const splitSets = [...new Set(validNewStops.filter((d: any) => isSequenceStop(d)).map((d: any) => d.sequenceId as string))].filter(id => {
+      // ชุดที่ถามเรื่องลำดับสลับไปแล้วข้างบน ไม่ถามซ้ำ (กล่องเดียวพอ)
+      const askedSets = new Set(stepsBeforeEarlier.map((d: any) => d.sequenceId as string))
+      const splitSets = [...new Set(validNewStops.filter((d: any) => isSequenceStop(d)).map((d: any) => d.sequenceId as string))].filter(id => !askedSets.has(id)).filter(id => {
         const lastMember = currentStops.reduce((at: number, s: any, i: number) => isSequenceStop(s) && s.sequenceId === id && isLive(s) ? i : at, -1)
         return lastMember >= 0 && currentStops.some((s: any, i: number) => i > lastMember && isLive(s) && !(isSequenceStop(s) && s.sequenceId === id))
       })
