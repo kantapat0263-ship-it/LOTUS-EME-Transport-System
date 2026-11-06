@@ -8,7 +8,8 @@
 
 import { haversineMeters, OFFICE_LOCATION } from './tracking'
 import { inThailand } from './roadFlood'
-import { isTransferStop, transferStopFields, type TransferFields, type TransferRole } from './transfer'
+import { isTransferStop, type TransferFields, type TransferRole } from './transfer'
+import { jobSetFields, orderSequences } from './sequence'
 
 /** Default kilometres travelled per litre of diesel. */
 export const DEFAULT_FUEL_RATE = 10
@@ -558,6 +559,9 @@ export interface IncomingStopLike extends OutcomeStopLike {
   transferRole?: TransferRole
   transferId?: string
   transferDropName?: string
+  sequenceId?: string
+  sequenceIndex?: number
+  sequenceSize?: number
 }
 
 export interface IncomingTripLike {
@@ -591,6 +595,10 @@ export interface IncomingJob {
   transferRole?: TransferRole
   transferId?: string
   transferDropName?: string
+  /** งานไปหลายจุดตามลำดับ (lib/sequence) — เหตุผลเดียวกัน */
+  sequenceId?: string
+  sequenceIndex?: number
+  sequenceSize?: number
 }
 
 /**
@@ -623,10 +631,11 @@ export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: strin
           dispatcherNote: t.stopNotes?.[`stop_${sIdx}`] || s.dispatcherNote || '',
           dispatcherName: t.stopNoteAuthors?.[`stop_${sIdx}`] || s.dispatcherName || '',
           wasRefused: s.outcome === 'driver-refused',
-          ...transferStopFields(s),
+          ...jobSetFields(s),
         })
       }
     }
   }
-  return out
+  // งานต่อเนื่องที่โยกเข้ามาหลายจุด (จากหลายคัน) เรียงตามลำดับที่ผู้ขอกรอก ติดกัน — งานอื่นคงลำดับเดิม
+  return orderSequences(out)
 }

@@ -45,7 +45,8 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat, type IncomingJob } from "@/lib/calculations"
-import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferStopFields, transferStopName, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
+import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferStopName, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
+import { jobSetFields } from "@/lib/sequence"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -1642,7 +1643,7 @@ export default function DailySummaryPage() {
         assistForPlate: src.vehiclePlate,
         assistForDriver: (src as any).actualDriverName || src.driverName,
         // จุดปกติ = {} (ไม่มี key transfer* และไม่มี undefined) — สำเนาคันช่วยของงานปกติเหมือนเดิมทุกตัวอักษร
-        ...transferStopFields(stop),
+        ...jobSetFields(stop),
       }
       if (stop.lat != null && stop.lng != null) { c.lat = stop.lat; c.lng = stop.lng }
       if (stop.requestedBy) c.requestedBy = stop.requestedBy

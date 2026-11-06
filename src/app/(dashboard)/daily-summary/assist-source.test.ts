@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { transferLabel, transferMateReminder, transferStopFields, TRANSFER_WARNING } from '@/lib/transfer'
+import { transferLabel, transferMateReminder, TRANSFER_WARNING } from '@/lib/transfer'
+import { jobSetFields } from '@/lib/sequence'
 import { incomingStopsForTrip } from '@/lib/calculations'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -25,7 +26,7 @@ function arrange(options: { newTarget?: boolean; save?: boolean; targetDate?: st
   const setTrips = vi.fn(), setDialog = vi.fn(), setForm = vi.fn(), toast = vi.fn(), statsRefresh = vi.fn()
   const planDistanceFields = vi.fn(async (..._args: unknown[]) => options.dist === undefined ? { totalDistanceKm: 88, totalEstimatedTimeMinutes: 75, fuelCost: 440 } : options.dist)
   const dialog = { tripId: original.id, stopIdx: 0, expectedTrip: original }
-  const deps = { assistDialog: dialog, trips: [current, target], setAssistDialog: setDialog, allowOrdinaryEdit: () => true, recordedBy: 'ผู้จัด', assistForm: { targetTripId: options.newTarget ? '__new__' : target.id, driverId: 'D2', vehicleId: 'V2' }, toast, passLeaveGate: vi.fn().mockResolvedValue(options.leave !== false), applyStopsWithDistance: applyStops, planDistanceFields, setStatsRefreshKey: statsRefresh, companySettings: { dieselPrice: 30 }, driversData: [{ id: 'D2', name: 'คนช่วย' }], vehiclesData: [{ id: 'V2', licensePlate: 'รถช่วย', fuelRate: 7 }], createTripWithQueueGuard: create, db: {}, serverTimestamp: () => 'time', setTrips, setAssistForm: setForm, transferStopFields }
+  const deps = { assistDialog: dialog, trips: [current, target], setAssistDialog: setDialog, allowOrdinaryEdit: () => true, recordedBy: 'ผู้จัด', assistForm: { targetTripId: options.newTarget ? '__new__' : target.id, driverId: 'D2', vehicleId: 'V2' }, toast, passLeaveGate: vi.fn().mockResolvedValue(options.leave !== false), applyStopsWithDistance: applyStops, planDistanceFields, setStatsRefreshKey: statsRefresh, companySettings: { dieselPrice: 30 }, driversData: [{ id: 'D2', name: 'คนช่วย' }], vehiclesData: [{ id: 'V2', licensePlate: 'รถช่วย', fuelRate: 7 }], createTripWithQueueGuard: create, db: {}, serverTimestamp: () => 'time', setTrips, setAssistForm: setForm, jobSetFields }
   const handler = new Function(...Object.keys(deps), `${body('addAssistStop')}return work`)(...Object.values(deps))
   return { handler, original, target, applyStops, planDistanceFields, statsRefresh, create, setTrips, setDialog, setForm, toast, passLeaveGate: deps.passLeaveGate }
 }

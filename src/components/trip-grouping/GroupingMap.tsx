@@ -11,7 +11,7 @@ import { Loader2, Route, Zap, RefreshCcw, Fuel, MousePointer2, Wand2, AlertTrian
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { inThailand } from "@/lib/roadFlood"
-import { orderPickupsBeforeDrop } from "@/lib/transfer"
+import { enforceSetOrder } from "@/lib/sequence"
 
 interface GroupingMapProps {
   destinations: any[];
@@ -87,9 +87,10 @@ export function GroupingMap({
     const google = window.google
 
     // Waypoints source
+    // โหมดอัตโนมัติ: ลำดับตั้งต้นตามกติกาชุดงาน (ปิด optimize แล้วเส้นบนแผนที่ = ลำดับที่จะบันทึก)
     const selectedDests = mode === 'manual'
       ? manualOrder.map(id => destinations.find(d => d.id === id)).filter(Boolean)
-      : destinations.filter(d => selectedIds.has(d.id))
+      : enforceSetOrder(destinations.filter(d => selectedIds.has(d.id)))
 
     if (selectedDests.length === 0) {
       // งานที่เลือกอยู่นอกตัวกรองวันทั้งหมด — ไม่ค้างตัวเลขของชุดก่อน
@@ -170,7 +171,7 @@ export function GroupingMap({
         const optimized = optimizedIndices.map(idx => routedDests[idx]);
         // งานรับของไปส่งต่อ: Google ไม่รู้ว่าต้องรับก่อนส่ง — ลำดับที่ส่งก่อนรับ ให้ย้ายจุดส่งไปหลังจุดรับ
         // แล้วขอเส้นทางใหม่ตามลำดับนั้น (ไม่จัดลำดับซ้ำ) ให้เส้นบนแผนที่และตัวเลขตรงกับลำดับที่จะบันทึก
-        const fixed = orderPickupsBeforeDrop(optimized)
+        const fixed = enforceSetOrder(optimized)
         if (fixed.some((d, i) => d !== optimized[i])) {
           directionsServiceRef.current?.route({
             origin, destination: origin,

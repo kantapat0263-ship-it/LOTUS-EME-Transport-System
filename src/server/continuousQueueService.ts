@@ -5,6 +5,7 @@ import type { ContinuousBooking, QueueAuditEvent, QueueCommand, QueueCommandResu
 import type { Trip } from '@/types/models'
 import { assertRequestDestinationsUnchanged, dispatchedDestinationIndexes } from '@/lib/requestDestination'
 import { incomingStopsForTrip } from '@/lib/calculations'
+import { isSequenceStop } from '@/lib/sequence'
 
 const MAX_SNAPSHOT_BOOKINGS = 500
 const MAX_DAY_TRIPS = 500
@@ -39,7 +40,7 @@ function hasRecordedWork(stops: Trip['stops']): boolean {
 }
 
 function planningStops(stops: Trip['stops']): Trip['stops'] {
-  const fields = ['siteId', 'siteName', 'cargoDetails', 'lat', 'lng', 'requestedBy', 'requestedByPhone', 'requestedByUserId', 'requestedAt', 'requestTime', 'address', 'note', 'dispatcherNote', 'dispatcherName', 'transferRole', 'transferId', 'transferDropName'] as const
+  const fields = ['siteId', 'siteName', 'cargoDetails', 'lat', 'lng', 'requestedBy', 'requestedByPhone', 'requestedByUserId', 'requestedAt', 'requestTime', 'address', 'note', 'dispatcherNote', 'dispatcherName', 'transferRole', 'transferId', 'transferDropName', 'sequenceId', 'sequenceIndex', 'sequenceSize'] as const
   return stops.map((stop, index) => ({ ...Object.fromEntries(fields.filter(key => stop[key] !== undefined).map(key => [key, stop[key]])), order: index + 1 }) as Trip['stops'][number])
 }
 
@@ -232,6 +233,7 @@ class QueueTransaction {
     requireValue(dates[0] >= this.today, 'สร้างคิวต่อเนื่องย้อนหลังไม่ได้')
     // คิวหลายวันคัดลอกจุดเดิมไปทุกวัน — งานรับของไปส่งต่อเป็นงานครั้งเดียว (ยืมคิววันเดียวยังทำได้)
     requireValue(!command.trip.stops.some(stop => stop.transferRole), 'งานรับของไปส่งต่อจัดเป็นคิวต่อเนื่องไม่ได้ — จัดเป็นเที่ยววันเดียว', 400)
+    requireValue(!command.trip.stops.some(stop => isSequenceStop(stop)), 'งานไปหลายจุดตามลำดับจัดเป็นคิวต่อเนื่องไม่ได้ — จัดเป็นเที่ยววันเดียว', 400)
     const input = await this.resources(command.trip)
     const id = `BQ-${command.operationId}`
     requireValue(!(await this.read('continuousBookings', id)), 'รหัสคิวต่อเนื่องถูกใช้แล้ว')
@@ -258,6 +260,7 @@ class QueueTransaction {
     requireValue(incoming.length === 0, `ทริปนี้ยังรับงานที่โยกมาจากคันอื่น ${incoming.length} จุด — ย้ายงานนั้นไปคันอื่นหรือคืนคันเดิมก่อนขยายเป็นคิวต่อเนื่อง`)
     // งานรับของไปส่งต่อเป็นงานครั้งเดียว — ขยายเป็นหลายวันจะคัดลอกจุดรับไปรับซ้ำทุกวัน (กติกาเดียวกับ create)
     requireValue(!(original.stops || []).some(stop => stop.transferRole), 'ทริปนี้มีงานรับของไปส่งต่อ — กำหนดเป็นคิวต่อเนื่องไม่ได้', 400)
+    requireValue(!(original.stops || []).some(stop => isSequenceStop(stop)), 'ทริปนี้มีงานไปหลายจุดตามลำดับ — กำหนดเป็นคิวต่อเนื่องไม่ได้', 400)
     const dates = rangeDates(original.tripDate, command.endDate)
     requireValue(dates[0] >= this.today && dates.length > 1, 'ระบุวันสิ้นสุดหลังวันเริ่ม และห้ามขยายคิวย้อนหลัง')
     const input = await this.resources({ ...original, stops: planningStops(original.stops) })

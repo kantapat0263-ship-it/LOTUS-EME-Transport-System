@@ -1,5 +1,6 @@
 import { computeDriverLeaderboard, computeOutcomeStats, incomingStopsForTrip } from '@/lib/calculations'
-import { transferStopFields, type TransferFields } from '@/lib/transfer'
+import { type TransferFields } from '@/lib/transfer'
+import { jobSetFields, type SequenceFields } from '@/lib/sequence'
 
 /**
  * ข้อมูลใบงานคนขับที่ส่งให้คนเปิดลิงก์ (ไม่ต้องล็อกอิน) — คัดเฉพาะฟิลด์ที่หน้า /driver/[tripId] แสดงจริง
@@ -13,6 +14,8 @@ const STOP_TEXT_FIELDS = [
   'reassignedToVehiclePlate', 'reassignedToDriverName', 'assistForPlate', 'assistForDriver',
   // งานรับของไปส่งต่อ — ใบงานคิดป้าย "รับ → ไปส่งต่อที่ ..." จากฟิลด์พวกนี้ (รหัสกลุ่มเป็นรหัสสุ่ม ไม่มีข้อมูลภายใน)
   'transferRole', 'transferId', 'transferDropName',
+  // งานไปหลายจุดตามลำดับ — รหัสชุดเป็นรหัสสุ่ม (ลำดับ/จำนวนจุดเป็นตัวเลข ดู projectStop)
+  'sequenceId',
 ] as const
 
 const TRIP_TEXT_FIELDS = ['tripId', 'tripDate', 'departureTime', 'driverName', 'actualDriverName', 'vehiclePlate'] as const
@@ -56,6 +59,9 @@ function projectStop(s: Raw) {
     ...(typeof s.outcome === 'string' && s.outcome ? { outcome: s.outcome === 'delivered' || s.outcome === 'postponed' ? s.outcome : 'not-delivered' } : {}),
     ...(isNum(s.lat) ? { lat: s.lat } : {}),
     ...(isNum(s.lng) ? { lng: s.lng } : {}),
+    // ป้าย "🔁 จุดที่ 2/3" — pickText คัดแต่ข้อความ ตัวเลขต้องคัดแยก
+    ...(Number.isInteger(s.sequenceIndex) && (s.sequenceIndex as number) >= 0 ? { sequenceIndex: s.sequenceIndex as number } : {}),
+    ...(Number.isInteger(s.sequenceSize) && (s.sequenceSize as number) > 0 ? { sequenceSize: s.sequenceSize as number } : {}),
   }
 }
 
@@ -74,7 +80,7 @@ export function buildDriverTicket(trip: Raw & { id: string }, monthTrips: (Raw &
   let stats: DriverTicketStats | null = null
   let boardSize = 0
   let topKm = 0
-  let incoming: ({ siteName: string; cargoDetails: string; dispatcherNote: string; dispatcherName: string; fromVehiclePlate: string; fromDriverName: string } & TransferFields)[] = []
+  let incoming: ({ siteName: string; cargoDetails: string; dispatcherNote: string; dispatcherName: string; fromVehiclePlate: string; fromDriverName: string } & TransferFields & SequenceFields)[] = []
   let actualKm: number | null = null
   if (trip.tripDate && trip.driverId) {
     // ไม่นับทริปที่ยกเลิก (Cancelled) — เหมือนหน้าใบงานเดิม
@@ -89,7 +95,7 @@ export function buildDriverTicket(trip: Raw & { id: string }, monthTrips: (Raw &
     incoming = incomingStopsForTrip(active, trip.id).map(job => ({
       siteName: job.siteName, cargoDetails: job.cargoDetails, dispatcherNote: job.dispatcherNote,
       dispatcherName: job.dispatcherName, fromVehiclePlate: job.fromVehiclePlate, fromDriverName: job.fromDriverName,
-      ...transferStopFields(job),
+      ...jobSetFields(job),
     }))
     actualKm = computeOutcomeStats(active).actualKmByTrip[trip.id] ?? null
   }

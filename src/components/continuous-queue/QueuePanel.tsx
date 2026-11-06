@@ -6,6 +6,7 @@ import { useContinuousQueues } from '@/hooks/use-continuous-queues'
 import { runContinuousQueueCommand } from '@/lib/continuousQueueClient'
 import { expandQueueDates, isActiveOverride, isManagedTrip } from '@/lib/continuousQueue'
 import { liveMoveTarget, tripDriverLabel } from '@/lib/reassign'
+import { isOneOffJobStop } from '@/lib/sequence'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -88,7 +89,7 @@ export function QueuePanel({ date, trips, onChanged, checkAssignments }: {
   React.useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const normalTrips = trips.filter(t => t.status === 'Planned' && t.gpsEndAt == null && !isManagedTrip(t))
   // งานรับของไปส่งต่อเป็นงานครั้งเดียว — ทริปที่มีงานนี้กำหนดเป็นคิวต่อเนื่องไม่ได้ (server กันซ้ำอีกชั้น)
-  const extendableTrips = normalTrips.filter(t => !(t.stops || []).some(s => s.transferRole))
+  const extendableTrips = normalTrips.filter(t => !(t.stops || []).some(s => isOneOffJobStop(s)))
   const [extendTripId, setExtendTripId] = React.useState('')
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10)
   const booking = action && 'bookingId' in action ? queues.bookings.find(b => b.id === action.bookingId) : undefined

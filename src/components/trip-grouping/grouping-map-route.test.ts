@@ -3,6 +3,7 @@ import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { inThailand } from '@/lib/roadFlood'
 import { orderPickupsBeforeDrop } from '@/lib/transfer'
+import { enforceSetOrder } from '@/lib/sequence'
 
 // ดึง calculateRoute ตัวจริงจาก GroupingMap มารันกับ Google ปลอม
 const source = ts.createSourceFile('GroupingMap.tsx', readFileSync(new URL('./GroupingMap.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -30,7 +31,7 @@ function mapUi(dests: object[], status = 'OK') {
     mode: 'auto', manualOrder: [], selectedIds: new Set(dests.map((d: any) => d.id)), destinations: dests,
     setRouteStats: vi.fn(), setMissingCoordCount: vi.fn(), setIsCalculating: vi.fn(), lastRouteKeyRef: { current: null }, routeSeqRef: { current: 0 },
     window: { google: { maps: { LatLng: vi.fn((lat: number, lng: number) => ({ lat, lng })), TravelMode: { DRIVING: 'DRIVING' } } } },
-    settings: {}, selectedVehicleRate: 10, onOptimizedOrderChange: vi.fn(), toast: vi.fn(), inThailand, orderPickupsBeforeDrop,
+    settings: {}, selectedVehicleRate: 10, onOptimizedOrderChange: vi.fn(), toast: vi.fn(), inThailand, orderPickupsBeforeDrop, enforceSetOrder,
     HEAD_OFFICE_DEFAULT: { lat: 14.0815, lng: 100.7129 },
   }
   const calculateRoute = new Function(...Object.keys(deps), `${compiled}return work`)(...Object.values(deps))
@@ -100,7 +101,8 @@ it('งานรับของไปส่งต่อ: Google จัดจุ�
   const ui = mapUi([DROP, PICK])
   const legs = (km: number) => [0, 1, 2].map(() => ({ distance: { value: km * 1000 }, duration: { value: 600 } }))
   ui.route
-    .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 1], legs: legs(10) }] }, 'OK')) // Google: ส่งก่อนรับ
+    // ลำดับตั้งต้นจัดรับก่อนส่งแล้ว (enforceSetOrder) → [P, D] · Google สลับเป็นส่งก่อนรับ
+    .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [1, 0], legs: legs(10) }] }, 'OK')) // Google: ส่งก่อนรับ
     .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 1], legs: legs(20) }] }, 'OK'))
   await ui.calculateRoute(true)
   expect(ui.route).toHaveBeenCalledTimes(2)
@@ -120,4 +122,20 @@ it('งานรับของไปส่งต่อ: Google จัดรั�
   await ui.calculateRoute(true)
   expect(ui.route).toHaveBeenCalledTimes(1)
   expect(ui.onOptimizedOrderChange).toHaveBeenCalledWith(['P', 'D'])
+})
+
+it('งานไปหลายจุดตามลำดับ: Google รวมจุดที่เดียวกันติดกัน → ขอเส้นทางใหม่ตามลำดับที่ผู้ขอกรอก (ไซต์ → สนง. → ไซต์)', async () => {
+  const A1 = { id: 'A1', siteName: 'ไซต์', lat: 13.7, lng: 100.7, sequenceId: 'sq_1', sequenceIndex: 0, sequenceSize: 3 }
+  const DOC = { id: 'DOC', siteName: 'สนง.เอกสาร', lat: 13.8, lng: 100.5, sequenceId: 'sq_1', sequenceIndex: 1, sequenceSize: 3 }
+  const A2 = { id: 'A2', siteName: 'ไซต์', lat: 13.7, lng: 100.7, sequenceId: 'sq_1', sequenceIndex: 2, sequenceSize: 3 }
+  const ui = mapUi([A2, DOC, A1])
+  const legs = [0, 1, 2, 3].map(() => ({ distance: { value: 10_000 }, duration: { value: 600 } }))
+  ui.route
+    // ลำดับตั้งต้น [A1, DOC, A2] · Google รวมไซต์ติดกัน → [A1, A2, DOC]
+    .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 2, 1], legs }] }, 'OK'))
+    .mockImplementationOnce((_req: any, cb: (r: unknown, s: string) => void) => cb({ routes: [{ waypoint_order: [0, 1, 2], legs }] }, 'OK'))
+  await ui.calculateRoute(true)
+  expect(ui.route).toHaveBeenCalledTimes(2)
+  expect(ui.route.mock.calls[1][0].optimizeWaypoints).toBe(false)
+  expect(ui.onOptimizedOrderChange).toHaveBeenCalledWith(['A1', 'DOC', 'A2'])
 })

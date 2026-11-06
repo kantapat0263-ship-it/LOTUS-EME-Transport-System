@@ -36,7 +36,8 @@ import { createQueueCommandFlight } from "@/components/continuous-queue/queue-co
 import { computeTripPlanDistance } from "@/lib/planDistance"
 import { assertRequestDestinationsUnchanged, dispatchedDestinationIndexes, requestDestinationFingerprint } from "@/lib/requestDestination"
 import { inThailand } from "@/lib/roadFlood"
-import { isTransferStop, orderPickupsBeforeDrop, TRANSFER_WARNING, transferLabel, transferShapeProblem, transferStopFields } from "@/lib/transfer"
+import { isTransferStop, stopSetKey, TRANSFER_WARNING, transferShapeProblem } from "@/lib/transfer"
+import { enforceSetOrder, isOneOffJobStop, isSequenceStop, jobSetFields, jobSetLabel } from "@/lib/sequence"
 
 type GroupingMode = 'auto' | 'manual';
 
@@ -199,40 +200,42 @@ export default function TripGroupingPage() {
     const ids = mode === 'manual' ? manualOrder : currentOrderedIds;
     const items = ids.map(id => availableDestinations.find(d => d.id === id)).filter(matchesSelection);
     
-    // งานรับของไปส่งต่อ: จุดส่งต้องตามหลังจุดรับของกลุ่มเดียวกันเสมอ (แผนที่จัดให้แล้ว — ตรงนี้กันอีกชั้นก่อนบันทึก)
+    // งานรับของไปส่งต่อ: จุดส่งต้องตามหลังจุดรับของกลุ่มเดียวกันเสมอ · งานไปหลายจุดตามลำดับ: จุดของชุดติดกันตามลำดับที่ผู้ขอกรอก
+    // (แผนที่จัดให้แล้ว — ตรงนี้กันอีกชั้นก่อนบันทึก)
     if (mode === 'auto') {
       const remaining = availableDestinations.filter(d => selectedIds.has(d.id) && !ids.includes(d.id) && matchesSelection(d));
-      return orderPickupsBeforeDrop([...items, ...remaining]);
+      return enforceSetOrder([...items, ...remaining]);
     }
-    return orderPickupsBeforeDrop(items);
+    return enforceSetOrder(items);
   }, [availableDestinations, selectedIds, manualOrder, currentOrderedIds, mode])
 
-  // งานรับของไปส่งต่อที่เลือกไม่ครบกลุ่ม (ตั้งใจแยกคัน / เผลอถอดออก) — เตือนบนการ์ดและก่อนสร้างเที่ยว
+  // ชุดงาน (รับของไปส่งต่อ / ไปหลายจุดตามลำดับ) ที่เลือกไม่ครบกลุ่ม (ตั้งใจแยกคัน / เผลอถอดออก) — เตือนบนการ์ดและก่อนสร้างเที่ยว
   const transferGroupMates = React.useCallback((d: any) => availableDestinations.filter(o =>
-    o.vrDocId === d.vrDocId && isTransferStop(o) && o.transferId === d.transferId), [availableDestinations])
+    o.vrDocId === d.vrDocId && stopSetKey(o) !== null && stopSetKey(o) === stopSetKey(d)), [availableDestinations])
   const isPicked = React.useCallback((id: string) => mode === 'manual' ? manualOrder.includes(id) : selectedIds.has(id), [mode, manualOrder, selectedIds])
   const splitTransferNames = React.useMemo(() => {
     const names = new Set<string>()
     selectedDestinations.forEach(d => {
-      if (!isTransferStop(d)) return
+      if (!isOneOffJobStop(d)) return
       transferGroupMates(d).filter(o => !isPicked(o.id)).forEach(o => names.add(`${o.siteName || o.customName} (${o.vrId})`))
     })
     return [...names]
   }, [selectedDestinations, transferGroupMates, isPicked])
   /** ป้ายบนการ์ด: การ์ดที่เลือกแล้วคิดจากลำดับในเที่ยว · เตือนเมื่อกลุ่มถูกแยก (จุดคู่ยังค้างในกอง / จัดไปเที่ยวอื่นแล้ว) */
   const transferBadgeFor = (d: any) => {
-    if (!isTransferStop(d)) return null
+    if (!isOneOffJobStop(d)) return null
     const mates = transferGroupMates(d)
     const index = selectedDestinations.findIndex(s => s.id === d.id)
     if (index >= 0) {
-      const label = transferLabel(selectedDestinations, index)
+      const label = jobSetLabel(selectedDestinations, index)
       if (!label) return null
       const left = mates.filter(o => !isPicked(o.id))
       if (left.length > 0) return { text: label.text, warning: `เลือกไม่ครบกลุ่ม — ยังเหลือ ${left.map(o => o.siteName || o.customName).join(', ')} ในกอง` }
       const missingMate = label.warning === TRANSFER_WARNING.dropMissing || label.warning === TRANSFER_WARNING.pickupMissing
+        || (label.role === 'sequence' && !!label.missing?.length)
       return { text: label.text, warning: missingMate ? 'จุดคู่จัดไปเที่ยวอื่นแล้ว' : label.warning }
     }
-    const label = transferLabel(mates, mates.findIndex(s => s.id === d.id))
+    const label = jobSetLabel(mates, mates.findIndex(s => s.id === d.id))
     if (!label) return null
     return mates.some(o => isPicked(o.id)) ? { text: label.text, warning: 'ยังไม่ได้เลือก — จุดอื่นของกลุ่มเลือกไปแล้ว' } : { text: label.text }
   }
@@ -278,15 +281,19 @@ export default function TripGroupingPage() {
     const destination = availableDestinations.find(d => d.id === id)
     if (!destination) return
     const isSelected = mode === 'manual' ? manualOrder.includes(id) : selectedIds.has(id)
-    // งานรับของไปส่งต่อ: เลือกจุดไหนก็ได้ทั้งกลุ่ม (จุดรับ + จุดส่งของใบเดียวกัน) · ถอดออกทีละจุด = ตั้งใจแยกคัน (มีเตือน)
+    // ชุดงาน: เลือกจุดไหนก็ได้ทั้งกลุ่ม (รับ-ส่ง: จุดรับ + จุดส่ง · งานต่อเนื่อง: ทุกจุดของใบ) · ถอดออกทีละจุด = ตั้งใจแยกคัน (มีเตือน)
     const picked = (i: string) => mode === 'manual' ? manualOrder.includes(i) : selectedIds.has(i)
-    const added = isSelected ? [] : isTransferStop(destination)
-      ? availableDestinations.filter(d => d.id === id || (d.vrDocId === destination.vrDocId && isTransferStop(d) && d.transferId === destination.transferId && !picked(d.id)))
+    const setKey = stopSetKey(destination)
+    const added = isSelected ? [] : setKey
+      ? enforceSetOrder(availableDestinations.filter(d => d.id === id || (d.vrDocId === destination.vrDocId && stopSetKey(d) === setKey && !picked(d.id))))
       : [destination]
     if (isSelected) selectionFingerprintsRef.current.delete(id)
     else added.forEach(d => selectionFingerprintsRef.current.set(d.id, d.sourceFingerprint))
     // บอกคนจัดรถว่าการ์ดอื่นถูกติ๊กตามมาด้วย (ไม่งั้นงงว่าทำไมติ๊กเพิ่มเอง)
-    if (added.length > 1) toast({
+    if (added.length > 1) toast(isSequenceStop(destination) ? {
+      title: `🔁 เลือกทั้งชุด ${added.length} จุด`,
+      description: `งานไปหลายจุดตามลำดับ ${destination.vrId || ""} — ทุกจุดไปคันเดียวกัน เรียงตามลำดับที่ผู้ขอกรอก (ถ้าจะแยกคัน ถอดออกทีละจุดได้)`,
+    } : {
       title: `📦 เลือกทั้งชุด ${added.length} จุด`,
       description: `งานรับของไปส่งต่อ ${destination.vrId || ""} — จุดรับกับจุดส่งไปคันเดียวกัน (ถ้าจะแยกคัน ถอดออกทีละจุดได้)`,
     })
@@ -295,10 +302,10 @@ export default function TripGroupingPage() {
         if (prev.includes(id)) {
           return prev.filter(i => i !== id)
         }
-        // โหมดจัดเอง: เรียงตามลำดับที่กด แต่จุดส่งต้องอยู่หลังจุดรับของกลุ่มเดียวกัน
+        // โหมดจัดเอง: เรียงตามลำดับที่กด แต่จุดส่งต้องอยู่หลังจุดรับของกลุ่มเดียวกัน · งานต่อเนื่องติดกันตามลำดับ
         const next = [...prev, ...added.map(d => d.id).filter(i => !prev.includes(i))]
         const byId = new Map(availableDestinations.map(d => [d.id, d]))
-        return orderPickupsBeforeDrop(next.map(i => byId.get(i) ?? { id: i })).map(d => d.id)
+        return enforceSetOrder(next.map(i => byId.get(i) ?? { id: i })).map(d => d.id)
       })
     } else {
       setSelectedIds(prev => {
@@ -397,18 +404,22 @@ export default function TripGroupingPage() {
         const orig = fresh.destinations?.[dest.destIndex]
         if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !orig || orig.pairedCopy) throw new Error("ไม่พบจุดต้นฉบับ หรือจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
         assertRequestDestinationsUnchanged(fresh, [dest.destIndex], [dest.sourceFingerprint])
-        // งานรับของไปส่งต่อ: คันคู่ = สำเนา "ทั้งชุด" (จุดรับทุกจุด + จุดส่ง) รหัสกลุ่มใหม่ — คันที่ 2 ได้ชุดของตัวเองครบ ไม่ปนกับชุดเดิม
-        // (สำเนาจุดเดียวจะได้จุดรับที่ไม่มีจุดส่ง หรือจุดส่งที่ไม่มีของ)
-        const sourceIndexes: number[] = isTransferStop(orig)
-          ? fresh.destinations.flatMap((d: any, i: number) => !d?.pairedCopy && isTransferStop(d) && d.transferId === orig.transferId ? [i] : [])
+        // ชุดงาน: คันคู่ = สำเนา "ทั้งชุด" รหัสกลุ่มใหม่ — คันที่ 2 ได้ชุดของตัวเองครบ ไม่ปนกับชุดเดิม
+        // (รับ-ส่ง: สำเนาจุดเดียวจะได้จุดรับที่ไม่มีจุดส่ง · งานต่อเนื่อง: ได้จุดเดียวที่ไม่มีเส้นทาง) · งานต่อเนื่องคงลำดับเดิมของแต่ละจุด
+        const origKey = stopSetKey(orig)
+        const sourceIndexes: number[] = origKey
+          ? fresh.destinations.flatMap((d: any, i: number) => !d?.pairedCopy && stopSetKey(d) === origKey ? [i] : [])
           : [dest.destIndex]
         if (isTransferStop(orig) && transferShapeProblem(sourceIndexes.map(i => fresh.destinations[i].transferRole))) throw new Error("ชุดรับ-ส่งของใบนี้ไม่ครบ กรุณาโหลดข้อมูลใหม่")
+        if (isSequenceStop(orig) && new Set(sourceIndexes.map(i => fresh.destinations[i].sequenceIndex)).size !== sourceIndexes.length) throw new Error("ลำดับงานต่อเนื่องของใบนี้ไม่ถูกต้อง กรุณาโหลดข้อมูลใหม่")
         const copyTransferId = isTransferStop(orig) ? `tf_${crypto.randomUUID()}` : null
+        const copySequenceId = isSequenceStop(orig) ? `sq_${crypto.randomUUID()}` : null
         const copies = sourceIndexes.map(i => {
           const copy: Record<string, any> = Object.fromEntries(
             Object.entries(fresh.destinations[i]).filter(([k, v]) => v !== undefined && k !== "pairedCopy" && k !== "pairedFromIndex")
           )
           if (copyTransferId) copy.transferId = copyTransferId
+          if (copySequenceId) copy.sequenceId = copySequenceId
           copy.pairedCopy = true
           copy.pairedFromIndex = i
           return copy
@@ -418,7 +429,9 @@ export default function TripGroupingPage() {
           updatedAt: serverTimestamp(),
         })
       })
-      toast(isTransferStop(dest)
+      toast(isSequenceStop(dest)
+        ? { title: "เพิ่มคันคู่ทั้งชุดแล้ว 🚛🚛", description: `ใบ ${dest.vrId || ""} มีสำเนางานต่อเนื่องทุกจุดอีก 1 ชุดในกอง — หยิบทั้งชุดไปจัดให้อีกคันได้เลย` }
+        : isTransferStop(dest)
         ? { title: "เพิ่มคันคู่ทั้งชุดแล้ว 🚛🚛", description: `ใบ ${dest.vrId || ""} มีสำเนาจุดรับ + จุดส่งอีก 1 ชุดในกอง — หยิบทั้งชุดไปจัดให้อีกคันได้เลย` }
         : { title: "เพิ่มคันคู่แล้ว 🚛🚛", description: `"${dest.siteName}" มีสำเนาในกองอีก 1 ใบ — หยิบไปจัดให้อีกคันได้เลย` })
     } catch (e: any) {
@@ -435,13 +448,14 @@ export default function TripGroupingPage() {
     const req = requests?.find(r => r.id === dest.vrDocId)
     if (!req?.destinations?.[dest.destIndex]?.pairedCopy) return
     // งานรับของไปส่งต่อ: สำเนาเป็นชุด (รหัสกลุ่มเดียวกัน) — ถอนทั้งชุดพร้อมกัน ไม่ให้เหลือจุดรับที่ไม่มีจุดส่งค้างในกอง
-    const isSet = isTransferStop(dest)
+    const destKey = stopSetKey(dest)
+    const isSet = destKey !== null
     const onTrip = dispatchedDestinationIndexes(req) // ไม่นับสำเนาที่ถอนไปแล้ว
     const partlyUsed = isSet && (req.destinations || []).some((d: any, i: number) =>
-      d?.pairedCopy && d.transferId === dest.transferId && onTrip.includes(i))
+      d?.pairedCopy && stopSetKey(d) === destKey && onTrip.includes(i))
     if (!window.confirm(partlyUsed
       ? `สำเนาคันคู่ชุดนี้ของใบ ${dest.vrId || ""} จัดเข้าเที่ยวไปแล้วบางจุด — ถอนเฉพาะจุดที่ยังค้างในกอง?\n(จุดที่จัดไปแล้วยังอยู่ในเที่ยวเดิม ไม่ถูกแตะ)`
-      : isSet ? `ถอนคันคู่ทั้งชุด (จุดรับ + จุดส่งที่เป็นสำเนา) ของใบ ${dest.vrId || ""} ออกจากกอง?` : `ถอนคันคู่ "${dest.siteName}" ออกจากกอง?`)) return
+      : isSet ? `ถอนคันคู่ทั้งชุด (${isSequenceStop(dest) ? "ทุกจุดของงานต่อเนื่อง" : "จุดรับ + จุดส่ง"}ที่เป็นสำเนา) ของใบ ${dest.vrId || ""} ออกจากกอง?` : `ถอนคันคู่ "${dest.siteName}" ออกจากกอง?`)) return
     let closedOnly = 0
     let setOnTrip = false
     try {
@@ -455,8 +469,9 @@ export default function TripGroupingPage() {
         const paired = fresh.destinations?.[dest.destIndex]
         if (!Number.isSafeInteger(dest.destIndex) || dest.destIndex < 0 || !paired?.pairedCopy || paired.pairedFromIndex !== dest.pairedFromIndex) throw new Error("สำเนาหรือลำดับจุดเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่")
         assertRequestDestinationsUnchanged(fresh, [dest.destIndex], [dest.sourceFingerprint])
-        const removed: number[] = isTransferStop(paired)
-          ? fresh.destinations.flatMap((d: any, i: number) => d?.pairedCopy && isTransferStop(d) && d.transferId === paired.transferId ? [i] : [])
+        const pairedKey = stopSetKey(paired)
+        const removed: number[] = pairedKey
+          ? fresh.destinations.flatMap((d: any, i: number) => d?.pairedCopy && stopSetKey(d) === pairedKey ? [i] : [])
           : [dest.destIndex]
         const first = Math.min(...removed)
         const assigned: number[] = fresh.assignedDestinations || []
@@ -546,7 +561,7 @@ export default function TripGroupingPage() {
     )) return
     // งานรับของไปส่งต่อ: จุดคู่ยังค้างในกอง = จุดรับกับจุดส่งจะอยู่คนละคัน (ทำได้ แต่ต้องตั้งใจ)
     if (splitTransferNames.length > 0 && !window.confirm(
-      `งานรับของไปส่งต่อยังเลือกไม่ครบกลุ่ม — จุดต่อไปนี้ยังค้างในกอง:\n${splitTransferNames.map(n => `• ${n}`).join('\n')}\n\nจุดรับกับจุดส่งจะอยู่คนละคัน ยืนยันแยก?`
+      `ชุดงาน (รับของไปส่งต่อ / ไปหลายจุดตามลำดับ) ยังเลือกไม่ครบกลุ่ม — จุดต่อไปนี้ยังค้างในกอง:\n${splitTransferNames.map(n => `• ${n}`).join('\n')}\n\nจุดของชุดเดียวกันจะอยู่คนละคัน ยืนยันแยก?`
     )) return
 
     const uniqueDates = Array.from(new Set(selectedDestinations.map(d => d.requestDate).filter(Boolean)))
@@ -572,9 +587,9 @@ export default function TripGroupingPage() {
       setBorrowOpen(true)
       return
     }
-    if (continuousEndDate && continuousEndDate > badgeDate && selectedDestinations.some(isTransferStop)) {
-      // คิวต่อเนื่องคัดลอกจุดเดิมไปทุกวัน — งานรับของครั้งเดียวจะถูกรับซ้ำทุกวัน
-      toast({ title: 'จัดเป็นคิวต่อเนื่องไม่ได้', description: 'งานรับของไปส่งต่อเป็นงานครั้งเดียว — ล้างวันสิ้นสุดคิวต่อเนื่อง แล้วจัดเป็นเที่ยววันเดียว', variant: 'destructive' })
+    if (continuousEndDate && continuousEndDate > badgeDate && selectedDestinations.some(isOneOffJobStop)) {
+      // คิวต่อเนื่องคัดลอกจุดเดิมไปทุกวัน — งานครั้งเดียว (รับของไปส่งต่อ / ไปหลายจุดตามลำดับ) จะถูกทำซ้ำทุกวัน
+      toast({ title: 'จัดเป็นคิวต่อเนื่องไม่ได้', description: `${selectedDestinations.some(isTransferStop) ? 'งานรับของไปส่งต่อ' : 'งานไปหลายจุดตามลำดับ'}เป็นงานครั้งเดียว — ล้างวันสิ้นสุดคิวต่อเนื่อง แล้วจัดเป็นเที่ยววันเดียว`, variant: 'destructive' })
       return
     }
     if (continuousEndDate && continuousEndDate > badgeDate) {
@@ -713,7 +728,7 @@ export default function TripGroupingPage() {
             requestTime: fresh.requestTime || req.requestTime || '08:30', address: fresh.address || '',
             note: req.note || req.notes || '', dispatcherNote: req.stopNotes?.[`stop_${d.destIndex}`] || '',
             dispatcherName: req.stopNoteAuthors?.[`stop_${d.destIndex}`] || req.stopNotesUpdatedBy || '',
-            ...transferStopFields(fresh),
+            ...jobSetFields(fresh),
           }
         })
         // คิวต่อเนื่องหลายวันใช้งานชุดเดียวกันทุกวัน — คิดครั้งเดียว
@@ -767,7 +782,7 @@ export default function TripGroupingPage() {
         note: d.note || "",
         dispatcherNote: d.dispatcherNote || "",
         dispatcherName: d.dispatcherName || "",
-        ...transferStopFields(d),
+        ...jobSetFields(d),
       }))
       // คิดก่อนนับเลขทริปของวัน — ไม่ให้ช่วงรอ Google ไปถ่างช่องระหว่างนับเลขกับบันทึก
       const distance = await planFields(warehousePos, stops)
@@ -910,6 +925,12 @@ export default function TripGroupingPage() {
       if (pickupsAfterDrop.length > 0 && !window.confirm(
         `จุดรับของต่อไปนี้จะอยู่หลังจุดส่งที่มีในเที่ยวนี้แล้ว (ลำดับเป็นส่งก่อนรับ):\n${pickupsAfterDrop.map((d: any) => `• ${d.siteName || d.customName}`).join('\n')}\n\nต้องแจ้งคนขับให้ไปรับก่อน ยืนยันรวม?`
       )) return
+      // งานต่อเนื่อง: จุดใหม่ต่อท้าย — ถ้าจุดลำดับหลังของชุดเดียวกันอยู่ในเที่ยวนี้แล้ว ลำดับจะสลับ (และมีงานอื่นคั่น) → ถามก่อน
+      const stepsBeforeEarlier = validNewStops.filter((d: any) => isSequenceStop(d) &&
+        currentStops.some((s: any) => isSequenceStop(s) && s.sequenceId === d.sequenceId && s.sequenceIndex > d.sequenceIndex && !(s.outcome && s.outcome !== 'delivered')))
+      if (stepsBeforeEarlier.length > 0 && !window.confirm(
+        `จุดของงานต่อเนื่องต่อไปนี้จะอยู่หลังจุดลำดับถัดไปที่มีในเที่ยวนี้แล้ว (ลำดับสลับ):\n${stepsBeforeEarlier.map((d: any) => `• จุดที่ ${d.sequenceIndex + 1} ${d.siteName || d.customName}`).join('\n')}\n\nต้องแจ้งคนขับเรื่องลำดับ ยืนยันรวม?`
+      )) return
       if (cancelled()) return
 
       const addedStops = validNewStops.map((d, index) => ({
@@ -925,7 +946,7 @@ export default function TripGroupingPage() {
         requestTime: d.requestTime || '',
         address: d.address || '',
         note: d.note || "",
-        ...transferStopFields(d),
+        ...jobSetFields(d),
       }))
 
       const mergedStops = [...currentStops, ...addedStops]

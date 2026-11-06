@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { inThailand } from '@/lib/roadFlood'
-import { transferStopFields } from '@/lib/transfer'
+import { isSequenceStop, jobSetFields } from '@/lib/sequence'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 let mergeHandler: ts.Expression | undefined
@@ -43,8 +43,8 @@ function arrange(statuses: Record<string, string> = {}, plan: Plan = { km: 250, 
     if (closeDuringPlan) dialogRef.current = null // ผู้ใช้ปิดหน้าต่างรวมระหว่างรอ Google
     return plan
   })
-  const handler = new Function('setIsProcessing', 'mergeDialog', 'pageVersionRef', 'mergeDialogRef', 'getDoc', 'doc', 'db', 'toast', 'isManagedTrip', 'confirmLeaveBeforeAssign', 'checkLeave', 'drivers', 'window', 'updateTripWithQueueGuard', 'serverTimestamp', 'computeTripPlanDistance', 'settings', 'resetAll', 'console', 'stopCoords', 'transferStopFields', `${compiled}; return merge`)(
-    vi.fn(), dialog, { current: 1 }, dialogRef, getDoc, (_db: unknown, collection: string, id: string) => `${collection}/${id}`, {}, toast, () => false, vi.fn().mockResolvedValue(true), vi.fn(), [], { confirm: () => true }, update, () => 'test-timestamp', computePlan, { googleMapsApiKeyReference: 'maps-key' }, reset, { error: vi.fn() }, stopCoords, transferStopFields,
+  const handler = new Function('setIsProcessing', 'mergeDialog', 'pageVersionRef', 'mergeDialogRef', 'getDoc', 'doc', 'db', 'toast', 'isManagedTrip', 'confirmLeaveBeforeAssign', 'checkLeave', 'drivers', 'window', 'updateTripWithQueueGuard', 'serverTimestamp', 'computeTripPlanDistance', 'settings', 'resetAll', 'console', 'stopCoords', 'jobSetFields', 'isSequenceStop', `${compiled}; return merge`)(
+    vi.fn(), dialog, { current: 1 }, dialogRef, getDoc, (_db: unknown, collection: string, id: string) => `${collection}/${id}`, {}, toast, () => false, vi.fn().mockResolvedValue(true), vi.fn(), [], { confirm: () => true }, update, () => 'test-timestamp', computePlan, { googleMapsApiKeyReference: 'maps-key' }, reset, { error: vi.fn() }, stopCoords, jobSetFields, isSequenceStop,
   ) as () => Promise<void>
   return { handler, update, toast, reset, trip, selected, computePlan }
 }

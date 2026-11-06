@@ -13,6 +13,8 @@ const stop = z.object({
   requestedBy: text.optional(), requestedByPhone: text.optional(), requestedByUserId: text.optional(), requestedAt: z.number().finite().optional(), requestTime: text.optional(), address: text.optional(), note: text.optional(), dispatcherNote: text.optional(), dispatcherName: text.optional(),
   // งานรับของไปส่งต่อ (lib/transfer) — รับเฉพาะการยืมคิววันเดียว · สร้างคิวหลายวันถูกปฏิเสธใน service
   transferRole: z.enum(['pickup', 'drop']).optional(), transferId: text.optional(), transferDropName: text.optional(),
+  // งานไปหลายจุดตามลำดับ (lib/sequence) — เหมือนงานรับ-ส่ง: รับเฉพาะการยืมคิววันเดียว
+  sequenceId: text.optional(), sequenceIndex: z.number().int().min(0).max(149).optional(), sequenceSize: z.number().int().min(1).max(150).optional(),
 }).strict()
 const trip = z.object({
   tripDate: date, driverId: id, driverName: text, vehicleId: id, vehiclePlate: text, stops: z.array(stop).min(1).max(150),

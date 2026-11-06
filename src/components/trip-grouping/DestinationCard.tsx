@@ -83,7 +83,7 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
                 <MapPin className="h-3.5 w-3.5 text-accent shrink-0" /> {dest.siteName}
               </p>
               {transferBadge && (
-                <p className={cn("text-[11px] font-semibold", dest.transferRole === "pickup" ? "text-amber-300" : "text-emerald-300")}>
+                <p className={cn("text-[11px] font-semibold", dest.transferRole === "pickup" ? "text-amber-300" : dest.transferRole === "drop" ? "text-emerald-300" : "text-indigo-300")}>
                   {transferBadge.text}
                   {transferBadge.warning && <span className="ml-1.5 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-400">⚠️ {transferBadge.warning}</span>}
                 </p>
@@ -153,7 +153,7 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
                   onClick={onRemoveDup}
                   className="rounded-md border border-red-500/40 px-2 py-0.5 text-[10px] font-medium text-red-400 hover:bg-red-500/15"
                 >
-                  {dest.transferRole ? "✕ ถอนคันคู่ทั้งชุด" : "✕ ถอนคันคู่"}
+                  {dest.transferRole || dest.sequenceId ? "✕ ถอนคันคู่ทั้งชุด" : "✕ ถอนคันคู่"}
                 </button>
               ) : onDuplicate ? (
                 <button
@@ -161,10 +161,11 @@ export function DestinationCard({ dest, isSelected, onToggle, manualIndex, onHov
                   onClick={onDuplicate}
                   title={dest.transferRole
                     ? "งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาทั้งชุด (จุดรับทุกจุด + จุดส่ง) ให้อีกคันหยิบไปจัด"
+                    : dest.sequenceId ? "งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาทุกจุดของงานต่อเนื่อง ให้อีกคันหยิบไปจัด"
                     : "งานนี้ต้องใช้รถมากกว่า 1 คัน — เพิ่มสำเนาจุดนี้ให้อีกคันหยิบไปจัด"}
                   className="rounded-md border border-blue-500/40 px-2 py-0.5 text-[10px] font-medium text-blue-400 hover:bg-blue-500/15"
                 >
-                  {dest.transferRole ? "🚛+ คันคู่ทั้งชุด" : "🚛+ เพิ่มคันคู่"}
+                  {dest.transferRole || dest.sequenceId ? "🚛+ คันคู่ทั้งชุด" : "🚛+ เพิ่มคันคู่"}
                 </button>
               ) : null}
             </div>

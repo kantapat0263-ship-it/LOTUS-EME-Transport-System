@@ -3,10 +3,14 @@ import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { assertRequestDestinationsUnchanged, dispatchedDestinationIndexes, requestDestinationFingerprint } from '@/lib/requestDestination'
 import { inThailand } from '@/lib/roadFlood'
-import { isTransferStop, orderPickupsBeforeDrop, transferShapeProblem, transferStopFields } from '@/lib/transfer'
+import { isTransferStop, orderPickupsBeforeDrop, stopSetKey, transferShapeProblem, transferStopFields } from '@/lib/transfer'
+import { enforceSetOrder, isOneOffJobStop, isSequenceStop, jobSetFields, jobSetLabel } from '@/lib/sequence'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-function actual(name: string, deps: Record<string, unknown>) {
+// helper ของชุดงาน (รับ-ส่ง + งานต่อเนื่อง) ที่หน้าใช้ — ฉีดให้ทุกตัวที่ดึงมา (ตัวที่ส่งมาเองทับได้)
+const SET_DEPS = { stopSetKey, enforceSetOrder, isOneOffJobStop, isSequenceStop, jobSetFields, jobSetLabel }
+function actual(name: string, given: Record<string, unknown>) {
+  const deps = { ...SET_DEPS, ...given }
   let expression: ts.Expression | undefined
   const find = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node) && node.name.getText(source) === name) expression = node.initializer
