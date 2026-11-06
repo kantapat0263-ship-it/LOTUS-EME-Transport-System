@@ -23,14 +23,15 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { validCoordinates } from "@/lib/tripCoordinateSync"
-import { transferDisplayOrder, transferLabel, transferNoteForDriver, type TransferFields, type TransferLabel } from "@/lib/transfer"
+import { transferDisplayOrder, type TransferFields } from "@/lib/transfer"
+import { jobSetLabel, jobSetNoteForDriver, type JobSetLabel, type SequenceFields } from "@/lib/sequence"
 
-/** ป้ายงานรับของไปส่งต่อบนใบงานคนขับ — บอกว่าจุดนี้รับของไปส่งที่ไหน / ส่งของที่รับมาจากไหน */
-function TransferTag({ label }: { label: TransferLabel }) {
-  const note = transferNoteForDriver(label)
+/** ป้ายงานรับของไปส่งต่อ / งานไปหลายจุดตามลำดับ บนใบงานคนขับ — บอกว่าจุดนี้รับของไปส่งที่ไหน / ส่งของที่รับมาจากไหน / จุดที่เท่าไรของเส้นทาง */
+function TransferTag({ label }: { label: JobSetLabel }) {
+  const note = jobSetNoteForDriver(label)
   return (
     <div className="mt-1">
-      <span className={`inline-block text-[12px] font-bold px-2 py-0.5 rounded-full ${label.role === "pickup" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
+      <span className={`inline-block text-[12px] font-bold px-2 py-0.5 rounded-full ${label.role === "pickup" ? "bg-amber-100 text-amber-900" : label.role === "sequence" ? "bg-indigo-100 text-indigo-900" : "bg-emerald-100 text-emerald-900"}`}>
         {label.text}
       </span>
       {note && <p className="text-[11px] font-semibold text-red-600 mt-0.5">⚠️ {note}</p>}
@@ -60,7 +61,7 @@ export default function DriverTripPage() {
   const [boardSize, setBoardSize] = React.useState(0)
   const [topKm, setTopKm] = React.useState(0)
   // Jobs other trucks handed to this driver today (public-safe: shown as "รับงานต่อ")
-  const [incoming, setIncoming] = React.useState<(Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName"> & TransferFields)[]>([])
+  const [incoming, setIncoming] = React.useState<(Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName"> & TransferFields & SequenceFields)[]>([])
   // Actual km for this trip after work moved in/out (null = fall back to planned)
   const [actualKm, setActualKm] = React.useState<number | null>(null)
 
@@ -190,7 +191,7 @@ export default function DriverTripPage() {
   const incomingCards = incoming.map((job, i) => (
     <div key={i} className="bg-white rounded-xl border border-blue-200 p-3">
       {(() => {
-        const label = transferLabel(transferPeers, incomingPos[i])
+        const label = jobSetLabel(transferPeers, incomingPos[i])
         return label && <TransferTag label={label} />
       })()}
       <div className="flex items-start gap-2">
@@ -285,7 +286,7 @@ export default function DriverTripPage() {
                 // จุดที่ไม่ต้องทำวันนี้ (โยกไปคันอื่น/เลื่อน/ปฏิเสธ — ใบงานส่งมาเป็น postponed / not-delivered) ไม่ขึ้นป้ายรับ-ส่ง
                 // ไม่งั้นป้าย "รับของ → ไปส่งต่อ" จะขัดกับคำเตือนของจุดคู่ที่บอกว่าจุดนี้ไม่อยู่ในใบงาน
                 if ((stop as any).outcome && (stop as any).outcome !== 'delivered') return null
-                const label = transferLabel(transferPeers, ownPos[index])
+                const label = jobSetLabel(transferPeers, ownPos[index])
                 return label && <TransferTag label={label} />
               })()}
             </div>

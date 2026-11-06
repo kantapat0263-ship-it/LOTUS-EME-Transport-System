@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { transferLabel, transferMateReminder, TRANSFER_WARNING } from '@/lib/transfer'
 import { jobSetFields } from '@/lib/sequence'
 import { incomingStopsForTrip } from '@/lib/calculations'
+import { isSequenceStop, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from '@/lib/sequence'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
@@ -151,10 +152,10 @@ function assistBox(dialog: unknown, trips: unknown[] = []) {
   if (!box) throw new Error('Actual assist transfer box missing')
   const code = ts.transpileModule(`const work = ${box.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText
   const React = { createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }) }
-  const helpers = { trips, incomingStopsForTrip, transferMateReminder }
+  const helpers = { trips, incomingStopsForTrip, transferMateReminder, jobSetMateReminder }
   const transferPeersOf = new Function(...Object.keys(helpers), `${body('transferPeersOf')}return work`)(...Object.values(helpers))
   const transferReminderFor = new Function(...Object.keys(helpers), 'transferPeersOf', `${body('transferReminderFor')}return work`)(...Object.values(helpers), transferPeersOf)
-  const deps = { React, assistDialog: dialog, transferLabel, transferPeersOf, transferReminderFor, transferMateReminder, TRANSFER_WARNING }
+  const deps = { React, assistDialog: dialog, transferLabel, sequenceLabel, transferPeersOf, transferReminderFor, transferMateReminder, TRANSFER_WARNING }
   const out = new Function(...Object.keys(deps), `${code}return work()`)(...Object.values(deps))
   const text = (node: any): string => node == null || node === false ? '' : typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : text(node.children)
   // บรรทัดละ <p> — บรรทัดแรก = ป้ายของคันต้นทาง

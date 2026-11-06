@@ -11,7 +11,7 @@
  */
 // import แบบ type อย่างเดียวสำหรับ react — ไฟล์นี้ถูก import ฝั่ง server ด้วย (driverTicket, vehicleRequestValidation)
 import type { CSSProperties } from 'react'
-import { isInactiveStop, isTransferStop, orderPickupsBeforeDrop, samePlace, transferLabel, transferMateReminder, transferStopFields, type Place, type TransferFields, type TransferLabel } from './transfer'
+import { isInactiveStop, isTransferStop, orderPickupsBeforeDrop, postponedPickupNote, samePlace, transferLabel, transferMateReminder, transferNoteForDriver, transferStopFields, transferTagStyle, type Place, type TransferFields, type TransferLabel } from './transfer'
 
 export interface SequenceFields {
   sequenceId?: string
@@ -194,4 +194,29 @@ export function sequenceNoteForDriver(label: SequenceLabel | null): string | nul
   if (label.warning.startsWith(SEQUENCE_WARNING.outOfOrder)) return 'ไปตามเลขจุดของงานต่อเนื่อง (จุดที่ 1 ก่อน) — ไม่แน่ใจถามคนจัดรถ'
   if (label.missing?.length) return `จุดที่ ${label.missing.join(', ')} ของงานนี้ไม่ได้อยู่ในใบงานนี้ — ถามคนจัดรถก่อนไป`
   return null
+}
+
+// ---------------------------------------------------------------------------
+// ตัวรวมของทั้งสองแบบ สำหรับหน้าจอ (ใบสรุป/ใบพิมพ์/ใบงานคนขับ/ประวัติ)
+// ---------------------------------------------------------------------------
+
+/** ชื่อแบบงานของจุด ใช้ขึ้นต้นข้อความเตือน — งานปกติ = '' */
+export function jobSetKindName(stop: (TransferFields & SequenceFields) | null | undefined): string {
+  return isTransferStop(stop) ? 'งานรับของไปส่งต่อ' : isSequenceStop(stop) ? 'งานไปหลายจุดตามลำดับ' : ''
+}
+
+/** สีป้ายบนกระดาษขาว (inline style) ของทั้งสองแบบ */
+export function jobSetTagStyle(label: JobSetLabel): CSSProperties {
+  return label.role === 'sequence' ? sequenceTagStyle : transferTagStyle(label)
+}
+
+/** คำอธิบายใต้ป้ายสำหรับคนขับ ของทั้งสองแบบ */
+export function jobSetNoteForDriver(label: JobSetLabel | null): string | null {
+  if (!label) return null
+  return label.role === 'sequence' ? sequenceNoteForDriver(label) : transferNoteForDriver(label)
+}
+
+/** ข้อความต่อท้ายใบวันใหม่เมื่อเลื่อนจุดของชุดงาน (จุดรับของ / จุดของงานต่อเนื่อง) · อื่น ๆ = null */
+export function jobSetPostponeNote(peers: readonly (Peer & TransferFields)[], index: number): string | null {
+  return postponedPickupNote(peers, index) ?? postponedSequenceNote(peers, index)
 }

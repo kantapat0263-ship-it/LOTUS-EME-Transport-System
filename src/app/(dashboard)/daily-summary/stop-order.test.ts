@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
 import { isManagedTrip } from '@/lib/continuousQueue'
 import { transferMateReminder } from '@/lib/transfer'
+import { isSequenceStop, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from '@/lib/sequence'
 
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
@@ -32,12 +33,12 @@ function arrange(reject = false, opts: { stops?: any[]; incoming?: number; plan?
   const remove = vi.fn().mockResolvedValue(undefined)
   const incoming = vi.fn(() => Array.from({ length: opts.incoming ?? 0 }, () => ({ fromTripId: 'SRC' })))
   const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'window', 'deleteTripWithQueueGuard', 'setRefusalDrafts', 'incomingStopsForTrip', 'recordedBy', 'user',
-    'computePlanDistance', 'nextDistGen', 'isLatestDistGen', 'setStatsRefreshKey', 'getDoc', 'assertTripStopsUnchanged', 'doc', 'isManagedTrip', 'transferMateReminder',
+    'computePlanDistance', 'nextDistGen', 'isLatestDistGen', 'setStatsRefreshKey', 'getDoc', 'assertTripStopsUnchanged', 'doc', 'isManagedTrip', 'jobSetMateReminder', 'jobSetKindName',
     `${body('transferPeersOf')}${body('transferReminderFor')}${body('persistTripPatch')}${body('applyStops')}${body('readLiveTrip')}${body('planDistanceFields')}${body('applyStopsWithDistance')}${body('cancelStop')}return cancelStop`)(
     {}, [trip], update, () => 'test-time', (fn: (prev: any[]) => any[]) => { state = fn(state) }, toast, () => true, { confirm: opts.confirm ?? (() => true) }, remove, vi.fn(), incoming, 'คนจัดรถ', null,
     compute, (id: string) => (gens[id] = (gens[id] ?? 0) + 1), (id: string, gen: number) => gens[id] === gen, statsRefresh,
     // ทริปบนฐาน (ค่าเริ่มต้น = ตรงกับบนจอ)
-    async () => ({ exists: () => true, data: () => structuredClone(opts.live ? opts.live(trip) : trip) }), assertTripStopsUnchanged, () => 'trip-ref', isManagedTrip, transferMateReminder,
+    async () => ({ exists: () => true, data: () => structuredClone(opts.live ? opts.live(trip) : trip) }), assertTripStopsUnchanged, () => 'trip-ref', isManagedTrip, jobSetMateReminder, jobSetKindName,
   ) as (trip: unknown, index: number) => Promise<void>
   return { trip, handler, update, toast, compute, statsRefresh, saved, remove, state: () => state }
 }

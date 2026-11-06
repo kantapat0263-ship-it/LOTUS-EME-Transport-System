@@ -7,6 +7,7 @@ import { isManagedTrip } from '@/lib/continuousQueue'
 import { findFreeRequestId, requestIdPrefix, RequestIdExhaustedError } from '@/lib/requestId'
 import { activeTransferSet, postponedPickupNote, TRANSFER_SET_CONFLICT, transferMateReminder } from '@/lib/transfer'
 import { assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
+import { isSequenceStop, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from '@/lib/sequence'
 
 // เลื่อนทั้งชุด / ทีละจุด — คอมไพล์ handlePostpone ตัวจริงจากหน้าใบสรุป + ธุรกรรมปลอม (อ่านหลังเขียน = พัง · throw = ไม่มีอะไรถูกเขียน)
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -55,12 +56,12 @@ function arrange(opts: { stops?: Raw[]; stopIdx?: number; live?: Raw[]; existing
   const deps = {
     postponeDialog: { tripId: 'T1', stopIdx: opts.stopIdx ?? 0, expectedStops: structuredClone(stops) },
     db: {}, trips: [trip], setPostponeDialog, allowOrdinaryEdit: () => true, activeTransferSet, toast, postponeDateStr: NEW_DATE, format,
-    postponedPickupNote, setIsPostponing: vi.fn(), isPostponedReqGrouped,
+    postponedPickupNote, jobSetPostponeNote, isSequenceStop, setIsPostponing: vi.fn(), isPostponedReqGrouped,
     getDocs: async () => ({ size: opts.startSize ?? 0 }), query: () => ({}), collection: () => ({}), where: () => ({}),
     doc: (_db: unknown, coll: string, id: string) => `${coll}/${id}`, requestIdPrefix, user: { uid: 'U-DISP', email: 'disp@x' }, serverTimestamp: () => 'ts',
     runTransaction, isManagedTrip, assertTripStopsUnchanged, findFreeRequestId, recordedBy: 'น้าสาว',
     setTrips, setRefusalDrafts: vi.fn(), formatThaiDate: (s: string) => s, TRANSFER_SET_CONFLICT, RequestIdExhaustedError,
-    incomingStopsForTrip, transferMateReminder, console: { error: () => {} },
+    incomingStopsForTrip, transferMateReminder, jobSetMateReminder, jobSetKindName, console: { error: () => {} },
   }
   const handler = new Function(...Object.keys(deps), `${body('transferPeersOf')}${body('stripOutcome')}${body('cleanStops')}${body('handlePostpone')}return handlePostpone`)(...Object.values(deps)) as (whole?: boolean) => Promise<void>
   const requests = () => sets.filter(([ref]) => ref.startsWith('vehicleRequests/'))

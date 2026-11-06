@@ -6,6 +6,7 @@ import { isManagedTrip } from '@/lib/continuousQueue'
 import { tripDriverLabel } from '@/lib/reassign'
 import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, transferMateReminder, transferSetOutside, transferStopName } from '@/lib/transfer'
 import { assertTripStopsUnchanged } from '@/lib/tripQueueGuard'
+import { isSequenceStop, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from '@/lib/sequence'
 
 // งานรับของไปส่งต่อ "ทำทั้งชุด" (โยก/คนขับปฏิเสธ/ยกเลิก) — คอมไพล์ handler/ปุ่ม/หน้าต่างตัวจริงจากหน้าใบสรุป ไม่ต้องบูต Firebase
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -330,7 +331,7 @@ describe('แถวในแผงปิดผลงาน: ปุ่มไห�
       React, isManagedTrip, displayOf: () => ({ ownPos: stops.map((_, i) => i), peers: stops }), activeTransferSet,
       openTransferSet: (...args: unknown[]) => calls.push(['set', ...args.slice(1)]),
       runOrdinaryAction, chooseOutcome: (...args: unknown[]) => calls.push(['outcome', ...args.slice(1)]), cancelStop: (...args: unknown[]) => calls.push(['cancel', ...args.slice(1)]),
-      ordinaryBusy: false, cn: (...c: unknown[]) => c.filter(Boolean).join(' '), transferLabel: () => null, RequestTimingBadge: 'badge', openNoteDialog: () => {}, Pencil: 'i', Trash2: 'i', CheckCircle2: 'i', ArrowRightLeft: 'i', CalendarClock: 'i', Ban: 'i',
+      ordinaryBusy: false, cn: (...c: unknown[]) => c.filter(Boolean).join(' '), transferLabel: () => null, jobSetLabel: () => null, RequestTimingBadge: 'badge', openNoteDialog: () => {}, Pencil: 'i', Trash2: 'i', CheckCircle2: 'i', ArrowRightLeft: 'i', CalendarClock: 'i', Ban: 'i',
       setAssistForm: () => {}, setAssistDialog: () => {}, refusalDrafts: {}, setRefuseReason: () => {}, formatThaiDate: (s: string) => s, setReassignNewForm: () => {}, setReassignNewDialog: () => {}, setReassignTarget: () => {},
       trips: [trip], tripDriverLabel, liveMoveTarget: () => null,
     }
@@ -421,7 +422,7 @@ describe('หน้าต่างเลื่อน: กล่องงาน�
     const trips = [trip, ...others]
     const deps = {
       React, postponeDialog: { tripId: 'T1', stopIdx, expectedStops: stops }, trips, postponeSet: activeTransferSet(stops as never[], stopIdx),
-      transferMateReminder, incomingStopsForTrip, postponedPickupNote, transferSetOutside, transferStopName, incomingOf: (id: string) => incomingStopsForTrip(trips as never[], id),
+      transferMateReminder, jobSetMateReminder, jobSetPostponeNote, jobSetKindName, isSequenceStop, incomingStopsForTrip, postponedPickupNote, transferSetOutside, transferStopName, incomingOf: (id: string) => incomingStopsForTrip(trips as never[], id),
     }
     return text(new Function(...Object.keys(deps), `${body('transferPeersOf')}${body('transferReminderFor')}${arrowWith('transferSetOutside(expected')}return work()`)(...Object.values(deps)))
   }

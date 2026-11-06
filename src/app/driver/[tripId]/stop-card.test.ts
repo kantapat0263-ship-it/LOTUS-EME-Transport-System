@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { buildDriverTicket } from '@/server/driverTicket'
 import { validCoordinates } from '@/lib/tripCoordinateSync'
 import { transferDisplayOrder, transferLabel, type TransferFields, type TransferLabel } from '@/lib/transfer'
+import { jobSetLabel } from '@/lib/sequence'
 
 const pageSource = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function compiledCallback(callee: string, name: string) {
@@ -53,8 +54,8 @@ function stopCards(trip: { stops: Record<string, unknown>[] }, withTransferTag =
   // withTransferTag: ใช้ป้ายรับ-ส่งตัวจริงของใบงาน (ตรวจว่าจุดที่ไม่ต้องไปไม่ขึ้นป้าย) · WARN: = มีคำเตือนที่คนขับจะเห็น
   const tag = withTransferTag ? ({ label }: { label: TransferLabel }) => React.createElement('span', null, `TAG:${label.text}${label.warning ? ` WARN:${label.warning}` : ''}`) : () => null
   const view = transferDisplayOrder(trip.stops as TransferFields[], incoming)
-  const renderCard = new Function('React', 'trip', 'transferLabel', 'transferPeers', 'ownPos', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText', `${compiled}; return renderCard`)(
-    React, trip, withTransferTag ? transferLabel : () => null, view.peers, view.ownPos, tag, validCoordinates, icon, icon, icon, icon, icon,
+  const renderCard = new Function('React', 'trip', 'jobSetLabel', 'transferPeers', 'ownPos', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText', `${compiled}; return renderCard`)(
+    React, trip, withTransferTag ? jobSetLabel : () => null, view.peers, view.ownPos, tag, validCoordinates, icon, icon, icon, icon, icon,
   ) as (stop: unknown, index: number) => React.ReactElement
   return trip.stops.map((stop, index) => renderToStaticMarkup(renderCard(stop, index)))
 }
@@ -162,9 +163,9 @@ describe('ใบงานคนขับ — จุดที่วันนี�
     expect(ticket.incoming).toHaveLength(2)
     const icon = () => React.createElement('span')
     const tag = ({ label }: { label: TransferLabel }) => React.createElement('span', null, `TAG:${label.text}${label.warning ? ` WARN:${label.warning}` : ''}`)
-    const page = new Function('React', 'trip', 'incoming', 'transferDisplayOrder', 'transferLabel', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText',
+    const page = new Function('React', 'trip', 'incoming', 'transferDisplayOrder', 'jobSetLabel', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText',
       `${compiledStatements('view', 'ownCards')}; return { view, boxedIncoming, incomingCards, ownCards }`,
-    )(React, ticket.trip, ticket.incoming, transferDisplayOrder, transferLabel, tag, validCoordinates, icon, icon, icon, icon, icon)
+    )(React, ticket.trip, ticket.incoming, transferDisplayOrder, jobSetLabel, tag, validCoordinates, icon, icon, icon, icon, icon)
     const html = renderToStaticMarkup(new Function('React', 'view', 'boxedIncoming', 'incomingCards', 'ownCards', 'Repeat', 'Navigation', 'actualKm', 'trip', 'formatDuration',
       `${compiledMain()}; return main`,
     )(React, page.view, page.boxedIncoming, page.incomingCards, page.ownCards, icon, icon, null, ticket.trip, () => '-'))

@@ -3,6 +3,7 @@ import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { isSameOutcome, keepsMoveTarget, renameMoveTarget } from '../../../lib/reassign'
 import { transferMateReminder } from '../../../lib/transfer'
+import { isSequenceStop, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from '@/lib/sequence'
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 function body(name: string) {
   let value: ts.Expression | undefined
@@ -125,7 +126,7 @@ function outcomeUI(stop: any, others: any[] = []) {
   const toast = vi.fn()
   const t = { id: 'T1', stops: [stop, ...others] }
   const strip = ({ outcome: _o, outcomeReason: _r, reassignedToTripId: _t, reassignedToVehiclePlate: _p, reassignedToDriverName: _n, ...rest }: any) => rest
-  const deps = { allowOrdinaryEdit: () => true, openPostponeDialog: vi.fn(), isSameOutcome, keepsMoveTarget, buildStops: (original: any, index: number, fn: any) => original.stops.map((s: any, i: number) => i === index ? fn(s) : s), stripOutcome: strip, recordedBy: 'ผู้จัด', applyStops: apply, user: null, toast, transferReminderFor: (trip: any, index: number) => transferMateReminder(trip.stops, index) }
+  const deps = { allowOrdinaryEdit: () => true, openPostponeDialog: vi.fn(), isSameOutcome, keepsMoveTarget, buildStops: (original: any, index: number, fn: any) => original.stops.map((s: any, i: number) => i === index ? fn(s) : s), stripOutcome: strip, recordedBy: 'ผู้จัด', applyStops: apply, user: null, toast, transferReminderFor: (trip: any, index: number) => transferMateReminder(trip.stops, index), jobSetKindName }
   const handler = new Function(...Object.keys(deps), `${body('chooseOutcome')}return work`)(...Object.values(deps))
   return { handler, apply, t, toast }
 }

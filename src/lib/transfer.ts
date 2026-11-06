@@ -118,7 +118,7 @@ export const TRANSFER_WARNING = {
   pickupAfterDrop: 'จุดรับอยู่หลังจุดส่ง — ตรวจลำดับ',
 } as const
 
-type Peer = TransferFields & { siteName?: string; outcome?: string }
+type Peer = TransferFields & { siteName?: string; outcome?: string; sequenceId?: string; sequenceIndex?: number }
 
 /**
  * จุดที่โยกไปคันอื่น / เลื่อนวัน / ไม่ได้ทำ (outcome อื่นที่ไม่ใช่ส่งแล้ว) — ยังอยู่ในลิสต์ของทริปเดิม แต่ของไม่ได้ไปกับคันนี้
@@ -209,6 +209,7 @@ export interface TransferDisplay<O extends Peer, I extends Peer> {
 /**
  * ลำดับที่แสดงบนใบสรุป/ใบงานคนขับ/แผงปิดผลงาน — เริ่มจาก [จุดของเที่ยวตามที่บันทึก..., งานโยกเข้า...] (แบบเดิม)
  * แล้วย้ายงานโยกเข้าที่เป็น "จุดรับ" ไปไว้หน้าจุดส่งของกลุ่มเดียวกันที่ยังไปกับเที่ยวนี้ (ถ้าจุดส่งมาก่อน)
+ * งานต่อเนื่องที่โยกเข้า ไปไว้หน้าจุดลำดับถัดไปของชุดเดียวกัน (กติกาเดียวกัน)
  * รับหลายร้านคงลำดับเดิม (P1, P2, D) · จุดของเที่ยวไม่สลับกันเอง · งานอื่นอยู่ท้ายเหมือนเดิม · ทริปปกติได้ลำดับเดิมทุกตำแหน่ง
  * แสดงผลอย่างเดียว: ไม่เรียง stops ที่บันทึก — ปุ่ม/หมายเหตุ (stop_<i>)/กม. ยังใช้ index ที่บันทึก
  */
@@ -225,6 +226,16 @@ export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readon
     if (drop === -1 || drop > at) return
     const [slot] = slots.splice(at, 1)
     slots.splice(drop, 0, slot) // drop อยู่ก่อน at → ตัด at ออกแล้วตำแหน่ง drop ไม่เลื่อน = วางหน้าจุดส่งพอดี
+  })
+  // งานไปหลายจุดตามลำดับ (lib/sequence): งานโยกเข้าไปอยู่หน้าจุดลำดับถัดไปของชุดเดียวกันที่ยังไปกับเที่ยวนี้ (ถ้าจุดนั้นมาก่อน)
+  incoming.forEach((job, index) => {
+    const key = stopSetKey(job)
+    if (!key?.startsWith('sq:')) return
+    const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
+    const later = slots.findIndex(s => s !== slots[at] && stopSetKey(s.stop) === key && (s.stop.sequenceIndex as number) > (job.sequenceIndex as number) && !isInactiveStop(s.stop))
+    if (later === -1 || later > at) return
+    const [slot] = slots.splice(at, 1)
+    slots.splice(later, 0, slot)
   })
   const ownPos: number[] = new Array(own.length)
   const incomingPos: number[] = new Array(incoming.length)

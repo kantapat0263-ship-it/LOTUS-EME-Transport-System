@@ -45,8 +45,8 @@ import { useToast } from "@/hooks/use-toast"
 import { Trip, Driver, Vehicle, TripStop, StopOutcome, Site } from "@/types/models"
 import { RequestTimingBadge } from "@/components/requests/RequestTimingBadge"
 import { computeOutcomeStats, computeDriverLeaderboard, monthRange, incomingStopsForTrip, calculateFuelCost, type DriverStat, type IncomingJob } from "@/lib/calculations"
-import { activeTransferSet, postponedPickupNote, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferNoteForDriver, transferSetOutside, transferStopName, transferTagStyle, type TransferDisplay } from "@/lib/transfer"
-import { jobSetFields } from "@/lib/sequence"
+import { activeTransferSet, TRANSFER_EDIT_AT_SOURCE, TRANSFER_SET_CONFLICT, TRANSFER_WARNING, transferDisplayOrder, transferLabel, transferMateReminder, transferSetOutside, transferStopName, type TransferDisplay } from "@/lib/transfer"
+import { isSequenceStop, jobSetFields, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from "@/lib/sequence"
 import { isFullyMovedOutLive, isEmptyTrip, isSameOutcome, keepsMoveTarget, liveMoveTarget, renameMoveTarget, tripDriverLabel } from "@/lib/reassign"
 import { requestIdPrefix, findFreeRequestId, RequestIdExhaustedError } from "@/lib/requestId"
 import { createLatestRequestGuard } from "@/lib/latestRequest"
@@ -1023,7 +1023,7 @@ export default function DailySummaryPage() {
 
   // งานรับของไปส่งต่อ: ลิสต์เดียวกับที่ป้ายใช้ (จุดของเที่ยว + งานที่โยกเข้ามา) — เตือนว่าจุดคู่ยังค้างเมื่อทำทีละจุด
   const transferPeersOf = (trip: Trip) => [...(trip.stops || []), ...incomingStopsForTrip(trips as any, trip.id)]
-  const transferReminderFor = (trip: Trip, sIdx: number) => transferMateReminder(transferPeersOf(trip), sIdx)
+  const transferReminderFor = (trip: Trip, sIdx: number) => jobSetMateReminder(transferPeersOf(trip), sIdx)
 
   // ลบงานแทรก (เฉพาะ stop ที่ adhoc — งานตามแผนลบไม่ได้ ต้องใช้ เลื่อน/โยก)
   // ยกเลิก/ลบงานออกจากทริป (ลูกค้าแจ้งยกเลิกหลังออกคิว) — งานหายจากใบสรุป
@@ -1034,7 +1034,7 @@ export default function DailySummaryPage() {
     if (!stop) return
     const verb = (stop as any).adhoc ? "ลบงานแทรก" : "ยกเลิกงาน"
     const reminder = transferReminderFor(trip, sIdx)
-    const transferNote = reminder ? `\n\n⚠️ งานรับของไปส่งต่อ: ${reminder} — จุดนั้นไม่ถูกยกเลิกตาม อย่าลืมจัดการด้วย` : ""
+    const transferNote = reminder ? `\n\n⚠️ ${jobSetKindName(stop)}: ${reminder} — จุดนั้นไม่ถูกยกเลิกตาม อย่าลืมจัดการด้วย` : ""
     const remaining = (trip.stops || []).filter((_, i) => i !== sIdx)
     // งานที่เคยเลื่อนไปวันอื่น → ปลดใบวันใหม่พร้อมกัน (ใบวันใหม่ถูกจัดรถแล้ว = guard ปฏิเสธ ต้องเอางานออกจากทริปวันนั้นก่อน)
     const postponedReqId = (stop as any).postponedRequestId as string | undefined
@@ -1245,7 +1245,7 @@ export default function DailySummaryPage() {
       supersedeRequest: { id: prev.postponedRequestId, by: recordedBy || user?.email || "" },
     } : undefined)
     if (ok && reminder) toast({
-      title: "⚠️ งานรับของไปส่งต่อ — จุดคู่ยังอยู่ในเที่ยวนี้",
+      title: `⚠️ ${jobSetKindName(trip.stops[stopIdx]) || "งานรับของไปส่งต่อ"} — จุดคู่ยังอยู่ในเที่ยวนี้`,
       description: outcome === 'reassigned'
         ? `${reminder} — ถ้าจะโยกทั้งชุด ให้โยกจุดนั้นไปคันเดียวกันด้วย`
         : `${reminder} — อย่าลืมจัดการจุดนั้นด้วย (โยกตาม / หรือเขียน ✏️ หมายเหตุบอกคนขับ)`,
@@ -1290,7 +1290,7 @@ export default function DailySummaryPage() {
     }
     // งานรับของไปส่งต่อ: ใบวันใหม่เป็นจุดปกติจุดเดียว (ไม่มีจุดส่งในใบ) — จุดรับต้องบอกในรายละเอียดว่ารับแล้วเอาไปส่งที่ไหน
     const peers = transferPeersOf(trip)
-    const jobOf = (i: number) => [trip.stops[i]?.cargoDetails || "", postponedPickupNote(peers, i) || ""].filter(Boolean).join("\n")
+    const jobOf = (i: number) => [trip.stops[i]?.cargoDetails || "", jobSetPostponeNote(peers, i) || ""].filter(Boolean).join("\n")
     setIsPostponing(true)
     // งานในทริปเปลี่ยนหลังเปิดหน้าต่าง (เช็กในธุรกรรม) — ทั้งชุดปิดหน้าต่างแล้วให้กดใหม่ที่จุดนั้น
     let stale = false
@@ -1411,7 +1411,9 @@ export default function DailySummaryPage() {
       toast(whole
         ? {
             title: `เลื่อนทั้งชุด ${idxs.length} จุดแล้ว ✅`,
-            description: `ย้ายไป ${formatThaiDate(newDate)} — วันนั้นได้ใบขอธรรมดา ${idxs.length} ใบ ใบละจุด (${requestIds.join(", ")}) ไม่มีป้ายรับ-ส่ง: ตอนจัดเที่ยววิ่ง ให้ใส่ทุกใบไว้คันเดียวกัน และให้จุดรับมาก่อนจุดส่ง`,
+            description: isSequenceStop(trip.stops[stopIdx])
+              ? `ย้ายไป ${formatThaiDate(newDate)} — วันนั้นได้ใบขอธรรมดา ${idxs.length} ใบ ใบละจุด (${requestIds.join(", ")}) ไม่มีป้ายงานต่อเนื่อง: ตอนจัดเที่ยววิ่ง ให้ใส่ทุกใบไว้คันเดียวกัน แล้วเรียงตามลำดับเดิม (เขียนไว้ท้ายรายละเอียดแต่ละใบ)`
+              : `ย้ายไป ${formatThaiDate(newDate)} — วันนั้นได้ใบขอธรรมดา ${idxs.length} ใบ ใบละจุด (${requestIds.join(", ")}) ไม่มีป้ายรับ-ส่ง: ตอนจัดเที่ยววิ่ง ให้ใส่ทุกใบไว้คันเดียวกัน และให้จุดรับมาก่อนจุดส่ง`,
           }
         : { title: "เลื่อนงานแล้ว ✅", description: `ย้ายไป ${formatThaiDate(newDate)} — เข้ากองจัดเที่ยววิ่งวันนั้นเรียบร้อย (${requestIds[0]})` })
       setPostponeDialog(null)
@@ -1764,7 +1766,7 @@ export default function DailySummaryPage() {
 
   // งานโยกเข้าที่ถูกแทรกก่อนจุดส่งของคันนี้ — แสดงอย่างเดียวให้เลขข้อตรงกับใบพิมพ์ (ผลของงานเก็บที่คันต้นทาง จึงไม่มีปุ่ม ไม่เขียนอะไรลงฐาน)
   const renderIncomingRow = (trip: Trip, job: IncomingJob, incomingIdx: number, pos: number) => {
-    const label = transferLabel(displayOf(trip).peers, pos)
+    const label = jobSetLabel(displayOf(trip).peers, pos)
     return (
       <div key={`${trip.id}-inc-${incomingIdx}`} className="flex flex-col gap-1 rounded-md border border-dashed border-blue-500/30 bg-secondary/10 p-2.5">
         <span className="text-sm font-medium text-muted-foreground">
@@ -1828,9 +1830,9 @@ export default function DailySummaryPage() {
             ) : null}
             {(() => {
               // งานรับของไปส่งต่อ: จับคู่กับจุดของคันนี้ + งานที่โยกเข้ามา (ลำดับบนจอ) · เตือนคนจัดรถถ้าจุดคู่อยู่คนละคัน/ลำดับส่งก่อนรับ
-              const label = transferLabel(view.peers, view.ownPos[sIdx])
+              const label = jobSetLabel(view.peers, view.ownPos[sIdx])
               return label && (
-                <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+                <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : label.role === 'sequence' ? "bg-indigo-500/15 text-indigo-300" : "bg-emerald-500/15 text-emerald-300")}>
                   {label.text}
                   {label.warning && <span className="ml-1 text-red-400">⚠️ {label.warning}</span>}
                 </span>
@@ -2178,8 +2180,8 @@ export default function DailySummaryPage() {
                             // refusal someone took over) we only reveal where it went — never "ปฏิเสธ".
                             const movedToPlate = (stop as any).reassignedToVehiclePlate;
                             const movedToDriver = (stop as any).reassignedToDriverName;
-                            const tLabel = transferLabel(transferPeers, ownPos[sIdx]);
-                            const tNote = transferNoteForDriver(tLabel);
+                            const tLabel = jobSetLabel(transferPeers, ownPos[sIdx]);
+                            const tNote = jobSetNoteForDriver(tLabel);
 
                             return (
                               <tr key={`${trip.id}-${sIdx}`}>
@@ -2201,7 +2203,7 @@ export default function DailySummaryPage() {
                                           🤝 คันช่วย · จาก {(stop as any).assistForPlate}
                                         </span>
                                       )}
-                                      {tLabel && <span style={transferTagStyle(tLabel)}>{tLabel.text}</span>}
+                                      {tLabel && <span style={jobSetTagStyle(tLabel)}>{tLabel.text}</span>}
                                     </div>
                                     <div className="pl-5 space-y-0.5">
                                       <div className="flex gap-2">
@@ -2274,8 +2276,8 @@ export default function DailySummaryPage() {
                           // รายละเอียดครบเท่าแถวปกติ (เวลา/ผู้ขอ/เบอร์/หมายเหตุ) — เพราะแถวนี้อาจ
                           // "แทนที่" แถวของคันต้นทางทั้งคัน (เคสรถต้นทางไม่ได้วิ่ง ถูกซ่อนจากใบสรุป)
                           const incomingRows = incoming.map((job, i) => {
-                            const tLabel = transferLabel(transferPeers, incomingPos[i]);
-                            const tNote = transferNoteForDriver(tLabel);
+                            const tLabel = jobSetLabel(transferPeers, incomingPos[i]);
+                            const tNote = jobSetNoteForDriver(tLabel);
                             return (
                             <tr key={`${trip.id}-inc-${i}`} className="bg-blue-50">
                               {/* แถวรับโยกเป็นแถวแรกบนจอ (คันที่มีแต่งานรับโยก / จุดรับที่ขึ้นก่อนจุดส่ง) — คอลัมน์วันที่มาอยู่แถวนี้ (กัน col เหลื่อม) */}
@@ -2294,7 +2296,7 @@ export default function DailySummaryPage() {
                                     }}>
                                       🔄 รับโยกงานต่อ
                                     </span>
-                                    {tLabel && <span style={transferTagStyle(tLabel)}>{tLabel.text}</span>}
+                                    {tLabel && <span style={jobSetTagStyle(tLabel)}>{tLabel.text}</span>}
                                   </div>
                                   <div className="pl-5 space-y-0.5">
                                     {job.cargoDetails && (
@@ -2638,7 +2640,7 @@ export default function DailySummaryPage() {
             <DialogDescription>
               {postponeDialog
                 ? `จุด: ${trips.find(t => t.id === postponeDialog.tripId)?.stops?.[postponeDialog.stopIdx]?.siteName || ''} — ระบบจะดึงจุดนี้ออกจากใบสรุป แล้วสร้างเป็นงานใหม่รอจัดในวันที่เลือก` +
-                  (postponeSet.length > 1 ? ` · งานรับของไปส่งต่อ: เลือก "เลื่อนทั้งชุด" เพื่อเลื่อนพร้อมกัน ${postponeSet.length} จุด (รายชื่อด้านล่าง)` : '')
+                  (postponeSet.length > 1 ? ` · ${jobSetKindName(postponeDialog.expectedStops[postponeDialog.stopIdx])}: เลือก "เลื่อนทั้งชุด" เพื่อเลื่อนพร้อมกัน ${postponeSet.length} จุด (รายชื่อด้านล่าง)` : '')
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -2663,17 +2665,19 @@ export default function DailySummaryPage() {
               const pTrip = postponeDialog ? trips.find(t => t.id === postponeDialog.tripId) : null
               if (!pTrip || !postponeDialog) return null
               const reminder = transferReminderFor(pTrip, postponeDialog.stopIdx)
-              const note = postponedPickupNote(transferPeersOf(pTrip), postponeDialog.stopIdx)
+              const note = jobSetPostponeNote(transferPeersOf(pTrip), postponeDialog.stopIdx)
+              const kind = jobSetKindName(postponeDialog.expectedStops[postponeDialog.stopIdx])
+              const isSeq = isSequenceStop(postponeDialog.expectedStops[postponeDialog.stopIdx])
               if (!reminder && !note) return null
               const expected = postponeDialog.expectedStops
               const outside = postponeSet.length > 1 ? transferSetOutside(expected, postponeDialog.stopIdx, incomingOf(pTrip.id), trips.filter(t => t.id !== pTrip.id), pTrip.vehiclePlate || "") : []
-              const setNote = postponeSet.map(i => postponedPickupNote(transferPeersOf(pTrip), i)).find(Boolean)
+              const setNote = postponeSet.map(i => jobSetPostponeNote(transferPeersOf(pTrip), i)).find(Boolean)
               return (
                 <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
                   {postponeSet.length > 1 ? (
                     <>
                       {/* ชุดมีแต่จุดรับ (จุดส่งไม่ไปกับเที่ยวนี้) = ไม่มีชื่อจุดคู่ให้บอก — ตัดส่วนนั้นทิ้ง รายชื่อในชุดอยู่ด้านล่าง */}
-                      <p>⚠️ งานรับของไปส่งต่อ: {reminder ? `${reminder} — ` : ""}กด &quot;เลื่อนทั้งชุด&quot; = เลื่อนพร้อมกัน {postponeSet.length} จุด · กด &quot;เลื่อนเฉพาะจุดนี้&quot; = จุดคู่ไม่เลื่อนตาม (เขียน ✏️ หมายเหตุบอกคนขับ)</p>
+                      <p>⚠️ {kind}: {reminder ? `${reminder} — ` : ""}กด &quot;เลื่อนทั้งชุด&quot; = เลื่อนพร้อมกัน {postponeSet.length} จุด · กด &quot;เลื่อนเฉพาะจุดนี้&quot; = จุดคู่ไม่เลื่อนตาม (เขียน ✏️ หมายเหตุบอกคนขับ)</p>
                       {postponeSet.map(i => <p key={i}>• {transferStopName(expected[i])}</p>)}
                       {outside.length > 0 && (
                         <>
@@ -2681,12 +2685,14 @@ export default function DailySummaryPage() {
                           {outside.map((line, k) => <p key={k}>• {line}</p>)}
                         </>
                       )}
-                      <p>📦 เลื่อนทั้งชุด: วันใหม่ได้ใบขอธรรมดา {postponeSet.length} ใบ ใบละจุด (ไม่มีป้ายรับ-ส่ง) — ตอนจัดเที่ยววิ่งให้ใส่ทุกใบไว้คันเดียวกัน และให้จุดรับมาก่อนจุดส่ง{setNote ? <> · ใบของจุดรับเขียนต่อท้ายว่า &quot;{setNote}&quot;</> : null}</p>
+                      {isSeq
+                        ? <p>🔁 เลื่อนทั้งชุด: วันใหม่ได้ใบขอธรรมดา {postponeSet.length} ใบ ใบละจุด (ไม่มีป้ายงานต่อเนื่อง) — ตอนจัดเที่ยววิ่งให้ใส่ทุกใบไว้คันเดียวกัน แล้วใช้โหมดจัดเอง กดเรียงตามลำดับเดิม{setNote ? <> · ทุกใบเขียนต่อท้ายลำดับและเส้นทางเดิม เช่น &quot;{setNote}&quot;</> : null}</p>
+                        : <p>📦 เลื่อนทั้งชุด: วันใหม่ได้ใบขอธรรมดา {postponeSet.length} ใบ ใบละจุด (ไม่มีป้ายรับ-ส่ง) — ตอนจัดเที่ยววิ่งให้ใส่ทุกใบไว้คันเดียวกัน และให้จุดรับมาก่อนจุดส่ง{setNote ? <> · ใบของจุดรับเขียนต่อท้ายว่า &quot;{setNote}&quot;</> : null}</p>}
                     </>
                   ) : (
                     <>
-                      {reminder && <p>⚠️ งานรับของไปส่งต่อ: {reminder} — จุดนั้นไม่เลื่อนตาม ถ้าต้องเลื่อนทั้งชุด ให้กดเลื่อนจุดนั้นด้วย (หรือเขียน ✏️ หมายเหตุบอกคนขับ)</p>}
-                      {note && <p>📦 ใบของวันใหม่จะเขียนต่อท้ายรายละเอียดว่า &quot;{note}&quot;</p>}
+                      {reminder && <p>⚠️ {kind}: {reminder} — จุดนั้นไม่เลื่อนตาม ถ้าต้องเลื่อนทั้งชุด ให้กดเลื่อนจุดนั้นด้วย (หรือเขียน ✏️ หมายเหตุบอกคนขับ)</p>}
+                      {note && <p>{isSeq ? '🔁' : '📦'} ใบของวันใหม่จะเขียนต่อท้ายรายละเอียดว่า &quot;{note}&quot;</p>}
                     </>
                   )}
                 </div>
@@ -2840,7 +2846,7 @@ export default function DailySummaryPage() {
               สำหรับคนที่ยังไม่มีทริปวันนั้น — ระบบจะสร้างทริปให้ แล้วงานจะไปโผล่ในใบสรุปเป็นคันของเขาเอง
               {reassignNewDialog?.set && (
                 <span className="mt-1 block font-semibold text-orange-300">
-                  📦 ทั้งชุด {reassignNewDialog.set.idxs.length} จุด: {reassignNewDialog.set.idxs.map(i => transferStopName(reassignNewDialog.expectedStops[i])).join(", ")}
+                  {isSequenceStop(reassignNewDialog.expectedStops[reassignNewDialog.set.idxs[0]]) ? '🔁' : '📦'} ทั้งชุด {reassignNewDialog.set.idxs.length} จุด: {reassignNewDialog.set.idxs.map(i => transferStopName(reassignNewDialog.expectedStops[i])).join(", ")}
                   {reassignNewDialog.set.outcome === 'driver-refused' ? ' — บันทึก "คนขับปฏิเสธ" แล้วให้คนที่เลือกรับไปทำแทน' : ' — โยกไปให้คนที่เลือก'}
                 </span>
               )}
@@ -2890,10 +2896,10 @@ export default function DailySummaryPage() {
         <DialogContent className="sm:max-w-md rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-xl flex items-center gap-2">
-              📦 งานรับของไปส่งต่อ — ทำทั้งชุดไหม?
+              {transferSetDialog && isSequenceStop(transferSetDialog.expectedStops[transferSetDialog.stopIdx]) ? "🔁 งานไปหลายจุดตามลำดับ" : "📦 งานรับของไปส่งต่อ"} — ทำทั้งชุดไหม?
             </DialogTitle>
             <DialogDescription>
-              {transferSetDialog ? `จุดที่กด: ${transferStopName(transferSetDialog.expectedStops[transferSetDialog.stopIdx])} — จุดคู่ของงานเดียวกันยังไปกับเที่ยวนี้` : ""}
+              {transferSetDialog ? `จุดที่กด: ${transferStopName(transferSetDialog.expectedStops[transferSetDialog.stopIdx])} — จุดอื่นของงานเดียวกันยังไปกับเที่ยวนี้` : ""}
             </DialogDescription>
           </DialogHeader>
           {(() => {
@@ -3017,6 +3023,17 @@ export default function DailySummaryPage() {
               // บอกให้กดอีกครั้งเฉพาะเมื่อจุดคู่ยังอยู่ในเที่ยวต้นทาง · แสดงแค่ label.text ไม่แสดง label.warning (เป็นคำเตือนของคันต้นทาง ไม่ใช่ของคันช่วย)
               if (!assistDialog) return null
               const src = assistDialog.expectedTrip
+              const seqLabel = sequenceLabel(transferPeersOf(src), assistDialog.stopIdx)
+              if (seqLabel) {
+                const seqReminder = transferReminderFor(src, assistDialog.stopIdx)
+                return (
+                  <div className="text-[12px] text-indigo-200 rounded-md bg-indigo-500/10 border border-indigo-500/30 p-2 space-y-1">
+                    <p className="font-semibold">{seqLabel.text}</p>
+                    <p>คันช่วยจะได้เฉพาะจุดนี้ — แถวของคันช่วยจะขึ้น ⚠️ ว่าจุดอื่นของงานต่อเนื่องไม่ได้ไปกับเที่ยวนั้น ให้เขียน ✏️ หมายเหตุบอกคนขับคันช่วยว่าไปช่วยแค่จุดนี้</p>
+                    {seqReminder && <p>👉 {seqReminder} — ถ้าคันช่วยต้องไปจุดอื่นด้วย กด 🚛+ คันช่วย ที่จุดนั้นตามลำดับ แล้วเลือกคันเดียวกัน</p>}
+                  </div>
+                )
+              }
               const label = transferLabel(transferPeersOf(src), assistDialog.stopIdx)
               if (!label) return null
               const reminder = transferReminderFor(src, assistDialog.stopIdx)

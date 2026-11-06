@@ -7,6 +7,7 @@ import { incomingStopsForTrip } from '@/lib/calculations'
 import { isManagedTrip } from '@/lib/continuousQueue'
 import { tripDriverLabel } from '@/lib/reassign'
 import { activeTransferSet, TRANSFER_EDIT_AT_SOURCE, transferDisplayOrder, transferLabel, transferNoteForDriver } from '@/lib/transfer'
+import { isSequenceStop, jobSetKindName, jobSetLabel, jobSetMateReminder, jobSetNoteForDriver, jobSetPostponeNote, jobSetTagStyle, sequenceLabel } from '@/lib/sequence'
 
 // จุดรับที่โยกเข้ามาขึ้นก่อนจุดส่งของมัน — ตรวจด้วยโค้ดจริงของหน้าใบสรุป (ใบพิมพ์ + แผงปิดผลงาน) โดยไม่ต้องบูต Firebase
 const source = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -38,7 +39,7 @@ const icon = () => React.createElement('span')
 /** แถวของคันเดียวในใบพิมพ์ (callback จริงของ trips.flatMap) → html ของแต่ละ <tr> ตามลำดับบนจอ */
 function printRows(trips: Raw[], tripId: string) {
   const deps = {
-    React, trips, incomingStopsForTrip, transferDisplayOrder, transferLabel, transferNoteForDriver,
+    React, trips, incomingStopsForTrip, transferDisplayOrder, transferLabel, transferNoteForDriver, jobSetLabel, jobSetNoteForDriver, jobSetTagStyle,
     isFullyMovedOut: () => false, getDriverPhone: () => '', formatThaiDate: (s: string) => s, handleShareClick: () => {},
     Button: ({ children }: { children?: React.ReactNode }) => React.createElement('button', null, children),
     Send: icon, ClipboardList: icon, transferTagStyle: () => ({}),
@@ -117,8 +118,8 @@ describe('แผงปิดผลงานจริง: บรรทัดอ�
   const displayOf = () => view
 
   it('ปุ่มของจุดในคันยังได้ index ที่บันทึก · จุดรับที่แทรกขึ้นเป็นบรรทัดอ่านอย่างเดียวพร้อมเลขบนจอ · งานโยกท้ายใบไม่แสดง', () => {
-    const renderIncomingRow = new Function('React', 'displayOf', 'transferLabel', 'cn', 'TRANSFER_EDIT_AT_SOURCE', `${variable('renderIncomingRow')}return work`)(
-      React, displayOf, transferLabel, (...c: unknown[]) => c.filter(Boolean).join(' '), TRANSFER_EDIT_AT_SOURCE,
+    const renderIncomingRow = new Function('React', 'displayOf', 'jobSetLabel', 'cn', 'TRANSFER_EDIT_AT_SOURCE', `${variable('renderIncomingRow')}return work`)(
+      React, displayOf, jobSetLabel, (...c: unknown[]) => c.filter(Boolean).join(' '), TRANSFER_EDIT_AT_SOURCE,
     )
     const renderStopRow = vi.fn((_trip: unknown, stop: Raw, sIdx: number) => React.createElement('div', { key: sIdx }, `OWN:${sIdx}:${stop.siteName}`))
     const row = new Function('trip', 'renderStopRow', 'renderIncomingRow', 'incomingOf', `${callbackOf('displayOf(trip).order.map')}return work`)(
@@ -140,14 +141,14 @@ describe('แผงปิดผลงานจริง: บรรทัดอ�
     const cn = (...c: unknown[]) => c.filter(Boolean).join(' ')
     const incomingOf = new Function('incomingCache', 'incomingStopsForTrip', 'trips', `${variable('incomingOf')}return work`)(new Map(), incomingStopsForTrip, trips)
     const displayOfReal = new Function('displayCache', 'transferDisplayOrder', 'incomingOf', `${variable('displayOf')}return work`)(new Map(), transferDisplayOrder, incomingOf)
-    const renderIncomingRow = new Function('React', 'displayOf', 'transferLabel', 'cn', 'TRANSFER_EDIT_AT_SOURCE', `${variable('renderIncomingRow')}return work`)(
-      React, displayOfReal, transferLabel, cn, TRANSFER_EDIT_AT_SOURCE,
+    const renderIncomingRow = new Function('React', 'displayOf', 'jobSetLabel', 'cn', 'TRANSFER_EDIT_AT_SOURCE', `${variable('renderIncomingRow')}return work`)(
+      React, displayOfReal, jobSetLabel, cn, TRANSFER_EDIT_AT_SOURCE,
     )
     const calls: unknown[][] = []
     const deps = {
       React, isManagedTrip, displayOf: displayOfReal, activeTransferSet, openTransferSet: () => {},
       runOrdinaryAction: (fn: () => unknown) => { fn() }, chooseOutcome: (...args: unknown[]) => calls.push(['outcome', ...args.slice(1)]), cancelStop: () => {},
-      ordinaryBusy: false, cn, transferLabel, RequestTimingBadge: () => null, openNoteDialog: () => {}, Pencil: icon, Trash2: icon, CheckCircle2: icon, ArrowRightLeft: icon, CalendarClock: icon, Ban: icon,
+      ordinaryBusy: false, cn, transferLabel, jobSetLabel, RequestTimingBadge: () => null, openNoteDialog: () => {}, Pencil: icon, Trash2: icon, CheckCircle2: icon, ArrowRightLeft: icon, CalendarClock: icon, Ban: icon,
       setAssistForm: () => {}, setAssistDialog: () => {}, refusalDrafts: {}, setRefuseReason: () => {}, formatThaiDate: (s: string) => s, setReassignNewForm: () => {}, setReassignNewDialog: () => {}, setReassignTarget: () => {},
       trips, tripDriverLabel, liveMoveTarget: () => null,
     }
