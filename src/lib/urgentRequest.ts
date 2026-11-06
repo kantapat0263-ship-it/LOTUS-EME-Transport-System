@@ -16,17 +16,51 @@ interface DraftDestination {
   siteName?: string
   customName?: string
   jobDescription?: string
+  /** งานรับของไปส่งต่อ (RequestForm โหมด 📦) */
+  transferRole?: string
+  /** งานไปหลายจุดตามลำดับ (RequestForm โหมด 🔁) */
+  inSequence?: boolean
 }
 
-/** เติมช่องจากสิ่งที่ผู้ขอกรอกในฟอร์มไว้แล้ว (ปลายทาง/รายละเอียดงาน) + เบอร์ในโปรไฟล์ */
-export function urgentPrefill(destinations: DraftDestination[], profilePhone: unknown): UrgentDetails {
-  const names = destinations
-    .map(d => (d.category === "custom" ? d.customName : d.siteName)?.trim())
-    .filter((name): name is string => !!name)
-  const job = destinations.map(d => d.jobDescription?.trim()).find(Boolean) ?? ""
+const placeName = (d: DraftDestination) => (d.category === "custom" ? d.customName : d.siteName)?.trim() || ""
+const jobText = (d: DraftDestination) => d.jobDescription?.trim() || ""
+
+/** ปลายทาง + งาน ตามรูปใบ — คนจัดรถต้องเห็นเส้นทางจริง (เดิมตัดชื่อซ้ำ + เอางานแค่จุดแรก ใบไป-กลับดูเหมือนไปทางเดียว) */
+function routeSummary(destinations: DraftDestination[]): { destination: string; jobSummary: string } {
+  const isTransfer = destinations.some(d => d.transferRole === "pickup" || d.transferRole === "drop")
+  // ตรงกับ RequestForm: โหมดหลายจุด = ไม่ใช่รับ-ส่ง และมีจุดติดป้ายลำดับ
+  if (!isTransfer && destinations.some(d => d.inSequence)) {
+    // ไปตามลำดับจริง — ชื่อซ้ำต้องคงไว้ (ไซต์ A → ที่ทำเอกสาร → ไซต์ A = ขากลับ)
+    return {
+      destination: destinations.map(placeName).filter(Boolean).join(" → "),
+      jobSummary: destinations.map((d, i) => jobText(d) && `${i + 1}) ${jobText(d)}`).filter(Boolean).join(" · "),
+    }
+  }
+  if (isTransfer) {
+    const pickups = destinations.filter(d => d.transferRole === "pickup")
+    const drop = destinations.find(d => d.transferRole === "drop")
+    const pickupNames = [...new Set(pickups.map(placeName).filter(Boolean))]
+    const dropName = drop ? placeName(drop) : ""
+    return {
+      destination: [pickupNames.length > 0 && `รับ: ${pickupNames.join(", ")}`, dropName && `ส่ง: ${dropName}`].filter(Boolean).join(" → "),
+      jobSummary: [
+        ...pickups.map(p => jobText(p) && `รับ ${placeName(p) || "จุดรับ"}: ${jobText(p)}`),
+        drop && jobText(drop) && `ส่ง ${dropName || "จุดส่ง"}: ${jobText(drop)}`,
+      ].filter(Boolean).join(" · "),
+    }
+  }
   return {
-    destination: [...new Set(names)].join(", ").slice(0, URGENT_DETAIL_LIMITS.destination),
-    jobSummary: job.slice(0, URGENT_DETAIL_LIMITS.jobSummary),
+    destination: [...new Set(destinations.map(placeName).filter(Boolean))].join(", "),
+    jobSummary: destinations.map(jobText).find(Boolean) ?? "",
+  }
+}
+
+/** เติมช่องจากสิ่งที่ผู้ขอกรอกในฟอร์มไว้แล้ว (ปลายทาง/รายละเอียดงาน) + เบอร์ในโปรไฟล์ · ผู้ขอแก้เองได้ก่อนส่ง */
+export function urgentPrefill(destinations: DraftDestination[], profilePhone: unknown): UrgentDetails {
+  const { destination, jobSummary } = routeSummary(destinations)
+  return {
+    destination: destination.slice(0, URGENT_DETAIL_LIMITS.destination),
+    jobSummary: jobSummary.slice(0, URGENT_DETAIL_LIMITS.jobSummary),
     contactPhone: typeof profilePhone === "string" ? profilePhone.trim().slice(0, URGENT_DETAIL_LIMITS.contactPhone) : "",
   }
 }

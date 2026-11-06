@@ -17,6 +17,46 @@ describe('urgentPrefill — เติมจากฟอร์มที่กร�
   it('ฟอร์มยังว่าง / ไม่มีเบอร์ในโปรไฟล์ → ช่องว่างให้กรอกเอง', () => {
     expect(urgentPrefill([{ category: 'all', siteName: '' }], undefined)).toEqual({ destination: '', jobSummary: '', contactPhone: '' })
   })
+
+  it('🔁 หลายจุดตามลำดับ: เส้นทางตามลำดับจริง คงชื่อซ้ำ (เห็นขากลับ) + งานแยกตามจุด', () => {
+    expect(urgentPrefill([
+      { category: 'site', siteName: 'ไซต์ A', jobDescription: 'รับคนงาน 3 คน', inSequence: true },
+      { category: 'custom', customName: 'สนง.ทำเอกสาร', jobDescription: 'รอทำเอกสาร', inSequence: true },
+      { category: 'site', siteName: 'ไซต์ A', jobDescription: 'ส่งคนงานกลับ', inSequence: true },
+    ], '')).toEqual({
+      destination: 'ไซต์ A → สนง.ทำเอกสาร → ไซต์ A',
+      jobSummary: '1) รับคนงาน 3 คน · 2) รอทำเอกสาร · 3) ส่งคนงานกลับ',
+      contactPhone: '',
+    })
+  })
+
+  it('🔁 จุดที่ยังไม่กรอกงาน/ชื่อ ข้ามไป แต่เลขข้อตรงกับลำดับในใบ', () => {
+    const r = urgentPrefill([
+      { category: 'site', siteName: 'ร้าน', jobDescription: '', inSequence: true },
+      { category: 'site', siteName: '', jobDescription: 'ส่งท่อ', inSequence: true },
+    ], '')
+    expect(r.destination).toBe('ร้าน')
+    expect(r.jobSummary).toBe('2) ส่งท่อ')
+  })
+
+  it('📦 รับของไปส่งต่อ: "รับ: ... → ส่ง: ..." + งานบอกว่ารับ/ส่งที่ไหน', () => {
+    expect(urgentPrefill([
+      { category: 'store', siteName: 'ดูโฮม', jobDescription: 'ท่อ 8 เส้น', transferRole: 'pickup' },
+      { category: 'store', siteName: 'ไทวัสดุ', jobDescription: 'ปูน 5 ถุง', transferRole: 'pickup' },
+      { category: 'site', siteName: 'ไซต์ B', jobDescription: '', transferRole: 'drop' },
+    ], '0812345678')).toEqual({
+      destination: 'รับ: ดูโฮม, ไทวัสดุ → ส่ง: ไซต์ B',
+      jobSummary: 'รับ ดูโฮม: ท่อ 8 เส้น · รับ ไทวัสดุ: ปูน 5 ถุง',
+      contactPhone: '0812345678',
+    })
+  })
+
+  it('ข้อความยาวเกินถูกตัดตามความยาวที่ rules ยอม', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ category: 'site', siteName: `ไซต์ทดสอบชื่อยาวมากหมายเลข ${i}`, jobDescription: 'x'.repeat(80), inSequence: true }))
+    const r = urgentPrefill(many, '')
+    expect(r.destination.length).toBeLessThanOrEqual(200)
+    expect(r.jobSummary.length).toBeLessThanOrEqual(500)
+  })
 })
 
 describe('urgentDetailsError', () => {
