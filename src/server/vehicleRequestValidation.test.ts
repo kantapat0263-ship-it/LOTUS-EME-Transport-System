@@ -116,3 +116,27 @@ describe('parseVehicleRequestCommand: ใบรับของไปส่งต
     expect(messageOf(body({}, [pickup({ transferRole: 'other' }), drop()]))).toContain('โหลดหน้าใหม่')
   })
 })
+
+describe('parseVehicleRequestCommand: ใบไปหลายจุดตามลำดับ (2026-11-06)', () => {
+  const site = '13.7276, 100.7796'
+  const doc = '13.8452, 100.5603'
+  const stop = (i: number, o: Record<string, unknown> = {}) => dest({ sequenceIndex: i, coordinates: i % 2 ? doc : site, customName: i % 2 ? 'สนง.เอกสาร' : 'ไซต์ลาดกระบัง', jobDescription: `งานจุดที่ ${i + 1}`, ...o })
+  it('ไป-กลับ A → B → A ผ่าน และเก็บลำดับไว้', () => {
+    const parsed = parseVehicleRequestCommand(body({}, [stop(0), stop(1), stop(2)]))
+    expect(parsed.destinations.map(d => d.sequenceIndex)).toEqual([0, 1, 2])
+  })
+  it('จุดเดียว / จุดติดกันที่เดียวกัน / ลำดับไม่ตรง / ปนงานรับ-ส่ง → บอกเหตุผล', () => {
+    expect(messageOf(body({}, [stop(0)]))).toContain('งานปกติ')
+    expect(messageOf(body({}, [stop(0), stop(1, { coordinates: site })]))).toBe('จุดที่ 2 เป็นที่เดียวกับจุดที่ 1 — รวมงานไว้ในจุดเดียว')
+    expect(messageOf(body({}, [stop(1), stop(0)]))).toContain('โหลดหน้าใหม่')
+    expect(messageOf(body({}, [stop(0), dest()]))).toContain('โหลดหน้าใหม่')
+    expect(messageOf(body({}, [stop(0, { transferRole: 'pickup' }), stop(1, { transferRole: 'drop' })]))).toContain('โหลดหน้าใหม่')
+  })
+  it('จุดที่ไม่บอกว่าทำอะไร → ชี้จุดที่ (ไม่ใช่ข้อความของที่จะรับ)', () => {
+    expect(messageOf(body({}, [stop(0), stop(1, { jobDescription: ' ' })]))).toBe('จุดที่ 2 (สนง.เอกสาร): ยังไม่ได้ระบุว่าทำอะไรที่จุดนี้')
+  })
+  it('ลำดับไม่ใช่จำนวนเต็ม / เกินจำนวนจุด → ให้โหลดหน้าใหม่', () => {
+    expect(messageOf(body({}, [stop(0, { sequenceIndex: 0.5 }), stop(1)]))).toContain('โหลดหน้าใหม่')
+    expect(messageOf(body({}, [stop(0), stop(1, { sequenceIndex: 10 })]))).toContain('โหลดหน้าใหม่')
+  })
+})

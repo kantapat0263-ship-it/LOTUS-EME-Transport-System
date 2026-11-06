@@ -57,10 +57,10 @@ export function buildDropDescription(pickups: readonly { name: string; items: st
   return lines.join('\n')
 }
 
-type Place = { siteId?: string | null; lat?: number | null; lng?: number | null }
+export type Place = { siteId?: string | null; lat?: number | null; lng?: number | null }
 
-/** จุดอยู่ที่เดียวกัน (ไซต์เดียวกัน หรือพิกัดตรงกัน) — ใช้ตอนย้ายจุดส่ง ไม่ให้แทรกกลางงานที่ทำในที่เดียวกัน */
-function samePlace(a: Place, b: Place): boolean {
+/** จุดอยู่ที่เดียวกัน (ไซต์เดียวกัน หรือพิกัดตรงกัน) — ใช้ตอนย้ายจุดส่ง ไม่ให้แทรกกลางงานที่ทำในที่เดียวกัน · งานต่อเนื่องใช้ห้ามจุดติดกันซ้ำ */
+export function samePlace(a: Place, b: Place): boolean {
   if (a.siteId && a.siteId === b.siteId) return true
   const coords = (p: Place) => typeof p.lat === 'number' && typeof p.lng === 'number' && Number.isFinite(p.lat) && Number.isFinite(p.lng)
   return coords(a) && coords(b) && Math.abs(a.lat! - b.lat!) < 1e-5 && Math.abs(a.lng! - b.lng!) < 1e-5
@@ -484,12 +484,26 @@ export function dropSyncNote(sync: Pick<TripDropSync<unknown>, 'updated' | 'notI
 // ทำทั้งชุด (ใบสรุป: โยก/คนขับปฏิเสธ/ยกเลิก/เลื่อน จุดของกลุ่มเดียวกันพร้อมกัน ผู้ใช้ขอ 2026-11-05)
 // เขียนข้อมูลหน้าตาเหมือนกดทีละจุด N ครั้ง (ไม่มีฟิลด์ใหม่) · แตะได้แค่จุดของเที่ยวนี้ในการเขียนครั้งเดียว
 // งานโยกเข้า (ผลเก็บที่คันต้นทาง) / สำเนาคันช่วย / จุดที่ไม่ทำแล้ว / จุดของกลุ่มบนคันอื่น ไม่ถูกทำตาม — หน้าต่างบอกรายชื่อด้วย transferSetOutside
+// "ชุด" = งานรับของไปส่งต่อ (transferId) หรืองานไปหลายจุดตามลำดับ (sequenceId, lib/sequence.ts 2026-11-06) — ฟังก์ชันกลุ่มนี้ใช้ได้ทั้งสองแบบ
 // ---------------------------------------------------------------------------
 
 /** บันทึกทั้งชุดไม่ผ่านเพราะงานในทริปเปลี่ยนหลังเปิดหน้าต่าง — ปิดหน้าต่างแล้วบอกประโยคนี้ */
 export const TRANSFER_SET_CONFLICT = 'งานในทริปนี้เพิ่งถูกแก้ — ตรวจแล้วกดปุ่มที่จุดนั้นใหม่'
 
-type SetStop = TransferFields & {
+type SequenceKeyFields = { sequenceId?: string; sequenceIndex?: number }
+
+/**
+ * รหัสชุดของจุด: งานรับ-ส่ง = "tf:<transferId>" · งานต่อเนื่อง = "sq:<sequenceId>" · งานปกติ = null
+ * เช็กงานต่อเนื่องตรงนี้เอง (ไม่ import lib/sequence — ไฟล์นั้น import ไฟล์นี้) ต้องตรงกับ isSequenceStop
+ */
+export function stopSetKey(stop: (TransferFields & SequenceKeyFields) | null | undefined): string | null {
+  if (!stop) return null
+  if (isTransferStop(stop)) return `tf:${stop.transferId}`
+  if (typeof stop.sequenceId === 'string' && stop.sequenceId !== '' && Number.isInteger(stop.sequenceIndex) && (stop.sequenceIndex as number) >= 0) return `sq:${stop.sequenceId}`
+  return null
+}
+
+type SetStop = TransferFields & SequenceKeyFields & {
   siteName?: string
   outcome?: string | null
   assistForPlate?: string
@@ -498,23 +512,25 @@ type SetStop = TransferFields & {
   reassignedToVehiclePlate?: string
 }
 
-/** ชื่อจุดพร้อมบทบาท เช่น "วังโค (จุดรับ)" — ใช้ในหน้าต่าง/toast ของทำทั้งชุด (เรียกด้วยชื่อ ไม่ใช้เลขข้อ เพราะเลขบนจอ ≠ index ที่บันทึก) */
+/** ชื่อจุดพร้อมบทบาท เช่น "วังโค (จุดรับ)" / "ไซต์A (จุดที่ 3)" — ใช้ในหน้าต่าง/toast ของทำทั้งชุด (เรียกด้วยชื่อ ไม่ใช้เลขข้อ เพราะเลขบนจอ ≠ index ที่บันทึก) */
 export function transferStopName(stop: SetStop | null | undefined): string {
   const role = stop?.transferRole === 'pickup' ? 'จุดรับ' : stop?.transferRole === 'drop' ? 'จุดส่ง' : ''
+  const sequenceNo = !role && stopSetKey(stop)?.startsWith('sq:') ? `จุดที่ ${(stop!.sequenceIndex as number) + 1}` : ''
   const name = (stop?.siteName || '').trim() || role || 'จุดงาน'
-  return role ? `${name} (${role})` : name
+  return role || sequenceNo ? `${name} (${role || sequenceNo})` : name
 }
 
 /**
- * จุดของเที่ยวนี้ (index ที่บันทึก เรียงตาม stops) ที่อยู่กลุ่มเดียวกับจุดที่ `index` และยังไปกับเที่ยวนี้ — รวมจุดที่กดเอง
- * [] = ใช้ปุ่มทีละจุดเหมือนเดิม: ไม่ใช่งานรับ-ส่ง / จุดที่กดไม่ทำแล้ว / จุดที่กดเป็นสำเนาคันช่วย
+ * จุดของเที่ยวนี้ (index ที่บันทึก เรียงตาม stops) ที่อยู่ชุดเดียวกับจุดที่ `index` และยังไปกับเที่ยวนี้ — รวมจุดที่กดเอง
+ * [] = ใช้ปุ่มทีละจุดเหมือนเดิม: ไม่ใช่ชุดงาน / จุดที่กดไม่ทำแล้ว / จุดที่กดเป็นสำเนาคันช่วย
  *      / จุดในชุดมี postponedRequestId ค้าง (ทางทีละจุดปลดใบวันใหม่ให้ถูก ส่วนทำทั้งชุดไม่ส่ง supersede)
  * ไม่นับสำเนาคันช่วย (assistForPlate — งานจริงอยู่คันต้นทาง) · รับแค่ trip.stops ไม่รวมงานโยกเข้า · ได้ 1 ตัว = ไม่มีจุดคู่ (ไม่ถามทั้งชุด)
  */
 export function activeTransferSet(stops: readonly SetStop[], index: number): number[] {
   const stop = stops[index]
-  if (!stop || !isTransferStop(stop) || isInactiveStop(stop) || stop.assistForPlate) return []
-  const set = stops.flatMap((s, i) => (isTransferStop(s) && s.transferId === stop.transferId && !isInactiveStop(s) && !s.assistForPlate ? [i] : []))
+  const key = stopSetKey(stop)
+  if (!stop || !key || isInactiveStop(stop) || stop.assistForPlate) return []
+  const set = stops.flatMap((s, i) => (stopSetKey(s) === key && !isInactiveStop(s) && !s.assistForPlate ? [i] : []))
   return set.some(i => stops[i].postponedRequestId) ? [] : set
 }
 
@@ -533,8 +549,9 @@ export function transferSetOutside(
   plate: string,
 ): string[] {
   const stop = stops[index]
-  if (!stop || !isTransferStop(stop)) return []
-  const mate = (s: SetStop) => isTransferStop(s) && s.transferId === stop.transferId
+  const key = stopSetKey(stop)
+  if (!stop || !key) return []
+  const mate = (s: SetStop) => stopSetKey(s) === key
   const inSet = new Set(activeTransferSet(stops, index))
   const lines: string[] = []
   stops.forEach((s, i) => {

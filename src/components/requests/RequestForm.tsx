@@ -29,7 +29,9 @@ import {
   Calendar as CalendarIcon,
   Trash2,
   Info,
-Save
+Save,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { editCustomDestination, matchCustomSite } from "@/lib/customSite"
@@ -48,6 +50,7 @@ import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
 import { URGENT_DETAIL_LIMITS, urgentDetailsError, urgentPrefill, type UrgentDetails } from "@/lib/urgentRequest"
 import { buildDropDescription, type TransferRole } from "@/lib/transfer"
+import { SEQUENCE_MAX_STOPS, sequenceShapeProblem } from "@/lib/sequence"
 
 interface DestinationRequest {
   id: string;
@@ -64,6 +67,8 @@ interface DestinationRequest {
   requestTime: string;
   /** งานรับของไปส่งต่อ: จุดรับ (หลายจุดได้) + จุดส่ง 1 จุดท้ายใบ · ไม่มี = งานปกติ */
   transferRole?: TransferRole;
+  /** งานไปหลายจุดตามลำดับ (lib/sequence) — ตัวบอกในฟอร์มเท่านั้น ลำดับ = ตำแหน่งการ์ด (ส่งเป็น sequenceIndex) */
+  inSequence?: true;
 }
 
 /** การ์ดจุดหมายเปล่า (โหมดรับของไปส่งต่อ) */
@@ -293,19 +298,44 @@ export function RequestForm() {
   const dropDescription = (extra: string) => buildDropDescription(transferPickups.map(p => ({ name: placeName(p), items: p.jobDescription })), extra)
   const hasContent = (d: DestinationRequest) => placeChosen(d) || !!d.jobDescription.trim() || !!d.coordinates.trim()
 
-  const switchToTransfer = () => {
-    if (isTransfer) return
-    // การ์ดที่กรอกไว้ = จุดรับของจุดแรก แล้วเพิ่มการ์ดจุดส่งของต่อท้าย
-    setDestinations(prev => [{ ...prev[0], transferRole: "pickup" }, blankDestination("drop")])
-  }
-  const switchToNormal = () => {
-    if (!isTransfer) return
-    if (destinations.slice(1).some(hasContent) && !window.confirm("เปลี่ยนเป็นงานปกติ — จะเหลือเฉพาะจุดแรก ข้อมูลจุดอื่นจะหายไป ยืนยัน?")) return
+  // ---- งานไปหลายจุดตามลำดับ (ไป-กลับ): ใบเดียว รถคันเดียวไปตามลำดับที่กรอก — สถานที่ซ้ำได้ แต่จุดติดกันห้ามที่เดียวกัน ----
+  const isSequence = !isTransfer && destinations.some(d => d.inSequence)
+  type FormMode = "normal" | "transfer" | "sequence"
+  const mode: FormMode = isTransfer ? "transfer" : isSequence ? "sequence" : "normal"
+  const MODE_NAMES: Record<FormMode, string> = { normal: "งานปกติ", transfer: "รับของไปส่งต่อ", sequence: "ไปหลายจุดตามลำดับ" }
+  /** เปลี่ยนประเภทงาน — การ์ดแรกที่กรอกไว้คงอยู่ (เป็นจุดแรกของแบบใหม่) · การ์ดอื่นหาย (ถามก่อนถ้ากรอกไว้) */
+  const switchMode = (target: FormMode) => {
+    if (target === mode) return
+    if (destinations.slice(1).some(hasContent) && !window.confirm(`เปลี่ยนเป็น${MODE_NAMES[target]} — จะเหลือเฉพาะจุดแรก ข้อมูลจุดอื่นจะหายไป ยืนยัน?`)) return
     setDestinations(prev => {
-      const { transferRole: _role, ...first } = prev[0]
+      const { transferRole: _role, inSequence: _seq, ...first } = prev[0]
+      // รับของไปส่งต่อ: การ์ดที่กรอกไว้ = จุดรับของจุดแรก แล้วเพิ่มการ์ดจุดส่งของต่อท้าย
+      if (target === "transfer") return [{ ...first, transferRole: "pickup" }, blankDestination("drop")]
+      if (target === "sequence") return [{ ...first, inSequence: true }, { ...blankDestination(), inSequence: true, requestTime: first.requestTime }]
       return [first]
     })
   }
+  const addSequenceStop = () => setDestinations(prev => prev.length >= SEQUENCE_MAX_STOPS ? prev
+    // เวลาเริ่มต้น = เวลาจุดก่อนหน้า (จุดถัดไปไม่ควรเร็วกว่า)
+    : [...prev, { ...blankDestination(), inSequence: true, requestTime: prev[prev.length - 1]?.requestTime || "08:30" }])
+  const removeSequenceStop = (id: string) => {
+    const target = destinations.find(d => d.id === id)
+    if (target && hasContent(target) && !window.confirm(`ลบ${pointLabel(target)}${placeName(target) ? ` (${placeName(target)})` : ""}?`)) return
+    setDestinations(prev => prev.filter(d => d.id !== id))
+  }
+  const moveSequenceStop = (index: number, by: -1 | 1) => setDestinations(prev => {
+    const to = index + by
+    if (to < 0 || to >= prev.length) return prev
+    const next = [...prev]
+    ;[next[index], next[to]] = [next[to], next[index]]
+    return next
+  })
+  /** ขากลับ: ใช้สถานที่เดียวกับจุดก่อนหน้า (ไม่ต้องค้นหาใหม่) — ไม่บันทึกสถานที่ซ้ำ */
+  const copyPlaceFrom = (id: string, from: DestinationRequest) => updateDest(id, {
+    category: from.category, searchTerm: "", siteId: from.siteId, siteName: from.siteName, customName: from.customName,
+    coordinates: liveCoordinates(from), locationType: from.locationType, saveAsSite: false, allowSeparateSite: from.allowSeparateSite ?? false,
+  })
+  const placeOf = (d: DestinationRequest) => ({ siteId: d.category !== "custom" && d.siteId ? d.siteId : null, ...(parseThaiCoordinates(liveCoordinates(d)) ?? {}) })
   const addPickup = () => setDestinations(prev => {
     const drop = prev.filter(d => d.transferRole === "drop")
     return [...prev.filter(d => d.transferRole !== "drop"), blankDestination("pickup"), ...drop]
@@ -408,6 +438,26 @@ const handleSubmit = async (e: React.FormEvent) => {
       }
     }
 
+    if (isSequence) {
+      // ทุกการ์ดต้องมีสถานที่ + บอกว่าทำอะไร (ไม่ตัดการ์ดว่างทิ้งเงียบ ๆ — จุดกลางหายไปเส้นทางจะผิด)
+      const noPlace = destinations.find(d => !placeChosen(d))
+      if (noPlace) {
+        toast({ title: "ข้อมูลไม่ครบ", description: `${pointLabel(noPlace)}: ${noPlace.category === "custom" ? "ยังไม่ได้ใส่ชื่อสถานที่" : "ยังไม่ได้เลือกสถานที่"}${destinations.length > 2 ? " (ไม่ใช้จุดนี้ให้กด \"ลบจุดนี้\")" : ""}`, variant: "destructive" })
+        return
+      }
+      const noTask = destinations.find(d => !d.jobDescription.trim())
+      if (noTask) {
+        const name = placeName(noTask)
+        toast({ title: "ข้อมูลไม่ครบ", description: `${pointLabel(noTask)}${name && name.length <= 80 ? ` (${name})` : ""}: ระบุว่าทำอะไรที่จุดนี้`, variant: "destructive" })
+        return
+      }
+      const problem = sequenceShapeProblem(destinations.map((_, i) => ({ sequenceIndex: i })), destinations.map(placeOf))
+      if (problem) {
+        toast({ title: "ลำดับจุดไม่ถูกต้อง", description: problem, variant: "destructive" })
+        return
+      }
+    }
+
     const validDestinations = destinations.filter(d => 
       (d.category !== "custom" && d.siteId) || (d.category === "custom" && d.customName.trim())
     )
@@ -455,6 +505,8 @@ const handleSubmit = async (e: React.FormEvent) => {
         ...(d.allowSeparateSite === undefined ? {} : { allowSeparateSite: d.allowSeparateSite }),
         locationType: d.locationType, requestTime: timeOf(d),
         ...(d.transferRole ? { transferRole: d.transferRole } : {}),
+        // ตรวจแล้วข้างบนว่าทุกการ์ดของใบแบบนี้ผ่าน → ลำดับ = ตำแหน่งการ์ด
+        ...(isSequence ? { sequenceIndex: validDestinations.indexOf(d) } : {}),
       })),
     }
     const payloadKey = JSON.stringify(payload)
@@ -676,19 +728,25 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div className="flex items-center justify-between">
                 <Label className="text-base font-bold">จุดหมายปลายทาง</Label>
               </div>
-              {/* ประเภทงาน: ปกติ / รับของไปส่งต่อ (ใบเดียวแทนการทำใบรับ + ใบส่งแยก) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="ประเภทงาน">
-                <button type="button" role="radio" aria-checked={!isTransfer} onClick={switchToNormal}
+              {/* ประเภทงาน: ปกติ / รับของไปส่งต่อ (ใบเดียวแทนการทำใบรับ + ใบส่งแยก) / ไปหลายจุดตามลำดับ (ไป-กลับ) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="ประเภทงาน">
+                <button type="button" role="radio" aria-checked={mode === "normal"} onClick={() => switchMode("normal")}
                   className={cn("rounded-lg border-2 p-3 text-left transition-colors",
-                    !isTransfer ? "border-accent bg-accent/10" : "border-border/50 bg-background/30 hover:bg-secondary/40")}>
+                    mode === "normal" ? "border-accent bg-accent/10" : "border-border/50 bg-background/30 hover:bg-secondary/40")}>
                   <span className="block text-sm font-bold">🚚 งานปกติ</span>
                   <span className="block text-[11px] text-muted-foreground">ส่งของ / ไปทำงานที่สถานที่เดียว</span>
                 </button>
-                <button type="button" role="radio" aria-checked={isTransfer} onClick={switchToTransfer}
+                <button type="button" role="radio" aria-checked={isTransfer} onClick={() => switchMode("transfer")}
                   className={cn("rounded-lg border-2 p-3 text-left transition-colors",
                     isTransfer ? "border-amber-500 bg-amber-500/10" : "border-border/50 bg-background/30 hover:bg-secondary/40")}>
                   <span className="block text-sm font-bold">📦 รับของไปส่งต่อ</span>
                   <span className="block text-[11px] text-muted-foreground">รับของจากร้าน/ไซต์ (หลายที่ได้) แล้วนำไปส่งอีกที่ — ทำใบเดียวพอ</span>
+                </button>
+                <button type="button" role="radio" aria-checked={isSequence} onClick={() => switchMode("sequence")}
+                  className={cn("rounded-lg border-2 p-3 text-left transition-colors",
+                    isSequence ? "border-indigo-500 bg-indigo-500/10" : "border-border/50 bg-background/30 hover:bg-secondary/40")}>
+                  <span className="block text-sm font-bold">🔁 ไปหลายจุดตามลำดับ (ไป-กลับ)</span>
+                  <span className="block text-[11px] text-muted-foreground">รถคันเดียวไปตามลำดับ เช่น รับคนงานที่ไซต์ → ไปทำเอกสาร → ส่งกลับไซต์</span>
                 </button>
               </div>
 
@@ -707,6 +765,9 @@ const handleSubmit = async (e: React.FormEvent) => {
 
                   const isPickup = dest.transferRole === "pickup"
                   const isDrop = dest.transferRole === "drop"
+                  const isStep = isSequence
+                  // ขากลับ: ปุ่มใช้สถานที่ของจุดก่อนหน้า (ข้ามจุดที่ติดกัน — ที่เดียวกันติดกันไม่ได้)
+                  const reusable = isStep ? destinations.slice(0, Math.max(0, index - 1)).filter(placeChosen) : []
                   return (
                     <React.Fragment key={dest.id}>
                     {isDrop && (
@@ -715,9 +776,39 @@ const handleSubmit = async (e: React.FormEvent) => {
                       </Button>
                     )}
                     <Card className={cn("bg-secondary/20 relative overflow-hidden mb-4 border-2 shadow-sm",
-                      isPickup ? "border-amber-500/60" : isDrop ? "border-emerald-500/60" : "border-accent/60")}>
-                      <div className={cn("absolute top-0 left-0 w-1 h-full", isPickup ? "bg-amber-500" : isDrop ? "bg-emerald-500" : "bg-accent")} />
+                      isPickup ? "border-amber-500/60" : isDrop ? "border-emerald-500/60" : isStep ? "border-indigo-500/60" : "border-accent/60")}>
+                      <div className={cn("absolute top-0 left-0 w-1 h-full", isPickup ? "bg-amber-500" : isDrop ? "bg-emerald-500" : isStep ? "bg-indigo-500" : "bg-accent")} />
                       <CardContent className="p-4 md:p-6 space-y-4">
+                        {isStep && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-bold text-indigo-300">🔁 {pointLabel(dest)}{index > 0 ? ` (ต่อจากจุดที่ ${index})` : " (เริ่มที่นี่)"}</p>
+                              <div className="flex items-center gap-1">
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label={`เลื่อน${pointLabel(dest)}ขึ้น`} disabled={index === 0} onClick={() => moveSequenceStop(index, -1)}>
+                                  <ArrowUp className="h-4 w-4" />
+                                </Button>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label={`เลื่อน${pointLabel(dest)}ลง`} disabled={index === destinations.length - 1} onClick={() => moveSequenceStop(index, 1)}>
+                                  <ArrowDown className="h-4 w-4" />
+                                </Button>
+                                {destinations.length > 2 && (
+                                  <Button type="button" variant="ghost" size="sm" className="h-8 text-xs text-red-400 hover:text-red-300" onClick={() => removeSequenceStop(dest.id)}>
+                                    <Trash2 className="h-3.5 w-3.5 mr-1" /> ลบจุดนี้
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                            {reusable.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {reusable.map(from => (
+                                  <Button key={from.id} type="button" variant="outline" size="sm" className="h-8 text-xs border-indigo-500/50 text-indigo-200 hover:bg-indigo-500/10"
+                                    onClick={() => copyPlaceFrom(dest.id, from)}>
+                                    ↩ ใช้สถานที่เดียวกับ{pointLabel(from)} ({placeName(from)})
+                                  </Button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         {(isPickup || isDrop) && (
                           <div className="flex items-center justify-between gap-2">
                             <p className={cn("text-sm font-bold", isPickup ? "text-amber-300" : "text-emerald-300")}>
@@ -1025,10 +1116,10 @@ const handleSubmit = async (e: React.FormEvent) => {
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <Label>{isPickup ? <>รับอะไร (รายการของ) <span className="text-red-400">*</span></> : isDrop ? "งานอื่นที่จุดส่ง (ถ้ามี)" : "ลักษณะงานที่ต้องทำ"}</Label>
+                            <Label>{isPickup ? <>รับอะไร (รายการของ) <span className="text-red-400">*</span></> : isDrop ? "งานอื่นที่จุดส่ง (ถ้ามี)" : isStep ? <>ทำอะไรที่จุดนี้ <span className="text-red-400">*</span></> : "ลักษณะงานที่ต้องทำ"}</Label>
 </div>
-                          <Textarea 
-                            placeholder={isPickup ? "เช่น ปูนสกิม 10 ถุง, ท่อ PVC 4 นิ้ว 20 เส้น" : isDrop ? "ไม่ต้องพิมพ์รายการของซ้ำ — ใส่เฉพาะงานอื่น เช่น ส่งท่อ EMT จากออฟฟิศไปด้วย" : "รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ"}
+                          <Textarea
+                            placeholder={isPickup ? "เช่น ปูนสกิม 10 ถุง, ท่อ PVC 4 นิ้ว 20 เส้น" : isDrop ? "ไม่ต้องพิมพ์รายการของซ้ำ — ใส่เฉพาะงานอื่น เช่น ส่งท่อ EMT จากออฟฟิศไปด้วย" : isStep ? "เช่น รับคนงาน 3 คน / ส่งคนงานทำเอกสาร รอรับกลับ / ส่งท่อ 8 เส้น และรับท่อเก่า 5 เส้น" : "รายละเอียดงาน เช่น ส่งอุปกรณ์ไฟฟ้า, รับตัวอย่างวัสดุ"}
                             className="min-h-[80px] bg-background/30"
                             style={{ resize: 'vertical' }}
                             value={dest.jobDescription}
@@ -1058,6 +1149,11 @@ const handleSubmit = async (e: React.FormEvent) => {
 
                       </CardContent>
                     </Card>
+                    {isStep && index === destinations.length - 1 && destinations.length < SEQUENCE_MAX_STOPS && (
+                      <Button type="button" variant="outline" className="w-full h-11 mb-4 border-dashed border-indigo-500/60 text-indigo-300 hover:bg-indigo-500/10" onClick={addSequenceStop}>
+                        <Plus className="h-4 w-4 mr-1" /> เพิ่มจุดถัดไป (จุดที่ {destinations.length + 1})
+                      </Button>
+                    )}
                     </React.Fragment>
                   );
                 })}

@@ -195,6 +195,10 @@ export interface TripStop {
   transferId?: string;
   /** ชื่อจุดส่ง (เก็บที่จุดรับ) — ทำป้ายเมื่อจุดส่งอยู่คันอื่น */
   transferDropName?: string;
+  /** งานไปหลายจุดตามลำดับ (lib/sequence.ts) — จุดของใบเดียวกันมี sequenceId เดียวกัน · ลำดับที่ผู้ขอกรอก (เริ่ม 0) · จำนวนจุดตอนส่งใบ */
+  sequenceId?: string;
+  sequenceIndex?: number;
+  sequenceSize?: number;
 }
 
 export interface Trip {

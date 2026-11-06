@@ -100,12 +100,17 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
   const placeName = (d: { category: string; customName: string; siteName: string }) => d.category === 'custom' ? d.customName : d.siteName
   const dropDraft = sitePlan.destinations.find(d => d.transferRole === 'drop')
   const transferId = dropDraft ? `tf_${randomUUID()}` : ''
+  // ใบไปหลายจุดตามลำดับ (ตัวตรวจรับรองแล้ว: ทุกจุดมีลำดับตรงตำแหน่ง) — ผูกทุกจุดด้วยรหัสชุดเดียว + จำนวนจุดไว้ทำป้าย "จุดที่ 2/3"
+  // ออกรหัสก่อน transaction — transaction ลองใหม่ใช้รหัสเดิม
+  const sequenceId = sitePlan.destinations.some(d => d.sequenceIndex !== undefined) ? `sq_${randomUUID()}` : ''
+  const sequenceSize = sitePlan.destinations.length
   const destinations = sitePlan.destinations.map(d => {
     // ตัวแปลงเดียวกับตัวตรวจ (ผ่านตัวตรวจแล้วทุกจุด) — ไม่แปลงซ้ำด้วยวิธีอื่นจนได้ค่าคนละตัว
     const { lat, lng } = parseThaiCoordinates(d.coordinates) ?? { lat: NaN, lng: NaN }
     const transfer = transferId && d.transferRole
       ? { transferRole: d.transferRole, transferId, ...(d.transferRole === 'pickup' ? { transferDropName: placeName(dropDraft!) } : {}) }
       : {}
+    const sequence = sequenceId && d.sequenceIndex !== undefined ? { sequenceId, sequenceIndex: d.sequenceIndex, sequenceSize } : {}
     return {
       type: d.category === 'custom' ? 'other' : 'site',
       siteId: d.siteId || null,
@@ -116,6 +121,7 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
       jobDescription: d.jobDescription,
       requestTime: d.requestTime || '08:30',
       ...transfer,
+      ...sequence,
     }
   })
 
