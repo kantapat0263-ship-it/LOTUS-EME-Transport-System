@@ -419,13 +419,14 @@ describe('computeDriverReliability', () => {
 })
 
 describe('incomingStopsForTrip', () => {
-  it('ติดพิกัดของจุดต้นทางมาด้วย (ปุ่มนำทาง) เฉพาะพิกัดที่ใช้ได้', () => {
+  it('ติดพิกัดของจุดต้นทางมาด้วย (ปุ่มนำทาง) เฉพาะพิกัดในไทย — 0,0 ของใบที่แปลงพิกัดไม่ได้ไม่ส่ง', () => {
     const source = {
       id: 'source', stops: [
         { siteName: 'A', reassignedToTripId: 'receiver', lat: 13.7, lng: 100.5 },
         { siteName: 'B', reassignedToTripId: 'receiver' },
         { siteName: 'C', reassignedToTripId: 'receiver', lat: 13.7, lng: null },
         { siteName: 'D', reassignedToTripId: 'receiver', lat: 999, lng: 100.5 },
+        { siteName: 'E', reassignedToTripId: 'receiver', lat: 0, lng: 0 },
       ],
     }
     const jobs = incomingStopsForTrip([source], 'receiver')

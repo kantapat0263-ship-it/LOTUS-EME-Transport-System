@@ -10,7 +10,6 @@ import { haversineMeters, OFFICE_LOCATION } from './tracking'
 import { inThailand } from './roadFlood'
 import { isTransferStop, type TransferFields, type TransferRole } from './transfer'
 import { jobSetFields, orderSequences } from './sequence'
-import { validCoordinates } from './tripCoordinateSync'
 
 /** Default kilometres travelled per litre of diesel. */
 export const DEFAULT_FUEL_RATE = 10
@@ -636,7 +635,8 @@ export function incomingStopsForTrip(allTrips: IncomingTripLike[], tripId: strin
           dispatcherName: t.stopNoteAuthors?.[`stop_${sIdx}`] || s.dispatcherName || '',
           wasRefused: s.outcome === 'driver-refused',
           ...jobSetFields(s),
-          ...(validCoordinates(s.lat, s.lng) ? { lat: s.lat as number, lng: s.lng as number } : {}),
+          // นอกไทย/0,0 (ใบที่แปลงพิกัดไม่ได้) = ไม่ส่ง → ปุ่มค้นด้วยชื่อแบบเดิม ไม่พาไปกลางทะเล
+          ...(inThailand(s.lat, s.lng) ? { lat: s.lat as number, lng: s.lng as number } : {}),
         })
       }
     }
