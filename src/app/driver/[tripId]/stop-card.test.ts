@@ -12,7 +12,8 @@ const pageSource = ts.createSourceFile('page.tsx', readFileSync(new URL('./page.
 function compiledCallback(callee: string, name: string) {
   let callback: ts.Expression | undefined
   function find(node: ts.Node) {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.getText(pageSource) === callee) callback = node.arguments[0]
+    // ตัวแรกในไฟล์ — view.order.filter มีหลายที่ (boxedIncoming มาก่อน inlineIncomingCount)
+    if (!callback && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.getText(pageSource) === callee) callback = node.arguments[0]
     ts.forEachChild(node, find)
   }
   find(pageSource)
@@ -61,6 +62,18 @@ function stopCards(trip: { stops: Record<string, unknown>[] }, withTransferTag =
 }
 
 const NAV = 'นำทางด้วย Google Maps'
+
+/** <main> ของใบงานคนขับทั้งก้อน (โค้ดจริงตั้งแต่ view ถึง ownCards + JSX ของ main) จากข้อมูลใบงานจริงของ server */
+function renderDriverMain(ticket: ReturnType<typeof buildDriverTicket>) {
+  const icon = () => React.createElement('span')
+  const tag = ({ label }: { label: TransferLabel }) => React.createElement('span', null, `TAG:${label.text}${label.warning ? ` WARN:${label.warning}` : ''}`)
+  const page = new Function('React', 'trip', 'incoming', 'transferDisplayOrder', 'jobSetLabel', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText',
+    `${compiledStatements('view', 'ownCards')}; return { view, boxedIncoming, inlineIncomingCount, incomingCards, ownCards }`,
+  )(React, ticket.trip, ticket.incoming, transferDisplayOrder, jobSetLabel, tag, validCoordinates, icon, icon, icon, icon, icon)
+  return renderToStaticMarkup(new Function('React', 'view', 'boxedIncoming', 'inlineIncomingCount', 'incomingCards', 'ownCards', 'Repeat', 'Navigation', 'actualKm', 'trip', 'formatDuration',
+    `${compiledMain()}; return main`,
+  )(React, page.view, page.boxedIncoming, page.inlineIncomingCount, page.incomingCards, page.ownCards, icon, icon, null, ticket.trip, () => '-')) as string
+}
 
 describe('ใบงานคนขับ — จุดที่วันนี้ไม่ต้องไป', () => {
   it('จุดที่เลื่อนวัน: ไม่มีปุ่มนำทาง ขึ้น "เลื่อนไปวันอื่นแล้ว — วันนี้ไม่ต้องไปจุดนี้" (ผ่านข้อมูลใบงานจริงจาก server)', () => {
@@ -161,14 +174,7 @@ describe('ใบงานคนขับ — จุดที่วันนี�
     ] }
     const ticket = buildDriverTicket(receiver, [receiver, source], '')
     expect(ticket.incoming).toHaveLength(2)
-    const icon = () => React.createElement('span')
-    const tag = ({ label }: { label: TransferLabel }) => React.createElement('span', null, `TAG:${label.text}${label.warning ? ` WARN:${label.warning}` : ''}`)
-    const page = new Function('React', 'trip', 'incoming', 'transferDisplayOrder', 'jobSetLabel', 'TransferTag', 'validCoordinates', 'Navigation', 'User', 'Phone', 'Info', 'FileText',
-      `${compiledStatements('view', 'ownCards')}; return { view, boxedIncoming, incomingCards, ownCards }`,
-    )(React, ticket.trip, ticket.incoming, transferDisplayOrder, jobSetLabel, tag, validCoordinates, icon, icon, icon, icon, icon)
-    const html = renderToStaticMarkup(new Function('React', 'view', 'boxedIncoming', 'incomingCards', 'ownCards', 'Repeat', 'Navigation', 'actualKm', 'trip', 'formatDuration',
-      `${compiledMain()}; return main`,
-    )(React, page.view, page.boxedIncoming, page.incomingCards, page.ownCards, icon, icon, null, ticket.trip, () => '-'))
+    const html = renderDriverMain(ticket)
     const at = (site: string) => html.indexOf(`>${site}</h3>`)
     const list = html.indexOf('ลำดับจุดส่งของ')
     // ดูโฮมขึ้นที่เดียว (ไม่ซ้ำในกล่องด้านบน) และอยู่ระหว่างไซต์ A กับดอนเมืองในรายการหลัก
@@ -177,10 +183,43 @@ describe('ใบงานคนขับ — จุดที่วันนี�
     expect(list).toBeLessThan(at('ไซต์ A'))
     expect(at('ไซต์ A')).toBeLessThan(at('ดูโฮม'))
     expect(at('ดูโฮม')).toBeLessThan(at('ดอนเมือง'))
-    expect(html).toContain('รับงานต่อ 1 จุด — โยกมาให้คันนี้เพิ่ม')
+    // หัวกล่องนับทั้ง 2 งานโยก ให้ตรงกับ LINE "รับโยกงานต่อเพิ่ม 2 จุด" (เดิมขึ้น 1 จุด)
+    expect(html).toContain(`รับงานต่อ ${ticket.incoming.length} จุด — โยกมาให้คันนี้เพิ่ม`)
+    expect(html).toContain('อีก 1 จุดอยู่ในลำดับด้านล่าง')
     expect(html).toContain('ลำดับจุดส่งของ (3)')
     expect(html).toContain('TAG:🏁 ส่งของที่รับจาก ดูโฮม')
     expect(html).not.toContain('WARN:')
+  })
+
+  it('งานโยกทุกจุดแทรกอยู่ในรายการหลัก: ยังมีหัว "รับงานต่อ N จุด" ตรงกับ LINE และบอกว่าอยู่ด้านล่าง', () => {
+    const receiver = { id: 'T-B', tripDate: '2026-11-05', driverId: 'D-B', stops: [{ siteName: 'ดอนเมือง', transferRole: 'drop', transferId: 'tf_1' }] }
+    const source = { id: 'T-A', tripDate: '2026-11-05', driverId: 'D-A', stops: [
+      { siteName: 'ดูโฮม', outcome: 'reassigned', reassignedToTripId: 'T-B', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง' },
+    ] }
+    const ticket = buildDriverTicket(receiver, [receiver, source], '')
+    const html = renderDriverMain(ticket)
+    expect(html).toContain('รับงานต่อ 1 จุด — โยกมาให้คันนี้เพิ่ม')
+    expect(html).toContain('อยู่ในลำดับจุดส่งของด้านล่าง')
+    expect(html.split('>ดูโฮม</h3>')).toHaveLength(2) // การ์ดยังขึ้นที่เดียว (ในรายการหลัก)
+  })
+
+  it('ไม่มีงานโยกเข้า: ไม่มีกล่อง "รับงานต่อ"', () => {
+    const html = renderDriverMain(buildDriverTicket({ id: 'T-B', tripDate: '2026-11-05', driverId: 'D-B', stops: [{ siteName: 'A' }] }, [], ''))
+    expect(html).not.toContain('รับงานต่อ')
+  })
+
+  it('งานที่โยกมา: ปุ่มนำทางใหญ่ใช้พิกัดของจุดนั้น · ไม่มีพิกัดค่อยค้นด้วยชื่อ (ผ่านข้อมูลใบงานจริงจาก server)', () => {
+    const receiver = { id: 'T-B', tripDate: '2026-11-05', driverId: 'D-B', stops: [{ siteName: 'ไซต์ A' }] }
+    const source = { id: 'T-A', tripDate: '2026-11-05', driverId: 'D-A', stops: [
+      { siteName: 'Best สาขาบางนา', outcome: 'reassigned', reassignedToTripId: 'T-B', lat: 13.66, lng: 100.64 },
+      { siteName: 'ร้านไม่มีพิกัด', outcome: 'reassigned', reassignedToTripId: 'T-B' },
+    ] }
+    const ticket = buildDriverTicket(receiver, [receiver, source], '')
+    const html = renderDriverMain(ticket)
+    const card = (site: string) => html.slice(html.indexOf(`>${site}</h3>`), html.indexOf(NAV, html.indexOf(`>${site}</h3>`)) + NAV.length)
+    expect(card('Best สาขาบางนา')).toContain('https://www.google.com/maps/dir/?api=1&amp;destination=13.66,100.64&amp;travelmode=driving')
+    expect(card('Best สาขาบางนา')).not.toContain('maps/search')
+    expect(card('ร้านไม่มีพิกัด')).toContain(`https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent('ร้านไม่มีพิกัด')}`)
   })
 
   it('จุดปกติ / ส่งตามแผน ยังมีปุ่มนำทาง ไม่มีป้าย', () => {

@@ -80,7 +80,7 @@ export function buildDriverTicket(trip: Raw & { id: string }, monthTrips: (Raw &
   let stats: DriverTicketStats | null = null
   let boardSize = 0
   let topKm = 0
-  let incoming: ({ siteName: string; cargoDetails: string; dispatcherNote: string; dispatcherName: string; fromVehiclePlate: string; fromDriverName: string } & TransferFields & SequenceFields)[] = []
+  let incoming: ({ siteName: string; cargoDetails: string; dispatcherNote: string; dispatcherName: string; fromVehiclePlate: string; fromDriverName: string; lat?: number; lng?: number } & TransferFields & SequenceFields)[] = []
   let actualKm: number | null = null
   if (trip.tripDate && trip.driverId) {
     // ไม่นับทริปที่ยกเลิก (Cancelled) — เหมือนหน้าใบงานเดิม
@@ -96,6 +96,8 @@ export function buildDriverTicket(trip: Raw & { id: string }, monthTrips: (Raw &
       siteName: job.siteName, cargoDetails: job.cargoDetails, dispatcherNote: job.dispatcherNote,
       dispatcherName: job.dispatcherName, fromVehiclePlate: job.fromVehiclePlate, fromDriverName: job.fromDriverName,
       ...jobSetFields(job),
+      // ปุ่มนำทางของงานที่โยกมาใช้พิกัด (incomingStopsForTrip คัดเฉพาะพิกัดที่ใช้ได้แล้ว)
+      ...(job.lat !== undefined && job.lng !== undefined ? { lat: job.lat, lng: job.lng } : {}),
     }))
     actualKm = computeOutcomeStats(active).actualKmByTrip[trip.id] ?? null
   }

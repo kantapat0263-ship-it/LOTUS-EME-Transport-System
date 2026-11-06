@@ -51,4 +51,18 @@ describe('buildDriverTicket — งานรับของไปส่งต่
     expect(ticket.trip.stops[0]).toMatchObject({ transferRole: 'drop', transferId: 'tf_1' })
     expect(ticket.incoming[0]).toMatchObject({ siteName: 'ดูโฮม', transferRole: 'pickup', transferId: 'tf_1', transferDropName: 'ดอนเมือง' })
   })
+
+  it('งานที่โยกเข้ามาส่งพิกัดมาด้วย (ปุ่มนำทาง) · ไม่มีพิกัดก็ไม่ใส่', () => {
+    const mine = { id: 'T-2', tripDate: '2026-11-06', driverId: 'D2', status: 'Planned', stops: [{ siteName: 'ไซต์' }] }
+    const other = {
+      id: 'T-3', tripDate: '2026-11-06', driverId: 'D3', status: 'Planned',
+      stops: [
+        { siteName: 'Best บางนา', reassignedToTripId: 'T-2', outcome: 'reassigned', lat: 13.66, lng: 100.64 },
+        { siteName: 'ร้านไม่มีพิกัด', reassignedToTripId: 'T-2', outcome: 'reassigned' },
+      ],
+    }
+    const ticket = buildDriverTicket(mine, [mine, other], '')
+    expect(ticket.incoming[0]).toMatchObject({ siteName: 'Best บางนา', lat: 13.66, lng: 100.64 })
+    expect(ticket.incoming[1]).not.toHaveProperty('lat')
+  })
 })

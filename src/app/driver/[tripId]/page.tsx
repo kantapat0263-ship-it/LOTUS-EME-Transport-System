@@ -61,7 +61,7 @@ export default function DriverTripPage() {
   const [boardSize, setBoardSize] = React.useState(0)
   const [topKm, setTopKm] = React.useState(0)
   // Jobs other trucks handed to this driver today (public-safe: shown as "รับงานต่อ")
-  const [incoming, setIncoming] = React.useState<(Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName"> & TransferFields & SequenceFields)[]>([])
+  const [incoming, setIncoming] = React.useState<(Pick<IncomingJob, "siteName" | "cargoDetails" | "dispatcherNote" | "dispatcherName" | "fromVehiclePlate" | "fromDriverName" | "lat" | "lng"> & TransferFields & SequenceFields)[]>([])
   // Actual km for this trip after work moved in/out (null = fall back to planned)
   const [actualKm, setActualKm] = React.useState<number | null>(null)
 
@@ -187,6 +187,8 @@ export default function DriverTripPage() {
   const view = transferDisplayOrder(trip.stops || [], incoming)
   const { peers: transferPeers, ownPos, incomingPos } = view
   const boxedIncoming = view.order.filter((e) => e.kind === "incoming" && !e.inline)
+  // จุดรับที่โยกมาแทรกอยู่ในรายการหลัก — หัวกล่องนับรวมด้วย ให้ตรงกับ LINE "รับโยกงานต่อเพิ่ม N จุด"
+  const inlineIncomingCount = view.order.filter((e) => e.kind === "incoming" && e.inline).length
 
   const incomingCards = incoming.map((job, i) => (
     <div key={i} className="bg-white rounded-xl border border-blue-200 p-3">
@@ -217,19 +219,23 @@ export default function DriverTripPage() {
                 โยกจาก {job.fromVehiclePlate}{job.fromDriverName ? ` (${job.fromDriverName})` : ""}
               </span>
             )}
-            {job.siteName && (
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.siteName)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[11px] font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
-              >
-                <Navigation className="h-3 w-3" /> นำทาง
-              </a>
-            )}
           </div>
         </div>
       </div>
+      {/* นำทางด้วยพิกัดเหมือนจุดของคันนี้ (เดิมค้นด้วยชื่อ — ร้านหลายสาขาพาไปผิดที่) · ไม่มีพิกัดค่อยค้นด้วยชื่อ */}
+      {(job.siteName || validCoordinates(job.lat, job.lng)) && (
+        <a
+          href={validCoordinates(job.lat, job.lng)
+            ? `https://www.google.com/maps/dir/?api=1&destination=${job.lat},${job.lng}&travelmode=driving`
+            : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.siteName)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 w-full h-[48px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
+        >
+          <Navigation className="h-5 w-5" />
+          นำทางด้วย Google Maps
+        </a>
+      )}
     </div>
   ))
 
@@ -457,15 +463,24 @@ export default function DriverTripPage() {
         {/* Stops List */}
         <main className="p-4 space-y-6">
           {/* งานที่ถูกโยกมาให้คันนี้เพิ่ม — public-safe: โชว์ "รับงานต่อ" ไม่ใช่ "ปฏิเสธ" · จุดรับที่ขึ้นก่อนจุดส่งของคันนี้ไปอยู่ในรายการหลัก */}
-          {boxedIncoming.length > 0 && (
+          {/* หัวกล่องนับงานโยกทั้งหมด (ตรงกับ LINE) · จุดที่แทรกอยู่ในรายการหลักบอกไว้ ไม่ต้องหาในกล่อง */}
+          {boxedIncoming.length + inlineIncomingCount > 0 && (
             <div className="rounded-2xl border-2 border-blue-300 bg-blue-50 overflow-hidden">
               <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center gap-2">
                 <Repeat className="h-5 w-5 shrink-0" />
-                <span className="font-bold">รับงานต่อ {boxedIncoming.length} จุด — โยกมาให้คันนี้เพิ่ม</span>
+                <span className="font-bold">รับงานต่อ {boxedIncoming.length + inlineIncomingCount} จุด — โยกมาให้คันนี้เพิ่ม</span>
               </div>
-              <div className="p-3 space-y-2">
-                {boxedIncoming.map((e) => incomingCards[e.index])}
-              </div>
+              {inlineIncomingCount > 0 && (
+                <p className="px-4 pt-2.5 text-sm font-bold text-blue-800">
+                  {boxedIncoming.length > 0 ? `อีก ${inlineIncomingCount} จุดอยู่ในลำดับด้านล่าง` : "อยู่ในลำดับจุดส่งของด้านล่าง"} (กรอบสีฟ้า &quot;รับงานต่อ&quot;)
+                </p>
+              )}
+              {boxedIncoming.length > 0 && (
+                <div className="p-3 space-y-2">
+                  {boxedIncoming.map((e) => incomingCards[e.index])}
+                </div>
+              )}
+              {boxedIncoming.length === 0 && <div className="pb-2.5" />}
             </div>
           )}
 

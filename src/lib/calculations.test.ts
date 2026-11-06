@@ -419,6 +419,23 @@ describe('computeDriverReliability', () => {
 })
 
 describe('incomingStopsForTrip', () => {
+  it('ติดพิกัดของจุดต้นทางมาด้วย (ปุ่มนำทาง) เฉพาะพิกัดที่ใช้ได้', () => {
+    const source = {
+      id: 'source', stops: [
+        { siteName: 'A', reassignedToTripId: 'receiver', lat: 13.7, lng: 100.5 },
+        { siteName: 'B', reassignedToTripId: 'receiver' },
+        { siteName: 'C', reassignedToTripId: 'receiver', lat: 13.7, lng: null },
+        { siteName: 'D', reassignedToTripId: 'receiver', lat: 999, lng: 100.5 },
+      ],
+    }
+    const jobs = incomingStopsForTrip([source], 'receiver')
+    expect(jobs[0]).toMatchObject({ lat: 13.7, lng: 100.5 })
+    for (const job of jobs.slice(1)) {
+      expect(job).not.toHaveProperty('lat')
+      expect(job).not.toHaveProperty('lng')
+    }
+  })
+
   it('โยกบางจุดหรือทั้งเที่ยวแล้วหมายเหตุอยู่กับจุดและรถปลายทางที่ถูกต้อง', () => {
     const source = {
       id: 'source', stops: [
