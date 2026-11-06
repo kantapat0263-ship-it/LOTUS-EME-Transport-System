@@ -17,6 +17,9 @@ const withPWA = require('next-pwa')({
     { urlPattern: ({ url }: { url: URL }) => url.origin === self.origin && url.pathname.startsWith('/driver/'), handler: 'NetworkOnly', method: 'GET' },
     // manifest ไม่ผ่านแคช (กฎ .json เดิมของ next-pwa เป็น NetworkFirst ที่ยังเก็บสำเนา)
     { urlPattern: ({ url }: { url: URL }) => url.pathname === '/manifest.json', handler: 'NetworkOnly', method: 'GET' },
+    // คลิปคู่มือ — กฎ .mp4 เดิมของ next-pwa เป็น CacheFirst (เก็บวิดีโอหลาย MB ลงเครื่อง + เล่นผ่านแคชแบบตัดช่วงซึ่งบางเบราว์เซอร์สะดุด)
+    // ให้เบราว์เซอร์โหลดจากเน็ตตรง ๆ แทน (HTTP cache ของเบราว์เซอร์ยังทำงานตามปกติ) · ภาพปก .jpg ในโฟลเดอร์เดียวกันก็ตามกฎนี้
+    { urlPattern: ({ url }: { url: URL }) => url.origin === self.origin && url.pathname.startsWith('/noprecache/manual/'), handler: 'NetworkOnly', method: 'GET' },
     // ตัดกฎ "cross-origin" (NetworkFirst ทุกคำขอข้ามโดเมน) ของชุดเดิมออก — มันดัก Firestore/Firebase Auth ซึ่งเป็น API ส่วนตัว
     // (เก็บคำตอบลงแคชไม่แยกบัญชี และทำสตรีม Listen ของ Firestore พังเมื่อ SW ทำงาน) → คำขอข้ามโดเมนไปเน็ตตรง ไม่ผ่านแคช
     // ฟอนต์ Google ยังแคชตามกฎของมันเอง

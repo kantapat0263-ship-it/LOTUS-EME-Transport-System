@@ -58,6 +58,13 @@ describe('service worker API isolation', () => {
     expect(firstGetRule('/driver/T-1010-0013?t=abc')?.handler).toBe('NetworkOnly')
   })
 
+  // คลิปคู่มือ — ต้องชนะกฎ .mp4 CacheFirst ของ next-pwa (ไม่เก็บวิดีโอหลาย MB ลงเครื่อง / ไม่เล่นช่วงตัดจากแคช)
+  it('manual clips and posters load from the network', () => {
+    expect(firstGetRule('/noprecache/manual/01-one-place.mp4')?.handler).toBe('NetworkOnly')
+    expect(firstGetRule('/noprecache/manual/01-one-place.jpg')?.handler).toBe('NetworkOnly')
+    expect(firstGetRule('/other/clip.mp4')?.handler).toBe('CacheFirst')
+  })
+
   // Firestore/Firebase Auth/แผนที่ = API ส่วนตัวข้ามโดเมน — ห้ามมีกฎใดดัก (เดิมกฎ "cross-origin" NetworkFirst เก็บลงแคช
   // ไม่แยกบัญชี และทำสตรีม Listen ของ Firestore พัง) → ไม่มีกฎตรง = เบราว์เซอร์ส่งเน็ตตรง ไม่ผ่าน SW
   it.each([

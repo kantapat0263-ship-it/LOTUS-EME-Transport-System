@@ -20,7 +20,8 @@ import {
   Layers,
   FileText,
   BarChart2,
-  Package
+  Package,
+  BookOpen
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -164,6 +165,7 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
       badge: parcelWatch.readyCount > 0 ? parcelWatch.readyCount : null,
       badgeColor: "bg-red-500"
     },
+    { name: "คู่มือ", href: "/manual", icon: BookOpen, roles: ['admin', 'dispatcher', 'viewer'] },
     { name: "จัดการไซต์งาน", href: "/sites", icon: MapPin, roles: ['admin', 'dispatcher'] },
     { name: "ฟลีทรถและคนขับ", href: "/fleet", icon: Truck, roles: ['admin', 'dispatcher'],
       // จำนวนรถที่ พ.ร.บ./ภาษี ใกล้หมด (≤30 วัน) หรือเกินกำหนด — แดง = เกิน/ครบวันนี้
@@ -193,6 +195,8 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
 
   // ป้าย "New!!" เมนูติดตามรถ — กระพริบถึงสิ้นวัน 18 ก.ค. 2026 (~3 วันหลังเปิดใช้) แล้วหายเอง
   const showTrackingNew = Date.now() < new Date("2026-07-18T23:59:59+07:00").getTime()
+  // ป้าย "NEW!!" เมนูคู่มือ (คลิป) — ถึงสิ้นวัน 20 พ.ย. 2026 (2 สัปดาห์หลังเปิด, ผู้ใช้อนุมัติ 2026-11-06) แล้วหายเอง
+  const showManualNew = Date.now() < new Date("2026-11-20T23:59:59+07:00").getTime()
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
@@ -251,12 +255,12 @@ export function AppSidebar({ userRole, profileName, isMobile }: AppSidebarProps)
                 !isActuallyCollapsed && "mr-3"
               )} />
               {!isActuallyCollapsed && <span className="flex-1">{item.name}</span>}
-              {item.href === "/tracking" && showTrackingNew && (
+              {((item.href === "/tracking" && showTrackingNew) || (item.href === "/manual" && showManualNew)) && (
                 isActuallyCollapsed ? (
                   <span className="absolute right-1 top-1 h-2 w-2 animate-ping rounded-full bg-accent" />
                 ) : (
                   <span className="ml-auto animate-pulse rounded-full bg-accent px-1.5 py-0.5 text-[9px] font-extrabold text-white">
-                    New!!
+                    {item.href === "/manual" ? "NEW!!" : "New!!"}
                   </span>
                 )
               )}
