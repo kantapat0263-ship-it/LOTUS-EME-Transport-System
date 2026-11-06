@@ -176,6 +176,18 @@ describe('กติกาเวลารับคำขอของผู้ข�
     expect((await createVehicleRequest(db, { ...viewer(), role: 'dispatcher' }, command('2030-01-07'), at(20))).requestId).toMatch(/^VR-0701-\d{4}$/)
     await expect(createVehicleRequest(db, viewer(), command('2030-01-07'), at(10))).rejects.toThrow('ล่วงหน้าอย่างน้อย 1 วัน')
   })
+
+  it('คำขออนุมัติที่ผู้ขอยกเลิกใช้ส่งใบไม่ได้ · ยกเลิกแล้วขอใหม่จนอนุมัติ = ส่งได้', async () => {
+    await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
+    await getAdminDb().doc('companySettings/default').set({ requestOpenTime: '08:00', requestCloseTime: '16:00' }, { merge: true })
+    const db = getAdminDb()
+    const { Timestamp } = await import('firebase-admin/firestore')
+    const mondayNight = new Date('2030-01-14T13:00:00Z') // จันทร์ 20:00 เวลาไทย (นอกเวลา) → ขอวันอังคาร 15 ม.ค.
+    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-15', status: 'cancelled', createdAt: Timestamp.fromMillis(1_000) })
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-15'), mondayNight)).rejects.toThrow('ขออนุมัติจาก Dispatcher')
+    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-15', status: 'approved', createdAt: Timestamp.fromMillis(2_000) })
+    expect((await createVehicleRequest(db, viewer(), command('2030-01-15'), mondayNight)).requestId).toMatch(/^VR-1501-\d{4}$/)
+  })
 })
 
 it('ใบไปหลายจุดตามลำดับ (ไซต์ → สนง. → ไซต์): ทุกจุดได้รหัสชุดเดียวกัน (sq_) + ลำดับ + จำนวนจุด · จุดติดกันที่เดียวกันถูกปฏิเสธ', async () => {
