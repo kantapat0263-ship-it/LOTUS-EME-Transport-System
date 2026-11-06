@@ -34,3 +34,18 @@ export function dispatchedDestinationIndexes(request: { assignedDestinations?: u
   const destinations: unknown[] = Array.isArray(request?.destinations) ? request.destinations : []
   return assigned.filter((index): index is number => typeof index === 'number' && !(destinations[index] as { withdrawn?: unknown } | undefined)?.withdrawn)
 }
+
+/** ใบที่ยังรอจัด — ผู้ขอเห็นปุ่ม "ยกเลิก" หรือข้อความ "ยกเลิกให้แจ้งคนจัดรถ" เฉพาะสถานะเหล่านี้ */
+export function isOpenRequestStatus(status: unknown): boolean {
+  return status === 'pending' || status === 'in_progress' || status === 'partial' || status === 'rescheduled'
+}
+
+/**
+ * ผู้ขอยกเลิกใบตัวเองได้ = ยังรอจัด และยังไม่มีจุดไหนเคยถูกจัดเข้าเที่ยว (assignedDestinations ว่าง)
+ * ต้องตรงกับ firestore.rules (vehicleRequests update ของเจ้าของ) ไม่งั้นกดแล้วติด permission-denied
+ * นับสำเนาคันคู่ที่ถอนแล้วด้วย (rules ไล่ดูจุดทีละตัวไม่ได้) — สำเนาถอนเกิดเฉพาะตอนมีจุดอื่นในชุดจัดไปแล้ว จึงแทบไม่ต่างจากเดิม
+ */
+export function ownerCanCancelRequest(request: { status?: unknown; assignedDestinations?: unknown } | null | undefined): boolean {
+  const assigned = request?.assignedDestinations
+  return isOpenRequestStatus(request?.status) && (assigned == null || (Array.isArray(assigned) && assigned.length === 0))
+}

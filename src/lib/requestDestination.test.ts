@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { requestDestinationFingerprint, assertRequestDestinationsUnchanged, dispatchedDestinationIndexes } from './requestDestination'
+import { requestDestinationFingerprint, assertRequestDestinationsUnchanged, dispatchedDestinationIndexes, ownerCanCancelRequest } from './requestDestination'
 import { Timestamp as WebTimestamp } from 'firebase/firestore'
 import { Timestamp as AdminTimestamp } from 'firebase-admin/firestore'
 
@@ -39,5 +39,25 @@ describe('dispatchedDestinationIndexes (สำเนาคันคู่ที�
     expect(dispatchedDestinationIndexes({ ...request, assignedDestinations: [1] })).toEqual([])
     expect(dispatchedDestinationIndexes(undefined)).toEqual([])
     expect(dispatchedDestinationIndexes({ destinations: [] })).toEqual([])
+  })
+})
+
+describe('ownerCanCancelRequest (ต้องตรงกับ firestore.rules ของ vehicleRequests)', () => {
+  it('ยังรอจัดและยังไม่มีจุดถูกจัด = ยกเลิกเองได้', () => {
+    for (const status of ['pending', 'in_progress', 'partial', 'rescheduled']) {
+      expect(ownerCanCancelRequest({ status })).toBe(true)
+      expect(ownerCanCancelRequest({ status, assignedDestinations: [] })).toBe(true)
+      expect(ownerCanCancelRequest({ status, assignedDestinations: null })).toBe(true)
+    }
+  })
+
+  it('จัดรถแล้ว / มีจุดถูกจัด (รวมสำเนาที่ถอน) / ปฏิเสธ / ยกเลิกแล้ว = ยกเลิกเองไม่ได้', () => {
+    expect(ownerCanCancelRequest({ status: 'approved', assignedDestinations: [0] })).toBe(false)
+    expect(ownerCanCancelRequest({ status: 'partial', assignedDestinations: [0] })).toBe(false)
+    expect(ownerCanCancelRequest({ status: 'in_progress', assignedDestinations: [0] })).toBe(false)
+    expect(ownerCanCancelRequest({ status: 'rejected' })).toBe(false)
+    expect(ownerCanCancelRequest({ status: 'cancelled' })).toBe(false)
+    expect(ownerCanCancelRequest({ status: 'pending', assignedDestinations: 'x' })).toBe(false)
+    expect(ownerCanCancelRequest(undefined)).toBe(false)
   })
 })

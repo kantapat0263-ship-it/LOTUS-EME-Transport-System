@@ -3,7 +3,7 @@
 import * as React from "react"
 import { applyPickupItemsEdit, isTransferStop, pickupEditMessage } from "@/lib/transfer"
 import { isOneOffJobStop, isSequenceStop } from "@/lib/sequence"
-import { dispatchedDestinationIndexes } from "@/lib/requestDestination"
+import { dispatchedDestinationIndexes, isOpenRequestStatus, ownerCanCancelRequest } from "@/lib/requestDestination"
 import { RequestForm } from "@/components/requests/RequestForm"
 import { SubmissionLogTab } from "@/components/requests/SubmissionLogTab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -1392,7 +1392,8 @@ export default function RequestsPage() {
     if (!reqToCancel) return
     // อ่านค่าสดจากรายการ (ระหว่างเปิดหน้าต่างยืนยันค้าง คนจัดรถอาจเพิ่งจัดจุดเข้าเที่ยว)
     const live = myRequests?.find((r: any) => r.id === reqToCancel.id) ?? reqToCancel
-    if (dispatchedDestinationIndexes(live).length > 0) {
+    // เงื่อนไขเดียวกับ firestore.rules — ใบที่จัดรถแล้ว (หรือเปลี่ยนสถานะไประหว่างเปิดหน้าต่าง) ยกเลิกเองไม่ได้
+    if (!ownerCanCancelRequest(live)) {
       toast({ title: "ยกเลิกเองไม่ได้", description: "ใบนี้มีจุดที่จัดรถแล้ว — แจ้งคนจัดรถให้ยกเลิกในเที่ยววิ่ง", variant: "destructive" })
       return
     }
@@ -1506,10 +1507,10 @@ export default function RequestsPage() {
                           
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             {/* มีจุดที่จัดเข้าเที่ยวแล้ว = ผู้ขอยกเลิกเองไม่ได้ (จุดในเที่ยวจะค้าง คนขับยังไป) — ให้แจ้งคนจัดรถ */}
-                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress" || req.status === "rescheduled") && req.userId === user?.uid && dispatchedDestinationIndexes(req).length > 0 && (
+                            {isOpenRequestStatus(req.status) && req.userId === user?.uid && !ownerCanCancelRequest(req) && (
                               <span className="text-[10px] text-muted-foreground">จัดรถแล้วบางจุด — ยกเลิกให้แจ้งคนจัดรถ</span>
                             )}
-                            {(req.status === "pending" || req.status === "partial" || req.status === "in_progress" || req.status === "rescheduled") && req.userId === user?.uid && dispatchedDestinationIndexes(req).length === 0 && (
+                            {req.userId === user?.uid && ownerCanCancelRequest(req) && (
                               <Button
                                 variant="outline" 
                                 size="sm" 

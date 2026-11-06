@@ -284,6 +284,35 @@ describe('vehicleRequests — viewer ยังขอรถของตัวเ�
     await assertFails(deleteDoc(doc(db, 'vehicleRequests', 'VR-MINE')))
   })
 
+  it('viewer ยกเลิกเองได้เฉพาะใบที่ยังรอจัดและยังไม่มีจุดถูกจัด (ตรงกับปุ่มบนหน้าจอ) · คนจัดรถยกเลิกได้ทุกใบ', async () => {
+    const cancel = { status: 'cancelled', cancelledAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    const seed = (id: string, extra: Record<string, unknown>) => env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'vehicleRequests', id), { userId: 'viewer', requestDate: '2026-10-05', status: 'pending', ...extra })
+    })
+    // ยกเลิกได้: ยังรอจัด ไม่มีจุดถูกจัด (ไม่มีฟิลด์ / รายการว่าง / null)
+    for (const [id, extra] of [
+      ['VR-OPEN-1', { status: 'in_progress' }],
+      ['VR-OPEN-2', { status: 'rescheduled', assignedDestinations: [] }],
+      ['VR-OPEN-3', { status: 'pending', assignedDestinations: null }],
+    ] as const) {
+      await seed(id, extra)
+      await assertSucceeds(updateDoc(doc(as('viewer'), 'vehicleRequests', id), cancel))
+    }
+    // ยกเลิกเองไม่ได้: จัดรถแล้ว / จัดบางจุด / ปฏิเสธ / ยกเลิกไปแล้ว / มีจุดถูกจัด (รวมสำเนาที่ถอน)
+    for (const [id, extra] of [
+      ['VR-DONE', { status: 'approved', assignedDestinations: [0] }],
+      ['VR-PART', { status: 'partial', assignedDestinations: [0] }],
+      ['VR-REJ', { status: 'rejected' }],
+      ['VR-CAN', { status: 'cancelled' }],
+      ['VR-ASSIGNED', { status: 'pending', assignedDestinations: [1] }],
+      ['VR-WITHDRAWN', { status: 'in_progress', assignedDestinations: [0], destinations: [{ withdrawn: true }] }],
+    ] as const) {
+      await seed(id, extra)
+      await assertFails(updateDoc(doc(as('viewer'), 'vehicleRequests', id), cancel))
+      await assertSucceeds(updateDoc(doc(as('dispatcher'), 'vehicleRequests', id), cancel))
+    }
+  })
+
   it('staff สร้างใบ in_progress / รับเรื่อง / ลบ ได้', async () => {
     const db = as('dispatcher')
     await assertSucceeds(setDoc(doc(db, 'vehicleRequests', 'VR-STAFF'), newRequest('dispatcher', 'in_progress')))

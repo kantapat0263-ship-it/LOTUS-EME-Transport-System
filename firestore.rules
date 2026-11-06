@@ -88,9 +88,13 @@ service cloud.firestore {
       // ผู้ขอทั่วไปส่งใบผ่าน server เท่านั้น (ออกเลข VR ใน transaction ฝั่ง server)
       allow create: if isStaff();
       // เจ้าของทำได้อย่างเดียวคือยกเลิกใบตัวเอง (requests/page.tsx handleCancelRequest)
+      // เฉพาะใบที่ยังรอจัดและยังไม่มีจุดไหนถูกจัดเข้าเที่ยว — ตรงกับปุ่มบนหน้าจอ (lib/requestDestination ownerCanCancelRequest)
+      // ใบที่จัดรถแล้วต้องให้คนจัดรถยกเลิก ไม่งั้นจุดค้างในเที่ยววิ่ง คนขับยังไป (ใบขอ↔ทริปไม่มีลิงก์ย้อนกลับ)
       allow update: if isStaff() || (
         isActiveUser()
         && resource.data.userId == request.auth.uid
+        && resource.data.status in ['pending', 'in_progress', 'partial', 'rescheduled']
+        && (resource.data.get('assignedDestinations', null) == null || resource.data.assignedDestinations.size() == 0)
         && request.resource.data.status == 'cancelled'
         && changesOnly(['status', 'cancelledAt', 'updatedAt'])
       );
