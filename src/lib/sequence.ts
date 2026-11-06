@@ -98,6 +98,8 @@ export function enforceSetOrder<T extends TransferFields & SequenceFields & Plac
 /** คำเตือนของป้าย — ใช้ค่าคงที่นี้เทียบเสมอ */
 export const SEQUENCE_WARNING = {
   outOfOrder: 'ลำดับสลับ — ตรวจลำดับงานต่อเนื่อง',
+  /** งานอื่นคั่นกลางจุดของชุด (ผู้ใช้ตัดสิน: ไม่แทรกกลางชุด) — เตือนคนจัดรถ ไม่บอกคนขับ (อาจตั้งใจ) */
+  interleaved: 'มีงานอื่นคั่นกลางงานต่อเนื่อง',
 } as const
 
 type Peer = SequenceFields & { siteName?: string; outcome?: string }
@@ -123,8 +125,9 @@ export function sequenceLabel(peers: readonly Peer[], index: number): SequenceLa
   if (!stop || !isSequenceStop(stop)) return null
   const group = peers.map((peer, i) => ({ peer, i })).filter(({ peer }) => isSequenceStop(peer) && peer.sequenceId === stop.sequenceId)
   const size = Math.max(stop.sequenceSize || 0, ...group.map(({ peer }) => numberOf(peer)))
+  // "ต่อจาก" = จุดก่อนหน้าที่ยังไปกับเที่ยวนี้ (จุดที่เลื่อน/โยกออกแล้ว รถไม่ได้ไป ไม่เอามาเป็นชื่อ)
   const prev = group
-    .filter(({ peer }) => peer.sequenceIndex! < stop.sequenceIndex!)
+    .filter(({ peer }) => peer.sequenceIndex! < stop.sequenceIndex! && !isInactiveStop(peer))
     .sort((a, b) => b.peer.sequenceIndex! - a.peer.sequenceIndex!)[0]
   const prevName = prev ? nameOf(prev.peer) : ''
   const text = `🔁 จุดที่ ${numberOf(stop)}/${size}${prevName ? ` · ต่อจาก ${prevName}` : ''}`
@@ -135,7 +138,11 @@ export function sequenceLabel(peers: readonly Peer[], index: number): SequenceLa
   // ลำดับบนจอสลับกับลำดับที่ผู้ขอกรอก (เช่น จุดที่โยกเข้ามาต่อท้าย) — เทียบเฉพาะจุดที่ยังไปกับเที่ยวนี้
   const outOfOrder = active.some(({ peer, i }) => (peer.sequenceIndex! < stop.sequenceIndex!) !== (i < index) && i !== index)
   const missingText = missing.length ? `จุดที่ ${missing.join(', ')} ไม่ได้ไปกับเที่ยวนี้` : ''
-  const warning = [outOfOrder ? SEQUENCE_WARNING.outOfOrder : '', missingText].filter(Boolean).join(' · ')
+  // งานอื่นที่ยังไปกับเที่ยวนี้อยู่ระหว่างจุดของชุด (เช่น รวมเข้าทริปเดิม / งานโยกเข้า) — ตำแหน่งบนจอ
+  const positions = active.map(({ i }) => i)
+  const interleaved = positions.length > 1 && peers.some((peer, i) =>
+    i > Math.min(...positions) && i < Math.max(...positions) && !isInactiveStop(peer) && !(isSequenceStop(peer) && peer.sequenceId === stop.sequenceId))
+  const warning = [outOfOrder ? SEQUENCE_WARNING.outOfOrder : '', interleaved ? SEQUENCE_WARNING.interleaved : '', missingText].filter(Boolean).join(' · ')
   return { role: 'sequence', text, ...(warning ? { warning } : {}), ...(missing.length ? { missing } : {}) }
 }
 
@@ -168,24 +175,31 @@ export function jobSetMateReminder(peers: readonly (Peer & TransferFields)[], in
   return transferMateReminder(peers, index) ?? sequenceMateReminder(peers, index)
 }
 
-/** เส้นทางของชุด "ไซต์A → สนง.เอกสาร → ไซต์A" จากจุดของชุดที่อยู่ในลิสต์ (เรียงตามลำดับที่ผู้ขอกรอก) */
-export function sequenceRouteText(peers: readonly Peer[], sequenceId: string): string {
-  return peers
-    .filter(peer => isSequenceStop(peer) && peer.sequenceId === sequenceId)
-    .sort((a, b) => a.sequenceIndex! - b.sequenceIndex!)
-    .map(peer => nameOf(peer) || `จุดที่ ${numberOf(peer)}`)
-    .join(' → ')
+/**
+ * เส้นทางเต็มของชุด มีเลขจุด "1.ไซต์A → 2.สนง.เอกสาร → 3.ไซต์A" — จุดที่ไม่อยู่ในลิสต์ (อยู่คันอื่น) = "2.(คันอื่น)"
+ * size = จำนวนจุดของชุด (ไม่ส่ง = เลขสูงสุดที่เห็น)
+ */
+export function sequenceRouteText(peers: readonly Peer[], sequenceId: string, size?: number): string {
+  const members = peers.filter(peer => isSequenceStop(peer) && peer.sequenceId === sequenceId)
+  const total = Math.max(size || 0, ...members.map(numberOf))
+  return Array.from({ length: total }, (_, k) => {
+    const m = members.find(peer => peer.sequenceIndex === k)
+    return `${k + 1}.${m ? nameOf(m) || 'ไม่ระบุสถานที่' : '(คันอื่น)'}`
+  }).join(' → ')
 }
 
 /**
  * ข้อความต่อท้ายรายละเอียดงาน เมื่อ "เลื่อน" จุดของงานต่อเนื่องไปวันอื่น — ใบวันใหม่เป็นจุดปกติ (ผู้ใช้ตัดสิน: ใบแยกทีละจุด)
- * จึงเขียนไว้ว่าเป็นจุดที่เท่าไรของเส้นทางไหน ให้คนจัดรถจัดคันเดียวกันและเรียงเอง · ไม่ใช่งานต่อเนื่อง = null
+ * เขียนเส้นทางเดิม + ใบนี้คือจุดที่เท่าไร + จุดไหนเลื่อนมาด้วยกัน ให้คนจัดรถวันใหม่จัดคันเดียวกันและเรียงเอง
+ * together = ตำแหน่ง (ใน peers) ของจุดที่เลื่อนพร้อมกัน · ไม่ส่ง/มีจุดเดียว = เลื่อนมาเฉพาะจุดนี้ · ไม่ใช่งานต่อเนื่อง = null
  */
-export function postponedSequenceNote(peers: readonly Peer[], index: number): string | null {
+export function postponedSequenceNote(peers: readonly Peer[], index: number, together?: readonly number[]): string | null {
   const stop = peers[index]
   if (!stop || !isSequenceStop(stop)) return null
   const size = Math.max(stop.sequenceSize || 0, numberOf(stop))
-  return `(งานต่อเนื่อง จุดที่ ${numberOf(stop)}/${size}: ${sequenceRouteText(peers, stop.sequenceId!)})`
+  const nums = [...new Set((together ?? [index]).map(i => peers[i]).filter(p => p && isSequenceStop(p) && p.sequenceId === stop.sequenceId).map(p => numberOf(p!)))].sort((a, b) => a - b)
+  const moved = nums.length <= 1 ? 'เลื่อนมาเฉพาะจุดนี้' : nums.length === size ? 'เลื่อนมาทั้งชุด' : `เลื่อนมาพร้อมกัน: จุดที่ ${nums.join(', ')}`
+  return `(งานต่อเนื่อง ${sequenceRouteText(peers, stop.sequenceId!, size)} · ใบนี้ = จุดที่ ${numberOf(stop)} · ${moved})`
 }
 
 /** คำอธิบายใต้ป้ายสำหรับคนขับ (ภาษาคนขับ) */
@@ -217,8 +231,8 @@ export function jobSetNoteForDriver(label: JobSetLabel | null): string | null {
 }
 
 /** ข้อความต่อท้ายใบวันใหม่เมื่อเลื่อนจุดของชุดงาน (จุดรับของ / จุดของงานต่อเนื่อง) · อื่น ๆ = null */
-export function jobSetPostponeNote(peers: readonly (Peer & TransferFields)[], index: number): string | null {
-  return postponedPickupNote(peers, index) ?? postponedSequenceNote(peers, index)
+export function jobSetPostponeNote(peers: readonly (Peer & TransferFields)[], index: number, together?: readonly number[]): string | null {
+  return postponedPickupNote(peers, index) ?? postponedSequenceNote(peers, index, together)
 }
 
 /**

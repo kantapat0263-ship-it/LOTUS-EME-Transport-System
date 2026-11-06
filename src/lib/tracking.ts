@@ -41,7 +41,9 @@ export function arrivalDwellMin(stop: LatLng, office: LatLng | null | undefined)
 /** รอบที่อยู่ในรัศมีจุดงานสั้นกว่านี้ (นาที) = ขับผ่าน — ไม่นับเป็นเวลาจอดใน timeline */
 export const STAY_MIN = 2
 
-type Visit = { start: number; end: number }
+/** leftAt = เวลาจุด GPS แรกที่อยู่นอกรัศมีหลังช่วงนี้ (ไม่มี = trail จบในรัศมี) — ใช้วัดว่ารถ "ออกไปจริง" นานแค่ไหน
+ *  (ไม่ใช้เวลาจบช่วง: จอดนานอุปกรณ์ไม่รายงาน ช่วงห่างระหว่างจุดในรัศมีไม่ได้แปลว่ารถออกไป) */
+type Visit = { start: number; end: number; leftAt?: number }
 
 /**
  * ทุกช่วงที่รถอยู่ในรัศมีจุดงาน — ช่วงจุด trail ต่อเนื่อง (เรียงตามเวลา) ที่อยู่ในรัศมีทุกจุด
@@ -58,6 +60,7 @@ function stopVisits(stop: LatLng, trail: TrailPoint[], radius: number): Visit[] 
       if (cur) cur.end = p.t!
       else cur = { start: p.t!, end: p.t! }
     } else if (cur) {
+      cur.leftAt = p.t!
       visits.push(cur)
       cur = null
     }
@@ -71,54 +74,90 @@ export function firstArrivalVisit(stop: LatLng, trail: TrailPoint[], radius: num
   return stopVisits(stop, trail, radius).find((v) => v.end - v.start >= minDwellMin * 60_000) ?? null
 }
 
-/**
- * ตำแหน่งใน visits ของการ "ถึง" รอบที่ skip (0 = รอบแรก) ที่ผ่านเกณฑ์จอด needMin
- * รอบที่เริ่มห่างจากรอบก่อนน้อยกว่า STAY_MIN (GPS กระโดดออกนอกรัศมีชั่วครู่) นับเป็นรอบเดียวกัน · ไม่มี = -1
- * skip = 0 ให้ผลเท่า findIndex ของรอบแรกที่ผ่านเกณฑ์ (กติกาเดิม)
- */
-function nthArrivalIndex(visits: Visit[], needMin: number, skip: number): number {
-  let count = -1
-  let lastEnd = Number.NEGATIVE_INFINITY
-  for (let i = 0; i < visits.length; i++) {
-    const v = visits[i]
-    if (v.end - v.start < needMin * 60_000) continue
-    if (count >= 0 && v.start - lastEnd < STAY_MIN * 60_000) { lastEnd = v.end; continue }
-    count++
-    if (count === skip) return i
-    lastEnd = v.end
-  }
-  return -1
-}
+/** กลับมาที่เดิมโดยไม่รู้จุดก่อนหน้า (จุดนั้นอยู่คันอื่น) — ต้องออกไปนอกรัศมีอย่างน้อยกี่นาที ถึงนับเป็นการกลับมารอบใหม่ */
+export const RETURN_AWAY_MIN = 10
 
 type SequenceStopLike = { lat?: number; lng?: number; sequenceId?: string; sequenceIndex?: number; outcome?: string | null }
 
+/** anchor = ต้องถึงหลังจุดนี้ถึง (จุดก่อนหน้าของชุด อยู่คนละที่) · after = ต้องเป็นการกลับมารอบใหม่หลังรอบของจุดนี้ (ที่เดียวกัน) */
+export type ReturnPlan = { anchor: number } | { after: number }
+
 /**
- * งานไปหลายจุดตามลำดับ (lib/sequence) ที่ "กลับมาที่เดิม" ในเที่ยวเดียว (ไซต์ → สนง. → ไซต์) — จุดนั้นเป็นการไปที่เดิมรอบที่เท่าไร
- * 0 = รอบแรก (ทุกจุดที่ไม่ใช่งานต่อเนื่อง / สถานที่ไม่ซ้ำ = 0 → ใช้กติกาเดิมทุกอย่าง) · k = ต้องเป็นการเข้ารัศมีรอบที่ k+1
- * นับเฉพาะสมาชิกชุดเดียวกันที่ยังไปกับเที่ยวนี้ เรียงตามลำดับที่ผู้ขอกรอก · จุดติดกันที่เดียวกัน = รอบเดียวกัน
- * (เดิม: ไซต์ที่อยู่ 2 ครั้งถูกติ๊ก "ถึง" ทั้งคู่ตั้งแต่รอบแรก → ป้าย "ครบจุด · กำลังกลับ" ขึ้นก่อนพาคนงานกลับ)
+ * งานไปหลายจุดตามลำดับ (lib/sequence) ที่ "กลับมาที่เดิม" ในเที่ยวเดียว (ไซต์ → สนง. → ไซต์) — วิธีนับ "ถึง" ของจุดนั้น
+ * null = กติกาเดิม (ทุกจุดที่ไม่ใช่งานต่อเนื่อง / ที่นั้นยังไม่เคยไปในชุด)
+ * { anchor } = จุดก่อนหน้า (คนละที่) อยู่ในเที่ยวนี้ → การถึงต้องเริ่มหลังรถถึงจุดก่อนหน้า (ไม่ขึ้นกับ GPS เด้ง/จอดนาน)
+ * { after } = จุดก่อนหน้าที่อยู่ที่เดียวกันคั่นด้วยจุดที่ไม่อยู่ในเที่ยวนี้ (ถอดไปคันอื่น/คันช่วยได้บางจุด) → ต้องออกไปนาน ≥ RETURN_AWAY_MIN แล้วกลับเข้ามา
+ * จุดที่ยังอยู่ในเที่ยวแต่ไม่ไปแล้ว (เลื่อน/โยกออก) คั่นกลาง = รถไม่ได้ออกไป → ที่เดียวกันสองจุดนับเป็นรอบเดียวกัน
  * ไม่ใช้กับงานคนละใบที่บังเอิญอยู่ที่เดียวกัน (หลายงานที่ไซต์เดียวกันใช้เวลาถึงร่วมกันได้ตามเดิม)
  */
-export function repeatOccurrences(stops: readonly SequenceStopLike[], radius = ARRIVAL_RADIUS_M): number[] {
-  const occ = stops.map(() => 0)
-  const groups = new Map<string, number[]>()
+export function returnVisitPlans(stops: readonly SequenceStopLike[], radius = ARRIVAL_RADIUS_M): (ReturnPlan | null)[] {
+  const plans: (ReturnPlan | null)[] = stops.map(() => null)
+  const onTrip = new Map<string, Set<number>>() // ลำดับของทุกจุดในชุดที่อยู่ในลิสต์นี้ (รวมจุดที่ไม่ไปแล้ว)
+  const groups = new Map<string, number[]>() // จุดที่ยังไปกับเที่ยวนี้และมีพิกัด
   stops.forEach((s, i) => {
-    if (typeof s.sequenceId !== 'string' || !s.sequenceId || !Number.isInteger(s.sequenceIndex) || s.lat == null || s.lng == null) return
-    if (s.outcome && s.outcome !== 'delivered') return
+    if (typeof s.sequenceId !== 'string' || !s.sequenceId || !Number.isInteger(s.sequenceIndex)) return
+    if (!onTrip.has(s.sequenceId)) onTrip.set(s.sequenceId, new Set())
+    onTrip.get(s.sequenceId)!.add(s.sequenceIndex!)
+    if ((s.outcome && s.outcome !== 'delivered') || s.lat == null || s.lng == null) return
     groups.set(s.sequenceId, [...(groups.get(s.sequenceId) ?? []), i])
   })
   const near = (a: SequenceStopLike, b: SequenceStopLike) =>
     haversineMeters({ lat: a.lat!, lng: a.lng! }, { lat: b.lat!, lng: b.lng! }) <= radius
-  for (const members of groups.values()) {
+  for (const [id, members] of groups) {
     const sorted = [...members].sort((a, b) => stops[a].sequenceIndex! - stops[b].sequenceIndex!)
-    const runStarts: number[] = [] // จุดแรกของแต่ละช่วงที่อยู่ที่เดียวกันติดกัน
+    const present = onTrip.get(id)!
+    const absentBetween = (a: number, b: number) => {
+      for (let k = stops[a].sequenceIndex! + 1; k < stops[b].sequenceIndex!; k++) if (!present.has(k)) return true
+      return false
+    }
+    const runStarts: number[] = [] // จุดแรกของแต่ละช่วงที่รถอยู่ที่เดียวกันต่อเนื่อง
+    let plan: ReturnPlan | null = null
     sorted.forEach((i, k) => {
-      if (k === 0 || !near(stops[i], stops[sorted[k - 1]])) runStarts.push(i)
-      const before = runStarts.slice(0, runStarts.length - 1)
-      occ[i] = before.filter((r) => near(stops[r], stops[i])).length
+      const prev = k > 0 ? sorted[k - 1] : -1
+      const sameAsPrev = prev >= 0 && near(stops[i], stops[prev])
+      if (prev < 0 || !sameAsPrev || absentBetween(prev, i)) {
+        const visitedBefore = runStarts.some((r) => near(stops[r], stops[i]))
+        plan = !visitedBefore ? null : !sameAsPrev ? { anchor: prev } : { after: prev }
+        runStarts.push(i)
+      }
+      plans[i] = plan
     })
   }
-  return occ
+  return plans
+}
+
+/**
+ * รอบที่นับว่า "ถึง" ของทุกจุด (ตามแผน returnVisitPlans) — จุดไม่มีแผน = รอบแรกที่ผ่านเกณฑ์จอด (กติกาเดิม)
+ * visitsOf(i) = ช่วงที่อยู่ในรัศมีของจุด i (เรียงตามเวลา) · needOf(i) = นาทีจอดขั้นต่ำ · คิดตามลำดับที่แผนอ้างถึง (จุดก่อนหน้าก่อน)
+ */
+function resolveArrivals(plans: readonly (ReturnPlan | null)[], visitsOf: (i: number) => Visit[], needOf: (i: number) => number): (Visit | null)[] {
+  const out: (Visit | null | undefined)[] = plans.map(() => undefined)
+  const get = (i: number): Visit | null => {
+    if (out[i] !== undefined) return out[i]!
+    out[i] = null // กันวน (แผนชี้จุดลำดับก่อนเสมอ ไม่ควรเกิด)
+    const visits = visitsOf(i)
+    const ok = (v: Visit) => v.end - v.start >= needOf(i) * 60_000
+    const plan = plans[i]
+    let found: Visit | null = null
+    if (!plan) found = visits.find(ok) ?? null
+    else if ('anchor' in plan) {
+      const a = get(plan.anchor)
+      found = a ? visits.find((v) => ok(v) && v.start > a.start) ?? null : null
+    } else {
+      const e = get(plan.after)
+      if (e) {
+        for (let k = 1; k < visits.length; k++) {
+          const v = visits[k]
+          const leftAt = visits[k - 1].leftAt
+          if (v.start > e.end && ok(v) && leftAt != null && v.start - leftAt >= RETURN_AWAY_MIN * 60_000) { found = v; break }
+        }
+      }
+    }
+    out[i] = found
+    return found
+  }
+  plans.forEach((_, i) => get(i))
+  return out as (Visit | null)[]
 }
 
 /**
@@ -133,11 +172,11 @@ export function stopTiming(
   radius: number,
   needMin: number,
   until = Number.POSITIVE_INFINITY,
-  /** งานต่อเนื่องที่กลับมาที่เดิม (repeatOccurrences) — ข้ามการถึงรอบก่อน ๆ · 0 = รอบแรก (กติกาเดิม) */
-  skip = 0
+  /** งานต่อเนื่องที่กลับมาที่เดิม (returnVisitPlans) — นับเฉพาะรอบที่เริ่มหลังเวลานี้ · ไม่ส่ง = รอบแรก (กติกาเดิม) */
+  notBefore = Number.NEGATIVE_INFINITY
 ): { arrivedAt: number; departedAt: number; dwellMin: number | null } | null {
   const visits = stopVisits(stop, trail, radius)
-  const i = nthArrivalIndex(visits, needMin, skip)
+  const i = visits.findIndex((v) => v.end - v.start >= needMin * 60_000 && v.start > notBefore)
   if (i < 0) return null
   const stays = visits
     .slice(i)
@@ -187,7 +226,15 @@ export function computeStopStatuses(
 ): StopStatus[] {
   const radius = opts.radius ?? ARRIVAL_RADIUS_M
   const ordered = [...stops].sort((a, b) => a.order - b.order)
-  const occurrence = repeatOccurrences(ordered, radius)
+  // งานต่อเนื่องที่กลับมาที่เดิม: คิดรอบที่ถึงจาก trail ที่มีเวลา · trail ไม่มีเวลา = แยกรอบไม่ได้ ใช้กติกาเดิม
+  const plans = returnVisitPlans(ordered, radius)
+  const resolved = plans.some(Boolean) && trail.some((p) => p.t != null)
+    ? resolveArrivals(
+        plans,
+        (i) => (ordered[i].lat != null && ordered[i].lng != null ? stopVisits({ lat: ordered[i].lat!, lng: ordered[i].lng! }, trail, radius) : []),
+        (i) => (ordered[i].lat != null && ordered[i].lng != null ? arrivalDwellMin({ lat: ordered[i].lat!, lng: ordered[i].lng! }, opts.office) : 0),
+      )
+    : null
   let currentAssigned = false
 
   return ordered.map((s, k) => {
@@ -201,12 +248,10 @@ export function computeStopStatuses(
         if (nearestM == null || d < nearestM) nearestM = d
       }
       const needMin = arrivalDwellMin(stopPos, opts.office)
-      // งานต่อเนื่องที่กลับมาที่เดิม: ต้องเป็นการเข้ารัศมีรอบหลัง · trail ไม่มีเวลา = แยกรอบไม่ได้ ใช้กติกาเดิม
-      const timed = occurrence[k] > 0 ? stopVisits(stopPos, trail, radius) : []
-      if (timed.length > 0) {
-        const at = nthArrivalIndex(timed, needMin, occurrence[k])
-        arrived = at >= 0
-        arrivedAt = at >= 0 ? timed[at].start : null
+      if (resolved && plans[k]) {
+        // งานต่อเนื่องที่กลับมาที่เดิม: นับรอบที่ถึงหลังจุดก่อนหน้า (returnVisitPlans)
+        arrived = resolved[k] != null
+        arrivedAt = resolved[k]?.start ?? null
       } else if (needMin === 0) {
         // กติกาเดิม: เข้าใกล้จุดเดียวก็นับ (รองรับ trail ที่ไม่มีเวลา) · เวลาถึง = เวลาเร็วที่สุดในรัศมี (ไม่ขึ้นกับลำดับ array)
         for (const p of trail) {
@@ -833,19 +878,29 @@ export function computeDailySummary(
   // ถึง = รอบแรกที่ผ่านเกณฑ์ · ออก = จบรอบจอดสุดท้าย · จอด = รวมทุกรอบจอด (stopTiming) — เดิมเอาจุดแรก/สุดท้าย
   // ที่เคยเข้ารัศมีทั้งวัน ทำให้ขับผ่านจุดเดิมตอนเช้า+บ่าย กลายเป็น "จอด" หลายชั่วโมง · จุดใกล้ออฟฟิศต้องจอด ≥ 5 นาทีถึงจะนับ
   const ordered = [...stops].sort((a, b) => a.order - b.order)
-  // งานต่อเนื่องที่กลับมาที่เดิม (ไซต์ → สนง. → ไซต์): จุดหลังใช้การถึงรอบหลัง ไม่ใช่รอบแรกซ้ำ
-  const occurrence = repeatOccurrences(ordered, arrivalRadius)
-  const timingOf = (s: { lat?: number; lng?: number }, until?: number, skip = 0) =>
+  // งานต่อเนื่องที่กลับมาที่เดิม (ไซต์ → สนง. → ไซต์): จุดหลังใช้การถึงรอบที่อยู่หลังจุดก่อนหน้า ไม่ใช่รอบแรกซ้ำ
+  const plans = returnVisitPlans(ordered, arrivalRadius)
+  const resolved = plans.some(Boolean)
+    ? resolveArrivals(
+        plans,
+        (i) => (ordered[i].lat != null && ordered[i].lng != null ? stopVisits({ lat: ordered[i].lat!, lng: ordered[i].lng! }, pts, arrivalRadius) : []),
+        (i) => (ordered[i].lat != null && ordered[i].lng != null ? arrivalDwellMin({ lat: ordered[i].lat!, lng: ordered[i].lng! }, origin) : 0),
+      )
+    : null
+  /** จุดตามแผน: เริ่มนับจากรอบที่หาได้ (ไม่มี = ยังไม่ถึง) · จุดอื่น = กติกาเดิม */
+  const notBeforeOf = (idx: number) =>
+    resolved && plans[idx] ? (resolved[idx] ? resolved[idx]!.start - 1 : Number.POSITIVE_INFINITY) : Number.NEGATIVE_INFINITY
+  const timingOf = (s: { lat?: number; lng?: number }, until?: number, notBefore = Number.NEGATIVE_INFINITY) =>
     s.lat != null && s.lng != null
-      ? stopTiming({ lat: s.lat, lng: s.lng }, pts, arrivalRadius, arrivalDwellMin({ lat: s.lat, lng: s.lng }, origin), until, skip)
+      ? stopTiming({ lat: s.lat, lng: s.lng }, pts, arrivalRadius, arrivalDwellMin({ lat: s.lat, lng: s.lng }, origin), until, notBefore)
       : null
   // รอบจอดหลังถึงจุดงานถัดไปไม่นับให้จุดนี้ (A→B→A) — ไม่งั้นเวลาออก A เลยเวลาถึง B แล้วขาไป B หาย
-  const firstArrivals = ordered.map((s, idx) => timingOf(s, undefined, occurrence[idx])?.arrivedAt ?? null)
+  const firstArrivals = ordered.map((s, idx) => timingOf(s, undefined, notBeforeOf(idx))?.arrivedAt ?? null)
   const timings: StopTiming[] = ordered.map((s, idx) => {
     const a = firstArrivals[idx]
     const until =
       a == null ? undefined : Math.min(...firstArrivals.filter((x): x is number => x != null && x > a), Number.POSITIVE_INFINITY)
-    const timing = timingOf(s, until, occurrence[idx])
+    const timing = timingOf(s, until, notBeforeOf(idx))
     return {
       order: s.order,
       siteName: s.siteName ?? "",

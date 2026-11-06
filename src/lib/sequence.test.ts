@@ -4,7 +4,7 @@ import {
   SEQUENCE_MAX_STOPS, SEQUENCE_RELOAD, SEQUENCE_WARNING, sequenceLabel, sequenceMateReminder, sequenceNoteForDriver, sequenceRouteText,
   sequenceShapeProblem, sequenceStopFields, type SequenceFields,
 } from './sequence'
-import { activeTransferSet, stopSetKey, transferSetOutside, transferStopName, type TransferFields } from './transfer'
+import { activeTransferSet, stopSetKey, transferDisplayOrder, transferSetOutside, transferStopName, type TransferFields } from './transfer'
 
 type S = SequenceFields & TransferFields & { id: string; siteName: string; outcome?: string; siteId?: string; lat?: number; lng?: number; assistForPlate?: string; postponedRequestId?: string }
 // ไซต์A (รับคนงาน) → สนง.เอกสาร → ไซต์A (ส่งกลับ)
@@ -139,10 +139,25 @@ describe('reminders / notes', () => {
     expect(sequenceMateReminder([Q('a', 0, 'A')], 0)).toBeNull()
     expect(jobSetMateReminder(trip(), 0)).toContain('จุดที่ 2 สนง.เอกสาร')
   })
-  it('postponedSequenceNote เขียนเส้นทางเดิม', () => {
-    expect(postponedSequenceNote(trip(), 2)).toBe('(งานต่อเนื่อง จุดที่ 3/3: ไซต์A → สนง.เอกสาร → ไซต์A)')
+  it('postponedSequenceNote เขียนเส้นทางเดิมพร้อมเลขจุด + จุดที่เลื่อนมาด้วยกัน', () => {
+    expect(postponedSequenceNote(trip(), 2)).toBe('(งานต่อเนื่อง 1.ไซต์A → 2.สนง.เอกสาร → 3.ไซต์A · ใบนี้ = จุดที่ 3 · เลื่อนมาเฉพาะจุดนี้)')
+    expect(postponedSequenceNote(trip(), 0, [0, 1, 2])).toContain('· ใบนี้ = จุดที่ 1 · เลื่อนมาทั้งชุด)')
+    // สนง.อยู่คันอื่น (ไม่อยู่ในลิสต์) แล้วเลื่อนทั้งชุดที่เหลือ → บอกว่าจุดที่ 2 อยู่คันอื่น และเลื่อนมาแค่ 1, 3
+    const split = [Q('a1', 0, 'ไซต์A'), Q('a2', 2, 'ไซต์A')]
+    expect(postponedSequenceNote(split, 1, [0, 1])).toBe('(งานต่อเนื่อง 1.ไซต์A → 2.(คันอื่น) → 3.ไซต์A · ใบนี้ = จุดที่ 3 · เลื่อนมาพร้อมกัน: จุดที่ 1, 3)')
     expect(postponedSequenceNote([N('x')], 0)).toBeNull()
-    expect(sequenceRouteText([Q('b', 1, ''), Q('a', 0, 'A')], 'sq_1')).toBe('A → จุดที่ 2')
+    expect(sequenceRouteText([Q('b', 1, ''), Q('a', 0, 'A')], 'sq_1', 3)).toBe('1.A → 2.ไม่ระบุสถานที่ → 3.(คันอื่น)')
+  })
+  it('"ต่อจาก" ใช้จุดก่อนหน้าที่ยังไปกับเที่ยวนี้ (สนง.เลื่อนแล้ว = ต่อจากไซต์ ไม่ใช่สนง.)', () => {
+    const [a1, doc, a2] = trip()
+    expect(sequenceLabel([a1, { ...doc, outcome: 'postponed' }, a2], 2)?.text).toBe('🔁 จุดที่ 3/3 · ต่อจาก ไซต์A')
+  })
+  it('งานอื่นที่ยังไปคั่นกลางชุด → เตือนคนจัดรถ (ไม่บอกคนขับ) · งานที่ไม่ไปแล้วคั่นได้', () => {
+    const [a1, doc, a2] = trip()
+    const label = sequenceLabel([a1, doc, N('y'), a2], 3)
+    expect(label?.warning).toBe(SEQUENCE_WARNING.interleaved)
+    expect(sequenceNoteForDriver(label)).toBeNull()
+    expect(sequenceLabel([a1, doc, { ...N('y'), outcome: 'reassigned' }, a2], 3)?.warning).toBeUndefined()
   })
   it('sequenceNoteForDriver', () => {
     const [a1, doc, a2] = trip()
@@ -173,5 +188,17 @@ describe('ทำทั้งชุด (transfer.ts) ใช้ได้กับ�
     const [a1, doc, a2] = trip()
     const lines = transferSetOutside([a1, doc], 0, [], [{ vehiclePlate: 'กข-9', stops: [a2] }], 'กข-1')
     expect(lines).toEqual(['ไซต์A (จุดที่ 3) — อยู่บนรถ กข-9 ไม่ถูกทำตาม — จัดการเองที่คันนั้น'])
+  })
+})
+
+describe('transferDisplayOrder: งานต่อเนื่องที่โยกเข้า', () => {
+  it('ไม่มีจุดลำดับถัดไปในเที่ยวนี้ → ต่อท้ายจุดลำดับก่อนหน้าของชุด (ไม่ต่อท้ายใบหลังงานอื่น)', () => {
+    const [a1, doc, a2] = trip()
+    const view = transferDisplayOrder([a1, doc, N('y')], [a2])
+    expect(view.peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
+  })
+  it('มีจุดลำดับถัดไปในเที่ยวนี้ → ขึ้นก่อนจุดนั้น', () => {
+    const [a1, doc, a2] = trip()
+    expect(transferDisplayOrder([a1, a2, N('y')], [doc]).peers.map(p => p.id)).toEqual(['a1', 'doc', 'a2', 'y'])
   })
 })

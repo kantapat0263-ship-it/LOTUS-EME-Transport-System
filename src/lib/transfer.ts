@@ -228,14 +228,25 @@ export function transferDisplayOrder<O extends Peer, I extends Peer>(own: readon
     slots.splice(drop, 0, slot) // drop อยู่ก่อน at → ตัด at ออกแล้วตำแหน่ง drop ไม่เลื่อน = วางหน้าจุดส่งพอดี
   })
   // งานไปหลายจุดตามลำดับ (lib/sequence): งานโยกเข้าไปอยู่หน้าจุดลำดับถัดไปของชุดเดียวกันที่ยังไปกับเที่ยวนี้ (ถ้าจุดนั้นมาก่อน)
+  // ไม่มีจุดลำดับถัดไป = ต่อท้ายจุดลำดับก่อนหน้าของชุด (ไม่ให้งานอื่นคั่นกลางชุด — ผู้ใช้ตัดสิน 2026-11-06)
   incoming.forEach((job, index) => {
     const key = stopSetKey(job)
     if (!key?.startsWith('sq:')) return
     const at = slots.findIndex(s => s.kind === 'incoming' && s.index === index)
-    const later = slots.findIndex(s => s !== slots[at] && stopSetKey(s.stop) === key && (s.stop.sequenceIndex as number) > (job.sequenceIndex as number) && !isInactiveStop(s.stop))
-    if (later === -1 || later > at) return
+    const mine = job.sequenceIndex as number
+    const active = (s: Slot) => s !== slots[at] && stopSetKey(s.stop) === key && !isInactiveStop(s.stop)
+    const later = slots.findIndex(s => active(s) && (s.stop.sequenceIndex as number) > mine)
+    if (later !== -1) {
+      if (later > at) return
+      const [slot] = slots.splice(at, 1)
+      slots.splice(later, 0, slot)
+      return
+    }
+    let earlier = -1
+    slots.forEach((s, i) => { if (active(s) && (s.stop.sequenceIndex as number) < mine) earlier = i })
+    if (earlier === -1 || earlier + 1 === at) return
     const [slot] = slots.splice(at, 1)
-    slots.splice(later, 0, slot)
+    slots.splice(earlier < at ? earlier + 1 : earlier, 0, slot)
   })
   const ownPos: number[] = new Array(own.length)
   const incomingPos: number[] = new Array(incoming.length)

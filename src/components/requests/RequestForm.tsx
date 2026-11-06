@@ -49,7 +49,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
 import { URGENT_DETAIL_LIMITS, urgentDetailsError, urgentPrefill, type UrgentDetails } from "@/lib/urgentRequest"
-import { buildDropDescription, type TransferRole } from "@/lib/transfer"
+import { buildDropDescription, samePlace, type TransferRole } from "@/lib/transfer"
 import { SEQUENCE_MAX_STOPS, sequenceShapeProblem } from "@/lib/sequence"
 
 interface DestinationRequest {
@@ -333,7 +333,8 @@ export function RequestForm() {
   /** ขากลับ: ใช้สถานที่เดียวกับจุดก่อนหน้า (ไม่ต้องค้นหาใหม่) — ไม่บันทึกสถานที่ซ้ำ */
   const copyPlaceFrom = (id: string, from: DestinationRequest) => updateDest(id, {
     category: from.category, searchTerm: "", siteId: from.siteId, siteName: from.siteName, customName: from.customName,
-    coordinates: liveCoordinates(from), locationType: from.locationType, saveAsSite: false, allowSeparateSite: from.allowSeparateSite ?? false,
+    // สถานที่ใหม่ที่ติ๊กบันทึก: ติ๊กตาม — server จับคู่กับสถานที่ที่กำลังบันทึกในใบนี้ ได้รหัสสถานที่เดียวกัน (ไม่บันทึกซ้ำ)
+    coordinates: liveCoordinates(from), locationType: from.locationType, saveAsSite: from.saveAsSite, allowSeparateSite: from.allowSeparateSite ?? false,
   })
   const placeOf = (d: DestinationRequest) => ({ siteId: d.category !== "custom" && d.siteId ? d.siteId : null, ...(parseThaiCoordinates(liveCoordinates(d)) ?? {}) })
   const addPickup = () => setDestinations(prev => {
@@ -767,7 +768,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                   const isDrop = dest.transferRole === "drop"
                   const isStep = isSequence
                   // ขากลับ: ปุ่มใช้สถานที่ของจุดก่อนหน้า (ข้ามจุดที่ติดกัน — ที่เดียวกันติดกันไม่ได้)
-                  const reusable = isStep ? destinations.slice(0, Math.max(0, index - 1)).filter(placeChosen) : []
+                  // ไม่เสนอที่เดียวกับจุดก่อนหน้า (ติดกันไม่ได้) · ที่เดียวกันหลายจุดเสนอครั้งเดียว
+                  const prevPlace = index > 0 ? placeOf(destinations[index - 1]) : null
+                  const reusable = isStep ? destinations.slice(0, Math.max(0, index - 1)).filter(placeChosen)
+                    .filter(from => !(prevPlace && samePlace(placeOf(from), prevPlace)))
+                    .filter((from, k, list) => list.findIndex(o => samePlace(placeOf(o), placeOf(from))) === k) : []
                   return (
                     <React.Fragment key={dest.id}>
                     {isDrop && (

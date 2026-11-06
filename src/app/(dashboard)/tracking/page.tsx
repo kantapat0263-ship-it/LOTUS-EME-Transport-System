@@ -352,7 +352,7 @@ export default function TrackingPage() {
       const isPostponed = (s: any) => s.outcome === "postponed"
       const activeOwn = ownSorted.filter((s) => !wasMovedAway(s) && !isPostponed(s))
       const routeStops = [
-        ...activeOwn.map((s) => ({ order: s.order, siteName: s.siteName, lat: s.lat, lng: s.lng, sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex })),
+        ...activeOwn.map((s) => ({ order: s.order, siteName: s.siteName, lat: s.lat, lng: s.lng, sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex, outcome: s.outcome })),
         ...incoming.map((inc, i) => ({
           order: maxOrder + i + 1,
           siteName: inc.siteName,
@@ -360,6 +360,7 @@ export default function TrackingPage() {
           lng: inc.lng,
           sequenceId: inc.sequenceId,
           sequenceIndex: inc.sequenceIndex,
+          outcome: undefined as string | undefined,
         })),
       ]
 
@@ -398,7 +399,8 @@ export default function TrackingPage() {
 
       // ส่งออฟฟิศเข้าไปด้วย — จุดงานใกล้ออฟฟิศต้องจอดจริงถึงจะนับว่าถึง (กันขับผ่าน)
       let statuses = computeStopStatuses(
-        routeStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng })),
+        // งานต่อเนื่อง: ส่งรหัสชุด/ลำดับ/ผล ให้จุดที่กลับมาที่เดิมนับ "ถึง" หลังจุดก่อนหน้า (ไม่ใช่ตั้งแต่รอบแรก)
+        routeStops.map((s) => ({ order: s.order, lat: s.lat, lng: s.lng, sequenceId: s.sequenceId, sequenceIndex: s.sequenceIndex, outcome: s.outcome })),
         trail,
         { office: origin }
       )

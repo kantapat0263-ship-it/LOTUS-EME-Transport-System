@@ -528,7 +528,7 @@ export default function TripGroupingPage() {
       setOptimizedOrder(prev => prev.filter(id => !belongsToRequest(id)))
       toast({ title: "ถอนคันคู่แล้ว", description: closedOnly
         ? `ถอนสำเนาที่ยังค้าง ${closedOnly} จุดของใบ ${dest.vrId || ""} ออกจากกองแล้ว${setOnTrip ? " — จุดที่จัดไปแล้วยังอยู่ในเที่ยวเดิม" : ""}`
-        : isSet ? `เอาสำเนาชุดรับ-ส่งของใบ ${dest.vrId || ""} ออกจากกองเรียบร้อย` : `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
+        : isSet ? `เอาสำเนา${isSequenceStop(dest) ? "งานต่อเนื่อง" : "ชุดรับ-ส่ง"}ของใบ ${dest.vrId || ""} ออกจากกองเรียบร้อย` : `เอาสำเนา "${dest.siteName}" ออกจากกองเรียบร้อย` })
     } catch (e: any) {
       console.error(e)
       toast({ title: "ถอนไม่สำเร็จ", description: e?.message || "ไม่สามารถถอนคันคู่ได้", variant: "destructive" })
@@ -930,6 +930,15 @@ export default function TripGroupingPage() {
         currentStops.some((s: any) => isSequenceStop(s) && s.sequenceId === d.sequenceId && s.sequenceIndex > d.sequenceIndex && !(s.outcome && s.outcome !== 'delivered')))
       if (stepsBeforeEarlier.length > 0 && !window.confirm(
         `จุดของงานต่อเนื่องต่อไปนี้จะอยู่หลังจุดลำดับถัดไปที่มีในเที่ยวนี้แล้ว (ลำดับสลับ):\n${stepsBeforeEarlier.map((d: any) => `• จุดที่ ${d.sequenceIndex + 1} ${d.siteName || d.customName}`).join('\n')}\n\nต้องแจ้งคนขับเรื่องลำดับ ยืนยันรวม?`
+      )) return
+      // งานต่อเนื่อง: ชุดเดียวกันมีจุดในเที่ยวนี้แล้ว และมีงานอื่น (ที่ยังไป) อยู่หลังจุดสุดท้ายของชุด → จุดใหม่ต่อท้ายจะมีงานอื่นคั่นกลางชุด
+      const isLive = (s: any) => !(s.outcome && s.outcome !== 'delivered')
+      const splitSets = [...new Set(validNewStops.filter((d: any) => isSequenceStop(d)).map((d: any) => d.sequenceId as string))].filter(id => {
+        const lastMember = currentStops.reduce((at: number, s: any, i: number) => isSequenceStop(s) && s.sequenceId === id && isLive(s) ? i : at, -1)
+        return lastMember >= 0 && currentStops.some((s: any, i: number) => i > lastMember && isLive(s) && !(isSequenceStop(s) && s.sequenceId === id))
+      })
+      if (splitSets.length > 0 && !window.confirm(
+        `งานอื่นในเที่ยวนี้จะคั่นกลางงานต่อเนื่อง (จุดใหม่ต่อท้ายเที่ยว ไม่ติดกับจุดเดิมของชุด):\n${validNewStops.filter((d: any) => splitSets.includes(d.sequenceId)).map((d: any) => `• จุดที่ ${d.sequenceIndex + 1} ${d.siteName || d.customName}`).join('\n')}\n\nต้องแจ้งคนขับเรื่องลำดับ ยืนยันรวม?`
       )) return
       if (cancelled()) return
 

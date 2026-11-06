@@ -1290,7 +1290,8 @@ export default function DailySummaryPage() {
     }
     // งานรับของไปส่งต่อ: ใบวันใหม่เป็นจุดปกติจุดเดียว (ไม่มีจุดส่งในใบ) — จุดรับต้องบอกในรายละเอียดว่ารับแล้วเอาไปส่งที่ไหน
     const peers = transferPeersOf(trip)
-    const jobOf = (i: number) => [trip.stops[i]?.cargoDetails || "", jobSetPostponeNote(peers, i) || ""].filter(Boolean).join("\n")
+    // งานต่อเนื่อง: บอกเส้นทางเดิม + จุดที่เลื่อนมาด้วยกัน (idxs = จุดที่เลื่อนรอบนี้)
+    const jobOf = (i: number) => [trip.stops[i]?.cargoDetails || "", jobSetPostponeNote(peers, i, idxs) || ""].filter(Boolean).join("\n")
     setIsPostponing(true)
     // งานในทริปเปลี่ยนหลังเปิดหน้าต่าง (เช็กในธุรกรรม) — ทั้งชุดปิดหน้าต่างแล้วให้กดใหม่ที่จุดนั้น
     let stale = false
@@ -1775,7 +1776,7 @@ export default function DailySummaryPage() {
             🔄 รับโยกงานต่อ{(job.fromVehiclePlate || job.fromDriverName) ? ` · จาก ${job.fromVehiclePlate}${job.fromDriverName ? ` (${job.fromDriverName})` : ""}` : ""}
           </span>
           {label && (
-            <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : "bg-emerald-500/15 text-emerald-300")}>
+            <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold", label.role === 'pickup' ? "bg-orange-500/15 text-orange-300" : label.role === 'sequence' ? "bg-indigo-500/15 text-indigo-300" : "bg-emerald-500/15 text-emerald-300")}>
               {label.text}
               {label.warning && <span className="ml-1 text-red-400">⚠️ {label.warning}</span>}
             </span>
@@ -2665,13 +2666,13 @@ export default function DailySummaryPage() {
               const pTrip = postponeDialog ? trips.find(t => t.id === postponeDialog.tripId) : null
               if (!pTrip || !postponeDialog) return null
               const reminder = transferReminderFor(pTrip, postponeDialog.stopIdx)
-              const note = jobSetPostponeNote(transferPeersOf(pTrip), postponeDialog.stopIdx)
+              const note = jobSetPostponeNote(transferPeersOf(pTrip), postponeDialog.stopIdx, [postponeDialog.stopIdx])
               const kind = jobSetKindName(postponeDialog.expectedStops[postponeDialog.stopIdx])
               const isSeq = isSequenceStop(postponeDialog.expectedStops[postponeDialog.stopIdx])
               if (!reminder && !note) return null
               const expected = postponeDialog.expectedStops
               const outside = postponeSet.length > 1 ? transferSetOutside(expected, postponeDialog.stopIdx, incomingOf(pTrip.id), trips.filter(t => t.id !== pTrip.id), pTrip.vehiclePlate || "") : []
-              const setNote = postponeSet.map(i => jobSetPostponeNote(transferPeersOf(pTrip), i)).find(Boolean)
+              const setNote = postponeSet.map(i => jobSetPostponeNote(transferPeersOf(pTrip), i, postponeSet)).find(Boolean)
               return (
                 <div className="text-[12px] text-orange-300 rounded-md bg-orange-500/10 border border-orange-500/30 p-2 space-y-1">
                   {postponeSet.length > 1 ? (
@@ -3025,12 +3026,16 @@ export default function DailySummaryPage() {
               const src = assistDialog.expectedTrip
               const seqLabel = sequenceLabel(transferPeersOf(src), assistDialog.stopIdx)
               if (seqLabel) {
-                const seqReminder = transferReminderFor(src, assistDialog.stopIdx)
+                // จุดอื่นของชุด: ของเที่ยวนี้ (มีปุ่มคันช่วยในการ์ดนี้) / งานที่โยกเข้ามา (ต้องกดที่การ์ดของคันต้นทาง) — แบบเดียวกับกล่องรับ-ส่ง
+                const ownStops = src.stops || []
+                const seqOwn = jobSetMateReminder(ownStops, assistDialog.stopIdx)
+                const seqIncoming = jobSetMateReminder([ownStops[assistDialog.stopIdx], ...transferPeersOf(src).slice(ownStops.length)], 0)
                 return (
                   <div className="text-[12px] text-indigo-200 rounded-md bg-indigo-500/10 border border-indigo-500/30 p-2 space-y-1">
                     <p className="font-semibold">{seqLabel.text}</p>
                     <p>คันช่วยจะได้เฉพาะจุดนี้ — แถวของคันช่วยจะขึ้น ⚠️ ว่าจุดอื่นของงานต่อเนื่องไม่ได้ไปกับเที่ยวนั้น ให้เขียน ✏️ หมายเหตุบอกคนขับคันช่วยว่าไปช่วยแค่จุดนี้</p>
-                    {seqReminder && <p>👉 {seqReminder} — ถ้าคันช่วยต้องไปจุดอื่นด้วย กด 🚛+ คันช่วย ที่จุดนั้นตามลำดับ แล้วเลือกคันเดียวกัน</p>}
+                    {seqOwn && <p>👉 {seqOwn} — ถ้าคันช่วยต้องไปจุดนั้นด้วย กด 🚛+ คันช่วย ที่จุดนั้นในการ์ดนี้ตามลำดับ แล้วเลือกคันเดียวกัน</p>}
+                    {seqIncoming && <p>👉 {seqIncoming} — จุดนั้นเป็นงานที่โยกเข้ามา ไม่มีปุ่ม 🚛+ คันช่วยในการ์ดนี้ — ถ้าคันช่วยต้องไปด้วย ให้กดที่จุดนั้นในการ์ดของคันต้นทางของงานนั้น</p>}
                   </div>
                 )
               }
