@@ -7,6 +7,7 @@ import { createTripWithQueueGuard, updateTripWithQueueGuard, deleteTripWithQueue
 import { findFreeRequestId, requestIdPrefix, RequestIdExhaustedError } from '@/lib/requestId'
 import { isSameOutcome, keepsMoveTarget } from '@/lib/reassign'
 import { activeTransferSet, postponedPickupNote, transferMateReminder } from '@/lib/transfer'
+import { isSequenceStop, jobSetKindName, jobSetPostponeNote } from '@/lib/sequence'
 import type { Trip, TripStop } from '@/types/models'
 
 // ในหน้าจริงสองตัวนี้รวมงานที่โยกเข้ามาจากคันอื่นด้วย — เทสต์ชุดนี้ไม่มีงานโยกเข้า จึงใช้จุดของทริปอย่างเดียว
@@ -66,8 +67,8 @@ function daily(db: Firestore, trip = original()) {
   let state = [trip]
   const buildStops = (trip: Trip, index: number, change: (stop: TripStop) => TripStop) => trip.stops.map((s, i) => i === index ? change({ ...s }) : s)
   const stripOutcome = (stop: TripStop) => { const { outcome: _o, outcomeReason: _r, postponedRequestId: _p, postponedToDate: _d, ...rest } = stop; return rest }
-  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'buildStops', 'stripOutcome', 'getDoc', 'doc', 'updateDoc', 'recordedBy', 'user', 'formatThaiDate', 'openPostponeDialog', 'setRefusalDrafts', 'isSameOutcome', 'keepsMoveTarget', 'transferReminderFor', `${body('persistTripPatch')}${body('applyStops')}${body('chooseOutcome')}return chooseOutcome`)(
-    db, [trip], updateTripWithQueueGuard, serverTimestamp, (fn: (prev: Trip[]) => Trip[]) => { state = fn(state) }, toast, () => true, buildStops, stripOutcome, getDoc, doc, updateDoc, 'คนจัดรถ', { email: 'test@example.invalid' }, (value: string) => value, vi.fn(), vi.fn(), isSameOutcome, keepsMoveTarget, transferReminderFor,
+  const handler = new Function('db', 'trips', 'updateTripWithQueueGuard', 'serverTimestamp', 'setTrips', 'toast', 'allowOrdinaryEdit', 'buildStops', 'stripOutcome', 'getDoc', 'doc', 'updateDoc', 'recordedBy', 'user', 'formatThaiDate', 'openPostponeDialog', 'setRefusalDrafts', 'isSameOutcome', 'keepsMoveTarget', 'transferReminderFor', 'jobSetKindName', `${body('persistTripPatch')}${body('applyStops')}${body('chooseOutcome')}return chooseOutcome`)(
+    db, [trip], updateTripWithQueueGuard, serverTimestamp, (fn: (prev: Trip[]) => Trip[]) => { state = fn(state) }, toast, () => true, buildStops, stripOutcome, getDoc, doc, updateDoc, 'คนจัดรถ', { email: 'test@example.invalid' }, (value: string) => value, vi.fn(), vi.fn(), isSameOutcome, keepsMoveTarget, transferReminderFor, jobSetKindName,
   ) as (trip: Trip, index: number, outcome: string) => Promise<void>
   return { handler, toast, state: () => state }
 }
@@ -197,7 +198,7 @@ it.each(['collision', 'booking', 'viewer'])('สร้างทริปรั�
 function postponeUI(db: Firestore, trip: Trip, initialStops = trip.stops) {
   const toast = vi.fn(), dialog = vi.fn()
   let state = [trip]
-  const deps = { db, trips: [trip], postponeDialog: { tripId: 'T1', stopIdx: 0, expectedStops: initialStops }, postponeDateStr: '2099-01-08', allowOrdinaryEdit: () => true, format: () => '2026-10-07', setPostponeDialog: dialog, setIsPostponing: vi.fn(), isPostponedReqGrouped: async (id: string) => ['approved', 'partial'].includes((await getDoc(doc(db, 'vehicleRequests', id))).data()?.status), getDocs, query, collection, where, runTransaction, doc, isManagedTrip: (value: any) => !!value.queueLink, assertTripStopsUnchanged, findFreeRequestId, requestIdPrefix, serverTimestamp, user: { uid: 'staff', email: 'staff@example.invalid' }, recordedBy: 'ผู้จัด', cleanStops: (stops: TripStop[]) => stops, stripOutcome: (stop: TripStop) => { const { outcome, postponedRequestId, postponedToDate, ...rest } = stop; return rest }, setTrips: (fn: (prev: Trip[]) => Trip[]) => { state = fn(state) }, setRefusalDrafts: vi.fn(), formatThaiDate: (date: string) => date, toast, console: { error: vi.fn() }, RequestIdExhaustedError, transferPeersOf, transferReminderFor, activeTransferSet, postponedPickupNote }
+  const deps = { db, trips: [trip], postponeDialog: { tripId: 'T1', stopIdx: 0, expectedStops: initialStops }, postponeDateStr: '2099-01-08', allowOrdinaryEdit: () => true, format: () => '2026-10-07', setPostponeDialog: dialog, setIsPostponing: vi.fn(), isPostponedReqGrouped: async (id: string) => ['approved', 'partial'].includes((await getDoc(doc(db, 'vehicleRequests', id))).data()?.status), getDocs, query, collection, where, runTransaction, doc, isManagedTrip: (value: any) => !!value.queueLink, assertTripStopsUnchanged, findFreeRequestId, requestIdPrefix, serverTimestamp, user: { uid: 'staff', email: 'staff@example.invalid' }, recordedBy: 'ผู้จัด', cleanStops: (stops: TripStop[]) => stops, stripOutcome: (stop: TripStop) => { const { outcome, postponedRequestId, postponedToDate, ...rest } = stop; return rest }, setTrips: (fn: (prev: Trip[]) => Trip[]) => { state = fn(state) }, setRefusalDrafts: vi.fn(), formatThaiDate: (date: string) => date, toast, console: { error: vi.fn() }, RequestIdExhaustedError, transferPeersOf, transferReminderFor, activeTransferSet, postponedPickupNote, jobSetPostponeNote, isSequenceStop }
   const handler = new Function(...Object.keys(deps), `${body('handlePostpone')}return handlePostpone`)(...Object.values(deps))
   return { handler, toast, dialog, state: () => state }
 }
