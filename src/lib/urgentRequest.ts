@@ -3,6 +3,8 @@
  * ยังไม่ใช่ใบขอรถ: อนุมัติแล้วผู้ขอค่อยกรอกใบเต็ม (ผู้ใช้เลือก 2026-10-14 — ไม่ให้กรอกใบเต็มก่อนเพราะถ้าไม่อนุมัติจะเสียแรงเปล่า)
  * ความยาวสูงสุดต้องตรงกับ firestore.rules (urgentRequests)
  */
+import { isIsoDate } from "@/lib/vehicle-compliance"
+
 export const URGENT_DETAIL_LIMITS = { destination: 200, jobSummary: 500, contactPhone: 30 } as const
 
 export interface UrgentDetails {
@@ -128,7 +130,63 @@ export function urgentNotPendingMessage(status: unknown): string {
   if (status === "cancelled") return "ผู้ขอยกเลิกคำขอนี้ไปแล้ว"
   if (status === "approved") return "คำขอนี้ได้รับอนุมัติไปแล้ว"
   if (status === "rejected") return "คำขอนี้ถูกปฏิเสธไปแล้ว"
+  if (status === "closed") return "คำขอนี้ถูกปิดไปแล้ว"
   return "คำขอนี้ไม่ได้รออนุมัติแล้ว"
+}
+
+/**
+ * คำขอที่ถึงวันขอรถแล้ว (วันนี้หรือเลยมาแล้ว) — ผู้ขอส่งใบเองไม่ได้แล้ว (ผู้ขอทั่วไปจองได้เร็วสุดพรุ่งนี้)
+ * อนุมัติไปก็ไม่มีผล → การ์ดคนจัดรถเปลี่ยนเป็น แทรกงานด่วน / กรอกใบขอรถแทน / ปิดคำขอ (ผู้ใช้อนุมัติ 2026-11-07)
+ * วันที่อ่านไม่ได้ = การ์ดแบบเดิม (ไม่เดาว่าเลยวัน)
+ */
+export function isUrgentPastDue(requestedDate: unknown, today: string): boolean {
+  return isIsoDate(requestedDate) && requestedDate <= today
+}
+
+interface VrLike {
+  userId?: unknown
+  requestDate?: unknown
+  status?: unknown
+  createdAt?: { toDate?: () => Date } | null
+}
+interface UrgentLike {
+  userId?: unknown
+  requestedDate?: unknown
+  createdAt?: { toMillis?: () => number } | null
+}
+
+const vrMs = (r: VrLike) => {
+  const ms = typeof r.createdAt?.toDate === "function" ? r.createdAt.toDate().getTime() : NaN
+  return Number.isFinite(ms) ? ms : null
+}
+
+/**
+ * ใบขอรถที่ผู้ขอส่งเองวันเดียวกัน "หลัง" ส่งคำขออนุมัติ (เช่น ขออนุมัติก่อนเวลาเปิดรับ แล้วส่งใบได้ตอนเปิดรับ) — ป้ายเตือนคนจัดรถไม่ให้จัดซ้ำ
+ * ใบที่มีอยู่ก่อนคำขอ = งานอื่นที่ขอเพิ่ม (ไม่นับ) · ใบเลื่อนวัน/ถูกแทน/ยกเลิก ไม่นับ · ไม่มีเวลาสร้าง = ไม่เดา
+ * คนจัดรถยังต้องดูเองว่าเป็นงานเดียวกันไหม (ป้ายโชว์ปลายทางของใบ)
+ */
+export function requesterVrAfterUrgent<T extends VrLike>(requests: readonly T[] | null | undefined, urgent: UrgentLike): T | null {
+  const urgentMs = typeof urgent.createdAt?.toMillis === "function" ? urgent.createdAt.toMillis() : NaN
+  if (typeof urgent.userId !== "string" || !urgent.userId || !Number.isFinite(urgentMs)) return null
+  for (const r of requests ?? []) {
+    if (r.userId !== urgent.userId || r.requestDate !== urgent.requestedDate) continue
+    if (r.status === "cancelled" || r.status === "rescheduled" || r.status === "superseded") continue
+    const ms = vrMs(r)
+    if (ms !== null && ms > urgentMs) return r
+  }
+  return null
+}
+
+export const URGENT_CLOSE_NOTE_LIMIT = 500
+
+/** ช่องที่เขียนตอนคนจัดรถปิดคำขอที่ถึงวันขอแล้ว (closedAt ใส่ serverTimestamp ที่จุดเรียก) — ห้ามมีค่า undefined */
+export function urgentCloseChanges(outcome: "handled" | "not_handled", note: string, closedBy: string) {
+  return {
+    status: "closed",
+    closeOutcome: outcome,
+    closeNote: note.trim().slice(0, URGENT_CLOSE_NOTE_LIMIT),
+    closedBy: closedBy || "Dispatcher",
+  }
 }
 
 /** ข้อความผิดพลาดของช่องที่ยังไม่ผ่าน (ไม่มี = ส่งได้) */

@@ -38,6 +38,8 @@ const command = z.object({
   requestDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(isRealDate),
   requestTime: time,
   requestedBy: text(120),
+  /** เบอร์ผู้ขอ — ส่งมาเฉพาะตอนคนจัดรถกรอกใบแทน (จากคำขอหลังเวลาปิดรับ) · server ใช้เฉพาะเมื่อผู้ส่งเป็น staff ไม่งั้นใช้เบอร์ในโปรไฟล์ */
+  requestedByPhone: text(30).optional(),
   note: text(2000),
   destinations: z.array(destination).min(1).max(30).superRefine((list, ctx) => {
     // ใบรับของไปส่งต่อ: จุดรับ ≥ 1 + จุดส่ง 1 จุดท้ายใบ · จุดรับต้องบอกว่ารับอะไร (จุดส่งเขียนรายการให้จากตรงนี้)
@@ -63,7 +65,7 @@ export class VehicleRequestInputError extends Error {}
 
 const RELOAD = 'ข้อมูลใบขอรถไม่ถูกต้อง — กรุณาโหลดหน้าใหม่ (F5) แล้วส่งอีกครั้ง'
 const LABELS: Record<string, string> = {
-  requestedBy: 'ชื่อผู้ขอใช้รถ', note: 'หมายเหตุเพิ่มเติม',
+  requestedBy: 'ชื่อผู้ขอใช้รถ', requestedByPhone: 'เบอร์ติดต่อผู้ขอ', note: 'หมายเหตุเพิ่มเติม',
   siteName: 'ชื่อสถานที่', customName: 'ชื่อสถานที่', coordinates: 'พิกัด', jobDescription: 'ลักษณะงานที่ต้องทำ',
   locationType: 'ประเภทสถานที่',
 }

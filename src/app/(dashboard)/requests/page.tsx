@@ -4,7 +4,7 @@ import * as React from "react"
 import { applyPickupItemsEdit, isTransferStop, pickupEditMessage } from "@/lib/transfer"
 import { isOneOffJobStop, isSequenceStop } from "@/lib/sequence"
 import { dispatchedDestinationIndexes, isOpenRequestStatus, ownerCanCancelRequest } from "@/lib/requestDestination"
-import { RequestForm } from "@/components/requests/RequestForm"
+import { RequestForm, type RequestFormPrefill } from "@/components/requests/RequestForm"
 import { SubmissionLogTab } from "@/components/requests/SubmissionLogTab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { 
@@ -76,7 +76,8 @@ import { Loader } from "@googlemaps/js-api-loader"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
-import { displayText, formatIsoDateTh, urgentNotPendingMessage } from "@/lib/urgentRequest"
+import { displayText, formatIsoDateTh, isUrgentPastDue, requesterVrAfterUrgent, URGENT_CLOSE_NOTE_LIMIT, urgentCloseChanges, urgentNotPendingMessage } from "@/lib/urgentRequest"
+import { thaiToday } from "@/lib/driverLeave"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
 import { isAwaitingPickup, sortForManage, waitingLabel, requestCreatedMs } from "@/lib/requestAttention"
@@ -117,9 +118,34 @@ const getStatusBadge = (status: string) => {
   )
 }
 
-function InlineRequestManager({ userRole, profileName }: { userRole?: string, profileName?: string }) {
+/**
+ * ตอบคำขออนุมัติเฉพาะใบที่ยังรออนุมัติ — อ่านซ้ำใน transaction เพราะผู้ขออาจเพิ่งกดยกเลิก (หรือคนจัดรถอีกคนตอบไปก่อน)
+ * คืน null = บันทึกแล้ว · คืนข้อความ = ไม่ได้บันทึก (สถานะจริงตอนนี้)
+ * ใช้ทั้งปุ่มบนการ์ด และตอนกรอกใบแทนผู้ขอสำเร็จ (ปิดคำขอให้เอง)
+ */
+const answerUrgentRequest = (db: ReturnType<typeof useFirestore>, urgentId: string, changes: DocumentData) => runTransaction(db, async (t) => {
+  const ref = doc(db, "urgentRequests", urgentId)
+  const status = (await t.get(ref)).data()?.status
+  if (status !== "pending") return urgentNotPendingMessage(status)
+  t.update(ref, changes)
+  return null
+})
+
+/**
+ * ปิดคำขอหลายใบใน transaction เดียว (ใบหลัก + ใบซ้ำของผู้ขอคนเดิมวันเดียวกัน) — เขียนเฉพาะใบที่ยังรออนุมัติ
+ * คืน null = ใบหลักปิดแล้ว · คืนข้อความ = ใบหลักไม่ได้รออนุมัติแล้ว (สถานะจริง) — ใบซ้ำที่ยังรอก็ยังถูกปิด
+ */
+const closeUrgentRequests = (db: ReturnType<typeof useFirestore>, ids: string[], changes: DocumentData) => runTransaction(db, async (t) => {
+  const refs = ids.map(id => doc(db, "urgentRequests", id))
+  const statuses = await Promise.all(refs.map(async ref => (await t.get(ref)).data()?.status))
+  refs.forEach((ref, i) => { if (statuses[i] === "pending") t.update(ref, changes) })
+  return statuses[0] === "pending" ? null : urgentNotPendingMessage(statuses[0])
+})
+
+function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?: string, profileName?: string, onFillForm?: (prefill: RequestFormPrefill) => void }) {
   const { toast } = useToast()
   const db = useFirestore()
+  const router = useRouter()
   const isStaff = userRole === 'admin' || userRole === 'dispatcher'
   
   const settingsRef = useMemoFirebase(() => doc(db, "companySettings", "default"), [db])
@@ -324,19 +350,14 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
     setSelectedDestIndexes(newSet);
   }
 
-  /**
-   * ตอบคำขออนุมัติเฉพาะใบที่ยังรออนุมัติ — อ่านซ้ำใน transaction เพราะผู้ขออาจเพิ่งกดยกเลิก (หรือคนจัดรถอีกคนตอบไปก่อน)
-   * คืน null = บันทึกแล้ว · คืนข้อความ = ไม่ได้บันทึก (สถานะจริงตอนนี้)
-   */
-  const answerUrgent = (urgentId: string, changes: DocumentData) => runTransaction(db, async (t) => {
-    const ref = doc(db, "urgentRequests", urgentId)
-    const status = (await t.get(ref)).data()?.status
-    if (status !== "pending") return urgentNotPendingMessage(status)
-    t.update(ref, changes)
-    return null
-  })
+  const answerUrgent = (urgentId: string, changes: DocumentData) => answerUrgentRequest(db, urgentId, changes)
 
   const handleApproveUrgent = async (urgentId: string, requestedBy: string, requestedDate: string) => {
+    // เปิดหน้าค้างข้ามเที่ยงคืน — ถึงวันขอแล้วอนุมัติไปผู้ขอก็ส่งใบไม่ได้ (การ์ดจะเปลี่ยนเป็นปุ่มแทรกงาน/กรอกใบ/ปิดคำขอ)
+    if (isUrgentPastDue(requestedDate, thaiToday())) {
+      toast({ title: "ถึงวันขอแล้ว", description: "ผู้ขอส่งใบเองไม่ได้ — ใช้แทรกงานด่วน หรือกรอกใบขอรถแทน แล้วกดปิดคำขอ", variant: "destructive" })
+      return
+    }
     try {
       const notPending = await answerUrgent(urgentId, {
         status: "approved",
@@ -373,6 +394,37 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
       toast({ title: "ปฏิเสธแล้ว", description: `ปฏิเสธคำขอของ ${requestedBy} แล้ว` })
     } catch (e) {
       toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
+    }
+  }
+
+  // ปิดคำขอที่ถึงวันขอแล้ว (คนจัดรถแทรกงาน/กรอกใบแทนแล้ว หรือไม่ได้จัด) — บันทึกผล + ใครปิด ให้การ์ดหายจากรายการรออนุมัติ
+  const [closeUrgent, setCloseUrgent] = React.useState<{ id: string; requestedBy: string } | null>(null)
+  const [closeOutcome, setCloseOutcome] = React.useState<"handled" | "not_handled" | null>(null)
+  const [closeNote, setCloseNote] = React.useState("")
+  const [isClosingUrgent, setIsClosingUrgent] = React.useState(false)
+  const openCloseUrgent = (id: string, requestedBy: string) => {
+    setCloseUrgent({ id, requestedBy })
+    setCloseOutcome(null)
+    setCloseNote("")
+  }
+  const handleCloseUrgent = async () => {
+    if (!closeUrgent || !closeOutcome || isClosingUrgent) return
+    setIsClosingUrgent(true)
+    try {
+      const notPending = await answerUrgent(closeUrgent.id, {
+        ...urgentCloseChanges(closeOutcome, closeNote, profileName || ""),
+        closedAt: serverTimestamp(),
+      })
+      if (notPending) {
+        toast({ title: notPending, description: "ไม่ได้บันทึกการปิดคำขอ", variant: "destructive" })
+      } else {
+        toast({ title: "ปิดคำขอแล้ว", description: `คำขอของ ${closeUrgent.requestedBy}${closeOutcome === "handled" ? " — จัดรถให้แล้ว" : " — ไม่ได้จัดรถ (โทรแจ้งผู้ขอด้วย)"}` })
+      }
+      setCloseUrgent(null)
+    } catch (e) {
+      toast({ title: "ปิดคำขอไม่สำเร็จ", description: "ลองใหม่อีกครั้ง", variant: "destructive" })
+    } finally {
+      setIsClosingUrgent(false)
     }
   }
 
@@ -686,9 +738,33 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
             const jobSummary = displayText(u.jobSummary)
             const createdAt = typeof u.createdAt?.toDate === "function" ? u.createdAt.toDate() : null
             const requestedAt = createdAt instanceof Date && !Number.isNaN(createdAt.getTime()) ? createdAt : undefined
+            // ถึงวันขอแล้ว (เช่น ส่งคำขอหลังปิดรับเมื่อวาน ไม่มีใครตอบ) — ผู้ขอส่งใบเองไม่ได้ อนุมัติไปก็ไม่มีผล
+            // วันนี้คิดจาก nowMs (เดินทุกนาที) → เปิดหน้าค้างข้ามเที่ยงคืน การ์ดเปลี่ยนเอง · ปุ่มใช้ thaiToday() สดตอนกด
+            const today = thaiToday(new Date(nowMs))
+            const pastDue = isUrgentPastDue(u.requestedDate, today)
+            const overdue = pastDue && u.requestedDate < today
+            // ผู้ขอส่งใบวันนั้นเองหลังขออนุมัติ (เช่น ขออนุมัติก่อนเวลาเปิดรับ แล้วส่งใบได้ตอนเปิดรับ) — เตือนให้ตรวจก่อนจัดซ้ำ
+            // ดูจากใบที่หน้านี้โหลดอยู่ (ใบที่จัดครบแล้ว/approved ไม่อยู่ในรายการนี้) · ใบเก่ากว่าคำขอ = งานอื่นที่ขอเพิ่ม ไม่นับ
+            const ownVr: any = requesterVrAfterUrgent(rawRequests, u)
+            const ownVrId = ownVr ? displayText(ownVr.requestId) || displayText(ownVr.id) : ""
+            const ownVrPlaces = ownVr && Array.isArray(ownVr.destinations)
+              ? ownVr.destinations.map((d: any) => displayText(d?.siteName) || displayText(d?.customName)).filter(Boolean).join(", ")
+              : ""
             return (
-            <div key={u.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-background/50 p-2 rounded-lg">
+            <div key={u.id} className={cn(
+              "flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-background/50 p-2 rounded-lg",
+              pastDue && "border border-red-500/40"
+            )}>
               <div className="min-w-0 space-y-0.5">
+                {ownVr ? (
+                  <p className="text-[11px] font-bold text-amber-400 break-words">
+                    📋 ผู้ขอส่งใบวันนั้นเองหลังขออนุมัติ: {ownVrId}{ownVrPlaces ? ` (📍 ${ownVrPlaces})` : ""} — ตรวจว่าเป็นงานเดียวกันไหม ถ้าใช่ไม่ต้องจัดซ้ำ{pastDue ? " กดปิดคำขอได้" : ""}
+                  </p>
+                ) : overdue ? (
+                  <p className="text-[11px] font-bold text-red-400">⏰ เลยวันขอมาแล้ว — โทรถามผู้ขอก่อนว่ายังต้องใช้รถไหม (ผู้ขอส่งใบเองไม่ได้)</p>
+                ) : pastDue && (
+                  <p className="text-[11px] font-bold text-red-400">⏰ ถึงวันขอแล้ว — ผู้ขอส่งใบเองไม่ได้ (คนจัดรถต้องจัดให้เอง)</p>
+                )}
                 <p className="text-xs font-bold text-white">{requestedBy}</p>
                 <p className="text-[10px] text-muted-foreground">
                   ขอรถวันที่: {formatIsoDateTh(u.requestedDate) || "-"}
@@ -706,6 +782,40 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                   <p className="text-[10px] text-muted-foreground italic">ไม่มีรายละเอียดงาน (ส่งมาก่อนมีช่องให้กรอก) — โทรถามผู้ขอได้</p>
                 )}
               </div>
+              {pastDue ? (
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-accent hover:bg-accent/90 text-white"
+                    onClick={() => router.push(`/daily-summary?date=${thaiToday()}`)}
+                  >
+                    ➕ แทรกงานด่วน
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                    onClick={() => onFillForm?.({
+                      urgentId: u.id,
+                      // ไม่มีชื่อ = ใช้อีเมลผู้ขอ (ไม่ปล่อยให้ฟอร์มเติมชื่อคนจัดรถเอง)
+                      requestedBy: displayText(u.requestedBy) || (typeof email === "string" ? email : ""),
+                      date: thaiToday(),
+                      destination,
+                      jobSummary,
+                      contactPhone: typeof phone === "string" ? phone : "",
+                    })}
+                  >
+                    📝 กรอกใบขอรถ
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => openCloseUrgent(u.id, requestedBy)}
+                  >
+                    ปิดคำขอ
+                  </Button>
+                </div>
+              ) : (
               <div className="flex gap-2 shrink-0">
                 <Button
                   size="sm"
@@ -722,11 +832,61 @@ function InlineRequestManager({ userRole, profileName }: { userRole?: string, pr
                   ❌ ปฏิเสธ
                 </Button>
               </div>
+              )}
             </div>
             )
           })}
         </div>
       )}
+      <Dialog open={!!closeUrgent} onOpenChange={(open) => { if (!open && !isClosingUrgent) setCloseUrgent(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>ปิดคำขอของ {closeUrgent?.requestedBy}</DialogTitle>
+            <DialogDescription>คำขอนี้ถึงวันขอแล้ว — บันทึกผลแล้วการ์ดจะหายจากรายการรออนุมัติ</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={closeOutcome === "handled" ? "default" : "outline"}
+                className={cn("h-10 text-xs", closeOutcome === "handled" && "bg-green-600 hover:bg-green-700 text-white")}
+                onClick={() => setCloseOutcome("handled")}
+              >
+                ✅ จัดรถให้แล้ว
+              </Button>
+              <Button
+                type="button"
+                variant={closeOutcome === "not_handled" ? "default" : "outline"}
+                className={cn("h-10 text-xs", closeOutcome === "not_handled" && "bg-red-600 hover:bg-red-700 text-white")}
+                onClick={() => setCloseOutcome("not_handled")}
+              >
+                ❌ ไม่ได้จัด
+              </Button>
+            </div>
+            {closeOutcome === "not_handled" && (
+              <p className="text-[11px] text-orange-400">ผู้ขอไม่เห็นผลนี้ในเว็บ — โทรแจ้งผู้ขอด้วย</p>
+            )}
+            <div className="space-y-1">
+              <Label htmlFor="urgent-close-note">หมายเหตุ (ไม่บังคับ)</Label>
+              <Textarea
+                id="urgent-close-note"
+                rows={2}
+                maxLength={URGENT_CLOSE_NOTE_LIMIT}
+                placeholder="เช่น แทรกงานเข้าทริปนายเอ / ไม่มีรถว่าง"
+                value={closeNote}
+                onChange={(e) => setCloseNote(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={isClosingUrgent} onClick={() => setCloseUrgent(null)}>ยกเลิก</Button>
+            <Button type="button" disabled={!closeOutcome || isClosingUrgent} onClick={handleCloseUrgent}>
+              {isClosingUrgent && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+              ปิดคำขอ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {(awaitingCount > 0 || onlyAwaiting) && (
         <button
           type="button"
@@ -1346,6 +1506,8 @@ export default function RequestsPage() {
   const { data: settings } = useDoc<any>(settingsRef)
 
   const [activeTab, setActiveTab] = React.useState("form")
+  // กรอกใบแทนผู้ขอจากการ์ดคำขอที่ถึงวันขอแล้ว — ออกจากแท็บฟอร์มแล้วล้าง (กลับมากรอกเองครั้งหน้า = ชื่อตัวเองตามเดิม)
+  const [formPrefill, setFormPrefill] = React.useState<RequestFormPrefill | null>(null)
   const [isCancelOpen, setIsCancelOpen] = React.useState(false)
   const [reqToCancel, setReqToCancel] = React.useState<any>(null)
   const [viewingUserReq, setViewingUserReq] = React.useState<any>(null)
@@ -1379,6 +1541,34 @@ export default function RequestsPage() {
   ) : null, [db, isStaff])
   const { data: urgentPending } = useCollection<any>(urgentPendingRef)
   const manageAttention = (awaitingReqs?.length ?? 0) + (urgentPending?.length ?? 0)
+
+  // ส่งใบแทนผู้ขอสำเร็จ → ปิดคำขอให้เอง (จัดรถให้แล้ว + เลข VR) แล้วล้าง prefill — ใบถัดไปไม่ติดชื่อ/เบอร์ผู้ขอคนเดิม
+  // ปิดทุกคำขอที่ยังรออยู่ของผู้ขอคนเดิม+วันเดียวกัน (ส่งซ้ำจาก 2 เครื่องได้) · ไม่ใช่ใบจากการ์ด (prefill ว่าง) = ไม่ทำอะไร
+  // ล้าง prefill เฉพาะของการ์ดนี้ — ระหว่างรอส่ง คนจัดรถอาจกดกรอกใบของการ์ดอื่นไปแล้ว
+  // toast เดียว (ระบบโชว์ได้ทีละอัน) รวมผลบันทึกสถานที่ของฟอร์มไว้ด้วย
+  const handlePrefillSubmitted = async (requestId: string, siteResults: string) => {
+    const filled = formPrefill
+    if (!filled) return
+    setFormPrefill(p => (p?.urgentId === filled.urgentId ? null : p))
+    const main = (urgentPending ?? []).find((u: any) => u.id === filled.urgentId)
+    const siblings = main
+      ? (urgentPending ?? []).filter((u: any) => u.id !== main.id && u.userId === main.userId && u.requestedDate === main.requestedDate).map((u: any) => u.id as string)
+      : []
+    const extra = siteResults ? ` · ${siteResults}` : ""
+    try {
+      const notPending = await closeUrgentRequests(db, [filled.urgentId, ...siblings], {
+        ...urgentCloseChanges("handled", `กรอกใบแทน ${requestId}`, profile?.name || ""),
+        closedAt: serverTimestamp(),
+      })
+      if (notPending) {
+        toast({ title: notPending, description: `ใบ ${requestId} บันทึกแล้ว — ตรวจในหน้าจัดกลุ่ม/ใบสรุปว่าไม่ซ้ำกับงานที่จัดไปแล้ว${extra}`, variant: "destructive" })
+      } else {
+        toast({ title: "ส่งใบแล้ว · ปิดคำขอให้แล้ว", description: `คำขอของ ${filled.requestedBy || "ผู้ขอ"} — กรอกใบแทน ${requestId}${extra}` })
+      }
+    } catch (e) {
+      toast({ title: "ปิดคำขอไม่สำเร็จ", description: `ใบ ${requestId} บันทึกแล้ว — กด "ปิดคำขอ" ที่การ์ดเอง${extra}`, variant: "destructive" })
+    }
+  }
 
   // เข้าหน้านี้ตอนมีงานรอ → เปิดแท็บ "จัดการคำขอ" ให้ (ครั้งเดียวตอนโหลด ผู้ใช้เลือกแท็บเองแล้วไม่ยุ่ง)
   const autoTabDoneRef = React.useRef(false)
@@ -1433,7 +1623,7 @@ export default function RequestsPage() {
         <p className="text-sm md:text-base text-muted-foreground">ระบบส่งคำขอใช้รถวัสดุและติดตามสถานะคิวงาน</p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(t) => { autoTabDoneRef.current = true; setActiveTab(t) }} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={(t) => { autoTabDoneRef.current = true; if (t !== "form") setFormPrefill(null); setActiveTab(t) }} className="space-y-6">
         <TabsList className="bg-secondary/50 p-1 w-full sm:w-auto overflow-x-auto justify-start">
           <TabsTrigger value="form" className="data-[state=active]:bg-accent flex-1 sm:flex-none h-10 px-6">
             <ClipboardList className="mr-2 h-4 w-4" /> ใบขอใช้รถ
@@ -1459,7 +1649,7 @@ export default function RequestsPage() {
         </TabsList>
 
         <TabsContent value="form" className="animate-in slide-in-from-left-2 duration-300">
-          <RequestForm />
+          <RequestForm prefill={formPrefill} onSubmitted={handlePrefillSubmitted} />
         </TabsContent>
 
         <TabsContent value="list" className="animate-in slide-in-from-right-2 duration-300">
@@ -1663,7 +1853,11 @@ export default function RequestsPage() {
 
         {isStaff && (
           <TabsContent value="manage" className="animate-in slide-in-from-bottom-2 duration-300">
-            <InlineRequestManager userRole={profile?.role} profileName={profile?.name} />
+            <InlineRequestManager
+              userRole={profile?.role}
+              profileName={profile?.name}
+              onFillForm={(prefill) => { autoTabDoneRef.current = true; setFormPrefill(prefill); setActiveTab("form") }}
+            />
           </TabsContent>
         )}
       </Tabs>

@@ -55,6 +55,7 @@ import { LeaveCheckBanner } from "@/components/driver-leave/LeaveCheckBanner"
 import { LeaveBadge } from "@/components/driver-leave/LeaveBadge"
 import { confirmLeaveBeforeAssign } from "@/lib/driverLeaveClient"
 import { leaveBadgeText } from "@/lib/driverLeave"
+import { isIsoDate } from "@/lib/vehicle-compliance"
 import { cn } from "@/lib/utils"
 import { applyNoteEdit, stopNoteKey, StopNoteConflictError, stopFingerprint } from "@/lib/stopNote"
 import { ROUTE_MODES, tripRouteMode, type RouteMode } from "@/lib/routeMode"
@@ -83,6 +84,12 @@ export default function DailySummaryPage() {
 
   // Set initial selected date to empty to force user to click
   const [selectedDate, setSelectedDate] = React.useState<string>("")
+  // เปิดจากปุ่ม "แทรกงานด่วน" บนการ์ดคำขอที่ถึงวันขอแล้ว (/daily-summary?date=YYYY-MM-DD) — เลือกวันนั้นให้เลย
+  // อ่านจาก location ตอนเปิดหน้า (ไม่ใช้ useSearchParams ที่ต้องห่อ Suspense ตอน build) · ไม่มี/ผิดรูป = ว่างให้เลือกเองเหมือนเดิม
+  React.useEffect(() => {
+    const date = new URLSearchParams(window.location.search).get("date")
+    if (isIsoDate(date)) setSelectedDate(date)
+  }, [])
   const [trips, setTrips] = React.useState<Trip[]>([])
   // ลิงก์ใบงานคนขับ (มี token) ของทริปวันนี้ — เตรียมไว้ก่อน เพราะปุ่มคัดลอกต้องเขียน clipboard ทันที
   const driverLinks = useDriverLinks(user, trips.map((t) => t.id))

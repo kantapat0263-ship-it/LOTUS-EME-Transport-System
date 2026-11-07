@@ -42,8 +42,7 @@ async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate
   const tomorrow = addDays(today, 1)
   if (requestDate < tomorrow) throw new VehicleRequestError('ต้องขอล่วงหน้าอย่างน้อย 1 วัน', 400)
   const settings = (await db.doc('companySettings/default').get()).data() ?? {}
-  const hour = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCHours()
-  const isOutsideHours = isOutsideRequestHours(hour, settings)
+  const isOutsideHours = isOutsideRequestHours(now, settings)
   if (requestDate >= addDays(today, isOutsideHours ? 2 : 1)) return
   if (requestDate !== tomorrow) throw new VehicleRequestError('วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่', 400)
   // ใช้ผลของคำขออนุมัติ "ล่าสุด" เหมือนฟอร์ม (urgentStatus) — ใบเก่าที่เคยอนุมัติไม่ชนะใบใหม่ที่ถูกปฏิเสธ/รออยู่
@@ -130,7 +129,10 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
     requestTime: command.requestTime || '08:30',
     requestedBy: command.requestedBy || profileName || user.email || 'Unknown',
     requestedByEmail: user.email,
-    requestedByPhone: typeof profile.phone === 'string' ? profile.phone : '',
+    // คนจัดรถกรอกใบแทนผู้ขอ = เบอร์ผู้ขอ (คนขับโทรหาคนนี้) · ผู้ขอทั่วไปส่งมาก็ไม่ใช้ — ใช้เบอร์ในโปรไฟล์ตัวเองเสมอ
+    requestedByPhone: isStaff && command.requestedByPhone?.trim()
+      ? command.requestedByPhone.trim()
+      : typeof profile.phone === 'string' ? profile.phone : '',
     userId: user.uid,
     userEmail: user.email,
     destinations,

@@ -93,6 +93,21 @@ it('คนจัดรถ: ใบเข้ากองจัดคิวทั�
   expect(saved).toMatchObject({ status: 'in_progress', acknowledgedBy: 'คนจัดรถ' })
 })
 
+it('เบอร์ผู้ขอ: คนจัดรถกรอกใบแทน = ใช้เบอร์ที่ส่งมา · ไม่ส่ง = เบอร์โปรไฟล์ · ผู้ขอทั่วไปส่งมา = ไม่ใช้ (เบอร์โปรไฟล์ตัวเอง)', async () => {
+  const day = workday(5)
+  const phoneOf = async (payload: unknown) => {
+    const response = await post(payload)
+    expect(response.status).toBe(200)
+    return (await getAdminDb().doc(`vehicleRequests/${(await response.json()).requestId}`).get()).data()!.requestedByPhone
+  }
+  await setProfile({ name: 'คนจัดรถ', phone: '0899999999', role: 'dispatcher', active: true })
+  expect(await phoneOf(body(day, [siteDest()], { requestedBy: 'สมชาย', requestedByPhone: ' 081-000-0000 ' }))).toBe('081-000-0000')
+  expect(await phoneOf(body(day))).toBe('0899999999')
+  await setProfile({ name: 'สมชาย', phone: '0812345678', role: 'viewer', active: true })
+  expect(await phoneOf(body(day, [siteDest()], { requestedByPhone: '0800000000' }))).toBe('0812345678')
+  expect((await post(body(day, [siteDest()], { requestedByPhone: '0'.repeat(31) }))).status).toBe(400)
+})
+
 it('ส่งพร้อมกัน 8 ใบในวันเดียว → ได้เลขไม่ซ้ำ และบันทึกครบทุกใบ', async () => {
   await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
   const day = workday(40) // วันที่เทสต์อื่นไม่ใช้ — เทสต์นี้นับจำนวนใบของวัน
@@ -175,6 +190,16 @@ describe('กติกาเวลารับคำขอของผู้ข�
     await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toThrow('ขออนุมัติจาก Dispatcher')
     expect((await createVehicleRequest(db, { ...viewer(), role: 'dispatcher' }, command('2030-01-07'), at(20))).requestId).toMatch(/^VR-0701-\d{4}$/)
     await expect(createVehicleRequest(db, viewer(), command('2030-01-07'), at(10))).rejects.toThrow('ล่วงหน้าอย่างน้อย 1 วัน')
+  })
+
+  it('เวลาปิดรับนับนาที: ตั้ง 17:30 → 17:15 ยังขอพรุ่งนี้ได้เอง · 17:30 ต้องขออนุมัติ (เดิมปิดตั้งแต่ 17:00)', async () => {
+    await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
+    await getAdminDb().doc('companySettings/default').set({ requestOpenTime: '08:00', requestCloseTime: '17:30' }, { merge: true })
+    const db = getAdminDb()
+    const monday1715 = new Date(`${MONDAY}T10:15:00Z`) // 17:15 เวลาไทย
+    const monday1730 = new Date(`${MONDAY}T10:30:00Z`) // 17:30 เวลาไทย
+    expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), monday1715)).requestId).toMatch(/^VR-0801-\d{4}$/)
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), monday1730)).rejects.toThrow('ขออนุมัติจาก Dispatcher')
   })
 
   it('คำขออนุมัติที่ผู้ขอยกเลิกใช้ส่งใบไม่ได้ · ยกเลิกแล้วขอใหม่จนอนุมัติ = ส่งได้', async () => {

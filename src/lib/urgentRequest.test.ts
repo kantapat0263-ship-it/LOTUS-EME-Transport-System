@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  displayText, formatIsoDateTh, latestUrgentRequest, planUrgentCancel, urgentDetailsError, urgentFormStatus, urgentNotPendingMessage,
-  urgentPrefill, urgentRejectReason,
+  displayText, formatIsoDateTh, isUrgentPastDue, latestUrgentRequest, planUrgentCancel, requesterVrAfterUrgent, urgentCloseChanges, urgentDetailsError,
+  urgentFormStatus, urgentNotPendingMessage, urgentPrefill, urgentRejectReason,
 } from './urgentRequest'
-import { isOutsideRequestHours, settingHour } from './requestWindow'
+import { isOutsideRequestHours, settingMinutes } from './requestWindow'
 
 describe('urgentPrefill — เติมจากฟอร์มที่กรอกไว้', () => {
   it('ใช้ชื่อสถานที่ (กำหนดเองใช้ชื่อที่พิมพ์) ไม่ซ้ำ + รายละเอียดงานแรก + เบอร์โปรไฟล์', () => {
@@ -77,23 +77,111 @@ describe('urgentDetailsError', () => {
 })
 
 describe('เวลาเปิด/ปิดรับคำขอ (ฟอร์มกับ server ใช้ตัวเดียวกัน)', () => {
-  it('"00:00" อ่านเป็น 0 ชั่วโมง ไม่กลายเป็นค่าเริ่มต้น · ไม่มีค่า/อ่านไม่ได้ = ค่าเริ่มต้น', () => {
-    expect(settingHour('00:00', 8)).toBe(0)
-    expect(settingHour('16:30', 8)).toBe(16)
-    expect(settingHour(undefined, 16)).toBe(16)
-    expect(settingHour('', 16)).toBe(16)
-    expect(settingHour('abc', 16)).toBe(16)
-    expect(settingHour('25:00', 16)).toBe(16)
+  it('อ่าน "HH:MM" เป็นนาทีของวัน (นับนาทีด้วย) · "00:00" = 0 ไม่กลายเป็นค่าเริ่มต้น · ไม่มีค่า/อ่านไม่ได้ = ค่าเริ่มต้น', () => {
+    expect(settingMinutes('00:00', 8)).toBe(0)
+    expect(settingMinutes('16:30', 8)).toBe(16 * 60 + 30)
+    expect(settingMinutes('17:30:00', 8)).toBe(17 * 60 + 30)
+    expect(settingMinutes('7', 8)).toBe(7 * 60)
+    expect(settingMinutes(' 08:15 ', 16)).toBe(8 * 60 + 15)
+    expect(settingMinutes(undefined, 16)).toBe(16 * 60)
+    expect(settingMinutes('', 16)).toBe(16 * 60)
+    expect(settingMinutes('abc', 16)).toBe(16 * 60)
+    expect(settingMinutes('25:00', 16)).toBe(16 * 60)
+    expect(settingMinutes('16:75', 8)).toBe(8 * 60)
+    expect(settingMinutes(1730, 16)).toBe(16 * 60)
   })
 
-  it('นอกเวลา = ตั้งแต่ชั่วโมงปิด หรือก่อนชั่วโมงเปิด', () => {
+  // เวลาไทย = UTC+7 → สร้างเวลาจาก "HH:MM" ไทยของวันหนึ่ง
+  const bkk = (hhmm: string) => new Date(`2030-01-07T${hhmm}:00+07:00`)
+
+  it('นอกเวลา = ตั้งแต่เวลาปิด หรือก่อนเวลาเปิด (ชั่วโมงตรง)', () => {
     const settings = { requestOpenTime: '08:00', requestCloseTime: '16:00' }
-    expect(isOutsideRequestHours(7, settings)).toBe(true)
-    expect(isOutsideRequestHours(8, settings)).toBe(false)
-    expect(isOutsideRequestHours(15, settings)).toBe(false)
-    expect(isOutsideRequestHours(16, settings)).toBe(true)
-    expect(isOutsideRequestHours(1, { requestOpenTime: '00:00', requestCloseTime: '17:00' })).toBe(false)
-    expect(isOutsideRequestHours(16, null)).toBe(true)
+    expect(isOutsideRequestHours(bkk('07:59'), settings)).toBe(true)
+    expect(isOutsideRequestHours(bkk('08:00'), settings)).toBe(false)
+    expect(isOutsideRequestHours(bkk('15:59'), settings)).toBe(false)
+    expect(isOutsideRequestHours(bkk('16:00'), settings)).toBe(true)
+    expect(isOutsideRequestHours(bkk('01:00'), { requestOpenTime: '00:00', requestCloseTime: '17:00' })).toBe(false)
+    expect(isOutsideRequestHours(bkk('16:00'), null)).toBe(true)
+  })
+
+  it('ตั้งปิด 17:30 = ปิดจริง 17:30 (เดิมอ่านแค่ชั่วโมง ปิดตั้งแต่ 17:00) · เปิด 08:30 = 08:29 ยังปิด', () => {
+    const settings = { requestOpenTime: '08:30', requestCloseTime: '17:30' }
+    expect(isOutsideRequestHours(bkk('17:00'), settings)).toBe(false)
+    expect(isOutsideRequestHours(bkk('17:29'), settings)).toBe(false)
+    expect(isOutsideRequestHours(bkk('17:30'), settings)).toBe(true)
+    expect(isOutsideRequestHours(bkk('08:29'), settings)).toBe(true)
+    expect(isOutsideRequestHours(bkk('08:30'), settings)).toBe(false)
+  })
+
+  it('ใช้เวลาไทยเสมอ ไม่ขึ้นกับเขตเวลาเครื่อง', () => {
+    const settings = { requestOpenTime: '08:00', requestCloseTime: '17:30' }
+    expect(isOutsideRequestHours(new Date('2030-01-07T10:29:00Z'), settings)).toBe(false) // 17:29 ไทย
+    expect(isOutsideRequestHours(new Date('2030-01-07T10:30:00Z'), settings)).toBe(true) // 17:30 ไทย
+  })
+})
+
+describe('คำขออนุมัติที่ถึงวันขอแล้ว (ผู้ขอส่งใบเองไม่ได้ — คนจัดรถต้องจัดให้เอง)', () => {
+  const today = '2026-11-08'
+  it.each([
+    ['2026-11-08', true], // ขอวันนี้ (ส่งคำขอเมื่อวานหลังเวลาปิดรับ แล้วไม่มีใครตอบ)
+    ['2026-11-01', true], // ค้างมาหลายวัน
+    ['2026-11-09', false], // พรุ่งนี้ — ยังอนุมัติให้ผู้ขอส่งใบเองทัน
+    ['', false],
+    [undefined, false],
+    [20261108, false],
+    ['8/11/2026', false],
+    ['2026-02-30', false],
+  ])('%o → %s', (requestedDate, expected) => {
+    expect(isUrgentPastDue(requestedDate, today)).toBe(expected)
+  })
+})
+
+describe('ใบที่ผู้ขอส่งเองหลังขออนุมัติ (กันคนจัดรถจัดซ้ำ — แต่ไม่จับงานคนละงาน)', () => {
+  const at = (ms: number) => ({ toDate: () => new Date(ms), toMillis: () => ms })
+  const urgent = { userId: 'u1', requestedDate: '2026-11-08', createdAt: at(1_000) }
+  const vr = (over: Record<string, unknown>) => ({ userId: 'u1', requestDate: '2026-11-08', status: 'pending', requestId: 'VR-1', createdAt: at(2_000), ...over })
+
+  it('ส่งหลังคำขออนุมัติ วันเดียวกัน ผู้ขอคนเดียวกัน = เจอ', () => {
+    expect(requesterVrAfterUrgent([vr({})], urgent)?.requestId).toBe('VR-1')
+    expect(requesterVrAfterUrgent([vr({ status: 'in_progress' }), vr({ requestId: 'VR-2', status: 'partial' })], urgent)?.requestId).toBe('VR-1')
+  })
+
+  it.each([
+    ['ใบที่มีอยู่ก่อนขออนุมัติ (ขอเพิ่มงาน B)', { createdAt: at(500) }],
+    ['ผู้ขอคนอื่น', { userId: 'u2' }],
+    ['คนละวัน', { requestDate: '2026-11-09' }],
+    ['ยกเลิกแล้ว', { status: 'cancelled' }],
+    ['ใบเลื่อนวันมาตรงวันนั้น', { status: 'rescheduled' }],
+    ['ใบที่ถูกแทนแล้ว', { status: 'superseded' }],
+    ['ไม่มีเวลาสร้าง', { createdAt: null }],
+  ])('%s = ไม่นับ', (_label, over) => {
+    expect(requesterVrAfterUrgent([vr(over)], urgent)).toBeNull()
+  })
+
+  it('คำขออนุมัติไม่มีเวลาสร้าง / ไม่มีผู้ขอ = ไม่เดา', () => {
+    expect(requesterVrAfterUrgent([vr({})], { ...urgent, createdAt: null })).toBeNull()
+    expect(requesterVrAfterUrgent([vr({ userId: undefined })], { ...urgent, userId: undefined })).toBeNull()
+    expect(requesterVrAfterUrgent(null, urgent)).toBeNull()
+  })
+})
+
+describe('คนจัดรถปิดคำขอที่ถึงวันขอแล้ว', () => {
+  it('จัดรถให้แล้ว / ไม่ได้จัด + หมายเหตุ (ตัดช่องว่าง) · ไม่มีค่า undefined (Firestore ปฏิเสธทั้งก้อน)', () => {
+    expect(urgentCloseChanges('handled', '  แทรกงานเข้าทริปนายเอ  ', 'คนจัดรถ')).toEqual({
+      status: 'closed', closeOutcome: 'handled', closeNote: 'แทรกงานเข้าทริปนายเอ', closedBy: 'คนจัดรถ',
+    })
+    const notHandled = urgentCloseChanges('not_handled', '', '')
+    expect(notHandled).toEqual({ status: 'closed', closeOutcome: 'not_handled', closeNote: '', closedBy: 'Dispatcher' })
+    expect(Object.values(notHandled).some(v => v === undefined)).toBe(false)
+  })
+
+  it('หมายเหตุยาวเกินถูกตัดที่ 500 ตัวอักษร', () => {
+    expect(urgentCloseChanges('handled', 'x'.repeat(600), 'A').closeNote).toHaveLength(500)
+  })
+
+  it('ปิดแล้ว ฟอร์มผู้ขอไม่นับเป็นคำขอที่รออยู่/อนุมัติ', () => {
+    expect(urgentFormStatus([{ status: 'closed', createdAt: { toMillis: () => 1 } }])).not.toBe('approved')
+    expect(urgentNotPendingMessage('closed')).toBe('คำขอนี้ถูกปิดไปแล้ว')
   })
 })
 

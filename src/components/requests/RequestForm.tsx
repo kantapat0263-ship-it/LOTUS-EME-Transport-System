@@ -57,7 +57,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { isOutsideRequestHours, requestHours } from "@/lib/requestWindow"
+import { isOutsideRequestHours } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
 import {
   URGENT_DETAIL_LIMITS, planUrgentCancel, urgentDetailsError, urgentFormStatus, urgentPrefill, urgentRejectReason, type UrgentDetails,
@@ -108,7 +108,22 @@ const CATEGORIES = [
  */
 let pendingOperation: { key: string; id: string } | null = null
 
-export function RequestForm() {
+/**
+ * คนจัดรถกด "กรอกใบขอรถ" บนการ์ดคำขอที่ถึงวันขอแล้ว (ผู้ขอส่งใบเองไม่ได้) — เติมชื่อผู้ขอ + วันนี้ให้
+ * ไซต์/เวลา/งาน คนจัดรถกรอกเอง (คำขอเก็บแค่ข้อความสั้น ไม่มีพิกัด) — โชว์ข้อความจากการ์ดไว้ดูระหว่างกรอก
+ * ส่งใบสำเร็จ → onSubmitted (หน้าแม่ปิดคำขอให้ + ล้าง prefill — ใบถัดไปกลับเป็นชื่อคนจัดรถ ไม่ติดชื่อผู้ขอคนเดิม)
+ */
+export interface RequestFormPrefill {
+  urgentId: string
+  requestedBy: string
+  date: string
+  destination: string
+  jobSummary: string
+  /** ส่งไปเป็นเบอร์ของใบ (server รับเฉพาะ staff) — คนขับโทรหาผู้ขอ ไม่ใช่คนจัดรถ */
+  contactPhone: string
+}
+
+export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPrefill | null; onSubmitted?: (requestId: string, siteResults: string) => void }) {
   const { toast } = useToast()
   const db = useFirestore()
   const { user } = useUser()
@@ -151,9 +166,7 @@ export function RequestForm() {
 
   const minDateStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-    const { closeHour, openHour } = requestHours(settings)
-    const currentHour = bangkokNow.getUTCHours()
-    const daysToAdd = !isViewer ? 1 : (currentHour >= closeHour || currentHour < openHour) ? 2 : 1
+    const daysToAdd = !isViewer ? 1 : isOutsideRequestHours(new Date(), settings) ? 2 : 1
     bangkokNow.setUTCDate(bangkokNow.getUTCDate() + daysToAdd)
     // ปิดรับวันอาทิตย์ — ถ้าวันเริ่มต้นตกวันอาทิตย์ ให้เลื่อนเป็นวันจันทร์
     if (bangkokNow.getUTCDay() === 0) bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
@@ -187,8 +200,8 @@ export function RequestForm() {
   const [isCancellingUrgent, setIsCancellingUrgent] = React.useState(false)
   // หน้าต่างกรอกรายละเอียดสั้น ๆ ตอนขออนุมัติพิเศษ (null = ปิด)
   const [urgentDetails, setUrgentDetails] = React.useState<UrgentDetails | null>(null)
-  const [requestedBy, setRequestedBy] = React.useState("")
-  const [selectedDate, setSelectedDate] = React.useState("")
+  const [requestedBy, setRequestedBy] = React.useState(prefill?.requestedBy ?? "")
+  const [selectedDate, setSelectedDate] = React.useState(prefill?.date ?? "")
   const continuousQueues = useContinuousQueues(selectedDate)
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [note, setNote] = React.useState("")
@@ -196,8 +209,7 @@ export function RequestForm() {
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
 
-  const bangkokHour = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).getUTCHours();
-  const isOutsideHours = isOutsideRequestHours(bangkokHour, settings)
+  const isOutsideHours = isOutsideRequestHours(new Date(), settings)
   
   const isSelectingTomorrow = selectedDate === tomorrowStr
   const isSelectingToday = !isViewer && selectedDate === todayStr
@@ -213,11 +225,12 @@ export function RequestForm() {
     }
   }, [profile?.role, settings, minDateStr, calendarMinStr, selectedDate])
 
+  // กรอกแทนผู้ขอ (prefill) = ชื่อผู้ขอ ไม่ใช่ชื่อคนจัดรถที่ล็อกอินอยู่ (ชื่อว่าง = ปล่อยว่างให้คนจัดรถพิมพ์ ไม่เติมชื่อตัวเอง)
   React.useEffect(() => {
     if (profile) {
-      setRequestedBy(profile.name || user?.displayName || "")
+      setRequestedBy(prefill ? prefill.requestedBy : (profile.name || user?.displayName || ""))
     }
-  }, [profile, user])
+  }, [profile, user, prefill])
 
   const handleRequestUrgentApproval = () => {
     if (!user || !selectedDate) return
@@ -391,6 +404,11 @@ const handleSubmit = async (e: React.FormEvent) => {
       toast({ title: "วันอาทิตย์ปิดรับคำขอ", description: "กรุณาเลือกวันจันทร์–เสาร์", variant: "destructive" })
       return
     }
+    // กรอกใบแทนผู้ขอ: ชื่อว่าง = server จะใส่ชื่อคนจัดรถแทน (ใบสรุป/ประวัติผู้ขอผิดคน) → ให้พิมพ์ชื่อผู้ขอก่อน
+    if (prefill && !requestedBy.trim()) {
+      toast({ title: "ยังไม่ได้ใส่ชื่อผู้ขอใช้รถ", description: "กรอกใบแทนผู้ขอ — ใส่ชื่อผู้ขอ (ดูจากการ์ดคำขอ) ก่อนส่ง", variant: "destructive" })
+      return
+    }
     // กันเลือกวันย้อนหลัง — staff เลือกได้เร็วสุด "วันนี้", viewer เร็วสุด "พรุ่งนี้"
     // คำนวณวันนี้ (เวลาไทย) สดๆ ตอนกดส่ง เพราะ todayStr/tomorrowStr เป็น useMemo ที่ตรึงค่าไว้ตั้งแต่ mount
     // ถ้าเปิดฟอร์มค้างข้ามเที่ยงคืน ค่าเดิมจะกลายเป็นวันย้อนหลังโดยไม่มีใครรู้
@@ -410,10 +428,9 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
 
     if (isViewer) {
-      const bangkokSubmitTime = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-      const { closeHour, openHour } = requestHours(settings)
-      const currentBangkokHour = bangkokSubmitTime.getUTCHours()
-      const isNowOutsideHours = currentBangkokHour >= closeHour || currentBangkokHour < openHour
+      const submitNow = new Date()
+      const bangkokSubmitTime = new Date(submitNow.getTime() + 7 * 60 * 60 * 1000)
+      const isNowOutsideHours = isOutsideRequestHours(submitNow, settings)
       const daysToAdd = isNowOutsideHours ? 2 : 1
       bangkokSubmitTime.setUTCDate(bangkokSubmitTime.getUTCDate() + daysToAdd)
       const currentMinStr = `${bangkokSubmitTime.getUTCFullYear()}-${String(bangkokSubmitTime.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokSubmitTime.getUTCDate()).padStart(2, '0')}`
@@ -540,6 +557,8 @@ const handleSubmit = async (e: React.FormEvent) => {
       requestDate: selectedDate,
       requestTime: (destinations[0] ? normalizeRequestTime(destinations[0].requestTime) : null) || "08:30",
       requestedBy,
+      // กรอกใบแทนผู้ขอ — เบอร์ของใบเป็นเบอร์ผู้ขอ (ไม่ส่ง = server ใช้เบอร์โปรไฟล์คนส่ง) · ยาวสุด 30 ตามตัวตรวจ server
+      ...(prefill?.contactPhone.trim() ? { requestedByPhone: prefill.contactPhone.trim().slice(0, 30) } : {}),
       note,
       destinations: validDestinations.map(d => ({
         category: d.category, siteId: d.siteId, siteName: d.siteName, customName: d.customName,
@@ -584,6 +603,8 @@ const handleSubmit = async (e: React.FormEvent) => {
 
       setNote("")
       setDestinations([{ id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }])
+      // ใบบันทึกแล้ว — error จากหน้าแม่ห้ามตกไป catch ข้างล่าง (จะขึ้น "ส่งไม่สำเร็จ กดส่งอีกครั้ง" ทั้งที่ล้างรหัสกันใบซ้ำไปแล้ว)
+      try { onSubmitted?.(requestId, siteResults) } catch (e) { console.error("[request-form] onSubmitted", e) }
     } catch (error) {
       console.error("Error saving request:", error)
       // ข้อมูลในฟอร์มยังอยู่ครบ (การล้างฟอร์มอยู่หลัง await ใน try) — ย้ำให้ผู้ใช้กดส่งซ้ำได้
@@ -607,6 +628,18 @@ const handleSubmit = async (e: React.FormEvent) => {
           <CardDescription>กรอกรายละเอียดเพื่อขอรับบริการรถรับ-ส่งหรืองานขนส่ง</CardDescription>
         </CardHeader>
         <CardContent>
+          {prefill && (
+            <div className="mb-6 p-3 rounded-lg border border-orange-500/30 bg-orange-500/10 space-y-1">
+              <p className="text-xs font-bold text-orange-400">📝 กรอกใบแทนผู้ขอ — จากคำขอหลังเวลาปิดรับที่ถึงวันขอแล้ว</p>
+              <p className="text-[11px] text-muted-foreground">
+                ใส่ชื่อผู้ขอและวันนี้ให้แล้ว · เลือกสถานที่ เวลา และงานตามที่ผู้ขอแจ้ง → ส่งใบ → ไปจัดกลุ่มเลือกคนขับ/รถตามปกติ
+              </p>
+              {prefill.contactPhone && <p className="text-[11px] text-white">📞 {prefill.contactPhone}</p>}
+              {prefill.destination && <p className="text-[11px] text-white break-words">📍 {prefill.destination}</p>}
+              {prefill.jobSummary && <p className="text-[11px] text-white whitespace-pre-wrap break-words">📦 {prefill.jobSummary}</p>}
+              <p className="text-[11px] text-orange-300">ส่งใบแล้วระบบปิดคำขอนี้ให้เอง (บันทึกว่าจัดรถให้แล้ว + เลข VR)</p>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div className="space-y-2">
