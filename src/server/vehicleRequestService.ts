@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { FieldValue, type DocumentData, type Firestore } from 'firebase-admin/firestore'
-import { parseThaiCoordinates } from '@/lib/requestCoordinates'
+import { officeLocationFrom, officeStopProblem, parseThaiCoordinates } from '@/lib/requestCoordinates'
 import type { ActiveTokenUser } from '@/firebase/admin'
 import { findFreeRequestId, requestIdPrefix } from '@/lib/requestId'
 import { planCustomSites, type SavedPlace } from '@/lib/customSite'
@@ -37,11 +37,10 @@ function storedResult(data: DocumentData | undefined, uid: string): VehicleReque
  * กติกาวันที่ของผู้ขอทั่วไป (เดิมตรวจแค่ในฟอร์ม): นอกเวลารับคำขอต้องขอล่วงหน้า 2 วัน
  * เว้นแต่ขอ "พรุ่งนี้" ที่ Dispatcher อนุมัติเร่งด่วนแล้ว — staff ไม่ติดกติกานี้
  */
-async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate: string, now: Date) {
+async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate: string, now: Date, settings: DocumentData) {
   const today = thaiToday(now)
   const tomorrow = addDays(today, 1)
   if (requestDate < tomorrow) throw new VehicleRequestError('ต้องขอล่วงหน้าอย่างน้อย 1 วัน', 400)
-  const settings = (await db.doc('companySettings/default').get()).data() ?? {}
   const isOutsideHours = isOutsideRequestHours(now, settings)
   if (requestDate >= addDays(today, isOutsideHours ? 2 : 1)) return
   if (requestDate !== tomorrow) throw new VehicleRequestError('วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่', 400)
@@ -68,11 +67,19 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
   if (new Date(`${requestDate}T00:00:00Z`).getUTCDay() === 0) {
     throw new VehicleRequestError('วันอาทิตย์ปิดรับคำขอ กรุณาเลือกวันจันทร์–เสาร์', 400)
   }
+  const settings = (await db.doc('companySettings/default').get()).data() ?? {}
+  // จุดหมายเป็นออฟฟิศ = ไม่รับ ทุกคน (ข้อความเดียวกับฟอร์ม) — ตรวจเฉพาะใบที่ส่งใหม่ ใบเก่าไม่ถูกตรวจซ้ำ
+  const office = officeLocationFrom(settings)
+  for (const [i, d] of command.destinations.entries()) {
+    const name = (d.category === 'custom' ? d.customName : d.siteName).trim()
+    const problem = officeStopProblem(d.coordinates, office, `จุดที่ ${i + 1}${name && name.length <= 80 ? ` (${name})` : ''}`)
+    if (problem) throw new VehicleRequestError(problem, 400)
+  }
   // ตรงกับฟอร์ม: staff เร็วสุด "วันนี้", ผู้ขอทั่วไปตามกติกาเวลารับคำขอ/อนุมัติเร่งด่วน (เวลาไทย)
   if (isStaff) {
     if (requestDate < thaiToday(now)) throw new VehicleRequestError('เลือกวันย้อนหลังไม่ได้', 400)
   } else {
-    await assertViewerBookingWindow(db, user.uid, requestDate, now)
+    await assertViewerBookingWindow(db, user.uid, requestDate, now, settings)
   }
 
   const profile = (await db.doc(`users/${user.uid}`).get()).data() ?? {}

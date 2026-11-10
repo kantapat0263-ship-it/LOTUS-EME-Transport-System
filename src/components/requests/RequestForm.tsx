@@ -35,7 +35,7 @@ Save,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { editCustomDestination, matchCustomSite } from "@/lib/customSite"
-import { COORDINATE_EXAMPLE, destinationCoordinateProblem, parseThaiCoordinates } from "@/lib/requestCoordinates"
+import { COORDINATE_EXAMPLE, destinationCoordinateProblem, officeLocationFrom, officeStopProblem, parseThaiCoordinates } from "@/lib/requestCoordinates"
 import { inThailand } from "@/lib/roadFlood"
 import { Site, UserProfile } from "@/types/models"
 import { cn } from "@/lib/utils"
@@ -535,6 +535,16 @@ const handleSubmit = async (e: React.FormEvent) => {
       const name = (noCoords.category === "custom" ? noCoords.customName : noCoords.siteName).trim()
       const where = `${pointLabel(noCoords)}${name && name.length <= 80 ? ` (${name})` : ""}`
       toast({ title: "ยังไม่มีพิกัด", description: destinationCoordinateProblem({ category: noCoords.category, coordinates: liveCoordinates(noCoords) }, where) ?? "", variant: "destructive" })
+      return
+    }
+
+    // จุดหมายเป็นออฟฟิศ = ไม่ต้องใส่ (รถออก-กลับออฟฟิศทุกเที่ยว) · ข้อความเดียวกับ server
+    const office = officeLocationFrom(settings)
+    const atOffice = validDestinations.find(d => officeStopProblem(liveCoordinates(d), office, ""))
+    if (atOffice) {
+      const name = (atOffice.category === "custom" ? atOffice.customName : atOffice.siteName).trim()
+      const where = `${pointLabel(atOffice)}${name && name.length <= 80 ? ` (${name})` : ""}`
+      toast({ title: "ไม่ต้องใส่ออฟฟิศ", description: officeStopProblem(liveCoordinates(atOffice), office, where) ?? "", variant: "destructive" })
       return
     }
 

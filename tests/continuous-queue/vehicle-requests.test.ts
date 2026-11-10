@@ -3,6 +3,7 @@ import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import { initializeApp, deleteApp, type FirebaseApp } from 'firebase/app'
 import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth } from 'firebase/auth'
 import { NextRequest } from 'next/server'
+import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb } from '@/firebase/admin'
 import { thaiToday } from '@/lib/driverLeave'
 import { POST as createRequest } from '@/app/api/vehicle-requests/route'
@@ -234,4 +235,46 @@ it('ใบไปหลายจุดตามลำดับ (ไซต์ → 
   const bad = await post(body(day, [siteDest({ sequenceIndex: 0 }), siteDest({ sequenceIndex: 1 })]))
   expect(bad.status).toBe(400)
   expect((await bad.json()).error).toContain('จุดที่ 2 เป็นที่เดียวกับจุดที่ 1')
+})
+
+it('จุดหมายเป็นออฟฟิศ (≤ 250 ม.) = ไม่รับ ทั้งผู้ขอและคนจัดรถ · ไม่บันทึกออฟฟิศเป็นสถานที่ · ใช้พิกัดคลังจากหน้าตั้งค่าก่อน', async () => {
+  const db = getAdminDb()
+  const day = workday(7)
+  const officeName = `ออฟฟิศ ${randomUUID().slice(0, 8)}`
+  const place = (coordinates: string) => ({ category: 'custom', siteId: '', siteName: '', customName: officeName, coordinates, jobDescription: '', saveAsSite: true, locationType: 'อื่นๆ', requestTime: '10:00' })
+  // ใบที่เกิดเหตุจริง: รับของจากไซต์ → จุดส่ง = ออฟฟิศ
+  const returnToOffice = (coordinates: string) => body(day, [
+    siteDest({ transferRole: 'pickup', jobDescription: 'รับเครื่องมือกลับ' }),
+    { ...place(coordinates), transferRole: 'drop' },
+  ])
+  const AT_OFFICE = '14.093932911692894, 100.68868332848953' // ค่าคงที่ OFFICE_LOCATION (ไม่ได้ตั้งพิกัดคลัง)
+  const NEAR_OFFICE = '14.0954, 100.6887' // ~160 ม.
+  const ONE_KM_AWAY = '14.1029, 100.6887'
+  await db.doc('companySettings/default').set({ warehouseLatitude: FieldValue.delete(), warehouseLongitude: FieldValue.delete() }, { merge: true })
+
+  for (const profile of [{ name: 'สมชาย', role: 'viewer', active: true }, { name: 'คนจัดรถ', role: 'dispatcher', active: true }]) {
+    await setProfile(profile)
+    for (const coordinates of [AT_OFFICE, NEAR_OFFICE]) {
+      const response = await post(returnToOffice(coordinates))
+      expect(response.status).toBe(400)
+      const { error } = await response.json()
+      expect(error).toContain(`จุดที่ 2 (${officeName}): เป็นออฟฟิศ`)
+      expect(error).toContain('เลือก 🚚 งานปกติ')
+    }
+    expect((await post(body(day, [place(AT_OFFICE)]))).status).toBe(400) // งานปกติที่หมายเดียวเป็นออฟฟิศก็ไม่รับ
+  }
+  expect((await db.collection('sites').where('name', '==', officeName).get()).size).toBe(0)
+  expect((await db.collection('vehicleRequests').where('requestDate', '==', day).get()).size).toBe(0)
+
+  // ห่างออฟฟิศ 1 กม. = ปกติ
+  expect((await post(body(day, [{ ...place(ONE_KM_AWAY), saveAsSite: false }]))).status).toBe(200)
+
+  // ตั้งพิกัดคลังในหน้าตั้งค่า → ใช้ค่านั้นแทนค่าคงที่
+  await db.doc('companySettings/default').set({ warehouseLatitude: 13.9, warehouseLongitude: 100.6 }, { merge: true })
+  try {
+    expect((await post(body(day, [{ ...place(AT_OFFICE), saveAsSite: false }]))).status).toBe(200)
+    expect((await post(body(day, [{ ...place('13.9005, 100.6'), saveAsSite: false }]))).status).toBe(400)
+  } finally {
+    await db.doc('companySettings/default').set({ warehouseLatitude: FieldValue.delete(), warehouseLongitude: FieldValue.delete() }, { merge: true })
+  }
 })
