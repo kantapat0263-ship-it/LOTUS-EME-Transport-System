@@ -42,7 +42,7 @@ describe('officeStopProblem / officeLocationFrom — จุดหมายเป
   })
   it('ในรัศมี 250 ม. = บอกว่าไม่ต้องใส่ + ทางที่ถูก · เกิน = ไม่มีปัญหา', () => {
     const at = (metersNorth: number) => `${office.lat + metersNorth / 111_195}, ${office.lng}`
-    expect(officeStopProblem(at(0), office, where)).toBe('จุดที่ 2 (ออฟฟิศ): เป็นออฟฟิศ — รถออกจากออฟฟิศและกลับออฟฟิศทุกเที่ยวอยู่แล้ว ไม่ต้องใส่เป็นจุดหมาย · ถ้าจะเอาของกลับออฟฟิศ เลือก 🚚 งานปกติ ที่หมาย = ที่ไปรับของ แล้วเขียนว่ารับอะไรกลับ')
+    expect(officeStopProblem(at(0), office, where)).toBe('จุดที่ 2 (ออฟฟิศ): เป็นออฟฟิศ — รถออกจากออฟฟิศและกลับออฟฟิศทุกเที่ยวอยู่แล้ว ไม่ต้องใส่เป็นจุดหมาย · ถ้าจะเอาของกลับออฟฟิศ เลือก 🚚 งานปกติ ที่หมาย = ที่ไปรับของ แล้วเขียนว่ารับอะไรกลับ (รับหลายที่ใช้ 🔁 ไปหลายจุดตามลำดับ) · ถ้าเอาของจากออฟฟิศไปด้วย เขียนไว้ในงานของจุดที่ไปส่ง')
     expect(officeStopProblem(at(240), office, where)).not.toBeNull()
     expect(officeStopProblem(at(260), office, where)).toBeNull()
     expect(officeStopProblem('13.7, 100.5', office, where)).toBeNull()

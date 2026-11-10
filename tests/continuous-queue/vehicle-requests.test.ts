@@ -262,12 +262,26 @@ it('จุดหมายเป็นออฟฟิศ (≤ 250 ม.) = ไม�
       expect(error).toContain('เลือก 🚚 งานปกติ')
     }
     expect((await post(body(day, [place(AT_OFFICE)]))).status).toBe(400) // งานปกติที่หมายเดียวเป็นออฟฟิศก็ไม่รับ
+    // 🔁 ไปหลายจุดตามลำดับ ที่แวะออฟฟิศกลางทางก็ไม่รับ (ผู้ใช้ OK แผน 2026-11-10: กันทุกแบบงาน)
+    const viaOffice = await post(body(day, [
+      siteDest({ sequenceIndex: 0, jobDescription: 'รับคนงาน' }),
+      { ...place(AT_OFFICE), saveAsSite: false, sequenceIndex: 1, jobDescription: 'ทำเอกสาร' },
+      siteDest({ sequenceIndex: 2, jobDescription: 'ส่งคนงานกลับ' }),
+    ]))
+    expect(viaOffice.status).toBe(400)
+    expect((await viaOffice.json()).error).toContain(`จุดที่ 2 (${officeName}): เป็นออฟฟิศ`)
   }
   expect((await db.collection('sites').where('name', '==', officeName).get()).size).toBe(0)
   expect((await db.collection('vehicleRequests').where('requestDate', '==', day).get()).size).toBe(0)
 
   // ห่างออฟฟิศ 1 กม. = ปกติ
-  expect((await post(body(day, [{ ...place(ONE_KM_AWAY), saveAsSite: false }]))).status).toBe(200)
+  const first = body(day, [{ ...place(ONE_KM_AWAY), saveAsSite: false }])
+  const ok = await post(first)
+  expect(ok.status).toBe(200)
+  // กดส่งซ้ำด้วยรหัสการส่งเดิม (ใบบันทึกแล้วแต่คำตอบหาย) = ได้ใบเดิม — ตรวจออฟฟิศไม่ขวางการคืนผลเดิม
+  const replay = await post({ ...first, destinations: [place(AT_OFFICE)] })
+  expect(replay.status).toBe(200)
+  expect((await replay.json()).requestId).toBe((await ok.json()).requestId)
 
   // ตั้งพิกัดคลังในหน้าตั้งค่า → ใช้ค่านั้นแทนค่าคงที่
   await db.doc('companySettings/default').set({ warehouseLatitude: 13.9, warehouseLongitude: 100.6 }, { merge: true })

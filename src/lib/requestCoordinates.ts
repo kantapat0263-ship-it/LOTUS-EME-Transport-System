@@ -40,5 +40,5 @@ export function officeLocationFrom(settings: { warehouseLatitude?: unknown; ware
 export function officeStopProblem(coordinates: string, office: LatLng, where: string): string | null {
   const place = parseThaiCoordinates(coordinates)
   if (!place || haversineMeters(place, office) > OFFICE_RADIUS_M) return null
-  return `${where}: เป็นออฟฟิศ — รถออกจากออฟฟิศและกลับออฟฟิศทุกเที่ยวอยู่แล้ว ไม่ต้องใส่เป็นจุดหมาย · ถ้าจะเอาของกลับออฟฟิศ เลือก 🚚 งานปกติ ที่หมาย = ที่ไปรับของ แล้วเขียนว่ารับอะไรกลับ`
+  return `${where}: เป็นออฟฟิศ — รถออกจากออฟฟิศและกลับออฟฟิศทุกเที่ยวอยู่แล้ว ไม่ต้องใส่เป็นจุดหมาย · ถ้าจะเอาของกลับออฟฟิศ เลือก 🚚 งานปกติ ที่หมาย = ที่ไปรับของ แล้วเขียนว่ารับอะไรกลับ (รับหลายที่ใช้ 🔁 ไปหลายจุดตามลำดับ) · ถ้าเอาของจากออฟฟิศไปด้วย เขียนไว้ในงานของจุดที่ไปส่ง`
 }
