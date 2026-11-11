@@ -154,7 +154,8 @@ export default function ManualPage() {
         <p className="text-muted-foreground text-sm mt-1">คลิปสั้นพร้อมเสียง — เลือกกรณีที่ตรงกับงานแล้วกดดูได้เลย</p>
       </div>
 
-      {isLoading || !user ? (
+      {/* useDoc เริ่มที่ isLoading=false ก่อนเริ่มโหลด — ยังไม่มีโปรไฟล์ = รอ (ไม่มีโปรไฟล์จริง layout ไม่แสดงหน้านี้อยู่แล้ว) */}
+      {isLoading || !user || !profile ? (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : isStaff ? (
         // คนจัดรถ/แอดมิน: เปิดมาเจอแท็บคนจัดรถ · แท็บผู้ขอรถไว้อธิบาย/ส่งคลิปให้ผู้ขอ
