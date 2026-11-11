@@ -2580,7 +2580,7 @@ export default function DailySummaryPage() {
               <Send className="h-5 w-5 text-blue-500" /> ส่งใบงานให้คนขับ
             </DialogTitle>
             <DialogDescription>
-              Trip ID: <span className="font-bold text-gray-900">{selectedTripForShare?.tripId}</span>
+              Trip ID: <span className="font-bold text-foreground">{selectedTripForShare?.tripId}</span>
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4 min-w-0">
