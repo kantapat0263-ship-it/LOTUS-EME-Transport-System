@@ -5,7 +5,7 @@ import type { ActiveTokenUser } from '@/firebase/admin'
 import { findFreeRequestId, requestIdPrefix } from '@/lib/requestId'
 import { planCustomSites, type SavedPlace } from '@/lib/customSite'
 import { thaiToday } from '@/lib/driverLeave'
-import { isOutsideRequestHours } from '@/lib/requestWindow'
+import { viewerRequestDateProblem } from '@/lib/requestWindow'
 import type { VehicleRequestCommand } from './vehicleRequestValidation'
 
 export class VehicleRequestError extends Error {
@@ -19,36 +19,12 @@ export interface VehicleRequestResult {
   unsavedNames: string[]
 }
 
-const addDays = (day: string, days: number) => {
-  const d = new Date(`${day}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
-}
-
 
 /** ผลที่บันทึกไว้ของคำสั่งนี้ (ส่งซ้ำหลังบันทึกสำเร็จแล้ว = คืนผลเดิม ไม่สร้างใบใหม่) */
 function storedResult(data: DocumentData | undefined, uid: string): VehicleRequestResult | null {
   if (!data) return null
   if (data.userId !== uid) throw new VehicleRequestError('ข้อมูลใบขอรถไม่ถูกต้อง กรุณาโหลดหน้าใหม่แล้วส่งอีกครั้ง', 409)
   return { requestId: data.requestId, createdNames: data.createdNames ?? [], reusedNames: data.reusedNames ?? [], unsavedNames: data.unsavedNames ?? [] }
-}
-
-/**
- * กติกาวันที่ของผู้ขอทั่วไป (เดิมตรวจแค่ในฟอร์ม): นอกเวลารับคำขอต้องขอล่วงหน้า 2 วัน
- * เว้นแต่ขอ "พรุ่งนี้" ที่ Dispatcher อนุมัติเร่งด่วนแล้ว — staff ไม่ติดกติกานี้
- */
-async function assertViewerBookingWindow(db: Firestore, uid: string, requestDate: string, now: Date, settings: DocumentData) {
-  const today = thaiToday(now)
-  const tomorrow = addDays(today, 1)
-  if (requestDate < tomorrow) throw new VehicleRequestError('ต้องขอล่วงหน้าอย่างน้อย 1 วัน', 400)
-  const isOutsideHours = isOutsideRequestHours(now, settings)
-  if (requestDate >= addDays(today, isOutsideHours ? 2 : 1)) return
-  if (requestDate !== tomorrow) throw new VehicleRequestError('วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่', 400)
-  // ใช้ผลของคำขออนุมัติ "ล่าสุด" เหมือนฟอร์ม (urgentStatus) — ใบเก่าที่เคยอนุมัติไม่ชนะใบใหม่ที่ถูกปฏิเสธ/รออยู่
-  const urgent = await db.collection('urgentRequests').where('userId', '==', uid).where('requestedDate', '==', requestDate).get()
-  const latest = urgent.docs.map(d => d.data())
-    .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0))[0]
-  if (latest?.status !== 'approved') throw new VehicleRequestError('กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้', 400)
 }
 
 /**
@@ -75,11 +51,12 @@ export async function createVehicleRequest(db: Firestore, user: ActiveTokenUser,
     const problem = officeStopProblem(d.coordinates, office, `จุดที่ ${i + 1}${name && name.length <= 80 ? ` (${name})` : ''}`)
     if (problem) throw new VehicleRequestError(problem, 400)
   }
-  // ตรงกับฟอร์ม: staff เร็วสุด "วันนี้", ผู้ขอทั่วไปตามกติกาเวลารับคำขอ/อนุมัติเร่งด่วน (เวลาไทย)
+  // ตรงกับฟอร์ม: staff เร็วสุด "วันนี้" ไม่ติดเวลารับคำขอ · ผู้ขอทั่วไปตามกติกาเวลารับคำขอ (เวลาไทย, lib/requestWindow)
   if (isStaff) {
     if (requestDate < thaiToday(now)) throw new VehicleRequestError('เลือกวันย้อนหลังไม่ได้', 400)
   } else {
-    await assertViewerBookingWindow(db, user.uid, requestDate, now, settings)
+    const problem = viewerRequestDateProblem(requestDate, now, settings)
+    if (problem) throw new VehicleRequestError(problem, 400)
   }
 
   const profile = (await db.doc(`users/${user.uid}`).get()).data() ?? {}

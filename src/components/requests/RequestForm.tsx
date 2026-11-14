@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useFirestore, useCollection, useUser, useMemoFirebase, useDoc } from "@/firebase"
-import { collection, doc, setDoc, serverTimestamp, getDocs, query, where, runTransaction } from "firebase/firestore"
+import { collection, doc } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -45,23 +45,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { useContinuousQueues } from "@/hooks/use-continuous-queues"
 import { QueueNoticeCard } from "@/components/continuous-queue/QueueNoticeCard"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-import { isOutsideRequestHours } from "@/lib/requestWindow"
+import { closedTomorrowMessage, isOutsideRequestHours, viewerRequestDateProblem } from "@/lib/requestWindow"
 import { normalizeRequestTime } from "@/lib/requestTime"
-import {
-  URGENT_DETAIL_LIMITS, planUrgentCancel, urgentDetailsError, urgentFormStatus, urgentPrefill, urgentRejectReason, type UrgentDetails,
-} from "@/lib/urgentRequest"
 import { buildDropDescription, samePlace, type TransferRole } from "@/lib/transfer"
 import { SEQUENCE_MAX_STOPS, sequenceShapeProblem } from "@/lib/sequence"
 
@@ -142,28 +127,6 @@ export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPre
 
   const [activeSuggestId, setActiveSuggestId] = React.useState<string | null>(null)
 
-  // Real-time urgent request status
-  const urgentRequestRef = useMemoFirebase(() => {
-    if (!db || !user || !isViewer) return null
-    const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-    bangkokNow.setUTCDate(bangkokNow.getUTCDate() + 1)
-    const y = bangkokNow.getUTCFullYear()
-    const m = String(bangkokNow.getUTCMonth() + 1).padStart(2, '0')
-    const d = String(bangkokNow.getUTCDate()).padStart(2, '0')
-    const tomorrowStr = `${y}-${m}-${d}`
-    return query(
-      collection(db, "urgentRequests"),
-      where("userId", "==", user.uid),
-      where("requestedDate", "==", tomorrowStr)
-    )
-  }, [db, user, isViewer])
-
-  const { data: urgentRequests } = useCollection<any>(urgentRequestRef)
-
-  // ผลของคำขออนุมัติ "ใบล่าสุด" (ตัวเดียวกับ server) · ผู้ขอยกเลิกแล้ว = เหมือนยังไม่มีคำขอ (ขอใหม่ได้)
-  const urgentStatus = React.useMemo(() => urgentFormStatus(urgentRequests), [urgentRequests])
-  const rejectReason = React.useMemo(() => urgentRejectReason(urgentRequests), [urgentRequests])
-
   const minDateStr = React.useMemo(() => {
     const bangkokNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
     const daysToAdd = !isViewer ? 1 : isOutsideRequestHours(new Date(), settings) ? 2 : 1
@@ -195,11 +158,6 @@ export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPre
   const calendarMinStr = isViewer ? tomorrowStr : todayStr
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
-  const [urgentApprovalRequested, setUrgentApprovalRequested] = React.useState(false)
-  const [isSendingUrgent, setIsSendingUrgent] = React.useState(false)
-  const [isCancellingUrgent, setIsCancellingUrgent] = React.useState(false)
-  // หน้าต่างกรอกรายละเอียดสั้น ๆ ตอนขออนุมัติพิเศษ (null = ปิด)
-  const [urgentDetails, setUrgentDetails] = React.useState<UrgentDetails | null>(null)
   const [requestedBy, setRequestedBy] = React.useState(prefill?.requestedBy ?? "")
   const [selectedDate, setSelectedDate] = React.useState(prefill?.date ?? "")
   const continuousQueues = useContinuousQueues(selectedDate)
@@ -209,11 +167,13 @@ export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPre
     { id: "1", category: "all", searchTerm: "", siteId: "", siteName: "", customName: "", coordinates: "", jobDescription: "", saveAsSite: false, locationType: "ไซต์งาน", requestTime: "08:30" }
   ])
 
-  const isOutsideHours = isOutsideRequestHours(new Date(), settings)
-  
+  // นอกเวลารับคำขอ: ผู้ขอทั่วไปส่งใบของพรุ่งนี้ไม่ได้เด็ดขาด (ผู้ใช้กำหนด 2026-11-14 — เลิกขออนุมัติพิเศษ ให้แจ้งคนจัดรถ)
+  // กล่องแจ้งขึ้นทุกวันที่ที่เลือก — นอกเวลาฟอร์มตั้งวันเป็นมะรืนให้เอง ถ้าไม่บอกชัด ผู้ขออาจส่งใบผิดวันโดยไม่รู้ตัว
+  const closedMessage = isViewer ? closedTomorrowMessage(new Date(), settings) : null
+
   const isSelectingTomorrow = selectedDate === tomorrowStr
   const isSelectingToday = !isViewer && selectedDate === todayStr
-  const isBlockedByUrgent = isViewer && isOutsideHours && isSelectingTomorrow && urgentStatus !== 'approved'
+  const isTomorrowClosed = !!closedMessage && isSelectingTomorrow
 
   React.useEffect(() => {
     if (profile) {
@@ -231,81 +191,6 @@ export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPre
       setRequestedBy(prefill ? prefill.requestedBy : (profile.name || user?.displayName || ""))
     }
   }, [profile, user, prefill])
-
-  const handleRequestUrgentApproval = () => {
-    if (!user || !selectedDate) return
-
-    if (urgentStatus === 'pending') {
-      toast({ title: "รออนุมัติอยู่", description: "Dispatcher กำลังพิจารณาคำขอของคุณครับ" })
-      return
-    }
-    if (urgentStatus === 'approved') {
-      toast({ title: "ได้รับอนุมัติแล้ว", description: "กรอกใบขอรถได้เลยครับ" })
-      return
-    }
-    // ให้คนจัดรถรู้ว่าไปไหน/ทำอะไร และติดต่อกลับได้ — เติมจากที่กรอกในฟอร์มไว้แล้ว
-    setUrgentDetails(urgentPrefill(destinations, (profile as any)?.phone))
-  }
-
-  const submitUrgentApproval = async () => {
-    if (!user || !selectedDate || !urgentDetails) return
-    const error = urgentDetailsError(urgentDetails)
-    if (error) {
-      toast({ title: "ข้อมูลไม่ครบ", description: error, variant: "destructive" })
-      return
-    }
-
-    setIsSendingUrgent(true)
-    try {
-      const urgentRef = doc(collection(db, "urgentRequests"))
-      await setDoc(urgentRef, {
-        id: urgentRef.id,
-        requestedBy: requestedBy || profile?.name || user.email,
-        requestedByEmail: user.email,
-        userId: user.uid,
-        requestedDate: selectedDate,
-        destination: urgentDetails.destination.trim(),
-        jobSummary: urgentDetails.jobSummary.trim(),
-        contactPhone: urgentDetails.contactPhone.trim(),
-        status: "pending",
-        createdAt: serverTimestamp()
-      })
-      setUrgentDetails(null)
-      setUrgentApprovalRequested(true)
-      toast({ 
-        title: "ส่งคำขออนุมัติแล้ว", 
-        description: "รอ Dispatcher อนุมัติก่อนกรอกใบขอรถครับ" 
-      })
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
-    } finally {
-      setIsSendingUrgent(false)
-    }
-  }
-
-  // ผู้ขอยกเลิกคำขออนุมัติที่ยังรออยู่ (เช่น ไม่ต้องใช้รถแล้ว / กรอกผิดอยากขอใหม่) — ยกเลิกแล้วขอใหม่ได้
-  // อ่านซ้ำใน transaction: คนจัดรถอาจเพิ่งกดอนุมัติ/ปฏิเสธระหว่างเปิดหน้าต่างยืนยัน → ไม่เขียนทับผลนั้น
-  // ยกเลิกทุกใบของวันนั้นที่ยังรออนุมัติ (ส่งซ้ำจาก 2 เครื่องได้) — ไม่ให้ใบเก่าค้างที่การ์ดคนจัดรถ
-  const cancelUrgentApproval = async () => {
-    const refs = (urgentRequests ?? []).filter((r: any) => r.status === "pending").map((r: any) => doc(db, "urgentRequests", r.id))
-    if (refs.length === 0) return
-    setIsCancellingUrgent(true)
-    try {
-      const message = await runTransaction(db, async (t) => {
-        const current = await Promise.all(refs.map(async (ref) => ({ ...(await t.get(ref)).data(), id: ref.id })))
-        const plan = planUrgentCancel(current)
-        for (const ref of refs) {
-          if (plan.cancelIds.includes(ref.id)) t.update(ref, { status: "cancelled", cancelledAt: serverTimestamp() })
-        }
-        return plan.message
-      })
-      toast({ title: message })
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
-    } finally {
-      setIsCancellingUrgent(false)
-    }
-  }
 
   const updateDest = (id: string, updates: Partial<DestinationRequest>) => {
     setDestinations(prev => prev.map(d => {
@@ -427,47 +312,13 @@ const handleSubmit = async (e: React.FormEvent) => {
       return
     }
 
+    // ผู้ขอทั่วไป: ตัดสินด้วยเวลาตอนกดส่ง (ฟอร์มอาจเปิดค้างข้ามเวลาปิดรับ) — ตัวเดียวกับ server
     if (isViewer) {
-      const submitNow = new Date()
-      const bangkokSubmitTime = new Date(submitNow.getTime() + 7 * 60 * 60 * 1000)
-      const isNowOutsideHours = isOutsideRequestHours(submitNow, settings)
-      const daysToAdd = isNowOutsideHours ? 2 : 1
-      bangkokSubmitTime.setUTCDate(bangkokSubmitTime.getUTCDate() + daysToAdd)
-      const currentMinStr = `${bangkokSubmitTime.getUTCFullYear()}-${String(bangkokSubmitTime.getUTCMonth() + 1).padStart(2, '0')}-${String(bangkokSubmitTime.getUTCDate()).padStart(2, '0')}`
-      if (selectedDate < currentMinStr) {
-        // ตรวจสอบอนุมัติเร่งด่วนกรณีจะจองวันพรุ่งนี้
-        const tomorrowStrInside = (() => {
-          const dNow = new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
-          dNow.setUTCDate(dNow.getUTCDate() + 1)
-          return `${dNow.getUTCFullYear()}-${String(dNow.getUTCMonth() + 1).padStart(2, '0')}-${String(dNow.getUTCDate()).padStart(2, '0')}`
-        })()
-        
-        if (selectedDate === tomorrowStrInside) {
-          // ใบล่าสุดต้องอนุมัติ (เหมือน server) — ใบที่ผู้ขอยกเลิก/ถูกปฏิเสธใช้ส่งใบไม่ได้
-          const urgentSnap = await getDocs(query(
-            collection(db, "urgentRequests"),
-            where("userId", "==", user.uid),
-            where("requestedDate", "==", selectedDate)
-          ))
-          
-          if (urgentFormStatus(urgentSnap.docs.map(d => d.data())) !== "approved") {
-            toast({ title: "ไม่สามารถส่งคำขอได้", description: "กรุณาขออนุมัติจาก Dispatcher ก่อนจึงจะขอรถพรุ่งนี้ได้", variant: "destructive" })
-            return
-          }
-        } else {
-          toast({ title: "ไม่สามารถส่งคำขอได้", description: "วันที่เลือกไม่ถูกต้อง กรุณาเลือกวันใหม่", variant: "destructive" })
-          return
-        }
+      const problem = viewerRequestDateProblem(selectedDate, new Date(), settings)
+      if (problem) {
+        toast({ title: "ไม่สามารถส่งคำขอได้", description: problem, variant: "destructive" })
+        return
       }
-    }
-
-    if (isBlockedByUrgent) {
-      toast({ 
-        title: "ยังไม่ได้รับอนุมัติ", 
-        description: "กรุณารอการอนุมัติเร่งด่วนจาก Dispatcher ก่อนครับ", 
-        variant: "destructive" 
-      })
-      return
     }
 
     if (isTransfer) {
@@ -650,6 +501,15 @@ const handleSubmit = async (e: React.FormEvent) => {
               <p className="text-[11px] text-orange-300">ส่งใบแล้วระบบปิดคำขอนี้ให้เอง (บันทึกว่าจัดรถให้แล้ว + เลข VR)</p>
             </div>
           )}
+          {closedMessage && !isTomorrowClosed && (
+            <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+              <span className="text-base leading-none">⏰</span>
+              <span>
+                <b>{closedMessage}</b>
+                {selectedDate && <><br />ใบนี้เป็นของวันที่ <b>{format(new Date(selectedDate + 'T00:00:00'), "dd/MM/yyyy")}</b> — ตรวจวันที่ต้องการรถให้ถูกก่อนส่ง</>}
+              </span>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div className="space-y-2">
@@ -708,125 +568,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                     </span>
                   </div>
                 )}
-                {isViewer && isOutsideHours && (
-                  <div className="mt-2 space-y-2">
-                    {isSelectingTomorrow ? (
-                      <div className={`p-3 rounded-lg border space-y-2 ${
-                        urgentStatus === 'approved' ? 'bg-green-500/10 border-green-500/30' :
-                        urgentStatus === 'rejected' ? 'bg-red-500/10 border-red-500/30' :
-                        urgentStatus === 'pending' ? 'bg-orange-500/10 border-orange-500/30' :
-                        'bg-red-500/10 border-red-500/30'
-                      }`}>
-                        {urgentStatus === 'approved' && (
-                          <p className="text-xs text-green-400 font-bold flex items-center gap-1">
-                            ✅ ได้รับอนุมัติแล้ว — กรอกใบขอรถได้เลยครับ
-                          </p>
-                        )}
-                        {urgentStatus === 'rejected' && (
-                          <div className="space-y-1">
-                            <p className="text-xs text-red-400 font-bold flex items-center gap-1">
-                              ❌ คำขอถูกปฏิเสธ — กรุณาเลือกวันอื่น
-                            </p>
-                            {rejectReason && (
-                              <p className="text-[10px] text-muted-foreground italic">
-                                เหตุผล: {rejectReason}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        {urgentStatus === 'pending' && (
-                          <>
-                            <p className="text-xs text-orange-400 font-bold flex items-center gap-2">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              รอ Dispatcher อนุมัติอยู่...
-                            </p>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 text-xs w-full"
-                                  disabled={isCancellingUrgent}
-                                >
-                                  {isCancellingUrgent && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                                  ยกเลิกคำขออนุมัติ
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>ยกเลิกคำขออนุมัติ?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    คนจัดรถจะไม่เห็นคำขอนี้แล้ว — ถ้ายังต้องใช้รถพรุ่งนี้ กดขออนุมัติใหม่ได้
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>ปิด</AlertDialogCancel>
-                                  <AlertDialogAction onClick={cancelUrgentApproval} className="bg-red-500 hover:bg-red-600">ยืนยันยกเลิก</AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </>
-                        )}
-                        {!urgentStatus && (
-                          <>
-                            <p className="text-xs text-red-400 font-bold flex items-center gap-1">
-                              🚫 เกินเวลารับคำขอ — ต้องขออนุมัติก่อน
-                            </p>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8 text-xs bg-orange-500 hover:bg-orange-600 text-white w-full"
-                              onClick={handleRequestUrgentApproval}
-                              disabled={isSendingUrgent}
-                            >
-                              {isSendingUrgent ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : "🔔"}
-                              ขออนุมัติพิเศษจาก Dispatcher
-                            </Button>
-                            <Dialog open={!!urgentDetails} onOpenChange={(open) => { if (!open && !isSendingUrgent) setUrgentDetails(null) }}>
-                              <DialogContent className="sm:max-w-md rounded-2xl">
-                                <DialogHeader>
-                                  <DialogTitle>ขออนุมัติส่งใบขอรถหลังเวลาปิดรับ</DialogTitle>
-                                  <DialogDescription>
-                                    บอกคนจัดรถสั้น ๆ ว่าจะไปไหน ทำอะไร — ได้รับอนุมัติแล้วค่อยกรอกใบขอรถเต็ม
-                                  </DialogDescription>
-                                </DialogHeader>
-                                {urgentDetails && (
-                                  <div className="space-y-3">
-                                    <div className="space-y-1">
-                                      <Label htmlFor="urgent-destination">ไปที่ไหน</Label>
-                                      <Input id="urgent-destination" value={urgentDetails.destination} maxLength={URGENT_DETAIL_LIMITS.destination}
-                                        placeholder="เช่น ไซต์งานบางนา" onChange={(e) => setUrgentDetails({ ...urgentDetails, destination: e.target.value })} />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <Label htmlFor="urgent-job">งาน / ของที่จะขน</Label>
-                                      <Textarea id="urgent-job" value={urgentDetails.jobSummary} maxLength={URGENT_DETAIL_LIMITS.jobSummary} rows={3}
-                                        placeholder="เช่น ส่งท่อ PVC 10 เส้น" onChange={(e) => setUrgentDetails({ ...urgentDetails, jobSummary: e.target.value })} />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <Label htmlFor="urgent-phone">เบอร์ติดต่อ</Label>
-                                      <Input id="urgent-phone" type="tel" inputMode="tel" value={urgentDetails.contactPhone} maxLength={URGENT_DETAIL_LIMITS.contactPhone}
-                                        placeholder="08x-xxx-xxxx" onChange={(e) => setUrgentDetails({ ...urgentDetails, contactPhone: e.target.value })} />
-                                    </div>
-                                  </div>
-                                )}
-                                <DialogFooter className="gap-2">
-                                  <Button type="button" variant="outline" onClick={() => setUrgentDetails(null)} disabled={isSendingUrgent}>ยกเลิก</Button>
-                                  <Button type="button" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={submitUrgentApproval} disabled={isSendingUrgent}>
-                                    {isSendingUrgent ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : "🔔"} ส่งคำขออนุมัติ
-                                  </Button>
-                                </DialogFooter>
-                              </DialogContent>
-                            </Dialog>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-amber-400 flex items-center gap-1">
-                        <Info className="h-3 w-3 shrink-0" />
-                        นอกเวลารับคำขอ — จองล่วงหน้าได้ตั้งแต่วันที่ {format(new Date(minDateStr + 'T00:00:00'), "dd/MM/yyyy")} เป็นต้นไป
-                      </div>
-                    )}
+                {isTomorrowClosed && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs font-bold text-red-400">
+                    <span className="text-base leading-none">🚫</span>
+                    <span>{closedMessage}</span>
                   </div>
                 )}
                 {!isViewer && (
@@ -1294,7 +1039,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             <Button 
               type="submit" 
               className="w-full h-12 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 disabled:opacity-50 disabled:cursor-not-allowed" 
-              disabled={isSubmitting || isBlockedByUrgent}
+              disabled={isSubmitting || isTomorrowClosed}
             >
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               ส่งคำขอรถ

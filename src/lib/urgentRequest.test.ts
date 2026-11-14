@@ -1,80 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  displayText, formatIsoDateTh, isUrgentPastDue, latestUrgentRequest, planUrgentCancel, requesterVrAfterUrgent, urgentCloseChanges, urgentDetailsError,
-  urgentFormStatus, urgentNotPendingMessage, urgentPrefill, urgentRejectReason,
-} from './urgentRequest'
-import { isOutsideRequestHours, settingMinutes } from './requestWindow'
-
-describe('urgentPrefill — เติมจากฟอร์มที่กรอกไว้', () => {
-  it('ใช้ชื่อสถานที่ (กำหนดเองใช้ชื่อที่พิมพ์) ไม่ซ้ำ + รายละเอียดงานแรก + เบอร์โปรไฟล์', () => {
-    expect(urgentPrefill([
-      { category: 'site', siteName: 'ไซต์บางนา', jobDescription: '' },
-      { category: 'custom', customName: ' ร้านวัสดุ ', siteName: 'ไม่ใช้', jobDescription: ' ท่อ 10 เส้น ' },
-      { category: 'site', siteName: 'ไซต์บางนา' },
-    ], '081-234-5678')).toEqual({ destination: 'ไซต์บางนา, ร้านวัสดุ', jobSummary: 'ท่อ 10 เส้น', contactPhone: '081-234-5678' })
-  })
-
-  it('ฟอร์มยังว่าง / ไม่มีเบอร์ในโปรไฟล์ → ช่องว่างให้กรอกเอง', () => {
-    expect(urgentPrefill([{ category: 'all', siteName: '' }], undefined)).toEqual({ destination: '', jobSummary: '', contactPhone: '' })
-  })
-
-  it('🔁 หลายจุดตามลำดับ: เส้นทางตามลำดับจริง คงชื่อซ้ำ (เห็นขากลับ) + งานแยกตามจุด', () => {
-    expect(urgentPrefill([
-      { category: 'site', siteName: 'ไซต์ A', jobDescription: 'รับคนงาน 3 คน', inSequence: true },
-      { category: 'custom', customName: 'สนง.ทำเอกสาร', jobDescription: 'รอทำเอกสาร', inSequence: true },
-      { category: 'site', siteName: 'ไซต์ A', jobDescription: 'ส่งคนงานกลับ', inSequence: true },
-    ], '')).toEqual({
-      destination: 'ไซต์ A → สนง.ทำเอกสาร → ไซต์ A',
-      jobSummary: '1) รับคนงาน 3 คน · 2) รอทำเอกสาร · 3) ส่งคนงานกลับ',
-      contactPhone: '',
-    })
-  })
-
-  it('🔁 จุดที่ยังไม่กรอกงาน/ชื่อ ข้ามไป แต่เลขข้อตรงกับลำดับในใบ', () => {
-    const r = urgentPrefill([
-      { category: 'site', siteName: 'ร้าน', jobDescription: '', inSequence: true },
-      { category: 'site', siteName: '', jobDescription: 'ส่งท่อ', inSequence: true },
-    ], '')
-    expect(r.destination).toBe('ร้าน')
-    expect(r.jobSummary).toBe('2) ส่งท่อ')
-  })
-
-  it('📦 รับของไปส่งต่อ: "รับ: ... → ส่ง: ..." + งานบอกว่ารับ/ส่งที่ไหน', () => {
-    expect(urgentPrefill([
-      { category: 'store', siteName: 'ดูโฮม', jobDescription: 'ท่อ 8 เส้น', transferRole: 'pickup' },
-      { category: 'store', siteName: 'ไทวัสดุ', jobDescription: 'ปูน 5 ถุง', transferRole: 'pickup' },
-      { category: 'site', siteName: 'ไซต์ B', jobDescription: '', transferRole: 'drop' },
-    ], '0812345678')).toEqual({
-      destination: 'รับ: ดูโฮม, ไทวัสดุ → ส่ง: ไซต์ B',
-      jobSummary: 'รับ ดูโฮม: ท่อ 8 เส้น · รับ ไทวัสดุ: ปูน 5 ถุง',
-      contactPhone: '0812345678',
-    })
-  })
-
-  it('ข้อความยาวเกินถูกตัดตามความยาวที่ rules ยอม', () => {
-    const many = Array.from({ length: 10 }, (_, i) => ({ category: 'site', siteName: `ไซต์ทดสอบชื่อยาวมากหมายเลข ${i}`, jobDescription: 'x'.repeat(80), inSequence: true }))
-    const r = urgentPrefill(many, '')
-    expect(r.destination.length).toBeLessThanOrEqual(200)
-    expect(r.jobSummary.length).toBeLessThanOrEqual(500)
-  })
-})
-
-describe('urgentDetailsError', () => {
-  const ok = { destination: 'ไซต์บางนา', jobSummary: 'ส่งท่อ', contactPhone: '0812345678' }
-  it('ครบ = ส่งได้', () => expect(urgentDetailsError(ok)).toBeNull())
-  it.each([
-    [{ ...ok, destination: ' ' }, 'ไปที่ไหน'],
-    [{ ...ok, jobSummary: '' }, 'งาน'],
-    [{ ...ok, contactPhone: '' }, 'เบอร์'],
-    [{ ...ok, contactPhone: '<script>' }, 'ตัวเลข'],
-    [{ ...ok, contactPhone: '---' }, 'ตัวเลข'],
-    [{ ...ok, contactPhone: '( )' }, 'ตัวเลข'],
-    [{ ...ok, destination: 'x'.repeat(201) }, 'ยาวเกิน'],
-    [{ ...ok, jobSummary: 'x'.repeat(501) }, 'ยาวเกิน'],
-  ])('%o → ไม่ผ่าน', (details, message) => {
-    expect(urgentDetailsError(details)).toContain(message)
-  })
-})
+import { displayText, formatIsoDateTh, isUrgentPastDue, requesterVrAfterUrgent, urgentCloseChanges, urgentNotPendingMessage } from './urgentRequest'
+import { closedTomorrowMessage, isOutsideRequestHours, settingMinutes, viewerRequestDateProblem } from './requestWindow'
 
 describe('เวลาเปิด/ปิดรับคำขอ (ฟอร์มกับ server ใช้ตัวเดียวกัน)', () => {
   it('อ่าน "HH:MM" เป็นนาทีของวัน (นับนาทีด้วย) · "00:00" = 0 ไม่กลายเป็นค่าเริ่มต้น · ไม่มีค่า/อ่านไม่ได้ = ค่าเริ่มต้น', () => {
@@ -117,6 +43,62 @@ describe('เวลาเปิด/ปิดรับคำขอ (ฟอร์�
     const settings = { requestOpenTime: '08:00', requestCloseTime: '17:30' }
     expect(isOutsideRequestHours(new Date('2030-01-07T10:29:00Z'), settings)).toBe(false) // 17:29 ไทย
     expect(isOutsideRequestHours(new Date('2030-01-07T10:30:00Z'), settings)).toBe(true) // 17:30 ไทย
+  })
+})
+
+describe('ผู้ขอทั่วไปส่งใบของวันไหนได้ (ผู้ใช้กำหนด 2026-11-14: หลังเวลาปิดรับ ใบพรุ่งนี้ปิดเด็ดขาด)', () => {
+  // วันที่ 2030-01-07 เวลาไทย · พรุ่งนี้ = 08 · มะรืน = 09
+  const bkk = (hhmm: string) => new Date(`2030-01-07T${hhmm}:00+07:00`)
+  const settings = { requestOpenTime: '06:00', requestCloseTime: '16:00' }
+
+  it('ในเวลารับคำขอ: พรุ่งนี้และวันถัดไปส่งได้', () => {
+    expect(viewerRequestDateProblem('2030-01-08', bkk('15:59'), settings)).toBeNull()
+    expect(viewerRequestDateProblem('2030-01-09', bkk('06:00'), settings)).toBeNull()
+  })
+
+  it('ตั้งแต่เวลาปิด: พรุ่งนี้ส่งไม่ได้ ให้แจ้งคนจัดรถ · มะรืนเป็นต้นไปยังส่งได้', () => {
+    const message = viewerRequestDateProblem('2030-01-08', bkk('16:00'), settings)
+    expect(message).toContain('เลยเวลาปิดรับใบขอรถของพรุ่งนี้แล้ว (ปิด 16:00 น.)')
+    expect(message).toContain('แจ้งคนจัดรถโดยตรง')
+    expect(viewerRequestDateProblem('2030-01-08', bkk('23:59'), settings)).toBe(message)
+    expect(viewerRequestDateProblem('2030-01-09', bkk('16:00'), settings)).toBeNull()
+    expect(viewerRequestDateProblem('2030-01-20', bkk('23:59'), settings)).toBeNull()
+  })
+
+  it('ก่อนเวลาเปิด: พรุ่งนี้ยังส่งไม่ได้ (รอเปิดรับ ไม่ใช่ให้แจ้งคนจัดรถ) · มะรืนส่งได้', () => {
+    const message = viewerRequestDateProblem('2030-01-08', bkk('05:59'), settings)
+    expect(message).toBe('ยังไม่ถึงเวลาเปิดรับใบขอรถของพรุ่งนี้ (รับ 06:00–16:00 น.) — ส่งได้ตั้งแต่ 06:00 น.')
+    expect(viewerRequestDateProblem('2030-01-09', bkk('00:30'), settings)).toBeNull()
+  })
+
+  it('วันนี้/ย้อนหลัง = ต้องล่วงหน้าอย่างน้อย 1 วัน ทุกเวลา', () => {
+    for (const time of ['00:00', '10:00', '16:30']) {
+      expect(viewerRequestDateProblem('2030-01-07', bkk(time), settings)).toBe('ต้องขอล่วงหน้าอย่างน้อย 1 วัน')
+      expect(viewerRequestDateProblem('2030-01-01', bkk(time), settings)).toBe('ต้องขอล่วงหน้าอย่างน้อย 1 วัน')
+    }
+  })
+
+  it('เวลาปิดมีนาที (17:30) และไม่มีค่าในตั้งค่า (ค่าเริ่มต้นปิด 16:00)', () => {
+    const half = { requestOpenTime: '08:00', requestCloseTime: '17:30' }
+    expect(viewerRequestDateProblem('2030-01-08', bkk('17:29'), half)).toBeNull()
+    expect(viewerRequestDateProblem('2030-01-08', bkk('17:30'), half)).toContain('ปิด 17:30 น.')
+    expect(viewerRequestDateProblem('2030-01-08', bkk('16:00'), null)).toContain('ปิด 16:00 น.')
+  })
+
+  it('ตัดสินด้วยเวลาไทยเสมอ — 16:00 ไทย = 09:00 UTC ของวันเดียวกัน', () => {
+    expect(viewerRequestDateProblem('2030-01-08', new Date('2030-01-07T08:59:00Z'), settings)).toBeNull()
+    expect(viewerRequestDateProblem('2030-01-08', new Date('2030-01-07T09:00:00Z'), settings)).toContain('เลยเวลาปิดรับ')
+    // 23:30 ไทยวันที่ 7 = 16:30 UTC วันที่ 7 — "พรุ่งนี้" ยังเป็นวันที่ 8 ตามเวลาไทย
+    expect(viewerRequestDateProblem('2030-01-08', new Date('2030-01-07T16:30:00Z'), settings)).toContain('เลยเวลาปิดรับ')
+    // 00:30 ไทยวันที่ 8 = 17:30 UTC วันที่ 7 — พรุ่งนี้กลายเป็นวันที่ 9 (ก่อนเวลาเปิด) · วันที่ 8 = วันนี้
+    expect(viewerRequestDateProblem('2030-01-09', new Date('2030-01-07T17:30:00Z'), settings)).toContain('ยังไม่ถึงเวลาเปิดรับ')
+    expect(viewerRequestDateProblem('2030-01-08', new Date('2030-01-07T17:30:00Z'), settings)).toBe('ต้องขอล่วงหน้าอย่างน้อย 1 วัน')
+  })
+
+  it('ข้อความกล่องแจ้งในฟอร์ม: ในเวลา = ไม่มี', () => {
+    expect(closedTomorrowMessage(bkk('10:00'), settings)).toBeNull()
+    expect(closedTomorrowMessage(bkk('16:00'), settings)).toContain('แจ้งคนจัดรถ')
+    expect(closedTomorrowMessage(bkk('05:00'), settings)).toContain('ยังไม่ถึงเวลาเปิดรับ')
   })
 })
 
@@ -179,8 +161,7 @@ describe('คนจัดรถปิดคำขอที่ถึงวัน�
     expect(urgentCloseChanges('handled', 'x'.repeat(600), 'A').closeNote).toHaveLength(500)
   })
 
-  it('ปิดแล้ว ฟอร์มผู้ขอไม่นับเป็นคำขอที่รออยู่/อนุมัติ', () => {
-    expect(urgentFormStatus([{ status: 'closed', createdAt: { toMillis: () => 1 } }])).not.toBe('approved')
+  it('ปิดแล้ว = คนจัดรถกดตอบไม่ได้อีก', () => {
     expect(urgentNotPendingMessage('closed')).toBe('คำขอนี้ถูกปิดไปแล้ว')
   })
 })
@@ -196,83 +177,6 @@ describe('ค่าที่ผู้ใช้เขียนเองได้ 
     expect(formatIsoDateTh('2026-02-30')).toBe('2026-02-30')
     expect(formatIsoDateTh({ toDate: 1 })).toBe('')
     expect(formatIsoDateTh(undefined)).toBe('')
-  })
-})
-
-describe('คำขออนุมัติใบล่าสุด (ฟอร์มใช้ตัดสินแบบเดียวกับ server)', () => {
-  const at = (ms: number) => ({ toMillis: () => ms })
-  const urgent = (id: string, status: string, createdMs: number | null, extra: Record<string, unknown> = {}) =>
-    ({ id, status, createdAt: createdMs === null ? null : at(createdMs), ...extra })
-
-  it('เลือกใบที่สร้างทีหลังสุด ไม่ขึ้นกับลำดับที่ได้มา', () => {
-    const list = [urgent('A', 'cancelled', 1_000), urgent('C', 'pending', 3_000), urgent('B', 'cancelled', 2_000)]
-    expect(latestUrgentRequest(list)?.id).toBe('C')
-    expect(latestUrgentRequest([...list].reverse())?.id).toBe('C')
-  })
-
-  it('ไม่มีคำขอ = null', () => {
-    expect(latestUrgentRequest([])).toBeNull()
-    expect(latestUrgentRequest(null)).toBeNull()
-    expect(latestUrgentRequest(undefined)).toBeNull()
-  })
-
-  it('ใบที่เพิ่งส่งในเครื่อง (server ยังไม่ประทับ createdAt) = ใบใหม่สุด — ไม่เด้งกลับไปขึ้นปุ่มขออนุมัติ', () => {
-    expect(latestUrgentRequest([urgent('OLD', 'cancelled', 5_000), urgent('NEW', 'pending', null)])?.id).toBe('NEW')
-  })
-
-  it('ใบล่าสุดถูกยกเลิก = เหมือนยังไม่มีคำขอ (ขออนุมัติใหม่ได้)', () => {
-    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000)])).toBeNull()
-    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000), urgent('B', 'cancelled', 2_000)])).toBeNull()
-    expect(urgentFormStatus([])).toBeNull()
-    expect(urgentFormStatus(null)).toBeNull()
-  })
-
-  it('ยกเลิกแล้วขอใหม่ = ใช้ผลของใบใหม่', () => {
-    expect(urgentFormStatus([urgent('B', 'pending', 2_000), urgent('A', 'cancelled', 1_000)])).toBe('pending')
-    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000), urgent('B', 'approved', 2_000)])).toBe('approved')
-    expect(urgentFormStatus([urgent('A', 'cancelled', 1_000), urgent('B', 'rejected', 2_000)])).toBe('rejected')
-  })
-
-  it('เหตุผลการปฏิเสธมาจากใบล่าสุด ไม่ใช่ใบแรกในรายการ', () => {
-    const list = [
-      urgent('OLD', 'rejected', 1_000, { rejectReason: 'เหตุผลใบเก่า' }),
-      urgent('NEW', 'rejected', 3_000, { rejectReason: 'รถเต็มแล้ว' }),
-      urgent('MID', 'cancelled', 2_000),
-    ]
-    expect(urgentRejectReason(list)).toBe('รถเต็มแล้ว')
-  })
-
-  it('ใบล่าสุดไม่ได้ถูกปฏิเสธ / เหตุผลไม่ใช่ข้อความ = ไม่แสดงเหตุผล', () => {
-    expect(urgentRejectReason([urgent('OLD', 'rejected', 1_000, { rejectReason: 'เก่า' }), urgent('NEW', 'pending', 2_000)])).toBe('')
-    expect(urgentRejectReason([urgent('A', 'rejected', 1_000, { rejectReason: { text: 'x' } })])).toBe('')
-    expect(urgentRejectReason([])).toBe('')
-  })
-})
-
-describe('ผู้ขอกดยกเลิก — ยกเลิกทุกใบของวันนั้นที่ยังรออนุมัติ (ค่าที่อ่านซ้ำใน transaction)', () => {
-  const at = (ms: number) => ({ toMillis: () => ms })
-  const urgent = (id: string, status: string, createdMs: number) => ({ id, status, createdAt: at(createdMs) })
-
-  it('ส่งซ้ำจาก 2 เครื่อง (pending 2 ใบ) = ยกเลิกทั้ง 2 ใบ ไม่เหลือค้างที่การ์ดคนจัดรถ', () => {
-    expect(planUrgentCancel([urgent('OLD', 'pending', 1_000), urgent('NEW', 'pending', 2_000)]))
-      .toEqual({ cancelIds: ['OLD', 'NEW'], message: 'ยกเลิกคำขออนุมัติแล้ว' })
-  })
-
-  it('ยกเลิกเฉพาะใบที่ยังรออนุมัติ — ใบที่คนจัดรถเพิ่งตอบไม่ถูกเขียนทับ', () => {
-    expect(planUrgentCancel([urgent('OLD', 'approved', 1_000), urgent('NEW', 'pending', 2_000)]))
-      .toEqual({ cancelIds: ['NEW'], message: 'ยกเลิกคำขออนุมัติแล้ว' })
-  })
-
-  it('ไม่มีใบไหนรออนุมัติเหลือ: คนจัดรถตอบใบล่าสุดไปแล้ว', () => {
-    expect(planUrgentCancel([urgent('A', 'approved', 1_000)])).toEqual({ cancelIds: [], message: 'คนจัดรถเพิ่งตอบคำขอนี้แล้ว' })
-    expect(planUrgentCancel([urgent('A', 'cancelled', 1_000), urgent('B', 'rejected', 2_000)]))
-      .toEqual({ cancelIds: [], message: 'คนจัดรถเพิ่งตอบคำขอนี้แล้ว' })
-  })
-
-  it('ไม่มีใบไหนรออนุมัติเหลือ: ใบล่าสุดถูกยกเลิกจากอีกแท็บ/เครื่องไปแล้ว', () => {
-    expect(planUrgentCancel([urgent('A', 'cancelled', 1_000)])).toEqual({ cancelIds: [], message: 'คำขอนี้ถูกยกเลิกไปแล้ว' })
-    expect(planUrgentCancel([urgent('A', 'approved', 1_000), urgent('B', 'cancelled', 2_000)]))
-      .toEqual({ cancelIds: [], message: 'คำขอนี้ถูกยกเลิกไปแล้ว' })
   })
 })
 

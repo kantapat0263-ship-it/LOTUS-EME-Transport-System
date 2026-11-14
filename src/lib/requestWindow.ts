@@ -24,3 +24,34 @@ export function isOutsideRequestHours(now: Date, settings: Parameters<typeof req
   const minuteOfDay = bangkok.getUTCHours() * 60 + bangkok.getUTCMinutes()
   return minuteOfDay >= closeMin || minuteOfDay < openMin
 }
+
+const clock = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`
+
+/**
+ * ข้อความบอกผู้ขอทั่วไปตอนนอกเวลารับคำขอ (null = อยู่ในเวลา) — ใช้ทั้งกล่องแจ้งในฟอร์มและข้อความตอนส่งไม่ผ่าน
+ * ก่อนเวลาเปิด = รอเปิดรับ · ตั้งแต่เวลาปิด = ให้แจ้งคนจัดรถ (คนจัดรถแทรกงานให้)
+ */
+export function closedTomorrowMessage(now: Date, settings: Parameters<typeof requestWindowMinutes>[0]): string | null {
+  if (!isOutsideRequestHours(now, settings)) return null
+  const { openMin, closeMin } = requestWindowMinutes(settings)
+  const bangkok = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+  const beforeOpen = bangkok.getUTCHours() * 60 + bangkok.getUTCMinutes() < openMin
+  return beforeOpen
+    ? `ยังไม่ถึงเวลาเปิดรับใบขอรถของพรุ่งนี้ (รับ ${clock(openMin)}–${clock(closeMin)} น.) — ส่งได้ตั้งแต่ ${clock(openMin)} น.`
+    : `เลยเวลาปิดรับใบขอรถของพรุ่งนี้แล้ว (ปิด ${clock(closeMin)} น.) — ถ้าต้องใช้รถพรุ่งนี้ ให้แจ้งคนจัดรถโดยตรง คนจัดรถจะแทรกงานให้`
+}
+
+/**
+ * ผู้ขอทั่วไปส่งใบของวันนี้ได้ไหม ณ เวลา now (null = ได้ / ข้อความ = เหตุผลที่ไม่ได้) — ฟอร์มกับ server ใช้ตัวเดียวกัน
+ * - ต้องล่วงหน้าอย่างน้อย 1 วัน
+ * - ใบของ "พรุ่งนี้" ส่งได้เฉพาะในเวลารับคำขอ — ผู้ใช้กำหนด 2026-11-14: เลยเวลาปิดแล้วปิดเด็ดขาด ไม่มีขออนุมัติพิเศษ
+ *   (เดิมผ่านได้ถ้า Dispatcher อนุมัติ urgentRequests) ให้แจ้งคนจัดรถ คนจัดรถแทรกงานให้
+ * - วันมะรืนเป็นต้นไปส่งได้ทุกเวลา · วันอาทิตย์ตรวจแยกที่จุดเรียก
+ */
+export function viewerRequestDateProblem(requestDate: string, now: Date, settings: Parameters<typeof requestWindowMinutes>[0]): string | null {
+  const tomorrow = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10)
+  if (requestDate < tomorrowStr) return "ต้องขอล่วงหน้าอย่างน้อย 1 วัน"
+  return requestDate === tomorrowStr ? closedTomorrowMessage(now, settings) : null
+}
