@@ -120,7 +120,12 @@ export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPre
   const { data: sites } = useCollection<Site>(sitesRef)
 
   const settingsRef = useMemoFirebase(() => db ? doc(db, "companySettings", "default") : null, [db])
-  const { data: settings } = useDoc<any>(settingsRef)
+  const { data: settings, isLoading: isSettingsLoading, error: settingsError } = useDoc<any>(settingsRef)
+  // โหลดตั้งค่าเสร็จแล้ว (มีค่า / ไม่มีเอกสาร / อ่านไม่ได้) — useDoc เริ่มที่ isLoading=false ก่อนเริ่มอ่าน จึงจำไว้ว่าเคยเริ่มโหลดแล้ว
+  // ก่อนเสร็จห้ามตั้งวันเริ่มต้น: เวลาเปิดรับค่าเริ่มต้น (08:00) ≠ ที่ตั้งจริง (เช่น 06:00) → 07:00 ฟอร์มจะตั้งเป็นมะรืนผิด ๆ แล้วไม่ถูกแก้กลับ
+  const settingsLoadStarted = React.useRef(false)
+  if (isSettingsLoading) settingsLoadStarted.current = true
+  const settingsReady = !!settings || !!settingsError || (settingsLoadStarted.current && !isSettingsLoading)
 
   const role = profile?.role?.toLowerCase() || ''
   const isViewer = role !== 'admin' && role !== 'dispatcher'
@@ -169,21 +174,22 @@ export function RequestForm({ prefill, onSubmitted }: { prefill?: RequestFormPre
 
   // นอกเวลารับคำขอ: ผู้ขอทั่วไปส่งใบของพรุ่งนี้ไม่ได้เด็ดขาด (ผู้ใช้กำหนด 2026-11-14 — เลิกขออนุมัติพิเศษ ให้แจ้งคนจัดรถ)
   // กล่องแจ้งขึ้นทุกวันที่ที่เลือก — นอกเวลาฟอร์มตั้งวันเป็นมะรืนให้เอง ถ้าไม่บอกชัด ผู้ขออาจส่งใบผิดวันโดยไม่รู้ตัว
-  const closedMessage = isViewer ? closedTomorrowMessage(new Date(), settings) : null
+  // รอโปรไฟล์ (รู้ role — staff ไม่ต้องเห็น) + ตั้งค่า (รู้เวลาจริง) ก่อน · คิดสดทุกครั้งที่วาด = เปิดค้างข้ามเวลาปิด/เที่ยงคืนก็ตรงกับตอนกดส่ง
+  const rulesReady = !!profile && settingsReady
+  const closedMessage = isViewer && rulesReady ? closedTomorrowMessage(new Date(), settings) : null
+  const dateProblem = isViewer && rulesReady && selectedDate ? viewerRequestDateProblem(selectedDate, new Date(), settings) : null
 
-  const isSelectingTomorrow = selectedDate === tomorrowStr
   const isSelectingToday = !isViewer && selectedDate === todayStr
-  const isTomorrowClosed = !!closedMessage && isSelectingTomorrow
 
   React.useEffect(() => {
-    if (profile) {
+    if (profile && settingsReady) {
       // รีเซ็ตเป็นค่าเริ่มต้น (พรุ่งนี้) ถ้ายังไม่เลือก / เลือกก่อนวันขั้นต่ำ / ตกวันอาทิตย์
       // ใช้ calendarMinStr → staff ที่ตั้งใจเลือก "วันนี้" จะไม่ถูกเด้งกลับ
       if (!selectedDate || selectedDate < calendarMinStr || isSundayStr(selectedDate)) {
         setSelectedDate(minDateStr)
       }
     }
-  }, [profile?.role, settings, minDateStr, calendarMinStr, selectedDate])
+  }, [profile?.role, settings, settingsReady, minDateStr, calendarMinStr, selectedDate])
 
   // กรอกแทนผู้ขอ (prefill) = ชื่อผู้ขอ ไม่ใช่ชื่อคนจัดรถที่ล็อกอินอยู่ (ชื่อว่าง = ปล่อยว่างให้คนจัดรถพิมพ์ ไม่เติมชื่อตัวเอง)
   React.useEffect(() => {
@@ -491,9 +497,9 @@ const handleSubmit = async (e: React.FormEvent) => {
         <CardContent>
           {prefill && (
             <div className="mb-6 p-3 rounded-lg border border-orange-500/30 bg-orange-500/10 space-y-1">
-              <p className="text-xs font-bold text-orange-400">📝 กรอกใบแทนผู้ขอ — จากคำขอหลังเวลาปิดรับที่ถึงวันขอแล้ว</p>
+              <p className="text-xs font-bold text-orange-400">📝 กรอกใบแทนผู้ขอ — จากคำขอหลังเวลาปิดรับ</p>
               <p className="text-[11px] text-muted-foreground">
-                ใส่ชื่อผู้ขอและวันนี้ให้แล้ว · เลือกสถานที่ เวลา และงานตามที่ผู้ขอแจ้ง → ส่งใบ → ไปจัดกลุ่มเลือกคนขับ/รถตามปกติ
+                ใส่ชื่อผู้ขอและวันที่ให้แล้ว · เลือกสถานที่ เวลา และงานตามที่ผู้ขอแจ้ง → ส่งใบ → ไปจัดกลุ่มเลือกคนขับ/รถตามปกติ
               </p>
               {prefill.contactPhone && <p className="text-[11px] text-white">📞 {prefill.contactPhone}</p>}
               {prefill.destination && <p className="text-[11px] text-white break-words">📍 {prefill.destination}</p>}
@@ -501,7 +507,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <p className="text-[11px] text-orange-300">ส่งใบแล้วระบบปิดคำขอนี้ให้เอง (บันทึกว่าจัดรถให้แล้ว + เลข VR)</p>
             </div>
           )}
-          {closedMessage && !isTomorrowClosed && (
+          {closedMessage && !dateProblem && (
             <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
               <span className="text-base leading-none">⏰</span>
               <span>
@@ -568,10 +574,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                     </span>
                   </div>
                 )}
-                {isTomorrowClosed && (
+                {dateProblem && (
                   <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs font-bold text-red-400">
                     <span className="text-base leading-none">🚫</span>
-                    <span>{closedMessage}</span>
+                    <span>{dateProblem}</span>
                   </div>
                 )}
                 {!isViewer && (
@@ -1039,7 +1045,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             <Button 
               type="submit" 
               className="w-full h-12 bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 disabled:opacity-50 disabled:cursor-not-allowed" 
-              disabled={isSubmitting || isTomorrowClosed}
+              disabled={isSubmitting || !!dateProblem}
             >
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               ส่งคำขอรถ

@@ -175,44 +175,40 @@ describe('กติกาเวลารับคำขอของผู้ข�
   const viewer = () => ({ uid, name: 'สมชาย', role: 'viewer' as const, email: 'viewer@test.local' })
   const command = (requestDate: string) => parseVehicleRequestCommand(body(requestDate))
 
-  it('นอกเวลา: ขอพรุ่งนี้ต้องได้อนุมัติเร่งด่วนก่อน · มะรืนขอได้ · ในเวลาขอพรุ่งนี้ได้ · staff ไม่ติดกติกานี้', async () => {
+  it('นอกเวลา: ขอพรุ่งนี้ไม่ได้เด็ดขาด (ให้แจ้งคนจัดรถ) · มะรืนขอได้ · ในเวลาขอพรุ่งนี้ได้ · staff ไม่ติดกติกานี้', async () => {
     await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
     await getAdminDb().doc('companySettings/default').set({ requestOpenTime: '08:00', requestCloseTime: '16:00' }, { merge: true })
     const db = getAdminDb()
-    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toThrow('ขออนุมัติจาก Dispatcher')
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toThrow('แจ้งคนจัดรถโดยตรง')
     await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toBeInstanceOf(VehicleRequestError)
     expect((await createVehicleRequest(db, viewer(), command('2030-01-09'), at(20))).requestId).toMatch(/^VR-0901-\d{4}$/)
     expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), at(10))).requestId).toMatch(/^VR-0801-\d{4}$/)
-    const { Timestamp } = await import('firebase-admin/firestore')
-    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-08', status: 'approved', createdAt: Timestamp.fromMillis(1_000) })
-    expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).requestId).toMatch(/^VR-0801-\d{4}$/)
-    // ขออนุมัติใหม่อีกใบแล้วถูกปฏิเสธ → ใบล่าสุดชนะ (เหมือนฟอร์ม) ใบเก่าที่เคยอนุมัติใช้ไม่ได้
-    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-08', status: 'rejected', createdAt: Timestamp.fromMillis(2_000) })
-    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(20))).rejects.toThrow('ขออนุมัติจาก Dispatcher')
+    // ก่อนเวลาเปิด: พรุ่งนี้ยังส่งไม่ได้ (รอเปิดรับ)
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), at(7))).rejects.toThrow('ยังไม่ถึงเวลาเปิดรับ')
     expect((await createVehicleRequest(db, { ...viewer(), role: 'dispatcher' }, command('2030-01-07'), at(20))).requestId).toMatch(/^VR-0701-\d{4}$/)
+    expect((await createVehicleRequest(db, { ...viewer(), role: 'dispatcher' }, command('2030-01-08'), at(20))).requestId).toMatch(/^VR-0801-\d{4}$/)
     await expect(createVehicleRequest(db, viewer(), command('2030-01-07'), at(10))).rejects.toThrow('ล่วงหน้าอย่างน้อย 1 วัน')
   })
 
-  it('เวลาปิดรับนับนาที: ตั้ง 17:30 → 17:15 ยังขอพรุ่งนี้ได้เอง · 17:30 ต้องขออนุมัติ (เดิมปิดตั้งแต่ 17:00)', async () => {
+  it('เวลาปิดรับนับนาที: ตั้ง 17:30 → 17:15 ยังขอพรุ่งนี้ได้ · 17:30 ขอไม่ได้ (เดิมปิดตั้งแต่ 17:00)', async () => {
     await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
     await getAdminDb().doc('companySettings/default').set({ requestOpenTime: '08:00', requestCloseTime: '17:30' }, { merge: true })
     const db = getAdminDb()
     const monday1715 = new Date(`${MONDAY}T10:15:00Z`) // 17:15 เวลาไทย
     const monday1730 = new Date(`${MONDAY}T10:30:00Z`) // 17:30 เวลาไทย
     expect((await createVehicleRequest(db, viewer(), command('2030-01-08'), monday1715)).requestId).toMatch(/^VR-0801-\d{4}$/)
-    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), monday1730)).rejects.toThrow('ขออนุมัติจาก Dispatcher')
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-08'), monday1730)).rejects.toThrow('ปิด 17:30 น.')
   })
 
-  it('คำขออนุมัติที่ผู้ขอยกเลิกใช้ส่งใบไม่ได้ · ยกเลิกแล้วขอใหม่จนอนุมัติ = ส่งได้', async () => {
+  it('คำขออนุมัติเก่าที่อนุมัติไว้แล้ว ใช้ส่งใบพรุ่งนี้หลังเวลาปิดรับไม่ได้ (เลิกขออนุมัติพิเศษ 2026-11-14)', async () => {
     await setProfile({ name: 'สมชาย', role: 'viewer', active: true })
     await getAdminDb().doc('companySettings/default').set({ requestOpenTime: '08:00', requestCloseTime: '16:00' }, { merge: true })
     const db = getAdminDb()
     const { Timestamp } = await import('firebase-admin/firestore')
     const mondayNight = new Date('2030-01-14T13:00:00Z') // จันทร์ 20:00 เวลาไทย (นอกเวลา) → ขอวันอังคาร 15 ม.ค.
-    await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-15', status: 'cancelled', createdAt: Timestamp.fromMillis(1_000) })
-    await expect(createVehicleRequest(db, viewer(), command('2030-01-15'), mondayNight)).rejects.toThrow('ขออนุมัติจาก Dispatcher')
     await db.collection('urgentRequests').add({ userId: uid, requestedDate: '2030-01-15', status: 'approved', createdAt: Timestamp.fromMillis(2_000) })
-    expect((await createVehicleRequest(db, viewer(), command('2030-01-15'), mondayNight)).requestId).toMatch(/^VR-1501-\d{4}$/)
+    await expect(createVehicleRequest(db, viewer(), command('2030-01-15'), mondayNight)).rejects.toThrow('เลยเวลาปิดรับใบขอรถของพรุ่งนี้แล้ว')
+    expect((await db.collection('vehicleRequests').where('requestDate', '==', '2030-01-15').get()).size).toBe(0)
   })
 })
 

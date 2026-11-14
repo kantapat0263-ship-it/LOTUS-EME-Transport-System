@@ -77,6 +77,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import { displayText, formatIsoDateTh, isUrgentPastDue, requesterVrAfterUrgent, URGENT_CLOSE_NOTE_LIMIT, urgentCloseChanges, urgentNotPendingMessage } from "@/lib/urgentRequest"
+import { isIsoDate } from "@/lib/vehicle-compliance"
 import { thaiToday } from "@/lib/driverLeave"
 import { isManagedTrip } from "@/lib/continuousQueue"
 import { createQueueCommandFlight } from "@/components/continuous-queue/queue-command-flight"
@@ -352,52 +353,7 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
 
   const answerUrgent = (urgentId: string, changes: DocumentData) => answerUrgentRequest(db, urgentId, changes)
 
-  const handleApproveUrgent = async (urgentId: string, requestedBy: string, requestedDate: string) => {
-    // เปิดหน้าค้างข้ามเที่ยงคืน — ถึงวันขอแล้วอนุมัติไปผู้ขอก็ส่งใบไม่ได้ (การ์ดจะเปลี่ยนเป็นปุ่มแทรกงาน/กรอกใบ/ปิดคำขอ)
-    if (isUrgentPastDue(requestedDate, thaiToday())) {
-      toast({ title: "ถึงวันขอแล้ว", description: "ผู้ขอส่งใบเองไม่ได้ — ใช้แทรกงานด่วน หรือกรอกใบขอรถแทน แล้วกดปิดคำขอ", variant: "destructive" })
-      return
-    }
-    try {
-      const notPending = await answerUrgent(urgentId, {
-        status: "approved",
-        approvedBy: profileName || "Dispatcher",
-        approvedAt: serverTimestamp()
-      })
-      if (notPending) {
-        toast({ title: notPending, description: "ไม่ได้บันทึกการอนุมัติ", variant: "destructive" })
-        return
-      }
-      toast({ 
-        title: "อนุมัติแล้ว", 
-        description: `${requestedBy} สามารถขอรถวันที่ ${formatIsoDateTh(requestedDate)} ได้แล้ว` 
-      })
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
-    }
-  }
-
-  const handleRejectUrgent = async (urgentId: string, requestedBy: string) => {
-    const reason = prompt(`เหตุผลที่ปฏิเสธคำขอของ ${requestedBy}:`)
-    if (!reason) return
-    try {
-      const notPending = await answerUrgent(urgentId, {
-        status: "rejected",
-        rejectReason: reason,
-        rejectedBy: profileName || "Dispatcher",
-        rejectedAt: serverTimestamp()
-      })
-      if (notPending) {
-        toast({ title: notPending, description: "ไม่ได้บันทึกการปฏิเสธ", variant: "destructive" })
-        return
-      }
-      toast({ title: "ปฏิเสธแล้ว", description: `ปฏิเสธคำขอของ ${requestedBy} แล้ว` })
-    } catch (e) {
-      toast({ title: "เกิดข้อผิดพลาด", variant: "destructive" })
-    }
-  }
-
-  // ปิดคำขอที่ถึงวันขอแล้ว (คนจัดรถแทรกงาน/กรอกใบแทนแล้ว หรือไม่ได้จัด) — บันทึกผล + ใครปิด ให้การ์ดหายจากรายการรออนุมัติ
+  // ปิดคำขอ (คนจัดรถแทรกงาน/กรอกใบแทนแล้ว หรือไม่ได้จัด) — บันทึกผล + ใครปิด ให้การ์ดหายจากรายการ
   const [closeUrgent, setCloseUrgent] = React.useState<{ id: string; requestedBy: string } | null>(null)
   const [closeOutcome, setCloseOutcome] = React.useState<"handled" | "not_handled" | null>(null)
   const [closeNote, setCloseNote] = React.useState("")
@@ -726,7 +682,7 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
             🔔 คำขอส่งใบขอรถหลังเวลาปิดรับ ({urgentRequests.length} รายการ)
           </p>
           <p className="text-[10px] text-muted-foreground">
-            ยังไม่ใช่ใบขอรถ — อนุมัติแล้วผู้ขอจะกรอกใบขอรถเอง แล้วการ์ด VR จะตามมาให้จัดคิว
+            ยังไม่ใช่ใบขอรถ — เลิกขออนุมัติพิเศษแล้ว (2026-11-14) ผู้ขอส่งใบของพรุ่งนี้หลังเวลาปิดรับเองไม่ได้ · คนจัดรถกรอกใบแทน หรือแทรกงานในวันนั้น แล้วกดปิดคำขอ
           </p>
           {urgentRequests.map((u: any) => {
             // ทุกค่ามาจากเอกสารที่ผู้ขอเขียนเอง — รับเฉพาะข้อความ ค่าผิดชนิดต้องไม่ทำให้ทั้งแท็บล้ม
@@ -782,8 +738,9 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
                   <p className="text-[10px] text-muted-foreground italic">ไม่มีรายละเอียดงาน (ส่งมาก่อนมีช่องให้กรอก) — โทรถามผู้ขอได้</p>
                 )}
               </div>
-              {pastDue ? (
-                <div className="flex flex-wrap gap-2 shrink-0">
+              {/* ทุกการ์ด: กรอกใบแทน / ปิดคำขอ (เลิกปุ่มอนุมัติ-ปฏิเสธ 2026-11-14 — อนุมัติไปผู้ขอก็ส่งใบไม่ได้แล้ว) · แทรกงานด่วนได้เฉพาะเมื่อถึงวันขอ */}
+              <div className="flex flex-wrap gap-2 shrink-0">
+                {pastDue && (
                   <Button
                     size="sm"
                     className="h-7 text-xs bg-accent hover:bg-accent/90 text-white"
@@ -791,6 +748,7 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
                   >
                     ➕ แทรกงานด่วน
                   </Button>
+                )}
                   <Button
                     size="sm"
                     className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
@@ -798,7 +756,8 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
                       urgentId: u.id,
                       // ไม่มีชื่อ = ใช้อีเมลผู้ขอ (ไม่ปล่อยให้ฟอร์มเติมชื่อคนจัดรถเอง)
                       requestedBy: displayText(u.requestedBy) || (typeof email === "string" ? email : ""),
-                      date: thaiToday(),
+                      // ยังไม่ถึงวันขอ = วันที่ผู้ขอต้องการ · ถึงวัน/เลยแล้ว หรือวันที่อ่านไม่ได้ = วันนี้ (เหมือนเดิม)
+                      date: !pastDue && isIsoDate(u.requestedDate) ? u.requestedDate : thaiToday(),
                       destination,
                       jobSummary,
                       contactPhone: typeof phone === "string" ? phone : "",
@@ -815,24 +774,6 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
                     ปิดคำขอ
                   </Button>
                 </div>
-              ) : (
-              <div className="flex gap-2 shrink-0">
-                <Button
-                  size="sm"
-                  className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
-                  onClick={() => handleApproveUrgent(u.id, requestedBy, u.requestedDate)}
-                >
-                  ✅ อนุมัติ
-                </Button>
-                <Button
-                  size="sm"
-                  className="h-7 text-xs bg-red-600 hover:bg-red-700 text-white"
-                  onClick={() => handleRejectUrgent(u.id, requestedBy)}
-                >
-                  ❌ ปฏิเสธ
-                </Button>
-              </div>
-              )}
             </div>
             )
           })}
@@ -842,7 +783,7 @@ function InlineRequestManager({ userRole, profileName, onFillForm }: { userRole?
         <DialogContent>
           <DialogHeader>
             <DialogTitle>ปิดคำขอของ {closeUrgent?.requestedBy}</DialogTitle>
-            <DialogDescription>คำขอนี้ถึงวันขอแล้ว — บันทึกผลแล้วการ์ดจะหายจากรายการรออนุมัติ</DialogDescription>
+            <DialogDescription>บันทึกผลแล้วการ์ดจะหายจากรายการ</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
